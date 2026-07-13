@@ -1,0 +1,28 @@
+component stories-tray
+
+use port feed { type story-ring }
+
+props {
+  stories: list[story-ring]
+}
+
+<scroll class="stories-tray" direction="horizontal">
+  <view role="list" class="ring-row">
+    {#each stories as story (story.id)}
+      <view class="ring-item">
+        <image class={if story.has-unseen then "ring unseen" else "ring seen"} src={story.user.avatar.src} alt={story.user.avatar.alt} />
+        <text class="ring-name">{if story.is-self then "Your story" else story.user.username}</text>
+      </view>
+    {/each}
+  </view>
+</scroll>
+
+<style>
+.stories-tray { border-block-end: 1px solid var(--color-line); }
+.stories-tray .ring-row { display: flex; gap: var(--space-4); padding: var(--space-3) var(--space-4); }
+.stories-tray .ring-item { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); }
+.stories-tray .ring { inline-size: 56px; block-size: 56px; border-radius: var(--radius-full); object-fit: cover; padding: 2px; }
+.stories-tray .unseen { border: 2px solid var(--color-accent); }
+.stories-tray .seen { border: 2px solid var(--color-line); }
+.stories-tray .ring-name { font-size: var(--type-xs); color: var(--color-ink-subtle); max-inline-size: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>

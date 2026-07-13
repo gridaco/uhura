@@ -1,0 +1,48 @@
+# The profile read surface (design §9.1: keyed projection `profile`).
+# Read-only in the spike: no commands, so no refusals either.
+
+[port]
+name = "profile"
+version = "0.1.0"
+
+[types.image-ref]
+kind = "record"
+
+[types.image-ref.fields]
+src = "asset"
+alt = "text"
+
+[types.user-ref]
+kind = "record"
+
+[types.user-ref.fields]
+id = "id"
+username = "text"
+display-name = "text"
+avatar = "image-ref"
+
+[types.thumb]
+kind = "record"
+
+[types.thumb.fields]
+id = "id"
+src = "asset"
+alt = "text"
+
+[types.profile-view]
+kind = "record"
+
+[types.profile-view.fields]
+user = "user-ref"
+bio = "text"
+# provider-formatted counts; core does no number formatting
+posts-label = "text"
+followers-label = "text"
+following-label = "text"
+posts = "list<thumb>"
+tagged = "list<thumb>"
+
+# Keyed by user id: `profile(user)` (§9.2).
+[projections.profile]
+type = "profile-view"
+key = "id"

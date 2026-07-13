@@ -1,0 +1,25 @@
+use fixture standard
+
+example populated default {
+  props { post = "post-lena-glaze" }
+  projection feed.viewer = fixture.users.mira
+  projection comments.for-post("post-lena-glaze") = fixture.comments.lena-glaze
+}
+
+example composing {
+  from populated
+  events [ composer-changed(value: "Saving this palette for my kitchen reno") ]
+  note "composer mid-draft; Post enables once non-empty"
+}
+
+example pending-append {
+  from composing
+  events [ submit-requested() ]
+  note "optimistic dimmed row until the outcome settles"
+}
+
+example empty {
+  props { post = "post-ayla-ferry" }
+  projection feed.viewer = fixture.users.mira
+  projection comments.for-post("post-ayla-ferry") = fixture.comments.empty
+}

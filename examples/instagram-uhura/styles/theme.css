@@ -1,0 +1,59 @@
+/* Uhura spike theme — the one built-in theme (design §8.5).
+   Tokens as custom properties; aesthetics are free to drift. */
+
+:root {
+  /* space: 4px scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* type scale (body 15px) */
+  --type-xs: 12px;
+  --type-sm: 14px;
+  --type-md: 15px;
+  --type-lg: 17px;
+  --type-xl: 22px;
+
+  /* radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* ink ramp + surfaces */
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f6f7f8;
+  --color-ink: #15181d;
+  --color-ink-subtle: #697077;
+  --color-ink-faint: #9aa1a9;
+  --color-line: #e8eaed;
+  --color-on-media: #ffffff;
+
+  /* the one accent — used only where it means something */
+  --color-accent: #ed4956;
+  --color-accent-ink: #ffffff;
+  --color-focus: #ed4956;
+}
+
+/* base */
+body {
+  margin: 0;
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: var(--type-md);
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+/* shared utilities the slice names in class= */
+.screen { display: flex; flex-direction: column; block-size: 100%; }
+.fill-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.row-center { display: flex; align-items: center; justify-content: center; padding: var(--space-3); }
+.stack-sm { gap: var(--space-2); }
+.gap-sm { gap: var(--space-2); }
+.pad-md { padding: var(--space-4); }
+.pad-lg { padding: var(--space-6); }
+.muted { color: var(--color-ink-subtle); }
+.title { font-weight: 600; }

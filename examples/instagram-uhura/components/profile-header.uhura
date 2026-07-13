@@ -1,0 +1,45 @@
+component profile-header
+
+use port profile { type user-ref }
+
+props {
+  user: user-ref
+  bio: text
+  posts-label: text
+  followers-label: text
+  following-label: text
+}
+
+<view class="profile-header">
+  <view class="head-row">
+    <image class="avatar" src={user.avatar.src} alt={user.avatar.alt} />
+    <view class="stats">
+      <view class="stat">
+        <text class="stat-num">{posts-label}</text>
+        <text class="stat-name">Posts</text>
+      </view>
+      <view class="stat">
+        <text class="stat-num">{followers-label}</text>
+        <text class="stat-name">Followers</text>
+      </view>
+      <view class="stat">
+        <text class="stat-num">{following-label}</text>
+        <text class="stat-name">Following</text>
+      </view>
+    </view>
+  </view>
+  <text class="display-name">{user.display-name}</text>
+  <text class="bio">{bio}</text>
+</view>
+
+<style>
+.profile-header { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); }
+.profile-header .head-row { display: flex; align-items: center; gap: var(--space-6); }
+.profile-header .avatar { inline-size: 80px; block-size: 80px; border-radius: var(--radius-full); object-fit: cover; }
+.profile-header .stats { display: flex; flex: 1; justify-content: space-around; }
+.profile-header .stat { display: flex; flex-direction: column; align-items: center; }
+.profile-header .stat-num { font-weight: 600; }
+.profile-header .stat-name { font-size: var(--type-xs); color: var(--color-ink-subtle); }
+.profile-header .display-name { font-weight: 600; }
+.profile-header .bio { font-size: var(--type-sm); }
+</style>

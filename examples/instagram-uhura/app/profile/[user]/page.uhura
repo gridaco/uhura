@@ -1,0 +1,92 @@
+page
+
+use component bottom-nav
+use component profile-header
+use port profile { projection profile }
+
+param user: id
+
+store {
+  state {
+    active-tab: text = "posts"
+  }
+
+  on profile-tab-selected(tab: text) {
+    set active-tab = tab
+  }
+
+  on back-tapped() {
+    navigate back
+  }
+
+  on tab-selected(section: text) when section == "feed" {
+    navigate feed()
+  }
+}
+
+<view class="screen profile-page">
+  <view class="top-bar">
+    <button label="Back" on:press={emit back-tapped()}>
+      <icon name="back" />
+    </button>
+    <text class="title">Profile</text>
+  </view>
+  {#match profile(user)}
+    {:when loading}
+      <view class="fill-center">
+        <text class="muted">Loading profile…</text>
+      </view>
+    {:when failed reason}
+      <view class="fill-center">
+        <text class="muted">This profile didn't load.</text>
+      </view>
+    {:when ready pr}
+      <scroll class="profile-scroll">
+        <profile-header user={pr.user} bio={pr.bio} posts-label={pr.posts-label} followers-label={pr.followers-label} following-label={pr.following-label} />
+        <view role="tablist" class="profile-tabs">
+          <button label="Posts" current={active-tab == "posts"} on:press={emit profile-tab-selected(tab: "posts")}>
+            <icon name="grid" />
+          </button>
+          <button label="Tagged" current={active-tab == "tagged"} on:press={emit profile-tab-selected(tab: "tagged")}>
+            <icon name="profile" />
+          </button>
+        </view>
+        {#if active-tab == "posts"}
+          {#if count(pr.posts) == 0}
+            <view class="fill-center pad-lg">
+              <text class="muted">No posts yet.</text>
+            </view>
+          {:else}
+            <view role="list" class="post-grid">
+              {#each pr.posts as th (th.id)}
+                <image class="grid-tile" src={th.src} alt={th.alt} />
+              {/each}
+            </view>
+          {/if}
+        {:else}
+          {#if count(pr.tagged) == 0}
+            <view class="fill-center pad-lg">
+              <text class="muted">No tagged posts yet.</text>
+            </view>
+          {:else}
+            <view role="list" class="post-grid">
+              {#each pr.tagged as th (th.id)}
+                <image class="grid-tile" src={th.src} alt={th.alt} />
+              {/each}
+            </view>
+          {/if}
+        {/if}
+      </scroll>
+  {/match}
+  <bottom-nav current="profile" on:tab-selected />
+</view>
+
+<style>
+.profile-page { display: flex; flex-direction: column; block-size: 100%; }
+.profile-page .top-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.profile-page .title { font-weight: 600; }
+.profile-page .profile-scroll { flex: 1; min-block-size: 0; }
+.profile-page .profile-tabs { display: flex; justify-content: space-around; border-block-end: 1px solid var(--color-line); }
+.profile-page .post-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.profile-page .post-grid .grid-tile { aspect-ratio: 1; inline-size: 100%; object-fit: cover; }
+</style>

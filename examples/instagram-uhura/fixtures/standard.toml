@@ -1,0 +1,509 @@
+# The standard fixture — the §11.2 cast as named, typed data slices.
+# Slices are raw values typed at every binding site (L8 at use — an
+# ill-typed slice is a link error where it binds). `"@<ns>.<name>"` strings
+# splice another slice (resolved at load, cycles rejected), so a post is
+# authored exactly once. No lorem ipsum; time/count labels are
+# provider-formatted strings (core has no clock, §9.1).
+
+# ── boot (auto-bound by the examples resolver, §6.1) ────────────────────
+
+[boot]
+viewer = "@users.mira"
+
+# ── users (user-ref) ────────────────────────────────────────────────────
+
+[users.mira]
+id = "user-mira"
+username = "mira.santos"
+display-name = "Mira Santos"
+avatar = "@avatars.mira"
+
+[users.lena]
+id = "user-lena"
+username = "lena.holt"
+display-name = "Lena Holt"
+avatar = "@avatars.lena"
+
+[users.marco]
+id = "user-marco"
+username = "marco.reyes"
+display-name = "Marco Reyes"
+avatar = "@avatars.marco"
+
+[users.nils]
+id = "user-nils"
+username = "nils.bergman"
+display-name = "Nils Bergman"
+avatar = "@avatars.nils"
+
+[users.priya]
+id = "user-priya"
+username = "priya.raman"
+display-name = "Priya Raman"
+avatar = "@avatars.priya"
+
+[users.ayla]
+id = "user-ayla"
+username = "ayla.demir"
+display-name = "Ayla Demir"
+avatar = "@avatars.ayla"
+
+[users.june]
+id = "user-june"
+username = "june.park"
+display-name = "June Park"
+avatar = "@avatars.june"
+
+[users.theo]
+id = "user-theo"
+username = "theo.okafor"
+display-name = "Theo Okafor"
+avatar = "@avatars.theo"
+
+[users.kenji]
+id = "user-kenji"
+username = "kenji.rides"
+display-name = "Kenji Tanaka"
+avatar = "@avatars.kenji"
+
+# ── avatars (image-ref) ─────────────────────────────────────────────────
+
+[avatars.mira]
+src = "avatar-mira"
+alt = "Mira Santos"
+
+[avatars.lena]
+src = "avatar-lena"
+alt = "Lena Holt"
+
+[avatars.marco]
+src = "avatar-marco"
+alt = "Marco Reyes"
+
+[avatars.nils]
+src = "avatar-nils"
+alt = "Nils Bergman"
+
+[avatars.priya]
+src = "avatar-priya"
+alt = "Priya Raman"
+
+[avatars.ayla]
+src = "avatar-ayla"
+alt = "Ayla Demir"
+
+[avatars.june]
+src = "avatar-june"
+alt = "June Park"
+
+[avatars.theo]
+src = "avatar-theo"
+alt = "Theo Okafor"
+
+[avatars.kenji]
+src = "avatar-kenji"
+alt = "Kenji Tanaka"
+
+# ── stories (story-ring) ────────────────────────────────────────────────
+
+[stories.ring-mira]
+id = "ring-mira"
+user = "@users.mira"
+has-unseen = false
+is-self = true
+
+[stories.ring-lena]
+id = "ring-lena"
+user = "@users.lena"
+has-unseen = true
+is-self = false
+
+[stories.ring-marco]
+id = "ring-marco"
+user = "@users.marco"
+has-unseen = true
+is-self = false
+
+[stories.ring-priya]
+id = "ring-priya"
+user = "@users.priya"
+has-unseen = false
+is-self = false
+
+[stories.ring-june]
+id = "ring-june"
+user = "@users.june"
+has-unseen = true
+is-self = false
+
+[stories.ring-kenji]
+id = "ring-kenji"
+user = "@users.kenji"
+has-unseen = false
+is-self = false
+
+# ── posts (post-summary) ────────────────────────────────────────────────
+
+[posts.lena-glaze]
+id = "post-lena-glaze"
+author = "@users.lena"
+caption = "New copper-red test tiles out of the kiln. Cone 10, heavy reduction — the speckle finally behaved."
+like-count = 214
+comment-count = 4
+viewer-has-liked = false
+posted-label = "2h"
+
+[posts.lena-glaze.media.image.image]
+src = "media-lena-glaze"
+alt = "Grid of copper-red glaze test tiles on a maple bench"
+
+# The authority's view after like-post settles: same post, count 215,
+# viewer-has-liked — the like-ok script's piggybacked update (§9.4).
+[posts.lena-glaze-liked]
+id = "post-lena-glaze"
+author = "@users.lena"
+caption = "New copper-red test tiles out of the kiln. Cone 10, heavy reduction — the speckle finally behaved."
+like-count = 215
+comment-count = 4
+viewer-has-liked = true
+posted-label = "2h"
+
+[posts.lena-glaze-liked.media.image.image]
+src = "media-lena-glaze"
+alt = "Grid of copper-red glaze test tiles on a maple bench"
+
+# After Mira's comment settles: the feed truth carries the new count
+# (§11.4 step 6 — "post-card meta shows 5 comments"; the provider updates
+# every carrier of the fact on settle).
+[posts.lena-glaze-liked-commented]
+id = "post-lena-glaze"
+author = "@users.lena"
+caption = "New copper-red test tiles out of the kiln. Cone 10, heavy reduction — the speckle finally behaved."
+like-count = 215
+comment-count = 5
+viewer-has-liked = true
+posted-label = "2h"
+
+[posts.lena-glaze-liked-commented.media.image.image]
+src = "media-lena-glaze"
+alt = "Grid of copper-red glaze test tiles on a maple bench"
+
+[posts.marco-baja]
+id = "post-marco-baja"
+author = "@users.marco"
+caption = "Three days down the Baja coast. Swell arrived on the last morning, as it always does."
+like-count = 892
+comment-count = 31
+viewer-has-liked = false
+posted-label = "5h"
+
+[[posts.marco-baja.media.carousel.slides]]
+id = "slide-marco-baja-1"
+src = "media-marco-baja-1"
+alt = "Long left-hand wave peeling along a desert point"
+
+[[posts.marco-baja.media.carousel.slides]]
+id = "slide-marco-baja-2"
+src = "media-marco-baja-2"
+alt = "Campfire on the bluff above the break at dusk"
+
+[[posts.marco-baja.media.carousel.slides]]
+id = "slide-marco-baja-3"
+src = "media-marco-baja-3"
+alt = "Board fins silhouetted against the sunrise"
+
+[posts.nils-aurora]
+id = "post-nils-aurora"
+author = "@users.nils"
+caption = "Aurora over the fjord last night — the whole sky was breathing. Sound on."
+like-count = 2431
+comment-count = 87
+viewer-has-liked = false
+posted-label = "9h"
+
+[posts.nils-aurora.media.video.poster]
+src = "media-nils-aurora-poster"
+alt = "Green aurora curtains over a dark fjord"
+
+[posts.priya-starter]
+id = "post-priya-starter"
+author = "@users.priya"
+caption = "Day 400 of the starter. She's earned a name: Clint Yeastwood."
+like-count = 156
+comment-count = 12
+viewer-has-liked = false
+posted-label = "12h"
+
+[posts.priya-starter.media.image.image]
+src = "media-priya-starter"
+alt = "Open crumb of a sourdough loaf, sliced on a flour-dusted board"
+
+[posts.ayla-ferry]
+id = "post-ayla-ferry"
+author = "@users.ayla"
+caption = "Morning ferry across the Bosphorus. Tea, gulls, and nowhere to be until noon."
+like-count = 340
+comment-count = 0
+viewer-has-liked = false
+posted-label = "1d"
+
+[posts.ayla-ferry.media.image.image]
+src = "media-ayla-ferry"
+alt = "Ferry deck railing over blue water, city skyline behind"
+
+[posts.june-lookbook]
+id = "post-june-lookbook"
+author = "@users.june"
+caption = "Studio lookbook, page one. Linen in every weight we could mill."
+like-count = 521
+comment-count = 18
+viewer-has-liked = false
+posted-label = "1d"
+
+[posts.june-lookbook.media.image.image]
+src = "media-june-lookbook"
+alt = "Folded linen garments stacked by shade on a workbench"
+
+[posts.theo-court]
+id = "post-theo-court"
+author = "@users.theo"
+caption = "Finished the mural at the 9th street court. Paint holds up better than my jumper."
+like-count = 774
+comment-count = 26
+viewer-has-liked = false
+posted-label = "2d"
+
+[posts.theo-court.media.image.image]
+src = "media-theo-court"
+alt = "Basketball court painted with bold geometric shapes"
+
+[posts.kenji-copper]
+id = "post-kenji-copper"
+author = "@users.kenji"
+caption = "120km of switchbacks and one very smug goat. Copper Pass, you were worth it."
+like-count = 1108
+comment-count = 44
+viewer-has-liked = true
+posted-label = "2d"
+
+[posts.kenji-copper.media.image.image]
+src = "media-kenji-copper"
+alt = "Road bike leaning on a stone wall at a mountain pass"
+
+# ── feed (feed-page) ────────────────────────────────────────────────────
+
+[feed]
+stories = [
+  "@stories.ring-mira",
+  "@stories.ring-lena",
+  "@stories.ring-marco",
+  "@stories.ring-priya",
+  "@stories.ring-june",
+  "@stories.ring-kenji",
+]
+
+[feed.page-1]
+stories = "@feed.stories"
+posts = [
+  "@posts.lena-glaze",
+  "@posts.marco-baja",
+  "@posts.nils-aurora",
+  "@posts.priya-starter",
+]
+cursor = "cursor-page-2"
+has-more = true
+
+# Page 1 with Lena's post settled at 215 — the like-ok reply value.
+[feed.page-1-liked]
+stories = "@feed.stories"
+posts = [
+  "@posts.lena-glaze-liked",
+  "@posts.marco-baja",
+  "@posts.nils-aurora",
+  "@posts.priya-starter",
+]
+cursor = "cursor-page-2"
+has-more = true
+
+# …and with Mira's comment counted — the demo's add-comment piggyback.
+[feed.page-1-liked-commented]
+stories = "@feed.stories"
+posts = [
+  "@posts.lena-glaze-liked-commented",
+  "@posts.marco-baja",
+  "@posts.nils-aurora",
+  "@posts.priya-starter",
+]
+cursor = "cursor-page-2"
+has-more = true
+
+[feed.page-2]
+stories = "@feed.stories"
+posts = [
+  "@posts.ayla-ferry",
+  "@posts.june-lookbook",
+  "@posts.theo-court",
+  "@posts.kenji-copper",
+]
+cursor = "cursor-page-3"
+has-more = true
+
+[feed.pages-1-2]
+stories = "@feed.stories"
+posts = [
+  "@posts.lena-glaze",
+  "@posts.marco-baja",
+  "@posts.nils-aurora",
+  "@posts.priya-starter",
+  "@posts.ayla-ferry",
+  "@posts.june-lookbook",
+  "@posts.theo-court",
+  "@posts.kenji-copper",
+]
+cursor = "cursor-page-3"
+has-more = true
+
+# Both pages with Lena's like settled — what the demo's pagination reply
+# delivers after like-post already settled (whole slices, §9.5).
+[feed.pages-1-2-liked]
+stories = "@feed.stories"
+posts = [
+  "@posts.lena-glaze-liked",
+  "@posts.marco-baja",
+  "@posts.nils-aurora",
+  "@posts.priya-starter",
+  "@posts.ayla-ferry",
+  "@posts.june-lookbook",
+  "@posts.theo-court",
+  "@posts.kenji-copper",
+]
+cursor = "cursor-page-3"
+has-more = true
+
+# Both pages, like AND comment settled, feed EXHAUSTED — the demo's
+# pagination reply (authored truth never regresses mid-walkthrough; the
+# end cap renders from `!has-more`, and a further near-end fires into an
+# unsatisfied guard — the observation descriptor itself is markup-authored
+# and stays in V; the acceptance battery pins the guard rejection).
+[feed.pages-1-2-liked-commented]
+stories = "@feed.stories"
+posts = [
+  "@posts.lena-glaze-liked-commented",
+  "@posts.marco-baja",
+  "@posts.nils-aurora",
+  "@posts.priya-starter",
+  "@posts.ayla-ferry",
+  "@posts.june-lookbook",
+  "@posts.theo-court",
+  "@posts.kenji-copper",
+]
+has-more = false
+
+[feed.final]
+stories = "@feed.stories"
+posts = [
+  "@posts.lena-glaze",
+  "@posts.marco-baja",
+  "@posts.nils-aurora",
+  "@posts.priya-starter",
+  "@posts.ayla-ferry",
+  "@posts.june-lookbook",
+  "@posts.theo-court",
+  "@posts.kenji-copper",
+]
+has-more = false
+
+[feed.empty]
+stories = ["@stories.ring-mira"]
+posts = []
+has-more = false
+
+# ── comments (comment-thread) ───────────────────────────────────────────
+
+[comments.lena-1]
+id = "comment-lena-glaze-1"
+author = "@users.kenji"
+body = "That copper red is unreal. What cone are you firing to?"
+posted-label = "1h"
+
+[comments.lena-2]
+id = "comment-lena-glaze-2"
+author = "@users.priya"
+body = "The third tile down — that speckle! Saving this for glaze inspiration."
+posted-label = "1h"
+
+[comments.lena-3]
+id = "comment-lena-glaze-3"
+author = "@users.june"
+body = "Would buy the whole batch honestly. Seconds sale when?"
+posted-label = "45m"
+
+[comments.lena-4]
+id = "comment-lena-glaze-4"
+author = "@users.theo"
+body = "These would look wild as a court-side mosaic. Collab?"
+posted-label = "20m"
+
+[comments.lena-glaze]
+comments = ["@comments.lena-1", "@comments.lena-2", "@comments.lena-3", "@comments.lena-4"]
+
+# The thread after add-comment settles: the four authored comments plus
+# Mira's — the comment-ok script's piggybacked update (§9.4). The last
+# entry carries the driver's only two substitutions (§9.5).
+[comments.lena-glaze-plus-mira]
+comments = [
+  "@comments.lena-1",
+  "@comments.lena-2",
+  "@comments.lena-3",
+  "@comments.lena-4",
+  "@comments.mira-reply",
+]
+
+[comments.empty]
+comments = []
+
+# Mira's demo comment (§11.2) as the driver's substitution template:
+# `@fresh-id` mints the authority's comment id; `@payload.body` echoes the
+# typed text — the optimistic row swaps for this atomically (§9.4/§9.5).
+[comments.mira-reply]
+id = "@fresh-id"
+author = "@users.mira"
+body = "@payload.body"
+posted-label = "now"
+
+# ── profiles (profile-view) ─────────────────────────────────────────────
+
+[profiles.lena]
+user = "@users.lena"
+bio = "Ceramics + slow mornings. Studio in SE Portland. Seconds sale every first Sunday."
+posts-label = "214"
+followers-label = "18.2k"
+following-label = "512"
+tagged = []
+posts = [
+  { id = "thumb-lena-1", src = "thumb-lena-1", alt = "Copper-red glaze tiles" },
+  { id = "thumb-lena-2", src = "thumb-lena-2", alt = "Stack of unglazed bowls" },
+  { id = "thumb-lena-3", src = "thumb-lena-3", alt = "Kiln shelf mid-load" },
+  { id = "thumb-lena-4", src = "thumb-lena-4", alt = "Celadon test cups" },
+  { id = "thumb-lena-5", src = "thumb-lena-5", alt = "Wedging table with fresh clay" },
+  { id = "thumb-lena-6", src = "thumb-lena-6", alt = "Iron-speckled dinner plates" },
+  { id = "thumb-lena-7", src = "thumb-lena-7", alt = "Throwing a tall cylinder" },
+  { id = "thumb-lena-8", src = "thumb-lena-8", alt = "Glaze buckets labelled by cone" },
+  { id = "thumb-lena-9", src = "thumb-lena-9", alt = "Morning light across the studio bench" },
+]
+
+[profiles.mira]
+user = "@users.mira"
+bio = "Food & travel photographer. Lisbon, mostly. Shooting the small hours."
+posts-label = "87"
+followers-label = "9.4k"
+following-label = "301"
+tagged = []
+posts = [
+  { id = "thumb-mira-1", src = "thumb-mira-1", alt = "Pastéis de nata on a marble counter" },
+  { id = "thumb-mira-2", src = "thumb-mira-2", alt = "Tram rails catching dawn light" },
+  { id = "thumb-mira-3", src = "thumb-mira-3", alt = "Market citrus stacked in crates" },
+  { id = "thumb-mira-4", src = "thumb-mira-4", alt = "Tiled facade in alternating blues" },
+  { id = "thumb-mira-5", src = "thumb-mira-5", alt = "Grilled sardines over coals" },
+  { id = "thumb-mira-6", src = "thumb-mira-6", alt = "Ferry wake at golden hour" },
+]

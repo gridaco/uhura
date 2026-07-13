@@ -1,0 +1,154 @@
+# The base semantic element catalog (design §10 — normative). Nine
+# elements, three classes; layout and aesthetics belong to CSS. The catalog
+# is DATA: source cannot invent an element, prop, or event by naming it,
+# and the checker validates this file against a meta-schema (input events
+# only on interactive elements; observation events only on viewports).
+#
+# Every element additionally takes `class` (opaque, CSS-owned) — it is
+# universal and deliberately not declared per element.
+
+[catalog]
+name = "base"
+version = "0.1.0"
+# The closed icon set, recomputed from slice usage (§10).
+icons = [
+  "home", "search", "plus", "reels", "profile",
+  "heart", "heart-filled", "comment", "close", "back",
+  "grid", "layers", "video-off", "progress",
+]
+
+[elements.view]
+class = "layout"
+children = "any"
+
+[elements.view.props.role]
+type = "enum"
+values = ["none", "list", "navigation", "tablist"]
+
+[elements.scroll]
+class = "layout"
+viewport = true
+children = "any"
+
+[elements.scroll.props.direction]
+type = "enum"
+values = ["vertical", "horizontal"]
+
+[elements.scroll.events.near-end]
+kind = "observe"
+# Physical proximity: remaining extent below 100% of one viewport extent —
+# integer percentage, stated once here (§8.2).
+threshold-percent = 100
+
+[elements.pager]
+class = "layout"
+viewport = true
+# Children come from exactly one keyed each (§10); uncontrolled in the spike.
+children = "keyed-each"
+
+[elements.pager.props.indicator]
+type = "enum"
+values = ["none", "dots"]
+
+[elements.pager.props.label]
+type = "text"
+required = true
+
+# Declared for controlled use; the spike never binds it (§10).
+[elements.pager.events.page-change]
+kind = "observe"
+
+[elements.text]
+class = "content"
+# Literal text and {expr} interpolation — only here (§4.4).
+children = "text"
+
+[elements.image]
+class = "content"
+children = "none"
+# a11y completeness: exactly one of alt / decorative (§10).
+exactly-one-of = [["alt", "decorative"]]
+
+[elements.image.props.src]
+type = "asset"
+required = true
+
+[elements.image.props.alt]
+type = "text"
+
+[elements.image.props.decorative]
+type = "bool"
+
+[elements.icon]
+class = "content"
+children = "none"
+
+[elements.icon.props.name]
+type = "icon"
+required = true
+
+[elements.button]
+class = "interactive"
+children = "content"
+
+[elements.button.props.label]
+type = "text"
+required = true
+
+[elements.button.props.disabled]
+type = "bool"
+
+[elements.button.props.busy]
+type = "bool"
+
+[elements.button.props.pressed]
+type = "bool"
+
+[elements.button.props.current]
+type = "bool"
+
+[elements.button.events.press]
+kind = "input"
+
+[elements.text-field]
+class = "interactive"
+children = "none"
+# Binding `value` obligates handling `change` (controlled promotion, §10).
+controlled = { prop = "value", event = "change" }
+
+[elements.text-field.props.value]
+type = "text"
+
+[elements.text-field.props.placeholder]
+type = "text"
+
+[elements.text-field.props.label]
+type = "text"
+required = true
+
+[elements.text-field.props.disabled]
+type = "bool"
+
+[elements.text-field.events.change]
+kind = "input"
+carries = { value = "text" }
+
+[elements.text-field.events.submit]
+kind = "input"
+
+[elements.region]
+class = "interactive"
+children = "one"
+
+[elements.region.props.label]
+type = "text"
+required = true
+
+[elements.region.props.supplementary]
+type = "bool"
+
+[elements.region.events.activate]
+kind = "input"
+
+[elements.region.events.activate-double]
+kind = "input"

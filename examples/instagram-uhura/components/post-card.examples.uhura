@@ -1,0 +1,35 @@
+use fixture standard
+
+example image-post default {
+  props {
+    post = fixture.posts.lena-glaze
+    liked = false
+    like-pending = false
+  }
+}
+
+example carousel-liked {
+  props {
+    post = fixture.posts.marco-baja
+    liked = true
+    like-pending = false
+  }
+}
+
+example video-poster {
+  props {
+    post = fixture.posts.nils-aurora
+    liked = false
+    like-pending = false
+  }
+  note "capability honesty: poster + unsupported badge"
+}
+
+example like-pending {
+  props {
+    post = fixture.posts.lena-glaze
+    liked = true
+    like-pending = true
+  }
+  note "busy heart during the optimistic window"
+}

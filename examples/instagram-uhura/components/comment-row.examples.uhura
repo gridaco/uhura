@@ -1,0 +1,21 @@
+use fixture standard
+
+example settled default {
+  props {
+    avatar = fixture.avatars.kenji
+    username = "kenji.rides"
+    body = "That copper red is unreal. What cone are you firing to?"
+    time-label = "1h"
+    pending = false
+  }
+}
+
+example pending {
+  props {
+    avatar = fixture.avatars.mira
+    username = "mira.santos"
+    body = "Saving this palette for my kitchen reno — stunning work!"
+    time-label = "Posting…"
+    pending = true
+  }
+}

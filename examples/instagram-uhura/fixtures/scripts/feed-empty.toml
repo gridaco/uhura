@@ -1,0 +1,8 @@
+# A followed-nobody feed: the empty state renders, nothing to observe.
+# CI-goldened.
+
+[[deliver]]
+after-ticks = 1
+port = "feed"
+projection = "feed-page"
+slice = "feed.empty"

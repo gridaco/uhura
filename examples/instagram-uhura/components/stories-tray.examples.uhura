@@ -1,0 +1,5 @@
+use fixture standard
+
+example tray default {
+  props { stories = fixture.feed.stories }
+}

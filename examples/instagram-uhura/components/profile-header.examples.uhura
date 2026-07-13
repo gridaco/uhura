@@ -1,0 +1,11 @@
+use fixture standard
+
+example lena default {
+  props {
+    user = fixture.users.lena
+    bio = "Ceramics + slow mornings. Studio in SE Portland. Seconds sale every first Sunday."
+    posts-label = "214"
+    followers-label = "18.2k"
+    following-label = "512"
+  }
+}

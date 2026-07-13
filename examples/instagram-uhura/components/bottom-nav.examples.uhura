@@ -1,0 +1,9 @@
+use fixture standard
+
+example feed-active default {
+  props { current = "feed" }
+}
+
+example profile-active {
+  props { current = "profile" }
+}

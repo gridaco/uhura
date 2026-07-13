@@ -1,0 +1,250 @@
+# Asset manifest — id → file, required alt text, and the motif spec the
+# committed generator renders (plan micro-decision #19: assets are locally
+# generated, seeded, no network or licensing). Regenerate with:
+#   cargo run -p uhura-cli --bin gen-assets -- examples/instagram
+# Motifs: duotone (avatars), glaze (tile grids), wave, aurora, crumb
+# (speckle), field (soft gradient blocks). Same seed → same bytes.
+
+# ── avatars (96×96) ─────────────────────────────────────────────────────
+
+[assets.avatar-mira]
+file = "avatar-mira.jpg"
+alt = "Mira Santos"
+motif = "duotone"
+seed = 11
+size = 96
+
+[assets.avatar-lena]
+file = "avatar-lena.jpg"
+alt = "Lena Holt"
+motif = "duotone"
+seed = 12
+size = 96
+
+[assets.avatar-marco]
+file = "avatar-marco.jpg"
+alt = "Marco Reyes"
+motif = "duotone"
+seed = 13
+size = 96
+
+[assets.avatar-nils]
+file = "avatar-nils.jpg"
+alt = "Nils Bergman"
+motif = "duotone"
+seed = 14
+size = 96
+
+[assets.avatar-priya]
+file = "avatar-priya.jpg"
+alt = "Priya Raman"
+motif = "duotone"
+seed = 15
+size = 96
+
+[assets.avatar-ayla]
+file = "avatar-ayla.jpg"
+alt = "Ayla Demir"
+motif = "duotone"
+seed = 16
+size = 96
+
+[assets.avatar-june]
+file = "avatar-june.jpg"
+alt = "June Park"
+motif = "duotone"
+seed = 17
+size = 96
+
+[assets.avatar-theo]
+file = "avatar-theo.jpg"
+alt = "Theo Okafor"
+motif = "duotone"
+seed = 18
+size = 96
+
+[assets.avatar-kenji]
+file = "avatar-kenji.jpg"
+alt = "Kenji Tanaka"
+motif = "duotone"
+seed = 19
+size = 96
+
+# ── post media (640×640) ────────────────────────────────────────────────
+
+[assets.media-lena-glaze]
+file = "media-lena-glaze.jpg"
+alt = "Grid of copper-red glaze test tiles on a maple bench"
+motif = "glaze"
+seed = 31
+size = 640
+
+[assets.media-marco-baja-1]
+file = "media-marco-baja-1.jpg"
+alt = "Long left-hand wave peeling along a desert point"
+motif = "wave"
+seed = 32
+size = 640
+
+[assets.media-marco-baja-2]
+file = "media-marco-baja-2.jpg"
+alt = "Campfire on the bluff above the break at dusk"
+motif = "wave"
+seed = 33
+size = 640
+
+[assets.media-marco-baja-3]
+file = "media-marco-baja-3.jpg"
+alt = "Board fins silhouetted against the sunrise"
+motif = "wave"
+seed = 34
+size = 640
+
+[assets.media-nils-aurora-poster]
+file = "media-nils-aurora-poster.jpg"
+alt = "Green aurora curtains over a dark fjord"
+motif = "aurora"
+seed = 35
+size = 640
+
+[assets.media-priya-starter]
+file = "media-priya-starter.jpg"
+alt = "Open crumb of a sourdough loaf, sliced on a flour-dusted board"
+motif = "crumb"
+seed = 36
+size = 640
+
+[assets.media-ayla-ferry]
+file = "media-ayla-ferry.jpg"
+alt = "Ferry deck railing over blue water, city skyline behind"
+motif = "wave"
+seed = 37
+size = 640
+
+[assets.media-june-lookbook]
+file = "media-june-lookbook.jpg"
+alt = "Folded linen garments stacked by shade on a workbench"
+motif = "field"
+seed = 38
+size = 640
+
+[assets.media-theo-court]
+file = "media-theo-court.jpg"
+alt = "Basketball court painted with bold geometric shapes"
+motif = "field"
+seed = 39
+size = 640
+
+[assets.media-kenji-copper]
+file = "media-kenji-copper.jpg"
+alt = "Road bike leaning on a stone wall at a mountain pass"
+motif = "field"
+seed = 40
+size = 640
+
+# ── profile grid thumbs (320×320) ───────────────────────────────────────
+
+[assets.thumb-lena-1]
+file = "thumb-lena-1.jpg"
+alt = "Copper-red glaze tiles"
+motif = "glaze"
+seed = 51
+size = 320
+
+[assets.thumb-lena-2]
+file = "thumb-lena-2.jpg"
+alt = "Stack of unglazed bowls"
+motif = "glaze"
+seed = 52
+size = 320
+
+[assets.thumb-lena-3]
+file = "thumb-lena-3.jpg"
+alt = "Kiln shelf mid-load"
+motif = "glaze"
+seed = 53
+size = 320
+
+[assets.thumb-lena-4]
+file = "thumb-lena-4.jpg"
+alt = "Celadon test cups"
+motif = "glaze"
+seed = 54
+size = 320
+
+[assets.thumb-lena-5]
+file = "thumb-lena-5.jpg"
+alt = "Wedging table with fresh clay"
+motif = "crumb"
+seed = 55
+size = 320
+
+[assets.thumb-lena-6]
+file = "thumb-lena-6.jpg"
+alt = "Iron-speckled dinner plates"
+motif = "crumb"
+seed = 56
+size = 320
+
+[assets.thumb-lena-7]
+file = "thumb-lena-7.jpg"
+alt = "Throwing a tall cylinder"
+motif = "field"
+seed = 57
+size = 320
+
+[assets.thumb-lena-8]
+file = "thumb-lena-8.jpg"
+alt = "Glaze buckets labelled by cone"
+motif = "glaze"
+seed = 58
+size = 320
+
+[assets.thumb-lena-9]
+file = "thumb-lena-9.jpg"
+alt = "Morning light across the studio bench"
+motif = "field"
+seed = 59
+size = 320
+
+[assets.thumb-mira-1]
+file = "thumb-mira-1.jpg"
+alt = "Pastéis de nata on a marble counter"
+motif = "crumb"
+seed = 61
+size = 320
+
+[assets.thumb-mira-2]
+file = "thumb-mira-2.jpg"
+alt = "Tram rails catching dawn light"
+motif = "field"
+seed = 62
+size = 320
+
+[assets.thumb-mira-3]
+file = "thumb-mira-3.jpg"
+alt = "Market citrus stacked in crates"
+motif = "glaze"
+seed = 63
+size = 320
+
+[assets.thumb-mira-4]
+file = "thumb-mira-4.jpg"
+alt = "Tiled facade in alternating blues"
+motif = "glaze"
+seed = 64
+size = 320
+
+[assets.thumb-mira-5]
+file = "thumb-mira-5.jpg"
+alt = "Grilled sardines over coals"
+motif = "crumb"
+seed = 65
+size = 320
+
+[assets.thumb-mira-6]
+file = "thumb-mira-6.jpg"
+alt = "Ferry wake at golden hour"
+motif = "wave"
+seed = 66
+size = 320

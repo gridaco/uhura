@@ -1,0 +1,25 @@
+# App manifest (design §3): entry route, catalog pin, port bindings,
+# fixtures, and play profiles. Paths are corpus-relative.
+
+[app]
+name = "instagram"
+entry = "feed"
+
+[catalog]
+path = "catalog/base.toml"
+
+[ports]
+feed = "ports/feed.port.toml"
+comments = "ports/comments.port.toml"
+profile = "ports/profile.port.toml"
+
+[fixtures]
+standard = "fixtures/standard.toml"
+
+[assets]
+manifest = "fixtures/assets/manifest.toml"
+
+# `uhura dev`/`uhura trace` profiles: which fixture data + script to drive.
+[play.default]
+fixture = "standard"
+script = "demo"

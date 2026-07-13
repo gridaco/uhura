@@ -1,0 +1,22 @@
+# The provider reports the feed projection failed; retry reloads and the
+# authority recovers. CI-goldened.
+
+[[deliver]]
+after-ticks = 1
+port = "feed"
+projection = "feed-page"
+failed = "unreachable"
+
+[[reply]]
+on = { command = "reload" }
+after-ticks = 1
+outcome = "ok"
+
+[[reply.updates]]
+port = "feed"
+projection = "feed-page"
+slice = "feed.page-1"
+
+[[ui]]
+at-tick = 2
+emit = "retry-reload-tapped"

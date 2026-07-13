@@ -1,0 +1,66 @@
+use fixture standard
+
+example loading {
+  note "cold start — nothing delivered yet"
+}
+
+example first-page default {
+  projection feed.viewer = fixture.users.mira
+  projection feed.feed-page = fixture.feed.page-1
+}
+
+example like-pending {
+  from first-page
+  events [ like-toggled(post: "post-lena-glaze", now-liked: true) ]
+  note "optimistic heart + count while like-post is in flight"
+}
+
+example like-refused {
+  from like-pending
+  events [ outcome like-post.err(refusal: rate-limited) ]
+  note "authority refused — rollback, notice explains"
+}
+
+example comments-open {
+  from first-page
+  projection comments.for-post("post-lena-glaze") = fixture.comments.lena-glaze
+  events [ comments-requested(post: "post-lena-glaze") ]
+  note "the sheet mounts because the machine mounted it"
+}
+
+example load-pending {
+  from first-page
+  events [ feed-near-end() ]
+  note "footer spinner; the guard suppresses duplicates"
+}
+
+example load-failed {
+  from load-pending
+  events [ outcome load-next-page.err(reason: "unreachable") ]
+}
+
+example appended {
+  from first-page
+  events [
+    feed-near-end()
+    projection feed.feed-page = fixture.feed.pages-1-2
+    outcome load-next-page.ok()
+  ]
+}
+
+example exhausted {
+  projection feed.viewer = fixture.users.mira
+  projection feed.feed-page = fixture.feed.final
+  note "cursor none, has-more false — end cap; pinned state"
+}
+
+example empty {
+  projection feed.viewer = fixture.users.mira
+  projection feed.feed-page = fixture.feed.empty
+}
+
+example failed {
+  projection feed.viewer = fixture.users.mira
+  projection feed.feed-page = failed("unreachable")
+  note "provider reported projection-failed"
+}

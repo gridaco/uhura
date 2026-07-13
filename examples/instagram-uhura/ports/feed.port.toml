@@ -1,0 +1,103 @@
+# The feed read/write surface (design §9.1 — normative). The canonical-form
+# hash of this contract is pinned in uhura.lock; drift is a link error.
+
+[port]
+name = "feed"
+version = "0.1.0"
+
+[types.image-ref]
+kind = "record"
+
+[types.image-ref.fields]
+src = "asset"
+alt = "text"
+
+[types.user-ref]
+kind = "record"
+
+[types.user-ref.fields]
+id = "id"
+username = "text"
+display-name = "text"
+avatar = "image-ref"
+
+[types.slide]
+kind = "record"
+
+[types.slide.fields]
+id = "id"
+src = "asset"
+alt = "text"
+
+[types.story-ring]
+kind = "record"
+
+[types.story-ring.fields]
+id = "id"
+user = "user-ref"
+has-unseen = "bool"
+is-self = "bool"
+
+[types.media]
+kind = "union"
+
+[types.media.variants.image]
+image = "image-ref"
+
+[types.media.variants.carousel]
+slides = "list<slide>"
+
+[types.media.variants.video]
+poster = "image-ref"
+
+[types.post-summary]
+kind = "record"
+
+[types.post-summary.fields]
+id = "id"
+author = "user-ref"
+media = "media"
+caption = "text"
+like-count = "int"
+comment-count = "int"
+viewer-has-liked = "bool"
+# provider-formatted; core has no clock (§9.1)
+posted-label = "text"
+
+[types.feed-cursor]
+kind = "opaque"
+
+[types.feed-page]
+kind = "record"
+
+[types.feed-page.fields]
+stories = "list<story-ring>"
+posts = "list<post-summary>"
+cursor = "option<feed-cursor>"
+has-more = "bool"
+
+# Delivered before Init; bare reads are legal (§9.2).
+[projections.viewer]
+type = "user-ref"
+boot = true
+
+[projections.feed-page]
+type = "feed-page"
+
+[refusals.not-authorized]
+[refusals.rate-limited]
+[refusals.not-found]
+
+[commands.like-post]
+payload = { post = "id" }
+refusals = ["not-authorized", "rate-limited", "not-found"]
+
+[commands.unlike-post]
+payload = { post = "id" }
+refusals = ["not-authorized", "not-found"]
+
+[commands.load-next-page]
+payload = { cursor = "option<feed-cursor>" }
+
+[commands.reload]
+payload = {}

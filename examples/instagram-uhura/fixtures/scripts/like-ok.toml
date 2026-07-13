@@ -1,0 +1,23 @@
+# §11.4 step 2: like Lena's post — optimistic beat, then the authority
+# settles via a piggybacked update (flicker-free, §9.4). CI-goldened.
+
+[[deliver]]
+after-ticks = 1
+port = "feed"
+projection = "feed-page"
+slice = "feed.page-1"
+
+[[reply]]
+on = { command = "like-post", where = { post = "post-lena-glaze" } }
+after-ticks = 1
+outcome = "ok"
+
+[[reply.updates]]
+port = "feed"
+projection = "feed-page"
+slice = "feed.page-1-liked"
+
+[[ui]]
+at-tick = 2
+emit = "like-toggled"
+where = { post = "post-lena-glaze", now-liked = true }

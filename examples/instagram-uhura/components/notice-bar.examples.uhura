@@ -1,0 +1,5 @@
+use fixture standard
+
+example refusal default {
+  props { text = "Couldn't like this post. Try again." }
+}

@@ -1,0 +1,23 @@
+use fixture standard
+
+example loading {
+  params { user = "user-lena" }
+  projection feed.viewer = fixture.users.mira
+}
+
+example lena-posts default {
+  params { user = "user-lena" }
+  projection feed.viewer = fixture.users.mira
+  projection profile.profile("user-lena") = fixture.profiles.lena
+}
+
+example tagged-empty {
+  from lena-posts
+  events [ profile-tab-selected(tab: "tagged") ]
+}
+
+example self {
+  params { user = "user-mira" }
+  projection feed.viewer = fixture.users.mira
+  projection profile.profile("user-mira") = fixture.profiles.mira
+}

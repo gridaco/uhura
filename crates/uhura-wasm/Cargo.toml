@@ -1,0 +1,26 @@
+[package]
+name = "uhura-wasm"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+uhura-base = { workspace = true }
+uhura-core = { workspace = true }
+uhura-fixture = { workspace = true }
+uhura-port = { workspace = true }
+wasm-bindgen = { workspace = true }
+serde_json = { workspace = true }
+
+# The ABI contract test replays the corpus scripts through `Session` +
+# `FixtureDriver` natively (the crate is also an rlib) and asserts byte
+# equality against the native trace harness.
+[dev-dependencies]
+uhura-check = { workspace = true }
+uhura-cli = { workspace = true }

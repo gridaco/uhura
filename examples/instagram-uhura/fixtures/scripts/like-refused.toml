@@ -1,0 +1,24 @@
+# §11.4 step 3: the authority refuses — heart and count roll back, the
+# notice explains; after dismissing it the feed subtree is byte-identical
+# to pre-like (the scoped invariant). CI-goldened.
+
+[[deliver]]
+after-ticks = 1
+port = "feed"
+projection = "feed-page"
+slice = "feed.page-1"
+
+[[reply]]
+on = { command = "like-post", where = { post = "post-lena-glaze" } }
+after-ticks = 1
+outcome = "refused"
+refusal = "rate-limited"
+
+[[ui]]
+at-tick = 2
+emit = "like-toggled"
+where = { post = "post-lena-glaze", now-liked = true }
+
+[[ui]]
+at-tick = 4
+emit = "notice-dismissed"

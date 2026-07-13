@@ -1,0 +1,6 @@
+[toolchain]
+# Exact pin, never "stable" (design doc §12.1). Bumping is a deliberate commit.
+channel = "1.92.0"
+components = ["rustfmt", "clippy"]
+# wasm target pinned from M0 so this file stays immutable through M5.
+targets = ["wasm32-unknown-unknown"]

@@ -1,0 +1,2 @@
+error[UH0003 syntax/unkeyed-each]: `{#each}` requires a key: `{#each list as item (item.id)}`
+  --> app/feed/page.uhura:138:32

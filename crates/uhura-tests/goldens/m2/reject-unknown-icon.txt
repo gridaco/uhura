@@ -1,0 +1,3 @@
+error[UH5017 markup/unknown-icon]: `reel` is not in the catalog icon set
+  --> components/bottom-nav.uhura:22:11
+  note: did you mean `reels`?

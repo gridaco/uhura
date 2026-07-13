@@ -1,0 +1,35 @@
+# Uhura spike CI. Steps grow with milestones (design §12.5); M0 ships
+# fmt/clippy/test.
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  uhura:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rustup honors rust-toolchain.toml automatically.
+      - uses: Swatinem/rust-cache@v2
+      # --locked everywhere: the committed Cargo.lock IS the pin.
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - run: cargo run --locked -p uhura-cli -- fmt --check examples/instagram-uhura
+      - run: cargo run --locked -p uhura-cli -- check examples/instagram-uhura --deny-warnings
+      # M4: the headless demo walkthrough runs end to end (goldens live in
+      # uhura-tests; this is the CLI-level smoke).
+      - run: cargo run --locked -p uhura-cli -- trace examples/instagram-uhura --script=demo > /dev/null
+      - run: cargo run --locked -p uhura-cli -- project examples/instagram-uhura --out=renders
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uhura-canvas
+          path: renders/canvas.html
+      # M5: the wasm crate compiles for its real target (bindgen + parity
+      # land with M6's full battery); the play shell typechecks strict.
+      - run: cargo build --locked -p uhura-wasm --target wasm32-unknown-unknown
+      - run: npx -y -p typescript@5.6.3 tsc -p shell/jsconfig.json
+      # M6: ./scripts/build-wasm.sh && node scripts/parity.mjs && acceptance

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>uhura play</title>
+    <!-- shell bases first, compiled app stylesheet second: the app always
+         wins on shared selectors (same order as the static canvas). -->
+    <link rel="stylesheet" href="/shell/shell.css" />
+    <link rel="stylesheet" href="/stylesheet.css" />
+  </head>
+  <body>
+    <div id="uh-app">
+      <div id="uh-page"></div>
+      <div id="uh-surfaces"></div>
+    </div>
+    <div id="uh-overlay" hidden></div>
+    <script type="module" src="/shell/main.js"></script>
+  </body>
+</html>
