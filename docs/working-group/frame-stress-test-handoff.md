@@ -86,7 +86,7 @@ uses a three-owner model instead:
 | Query execution, canonical cursor meaning, shared workflow state | Spock or another authoritative service |
 | Viewport observation, row realization, physical scroll anchor | Renderer/host protocol |
 | Layout, paint, gesture recognition, caret, IME, device APIs | Renderer/host protocol |
-| Contract selection, version pinning, fixtures, cross-link diagnostics | NCC |
+| Contract selection, version pinning, fixtures, cross-link diagnostics | The orchestration layer |
 
 The ownership test from the Uhura foundation remains decisive:
 

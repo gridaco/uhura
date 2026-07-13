@@ -1,6 +1,6 @@
-//! The `uhura-diagnostics/0` JSON envelope — the one stable shape NCC and
-//! editors integrate against (design §12.4) — plus a plain-text renderer
-//! for terminals.
+//! The `uhura-diagnostics/0` JSON envelope — the one stable shape editors
+//! and downstream tools integrate against (design §12.4) — plus a plain-text
+//! renderer for terminals.
 
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::span::{SourceMap, Span};

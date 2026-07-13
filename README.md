@@ -42,18 +42,11 @@ it:
   product behavior.
 - **Uhura** specifies and executes non-authoritative interface-session state
   and experience behavior.
-- **NCC** is the human-facing orchestration layer that authors, links, checks,
-  visualizes, and plays their composition.
-
-The shorthand `NCC = Spock + Uhura` is directional, not a literal ownership
-equation. NCC adds the composition, scenario, provenance, canvas, diagnostic,
-and playback layers; it must not redefine either language's semantics.
 
 ## Founding boundary
 
 > Uhura owns UI semantics and the headless UI-state mechanic. Spock owns
 > authoritative product semantics. A concrete renderer owns platform rendering.
-> NCC owns their checked composition.
 
 No fact may be authoritative in both Uhura and Spock.
 
@@ -68,12 +61,11 @@ The practical ownership test is:
 
 This is Uhura's dedicated repository. [Spock](https://github.com/gridaco/spock)
 is Uhura's canonical provider, developed in its own repository; the port seam
-stays provider-neutral. NCC remains the human-facing orchestration layer
-consuming both languages from its own repository.
+stays provider-neutral.
 
 Until an implementation RFC says otherwise:
 
-- it has no dependency on Spock or NCC internals;
+- it has no dependency on Spock internals;
 - its example corpus lives at `examples/instagram-uhura/`;
 - it publishes no package or executable;
 - Rust is the preferred initial core implementation direction, not yet a

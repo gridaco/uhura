@@ -55,7 +55,6 @@ The founding rule is:
 | Durable product state, policy, transactions, backend workflows | Spock |
 | UI-session state, experience transitions, semantic view evaluation | Uhura |
 | Layout, paint, native widget mechanics, device integration | Renderer/host drivers |
-| Authoring, linking, scenarios, canvas projection, playback | NCC |
 
 No state may be authoritative in both Spock and Uhura. An optimistic Uhura
 overlay remains provisional until an authoritative Spock outcome or projection
@@ -99,9 +98,6 @@ it exports. Uhura imports those contracts without redefining them. The linker
 checks satisfaction using a language-neutral representation so fixtures and
 other providers can implement the same ports.
 
-NCC owns selection and composition of concrete artifacts. It must not override
-the semantics of either side to make an invalid link appear valid.
-
 ## 6. Separation inside Uhura
 
 One project does not imply one mixed source layer. Uhura must keep these
@@ -135,29 +131,7 @@ Existing Frame XML and Wire v4 formats remain governed by their current
 documents. Any future migration requires an explicit adapter and diagnostics;
 this RFC promises no automatic or lossless conversion.
 
-## 8. Relationship to NCC
-
-**NCC** is the current repository and product name; the orchestration layer was
-renamed from **Wire** to make the architecture explicit:
-
-```text
-NCC
-├── authors and links Spock contracts
-├── authors and links Uhura programs
-├── supplies fixtures and scenarios
-├── projects checked states onto an infinite canvas
-└── plays the linked system through conforming runtimes and adapters
-```
-
-That rename was not performed by this RFC; it was carried out under its own
-migration plan covering repository identity, packages, command names,
-documentation, persisted files, and compatibility. See the
-[Wire → NCC migration note](https://github.com/gridaco/ncc/blob/main/docs/migration-wire-to-ncc.md).
-
-`NCC = Spock + Uhura` is useful shorthand, but incomplete: NCC contributes the
-human-facing authoring and orchestration layer and does not own either runtime.
-
-## 9. Repository posture
+## 8. Repository posture
 
 During incubation, `uhura/` is co-located but isolated:
 
@@ -175,7 +149,7 @@ No implementation manifest is added by this RFC. Rust is the preferred initial
 core direction because it supports a portable native/Wasm engine and reinforces
 the boundary, but implementation language and ABI are separate decisions.
 
-## 10. Consequences
+## 9. Consequences
 
 Expected benefits:
 
@@ -184,7 +158,7 @@ Expected benefits:
 - renderers that implement a semantic protocol rather than reinterpret source;
 - a sharp authority boundary between UI optimism and backend truth;
 - a language-neutral contract seam between Spock and Uhura; and
-- an independently extractable project with no premature NCC coupling.
+- an independently extractable project.
 
 Expected costs:
 
@@ -193,13 +167,12 @@ Expected costs:
 - the core/renderer boundary needs stable identity and reconciliation semantics;
 - Rust/Wasm integration may slow early iteration compared with a TypeScript-only
   spike;
-- UI checkpoints and language evolution require migration rules; and
-- NCC must link multiple independently versioned artifacts.
+- UI checkpoints and language evolution require migration rules.
 
 These costs are architectural work, not reasons to move UI state into Spock or
 renderer-specific code.
 
-## 11. Deferred decisions
+## 10. Deferred decisions
 
 This RFC does not accept:
 
@@ -211,12 +184,11 @@ This RFC does not accept:
 - a Spock interface-description format;
 - a renderer implementation;
 - a package/repository name in public registries;
-- a license or release policy; or
-- the Wire-to-NCC rename itself.
+- a license or release policy.
 
 Each requires a focused RFC and conformance evidence.
 
-## 12. Acceptance criteria
+## 11. Acceptance criteria
 
 This foundation can be accepted when the project agrees that:
 
@@ -226,5 +198,5 @@ This foundation can be accepted when the project agrees that:
 4. All I/O occurs through explicit commands or platform intents.
 5. Spock and Uhura contracts are linked through a language-neutral boundary.
 6. Uhura remains isolated and independently extractable during incubation.
-7. The Frame relationship and the NCC rename are described without implying
-   compatibility or prematurely performing migration.
+7. The Frame relationship is described without implying compatibility or
+   prematurely performing migration.

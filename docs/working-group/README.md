@@ -16,8 +16,8 @@ test suite.
 
 The group is responsible for:
 
-- preserving the authority boundary between Uhura, Spock, renderers, drivers,
-  and NCC;
+- preserving the authority boundary between Uhura, Spock, renderers, and
+  drivers;
 - researching source grammar and deterministic LLM/human authoring;
 - specifying UI-machine and core runtime semantics;
 - specifying semantic view identity and renderer interoperability;
@@ -36,7 +36,7 @@ Substantial proposals should include:
 3. a small formal or operational model where behavior is involved;
 4. realistic examples and adversarial counterexamples;
 5. static checking and runtime consequences;
-6. renderer, host, Spock, and NCC boundary effects;
+6. renderer, host, and Spock boundary effects;
 7. migration and compatibility consequences; and
 8. executable conformance cases before acceptance.
 
@@ -60,7 +60,6 @@ accepted.
 - semantic widget taxonomy and surface primitives
 - forms, navigation, optimistic UI, offline behavior, and infinite scrolling
 - Spock export/import contract representation
-- deterministic static scenario projection for NCC
 - message and localization model, including MessageFormat 2
 - compatibility strategy for Frame and Wire v4 inputs
 

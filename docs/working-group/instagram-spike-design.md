@@ -544,7 +544,7 @@ machine, not markup syntax).
 **Terms:** an **example** is the authored artifact (pinned or derived
 presentation state of a page/component/surface); a **preview** is one
 rendered example frame on the canvas. Rejected: *snapshot* (collides with
-V), *scenario* (reserved for NCC flows), *story* (borrowed), *variant*
+V), *scenario* (reserved for cross-artifact flows), *story* (borrowed), *variant*
 (collides with props).
 
 ### 6.1 Files and grammar
@@ -1261,7 +1261,7 @@ annotated/rich text; controlled pager exercise; prepend/refresh anchoring;
 capability negotiation; dark theme; aria-live conventions. Ports:
 subset/superset provider satisfaction; contract evolution; subscription
 interest sets; realtime `[[push]]` scripting; client-minted ids. Examples:
-cross-page journey strips (NCC flows); `expect` assertions over V; board
+cross-page journey strips; `expect` assertions over V; board
 curation. Toolchain: incremental CST; binary IR/ABI; release policy.
 Catalog: third-party catalog exercise (mechanism specified, §10).
 

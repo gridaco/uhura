@@ -24,7 +24,7 @@ Once versioned work begins, authority will follow this order:
    specification by accident.
 4. Renderer, host-driver, widget-catalog, message, Spock-binding, and bundle
    contracts remain independently versioned even when maintained here.
-5. NCC links compatible artifacts but cannot override their semantics.
+5. The linker connects compatible artifacts but cannot override their semantics.
 
 Examples are non-normative unless a specification explicitly promotes them to
 conformance fixtures.
@@ -41,7 +41,7 @@ Only the foundation is present today. Future RFCs may establish:
 - host capabilities and effect-driver protocols;
 - Spock contract imports and linking;
 - messages and localization, including whether to adopt MessageFormat 2;
-- bounded static projection for NCC's infinite canvas; and
+- bounded static projection for an infinite canvas; and
 - implementation language, packaging, compatibility, and release policy.
 
 These topics are intentionally not resolved merely by creating a directory.

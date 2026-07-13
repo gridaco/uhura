@@ -41,16 +41,14 @@ The system has four independent responsibilities:
 | Spock | Durable product truth, guarded business transitions, authorization, transactions, server workflows, and backend effects | UI-session state or rendering |
 | Uhura | Presentation semantics, UI-session state and transitions, external port requirements, semantic view evaluation, and UI traces | Durable domain authority, direct I/O, or pixels |
 | Renderer and host drivers | Layout, paint, native controls, input normalization, device mechanics, and execution of explicit platform intents | Product truth or experience transition semantics |
-| NCC | Human-facing authoring, contract linking, fixtures/scenarios, provenance, infinite-canvas projection, cross-artifact diagnostics, and playback | Redefining Spock or Uhura semantics |
+| Composition layer | Human-facing authoring, contract linking, fixtures/scenarios, provenance, infinite-canvas projection, cross-artifact diagnostics, and playback | Redefining Spock or Uhura semantics |
 
 Spock and Uhura are sibling language/runtime projects. Either can be checked or
-tested independently. NCC composes them through versioned contracts.
+tested independently. The composition layer combines them through versioned
+contracts.
 
-Uhura originated in the **NCC** repository (itself renamed from Wire under a
-separate migration that defined repository, package, CLI, documentation, and
-compatibility scope — see the
-[Wire → NCC migration note](https://github.com/gridaco/ncc/blob/main/docs/migration-wire-to-ncc.md))
-and now lives in the Spock repository as a sibling workspace.
+Uhura lives in its own dedicated repository; Spock, its canonical provider,
+is developed in its own repository alongside it.
 
 ## 3. Uhura project components
 
@@ -238,8 +236,8 @@ that a selected provider satisfies them.
 Fixtures and alternative service implementations may satisfy the same required
 ports. Uhura Core must not require Spock runtime objects or Spock source syntax.
 
-NCC may host the linker and surface its diagnostics, but the linker should be
-usable independently and must not invent compatibility.
+The composition layer may host the linker and surface its diagnostics, but the
+linker should be usable independently and must not invent compatibility.
 
 ## 10. Vocabulary
 
@@ -277,9 +275,10 @@ The toolchain is expected to parse and check, without running application code:
 
 It should be possible to extract a graph of views, UI states, events,
 transitions, external reads, commands, outcomes, messages, and capabilities.
-When linked with Spock exports, NCC can infer and validate where flows connect
-and how authoritative data is consumed. Inference may propose links; only
-explicit or mechanically proven links become part of a checked bundle.
+When linked with Spock exports, the composition layer can infer and validate
+where flows connect and how authoritative data is consumed. Inference may
+propose links; only explicit or mechanically proven links become part of a
+checked bundle.
 
 Checkability does not prove usability, aesthetics, backend security, service
 availability, or that a business workflow is desirable.
