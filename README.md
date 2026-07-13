@@ -28,6 +28,58 @@ parity criterion runs when `node` and the wasm package are present and is
 reported as skipped otherwise (`UHURA_REQUIRE_PARITY=1` makes that a
 failure).
 
+## Why Uhura exists
+
+Every product starts from the user, and the only honest, complete definition
+of "the user's product" is its experience — the pages a person actually sees
+and the things they can actually do. Most tools treat that definition as a
+picture: click-through screens that cannot be checked, backed by nothing
+real. A button that navigates nowhere, a logged-out page rendering a
+logged-in list, a tab with no state behind it, an action with no owner —
+these are not aesthetic problems. They are **broken contracts**, and a
+picture cannot catch them.
+
+Uhura exists to make the experience half of a product a real, checkable,
+executable artifact. The design is not documentation of the product; the
+design **is** the spec — and a spec deserves a compiler.
+
+## Doctrine
+
+- **Correctness over looks.** Invalid experience should fail to express, the
+  way a type system makes whole classes of bugs unrepresentable: every
+  element comes from a declared catalog, every event names a declared
+  handler, and a command's outcome — ok, typed failure, refusal,
+  unavailability — is a typed union the program branches on, not an
+  exception. Aesthetics — spacing, motion, theme — are a layer built on top
+  of a correct contract, owned by the renderer. Get the contract right
+  first.
+
+- **A state machine you can walk.** Because every transition is declared in
+  a closed language, a checked program is more than a set of screens — it is
+  a graph of journeys. Pick a path and follow it from start to finish.
+
+- **A prototype you can play, honestly.** The machine is deterministic and
+  headless: no clocks, no randomness, no floats, no I/O. Identical inputs
+  produce byte-identical traces, native or wasm. "Watch the flow run" is
+  only evidence when two runs cannot disagree — and a journey that cannot
+  complete is a broken contract, not a failed test.
+
+- **No imaginary halves.** Click-through prototypes fake the product's other
+  half. Uhura's ports are hash-pinned typed contracts with real outcomes,
+  exercised against a scripted fixture in CI and a real provider
+  ([Spock](https://github.com/gridaco/spock)) in play.
+
+- **Undefined behavior is owed, not hidden.** A gap in the experience — an
+  unhandled outcome, an unreachable state, an event with no effect — is not
+  a bug in what's written; it is a decision that's still owed. The checker's
+  job is to make every gap a visible, owned diagnostic, never a silent
+  guess.
+
+- **Semantic view, not pixels.** The runtime evaluates to a renderer-neutral
+  semantic view and emits typed commands and platform intents. What a thing
+  *is* — a list, a button, a sheet — is language; where its pixels land is
+  not.
+
 ## Project position
 
 Uhura is a greenfield design: no earlier format constrains its grammar or
