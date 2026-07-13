@@ -1,6 +1,6 @@
 # §11.4 step 8: scroll to the bottom — exactly one load-next-page; the
-# wiggle re-observation is guard-dropped (the guard IS the dedupe); page 2
-# appends with keys preserved. CI-goldened.
+# wiggle re-observation is guard-dropped (the guard IS the dedupe); the two
+# remaining followed-author posts append with keys preserved. CI-goldened.
 
 [[deliver]]
 after-ticks = 1

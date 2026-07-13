@@ -305,7 +305,7 @@ emit = "retry-load-tapped"
 "#;
 
 /// Test-local script: boot straight into the EXHAUSTED feed
-/// (`feed.final`: 8 posts, `has-more = false`, no cursor) and press
+/// (`feed.final`: 6 followed-author posts, `has-more = false`, no cursor) and press
 /// near-end once. No timeline coupling to any canonical script.
 const EXHAUSTED: &str = r#"
 [[deliver]]
@@ -341,7 +341,7 @@ fn criterion_4_pagination(program: &ProgramIr) {
     });
     let before = post_keys(&steps[ready]["v"]["page"]["root"]);
     let after = post_keys(&steps[steps.len() - 1]["v"]["page"]["root"]);
-    assert_eq!((before.len(), after.len()), (4, 8));
+    assert_eq!((before.len(), after.len()), (4, 6));
     assert_eq!(
         &after[..4],
         &before[..],
@@ -374,7 +374,7 @@ fn criterion_4_pagination(program: &ProgramIr) {
         !find_text(last, "Couldn't load more."),
         "the retry recovers"
     );
-    assert_eq!(post_keys(last).len(), 8, "page 2 appends after the retry");
+    assert_eq!(post_keys(last).len(), 6, "page 2 appends after the retry");
     assert_eq!(
         &post_keys(last)[..4],
         &retry_before[..],
@@ -410,17 +410,26 @@ fn criterion_4_pagination(program: &ProgramIr) {
         "register #67: the markup-authored observation descriptor stays in V"
     );
 
-    // The empty feed renders its empty state and observes nothing at all
-    // (§8.1): the positive anchor keeps the negative check honest.
+    // The empty feed renders its empty state. Its scroll still owns the
+    // authored observation descriptor, but projection truth guard-drops the
+    // observation without emitting a pagination command.
     let steps = trace(program, "feed-empty", true);
     let root = &steps[steps.len() - 1]["v"]["page"]["root"];
     assert!(
-        find_text(root, "Follow people to fill your feed."),
+        find_text(root, "Posts from people you follow will appear here."),
         "§13.4: the empty state actually renders"
     );
     assert!(
-        !has_near_end_descriptor(root),
-        "§13.4/§8.1: an empty feed subscribes to nothing"
+        has_near_end_descriptor(root),
+        "§13.4/§8.1: the markup-authored scroll observation stays in V"
+    );
+    assert!(
+        commands(&steps, "load-next-page").is_empty(),
+        "§13.4: projection truth prevents empty-feed pagination"
+    );
+    assert_eq!(
+        last["drop"], "no-handler",
+        "the empty-feed observation is rejected by the guard"
     );
 }
 

@@ -49,11 +49,22 @@ kind = "record"
 [types.profile-view.fields]
 user = "user-ref"
 bio = "text"
+is-self = "bool"
+viewer-follows = "bool"
 post-count = "int"
 follower-count = "int"
 following-count = "int"
 posts = "list<thumb>"
+reels = "list<thumb>"
+saved = "list<thumb>"
 tagged = "list<thumb>"
+
+[types.search-view]
+kind = "record"
+
+[types.search-view.fields]
+people = "list<connection>"
+posts = "list<thumb>"
 
 # Keyed by user id: `profile(user)` (§9.2).
 [projections.profile]
@@ -72,7 +83,7 @@ key = "id"
 # provider-filtered result. Search remains useful in Play and deterministic
 # in Canvas without leaking a database query primitive into Core.
 [projections.search-results]
-type = "connection-list"
+type = "search-view"
 
 [refusals.not-authorized]
 [refusals.not-found]

@@ -11,9 +11,10 @@ example lena-posts default {
   projection profile.profile("user-lena") = fixture.profiles.lena
 }
 
-example tagged-empty {
+example lena-tagged {
   from lena-posts
   events [ profile-tab-selected(tab: "tagged") ]
+  note "the tile is Priya's real sourdough post from the seeded tag edge"
 }
 
 example self {
@@ -26,4 +27,32 @@ example self-tagged {
   from self
   events [ profile-tab-selected(tab: "tagged") ]
   note "Mira's tagged grid carries Marco's real Baja post id and opens shared post detail"
+}
+
+example self-reels {
+  from self
+  events [ profile-tab-selected(tab: "reels") ]
+  note "Reels is a filtered view of Mira's genuine video posts"
+}
+
+example self-saved {
+  from self
+  events [ profile-tab-selected(tab: "saved") ]
+  note "Saved is private to Mira and mirrors her two seeded save edges"
+}
+
+example nils-posts {
+  params { user = "user-nils" }
+  projection feed.viewer = fixture.users.mira
+  projection profile.profile("user-nils") = fixture.profiles.nils
+}
+
+example nils-reels {
+  from nils-posts
+  events [ profile-tab-selected(tab: "reels") ]
+}
+
+example nils-tagged-empty {
+  from nils-posts
+  events [ profile-tab-selected(tab: "tagged") ]
 }

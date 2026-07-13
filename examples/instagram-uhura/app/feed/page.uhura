@@ -10,6 +10,8 @@ use port feed {
   projection viewer
   command like-post
   command unlike-post
+  command save-post
+  command unsave-post
   command load-next-page
   command reload
   command mark-story-seen
@@ -19,6 +21,8 @@ store {
   state {
     like-overlay: map[id]bool = {}
     like-pending: map[id]bool = {}
+    save-overlay: map[id]bool = {}
+    save-pending: map[id]bool = {}
     load-pending: bool = false
     load-failed: bool = false
     reload-pending: bool = false
@@ -60,6 +64,40 @@ store {
     set notice = "Couldn't unlike this post."
   }
 
+  on save-toggled(post: id, now-saved: bool) when now-saved && !(save-pending[post] ?? false) {
+    set save-overlay[post] = true
+    set save-pending[post] = true
+    send save-post(post: post)
+  }
+
+  on save-toggled(post: id, now-saved: bool) when !now-saved && !(save-pending[post] ?? false) {
+    set save-overlay[post] = false
+    set save-pending[post] = true
+    send unsave-post(post: post)
+  }
+
+  on save-post.ok(tag, cmd) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+  }
+
+  on save-post.err(tag, cmd, refusal) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+    set notice = "Couldn't save this post. Try again."
+  }
+
+  on unsave-post.ok(tag, cmd) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+  }
+
+  on unsave-post.err(tag, cmd, refusal) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+    set notice = "Couldn't remove this post from saved."
+  }
+
   // pagination: the guard IS the dedupe; exhausted derives from truth
   on feed-near-end() when !load-pending && !load-failed && feed-page.has-more && feed-page.cursor != none {
     set load-pending = true
@@ -98,7 +136,11 @@ store {
     open-surface comments-sheet(post: post)
   }
 
-  on author-tapped(user: id) {
+  on author-tapped(user: id) when user == viewer.id {
+    navigate replace profile(user: user)
+  }
+
+  on author-tapped(user: id) when user != viewer.id {
     navigate profile(user: user)
   }
 
@@ -112,7 +154,7 @@ store {
   }
 
   on tab-selected(section: text) when section == "profile" {
-    navigate profile(user: viewer.id)
+    navigate replace profile(user: viewer.id)
   }
 
   on tab-selected(section: text) when section == "create" {
@@ -120,11 +162,11 @@ store {
   }
 
   on tab-selected(section: text) when section == "search" {
-    navigate search()
+    navigate replace search()
   }
 
   on tab-selected(section: text) when section == "reels" {
-    navigate reels()
+    navigate replace reels()
   }
 
   on tab-selected(section: text) when section == "feed" && !reload-pending {
@@ -138,6 +180,17 @@ store {
 }
 
 <view class="screen feed-page">
+  <view class="feed-head">
+    <text class="wordmark">Instagram</text>
+    <view class="feed-head-actions">
+      <button label="Create post" on:press={emit tab-selected(section: "create")}>
+        <icon name="plus" />
+      </button>
+      <region label="View your profile" on:activate={emit author-tapped(user: viewer.id)}>
+        <image class="viewer-avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
+      </region>
+    </view>
+  </view>
   {#if notice != none}
     <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
   {/if}
@@ -154,16 +207,17 @@ store {
         </button>
       </view>
     {:when ready f}
-      {#if count(f.posts) == 0}
-        <view class="fill-center">
-          <text class="muted">Follow people to fill your feed.</text>
-        </view>
-      {:else}
-        <scroll class="feed-scroll" on:near-end={emit feed-near-end()}>
-          <stories-tray stories={f.stories} on:story-tapped />
+      <scroll class="feed-scroll" on:near-end={emit feed-near-end()}>
+        <stories-tray stories={f.stories} on:story-tapped />
+        {#if count(f.posts) == 0}
+          <view class="feed-empty fill-center stack-sm pad-lg">
+            <text class="title">Nothing new yet</text>
+            <text class="muted">Posts from people you follow will appear here.</text>
+          </view>
+        {:else}
           <view role="list" class="post-list">
             {#each f.posts as p (p.id)}
-              <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} show-open={true} on:like-toggled on:comments-requested on:author-tapped on:post-tapped />
+              <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} saved={save-overlay[p.id] ?? p.viewer-has-saved} save-pending={save-pending[p.id] ?? false} show-open={true} on:like-toggled on:save-toggled on:comments-requested on:author-tapped on:post-tapped />
             {/each}
           </view>
           {#if load-pending}
@@ -180,14 +234,21 @@ store {
           {#if !f.has-more}
             <text class="muted row-center pad-md">You're all caught up.</text>
           {/if}
-        </scroll>
-      {/if}
+        {/if}
+      </scroll>
   {/match}
   <bottom-nav current="feed" on:tab-selected />
 </view>
 
 <style>
 .feed-page { display: flex; flex-direction: column; block-size: 100%; }
+.feed-page .feed-head { display: flex; align-items: center; justify-content: space-between; min-block-size: 52px; padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); background: var(--color-surface); }
+.feed-page .wordmark { font-family: "Snell Roundhand", "Segoe Script", cursive; font-size: 24px; font-weight: 700; letter-spacing: -0.04em; }
+.feed-page .feed-head-actions { display: flex; align-items: center; gap: var(--space-1); }
+.feed-page .feed-head-actions .uh-button { min-inline-size: 40px; min-block-size: 40px; justify-content: center; }
+.feed-page .feed-head-actions > .uh-region { display: grid; place-items: center; min-inline-size: 44px; min-block-size: 44px; }
+.feed-page .viewer-avatar { inline-size: 30px; block-size: 30px; border-radius: var(--radius-full); object-fit: cover; }
 .feed-page .feed-scroll { flex: 1; min-block-size: 0; }
-.feed-page .post-list { display: flex; flex-direction: column; gap: var(--space-6); }
+.feed-page .feed-empty { min-block-size: 360px; text-align: center; }
+.feed-page .post-list { display: flex; flex-direction: column; gap: var(--space-4); }
 </style>

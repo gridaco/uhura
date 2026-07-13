@@ -264,7 +264,7 @@ fn paginate_dedupes_via_the_guard_and_appends_preserving_keys() {
     let before = post_keys(&steps[ready]["v"]["page"]["root"]);
     let after = post_keys(&steps[steps.len() - 1]["v"]["page"]["root"]);
     assert_eq!(before.len(), 4);
-    assert_eq!(after.len(), 8);
+    assert_eq!(after.len(), 6);
     assert_eq!(
         &after[..4],
         &before[..],
@@ -293,11 +293,14 @@ fn feed_failed_renders_the_failed_arm_then_recovers() {
 }
 
 #[test]
-fn feed_empty_renders_the_empty_state_with_nothing_to_observe() {
+fn feed_empty_renders_and_projection_truth_blocks_pagination() {
     let program = checked_program();
     let steps = trace(&program, "feed-empty", true);
     let last = &steps[steps.len() - 1]["v"]["page"]["root"];
-    assert!(find_text(last, "Follow people to fill your feed."));
+    assert!(find_text(
+        last,
+        "Posts from people you follow will appear here."
+    ));
     let mut nodes = Vec::new();
     walk_nodes(last, &mut nodes);
     let near_end = nodes.iter().any(|n| {
@@ -307,7 +310,12 @@ fn feed_empty_renders_the_empty_state_with_nothing_to_observe() {
             .flatten()
             .any(|d| d["emit"] == "feed-near-end")
     });
-    assert!(!near_end, "an empty feed subscribes to nothing (§8.1)");
+    assert!(
+        near_end,
+        "the authored scroll observation remains in V (§8.1)"
+    );
+    assert!(commands(&steps, "load-next-page").is_empty());
+    assert_eq!(steps.last().expect("steps")["drop"], "no-handler");
 }
 
 #[test]
@@ -376,7 +384,7 @@ fn every_derived_preview_replays_to_its_v_golden() {
         };
         assert_golden(&name, &v_json);
     }
-    assert_eq!(derived, 20, "twenty derived examples replay");
+    assert_eq!(derived, 34, "thirty-four derived examples replay");
 
     // The optimistic like really is in the derived like-pending state.
     let like_pending = out

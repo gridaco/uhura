@@ -1,8 +1,13 @@
-# A followed-nobody feed: the empty state renders, nothing to observe.
-# CI-goldened.
+# A followed-nobody feed: the empty state renders. The current scroll owns a
+# near-end observer even when empty, so the scripted observation proves the
+# projection-truth guard emits no pagination command. CI-goldened.
 
 [[deliver]]
 after-ticks = 1
 port = "feed"
 projection = "feed-page"
 slice = "feed.empty"
+
+[[ui]]
+at-tick = 2
+emit = "feed-near-end"

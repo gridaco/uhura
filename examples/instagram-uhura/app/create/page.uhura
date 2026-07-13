@@ -36,7 +36,7 @@ store {
     set alt = value
   }
 
-  on publish-tapped(image: id) when !choose-pending && !publish-pending && caption != "" && alt != "" {
+  on publish-tapped(image: id) when !choose-pending && !publish-pending {
     set publish-pending = true
     send publish-image(image: image, caption: caption, alt: alt)
   }
@@ -45,7 +45,7 @@ store {
     set publish-pending = false
     set caption = ""
     set alt = ""
-    navigate feed()
+    navigate back
   }
 
   on publish-image.err(tag, cmd, refusal) {
@@ -54,33 +54,36 @@ store {
   }
 
   on tab-selected(section: text) when section == "feed" {
-    navigate feed()
+    navigate replace feed()
   }
 
   on tab-selected(section: text) when section == "profile" {
-    navigate profile(user: viewer.id)
+    navigate replace profile(user: viewer.id)
   }
 
   on tab-selected(section: text) when section == "search" {
-    navigate search()
+    navigate replace search()
   }
 
   on tab-selected(section: text) when section == "reels" {
-    navigate reels()
-  }
-
-  on tab-selected(section: text) when section == "create" {
-    navigate create()
+    navigate replace reels()
   }
 
   on notice-dismissed() {
     set notice = none
   }
+
+  on cancel-tapped() {
+    navigate back
+  }
 }
 
 <view class="screen create-page">
   <view class="create-head">
-    <text class="title">Create post</text>
+    <button label="Cancel creating this post" on:press={emit cancel-tapped()}>
+      <icon name="back" />
+    </button>
+    <text class="title">New post</text>
   </view>
   {#if notice != none}
     <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
@@ -101,10 +104,12 @@ store {
       {#match d}
         {:when empty}
           <view class="fill-center stack-sm pad-lg">
-            <icon name="plus" />
+            <view class="upload-mark">
+              <icon name="plus" />
+            </view>
             <text class="create-empty-title">Share a photo</text>
-            <text class="muted">Choose one image, then add its caption and description.</text>
-            <button label="Choose photo" busy={choose-pending} disabled={publish-pending} on:press={emit choose-tapped()}>
+            <text class="muted create-empty-copy">Choose a JPEG, PNG, or WebP image from this device.</text>
+            <button class="primary-button choose-button" label="Choose photo" busy={choose-pending} disabled={publish-pending} on:press={emit choose-tapped()}>
               <text>Choose photo</text>
             </button>
           </view>
@@ -113,14 +118,14 @@ store {
             <image class="create-preview" src={u.preview} alt={u.name} />
             <view class="create-fields">
               <text class="muted">{u.name}</text>
-              <text-field value={caption} label="Caption" placeholder="Write a caption…" disabled={publish-pending} on:change={emit caption-changed()} />
-              <text-field value={alt} label="Image description" placeholder="Describe this image…" disabled={publish-pending} on:change={emit alt-changed()} />
+              <text-field value={caption} label="Caption (optional)" placeholder="Write a caption…" disabled={publish-pending} on:change={emit caption-changed()} />
+              <text-field value={alt} label="Alternative text (optional)" placeholder="Describe this image for people who can't see it…" disabled={publish-pending} on:change={emit alt-changed()} />
               <view class="create-actions">
-                <button label="Choose another photo" disabled={publish-pending} busy={choose-pending} on:press={emit choose-tapped()}>
+                <button class="secondary-button" label="Choose another photo" disabled={publish-pending} busy={choose-pending} on:press={emit choose-tapped()}>
                   <text>Choose another</text>
                 </button>
-                <button label="Publish" disabled={caption == "" || alt == "" || choose-pending} busy={publish-pending} on:press={emit publish-tapped(image: u.object)}>
-                  <text>Publish</text>
+                <button class="primary-button" label="Share post" disabled={choose-pending} busy={publish-pending} on:press={emit publish-tapped(image: u.object)}>
+                  <text>Share</text>
                 </button>
               </view>
             </view>
@@ -132,10 +137,15 @@ store {
 
 <style>
 .create-page { display: flex; flex-direction: column; block-size: 100%; }
-.create-page .create-head { padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.create-page .create-head { display: flex; align-items: center; gap: var(--space-2); min-block-size: 48px; padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.create-page .upload-mark { display: grid; place-items: center; inline-size: 72px; block-size: 72px; border: 1px dashed var(--color-ink-faint); border-radius: var(--radius-full); }
+.create-page .upload-mark .uh-icon svg { inline-size: 30px; block-size: 30px; }
 .create-page .create-empty-title { font-size: var(--type-lg); font-weight: 600; }
+.create-page .create-empty-copy { max-inline-size: 260px; text-align: center; }
+.create-page .choose-button { margin-block-start: var(--space-2); }
 .create-page .create-form { flex: 1; min-block-size: 0; }
 .create-page .create-preview { inline-size: 100%; aspect-ratio: 1; object-fit: cover; background: var(--color-surface-sunken); }
 .create-page .create-fields { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
 .create-page .create-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.create-page .create-actions .uh-button { flex: 1; justify-content: center; min-block-size: 42px; }
 </style>

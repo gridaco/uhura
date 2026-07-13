@@ -4,20 +4,41 @@ example loading {
   projection feed.viewer = fixture.users.mira
 }
 
-example people default {
+example explore default {
   projection feed.viewer = fixture.users.mira
   projection profile.search-results = fixture.people.search-all
+  note "Explore combines real people and clickable post thumbnails"
 }
 
 example searching {
-  from people
+  from explore
   events [
     query-changed(value: "nils")
     search-submitted()
   ]
 }
 
-example empty {
+example nils-results {
+  from explore
+  events [
+    query-changed(value: "nils")
+    search-submitted()
+    projection profile.search-results = fixture.people.search-nils
+    outcome search-people.ok()
+  ]
+}
+
+example no-results {
+  from explore
+  events [
+    query-changed(value: "no-such-person")
+    search-submitted()
+    projection profile.search-results = fixture.people.search-empty
+    outcome search-people.ok()
+  ]
+}
+
+example empty-explore {
   projection feed.viewer = fixture.users.mira
   projection profile.search-results = fixture.people.search-empty
 }

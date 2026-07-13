@@ -42,7 +42,11 @@ store {
     set notice = "Couldn't unfollow this person."
   }
 
-  on profile-tapped(target: id) {
+  on profile-tapped(target: id) when target == viewer.id {
+    navigate replace profile(user: target)
+  }
+
+  on profile-tapped(target: id) when target != viewer.id {
     navigate profile(user: target)
   }
 
@@ -51,11 +55,11 @@ store {
   }
 
   on tab-selected(section: text) when section == "feed" {
-    navigate feed()
+    navigate replace feed()
   }
 
   on tab-selected(section: text) when section == "search" {
-    navigate search()
+    navigate replace search()
   }
 
   on tab-selected(section: text) when section == "create" {
@@ -63,11 +67,11 @@ store {
   }
 
   on tab-selected(section: text) when section == "reels" {
-    navigate reels()
+    navigate replace reels()
   }
 
   on tab-selected(section: text) when section == "profile" {
-    navigate profile(user: viewer.id)
+    navigate replace profile(user: viewer.id)
   }
 
   on notice-dismissed() {

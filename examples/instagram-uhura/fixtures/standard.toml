@@ -143,8 +143,9 @@ user = "@users.kenji"
 has-unseen = false
 is-self = false
 
-# Story details share the ring ids. `viewer-has-viewed` comes from real
-# story-view edges; opening an unseen ring settles mark-story-seen.
+# Story details share the ring ids. Mira, Lena, and Marco each have the same
+# three-frame sequence as the Spock seed; previous/next stay within an
+# author's sequence, and progress reflects Mira's concrete story-view rows.
 [story-details.mira]
 id = "ring-mira"
 author = "@users.mira"
@@ -152,6 +153,41 @@ image = { src = "thumb-mira-1", alt = "Pastéis de nata cooling on a marble coun
 caption = "Breakfast before the first tram"
 posted-label = "20m"
 viewer-has-viewed = true
+next = "ring-mira-tram"
+progress = [
+  { id = "ring-mira", is-current = true, is-viewed = true },
+  { id = "ring-mira-tram", is-current = false, is-viewed = true },
+  { id = "ring-mira-market", is-current = false, is-viewed = true },
+]
+
+[story-details.mira-tram]
+id = "ring-mira-tram"
+author = "@users.mira"
+image = { src = "thumb-mira-2", alt = "Tram rails catching the first light in Lisbon" }
+caption = "Then the city wakes"
+posted-label = "8m"
+viewer-has-viewed = true
+previous = "ring-mira"
+next = "ring-mira-market"
+progress = [
+  { id = "ring-mira", is-current = false, is-viewed = true },
+  { id = "ring-mira-tram", is-current = true, is-viewed = true },
+  { id = "ring-mira-market", is-current = false, is-viewed = true },
+]
+
+[story-details.mira-market]
+id = "ring-mira-market"
+author = "@users.mira"
+image = { src = "thumb-mira-3", alt = "Crates of citrus stacked at the morning market" }
+caption = "Saturday palette"
+posted-label = "now"
+viewer-has-viewed = true
+previous = "ring-mira-tram"
+progress = [
+  { id = "ring-mira", is-current = false, is-viewed = true },
+  { id = "ring-mira-tram", is-current = false, is-viewed = true },
+  { id = "ring-mira-market", is-current = true, is-viewed = true },
+]
 
 [story-details.lena]
 id = "ring-lena"
@@ -160,6 +196,41 @@ image = { src = "thumb-lena-7", alt = "Lena throwing a tall clay cylinder" }
 caption = "One pull, no edits"
 posted-label = "35m"
 viewer-has-viewed = false
+next = "ring-lena-glazes"
+progress = [
+  { id = "ring-lena", is-current = true, is-viewed = false },
+  { id = "ring-lena-glazes", is-current = false, is-viewed = false },
+  { id = "ring-lena-studio", is-current = false, is-viewed = false },
+]
+
+[story-details.lena-glazes]
+id = "ring-lena-glazes"
+author = "@users.lena"
+image = { src = "thumb-lena-8", alt = "Rows of glaze buckets labelled by firing cone" }
+caption = "The unglamorous half of studio day"
+posted-label = "22m"
+viewer-has-viewed = false
+previous = "ring-lena"
+next = "ring-lena-studio"
+progress = [
+  { id = "ring-lena", is-current = false, is-viewed = false },
+  { id = "ring-lena-glazes", is-current = true, is-viewed = false },
+  { id = "ring-lena-studio", is-current = false, is-viewed = false },
+]
+
+[story-details.lena-studio]
+id = "ring-lena-studio"
+author = "@users.lena"
+image = { src = "thumb-lena-9", alt = "Morning light crossing a clean ceramics workbench" }
+caption = "Reset for tomorrow"
+posted-label = "6m"
+viewer-has-viewed = false
+previous = "ring-lena-glazes"
+progress = [
+  { id = "ring-lena", is-current = false, is-viewed = false },
+  { id = "ring-lena-glazes", is-current = false, is-viewed = false },
+  { id = "ring-lena-studio", is-current = true, is-viewed = false },
+]
 
 [story-details.marco]
 id = "ring-marco"
@@ -168,6 +239,41 @@ image = { src = "media-marco-baja-2", alt = "Campfire on a bluff above the break
 caption = "Last night at camp"
 posted-label = "1h"
 viewer-has-viewed = false
+next = "ring-marco-swell"
+progress = [
+  { id = "ring-marco", is-current = true, is-viewed = false },
+  { id = "ring-marco-swell", is-current = false, is-viewed = false },
+  { id = "ring-marco-dawn", is-current = false, is-viewed = false },
+]
+
+[story-details.marco-swell]
+id = "ring-marco-swell"
+author = "@users.marco"
+image = { src = "media-marco-baja-1", alt = "Long left-hand wave peeling along a desert point" }
+caption = "It finally arrived"
+posted-label = "48m"
+viewer-has-viewed = false
+previous = "ring-marco"
+next = "ring-marco-dawn"
+progress = [
+  { id = "ring-marco", is-current = false, is-viewed = false },
+  { id = "ring-marco-swell", is-current = true, is-viewed = false },
+  { id = "ring-marco-dawn", is-current = false, is-viewed = false },
+]
+
+[story-details.marco-dawn]
+id = "ring-marco-dawn"
+author = "@users.marco"
+image = { src = "media-marco-baja-3", alt = "Surfboard fins silhouetted against a Baja sunrise" }
+caption = "Pack up before the wind"
+posted-label = "36m"
+viewer-has-viewed = false
+previous = "ring-marco-swell"
+progress = [
+  { id = "ring-marco", is-current = false, is-viewed = false },
+  { id = "ring-marco-swell", is-current = false, is-viewed = false },
+  { id = "ring-marco-dawn", is-current = true, is-viewed = false },
+]
 
 [story-details.priya]
 id = "ring-priya"
@@ -176,6 +282,7 @@ image = { src = "media-priya-starter", alt = "Freshly sliced sourdough loaf" }
 caption = "Still warm"
 posted-label = "2h"
 viewer-has-viewed = true
+progress = [{ id = "ring-priya", is-current = true, is-viewed = true }]
 
 [story-details.june]
 id = "ring-june"
@@ -184,6 +291,7 @@ image = { src = "media-june-lookbook", alt = "Linen garments arranged by shade" 
 caption = "Fitting day"
 posted-label = "2h"
 viewer-has-viewed = false
+progress = [{ id = "ring-june", is-current = true, is-viewed = false }]
 
 [story-details.kenji]
 id = "ring-kenji"
@@ -192,6 +300,7 @@ image = { src = "media-kenji-copper", alt = "Road bike at Copper Pass" }
 caption = "Worth the climb"
 posted-label = "3h"
 viewer-has-viewed = true
+progress = [{ id = "ring-kenji", is-current = true, is-viewed = true }]
 
 # ── posts (post-summary) ────────────────────────────────────────────────
 
@@ -202,6 +311,7 @@ caption = "New copper-red test tiles out of the kiln. Cone 10, heavy reduction �
 like-count = 7
 comment-count = 4
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "2h"
 
 [posts.lena-glaze.media.image.image]
@@ -217,6 +327,7 @@ caption = "New copper-red test tiles out of the kiln. Cone 10, heavy reduction �
 like-count = 8
 comment-count = 4
 viewer-has-liked = true
+viewer-has-saved = false
 posted-label = "2h"
 
 [posts.lena-glaze-liked.media.image.image]
@@ -233,6 +344,7 @@ caption = "New copper-red test tiles out of the kiln. Cone 10, heavy reduction �
 like-count = 8
 comment-count = 5
 viewer-has-liked = true
+viewer-has-saved = false
 posted-label = "2h"
 
 [posts.lena-glaze-liked-commented.media.image.image]
@@ -246,6 +358,7 @@ caption = "Three days down the Baja coast. Swell arrived on the last morning, as
 like-count = 5
 comment-count = 2
 viewer-has-liked = false
+viewer-has-saved = true
 posted-label = "5h"
 
 [[posts.marco-baja.media.carousel.slides]]
@@ -266,11 +379,15 @@ alt = "Board fins silhouetted against the sunrise"
 [posts.nils-aurora]
 id = "post-nils-aurora"
 author = "@users.nils"
-caption = "Aurora over the fjord last night — the whole sky was breathing. Sound on."
+caption = "Aurora over the fjord last night — the whole sky was breathing."
 like-count = 5
 comment-count = 1
 viewer-has-liked = false
+viewer-has-saved = true
 posted-label = "9h"
+
+[posts.nils-aurora.media.video]
+src = "media-nils-aurora"
 
 [posts.nils-aurora.media.video.poster]
 src = "media-nils-aurora-poster"
@@ -283,6 +400,7 @@ caption = "Day 400 of the starter. She's earned a name: Clint Yeastwood."
 like-count = 7
 comment-count = 2
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "12h"
 
 [posts.priya-starter.media.image.image]
@@ -296,6 +414,7 @@ caption = "Morning ferry across the Bosphorus. Tea, gulls, and nowhere to be unt
 like-count = 4
 comment-count = 1
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "1d"
 
 [posts.ayla-ferry.media.image.image]
@@ -309,6 +428,7 @@ caption = "Studio lookbook, page one. Linen in every weight we could mill."
 like-count = 4
 comment-count = 1
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "1d"
 
 [posts.june-lookbook.media.image.image]
@@ -322,7 +442,11 @@ caption = "Finished the mural at the 9th street court. Paint holds up better tha
 like-count = 4
 comment-count = 1
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "2d"
+
+[posts.theo-court.media.video]
+src = "media-theo-court"
 
 [posts.theo-court.media.video.poster]
 src = "media-theo-court"
@@ -335,6 +459,7 @@ caption = "120km of switchbacks and one very smug goat. Copper Pass, you were wo
 like-count = 8
 comment-count = 1
 viewer-has-liked = true
+viewer-has-saved = false
 posted-label = "2d"
 
 [posts.kenji-copper.media.image.image]
@@ -350,6 +475,7 @@ caption = "Copper glaze in close-up, before the wax cooled."
 like-count = 2
 comment-count = 0
 viewer-has-liked = true
+viewer-has-saved = false
 posted-label = "4d"
 
 [posts.lena-bowls.media.image.image]
@@ -363,6 +489,7 @@ caption = "A quiet stack of bowls waiting for bisque firing."
 like-count = 1
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "6d"
 
 [posts.lena-greenware.media.image.image]
@@ -376,6 +503,7 @@ caption = "Kiln Tetris, level thirty-seven."
 like-count = 1
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "9d"
 
 [posts.lena-kiln.media.image.image]
@@ -389,6 +517,7 @@ caption = "Celadon tests after a slower cool-down."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "12d"
 
 [posts.lena-celadon.media.image.image]
@@ -402,6 +531,7 @@ caption = "Fresh reclaim, wedged and ready for tomorrow."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "16d"
 
 [posts.lena-clay.media.image.image]
@@ -415,6 +545,7 @@ caption = "Dinner plates with just enough iron speckle."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "20d"
 
 [posts.lena-plates.media.image.image]
@@ -428,6 +559,7 @@ caption = "Pulling one tall cylinder before lunch."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "25d"
 
 [posts.lena-throwing.media.image.image]
@@ -441,6 +573,7 @@ caption = "Labelling day. Future me will be grateful."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "32d"
 
 [posts.lena-buckets.media.image.image]
@@ -454,6 +587,7 @@ caption = "Seven o'clock light across the clean bench."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "41d"
 
 [posts.lena-morning.media.image.image]
@@ -467,6 +601,7 @@ caption = "The batch that vanished before I finished the coffee."
 like-count = 2
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "5d"
 
 [posts.mira-pasteis.media.image.image]
@@ -480,6 +615,7 @@ caption = "Rails holding the first light on Rua da Conceição."
 like-count = 1
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "10d"
 
 [posts.mira-tram.media.image.image]
@@ -493,6 +629,7 @@ caption = "Saturday citrus, arranged better than any still life."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "15d"
 
 [posts.mira-citrus.media.image.image]
@@ -506,6 +643,7 @@ caption = "Blue after blue after blue."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "23d"
 
 [posts.mira-tiles.media.image.image]
@@ -519,6 +657,7 @@ caption = "Sardines, smoke, lemon. Nothing else needed."
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "31d"
 
 [posts.mira-sardines.media.image.image]
@@ -532,14 +671,18 @@ caption = "The last ferry left a gold line all the way home."
 like-count = 1
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "43d"
+
+[posts.mira-ferry.media.video]
+src = "media-mira-ferry"
 
 [posts.mira-ferry.media.video.poster]
 src = "thumb-mira-6"
 alt = "Ferry wake at golden hour"
 
-# Reels are real video posts (poster-rendered because the base catalog does
-# not yet expose a video element), not a separate decorative dataset.
+# Reels reuse the real video posts and their playable fixture media rather
+# than maintaining a separate decorative dataset.
 [reels.page]
 posts = ["@posts.nils-aurora", "@posts.theo-court", "@posts.mira-ferry"]
 
@@ -560,8 +703,8 @@ stories = "@feed.stories"
 posts = [
   "@posts.lena-glaze",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
   "@posts.priya-starter",
+  "@posts.ayla-ferry",
 ]
 cursor = "cursor-page-2"
 has-more = true
@@ -572,8 +715,8 @@ stories = "@feed.stories"
 posts = [
   "@posts.lena-glaze-liked",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
   "@posts.priya-starter",
+  "@posts.ayla-ferry",
 ]
 cursor = "cursor-page-2"
 has-more = true
@@ -584,8 +727,8 @@ stories = "@feed.stories"
 posts = [
   "@posts.lena-glaze-liked-commented",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
   "@posts.priya-starter",
+  "@posts.ayla-ferry",
 ]
 cursor = "cursor-page-2"
 has-more = true
@@ -593,28 +736,22 @@ has-more = true
 [feed.page-2]
 stories = "@feed.stories"
 posts = [
-  "@posts.ayla-ferry",
   "@posts.june-lookbook",
-  "@posts.theo-court",
   "@posts.kenji-copper",
 ]
-cursor = "cursor-page-3"
-has-more = true
+has-more = false
 
 [feed.pages-1-2]
 stories = "@feed.stories"
 posts = [
   "@posts.lena-glaze",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
   "@posts.priya-starter",
   "@posts.ayla-ferry",
   "@posts.june-lookbook",
-  "@posts.theo-court",
   "@posts.kenji-copper",
 ]
-cursor = "cursor-page-3"
-has-more = true
+has-more = false
 
 # Both pages with Lena's like settled — what the demo's pagination reply
 # delivers after like-post already settled (whole slices, §9.5).
@@ -623,15 +760,12 @@ stories = "@feed.stories"
 posts = [
   "@posts.lena-glaze-liked",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
   "@posts.priya-starter",
   "@posts.ayla-ferry",
   "@posts.june-lookbook",
-  "@posts.theo-court",
   "@posts.kenji-copper",
 ]
-cursor = "cursor-page-3"
-has-more = true
+has-more = false
 
 # Both pages, like AND comment settled, feed EXHAUSTED — the demo's
 # pagination reply (authored truth never regresses mid-walkthrough; the
@@ -643,11 +777,9 @@ stories = "@feed.stories"
 posts = [
   "@posts.lena-glaze-liked-commented",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
   "@posts.priya-starter",
   "@posts.ayla-ferry",
   "@posts.june-lookbook",
-  "@posts.theo-court",
   "@posts.kenji-copper",
 ]
 has-more = false
@@ -657,11 +789,9 @@ stories = "@feed.stories"
 posts = [
   "@posts.lena-glaze",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
   "@posts.priya-starter",
   "@posts.ayla-ferry",
   "@posts.june-lookbook",
-  "@posts.theo-court",
   "@posts.kenji-copper",
 ]
 has-more = false
@@ -690,6 +820,7 @@ caption = "@payload.caption"
 like-count = 0
 comment-count = 0
 viewer-has-liked = false
+viewer-has-saved = false
 posted-label = "now"
 
 [posts.mira-created.media.image.image]
@@ -702,7 +833,7 @@ posts = [
   "@posts.mira-created",
   "@posts.lena-glaze",
   "@posts.marco-baja",
-  "@posts.nils-aurora",
+  "@posts.priya-starter",
 ]
 cursor = "cursor-page-2"
 has-more = true
@@ -765,10 +896,11 @@ posted-label = "now"
 [profiles.lena]
 user = "@users.lena"
 bio = "Ceramics and slow mornings. Small-batch studio work from Portland."
+is-self = false
+viewer-follows = true
 post-count = 10
 follower-count = 8
 following-count = 5
-tagged = []
 posts = [
   { id = "post-lena-glaze", src = "media-lena-glaze", alt = "Grid of copper-red glaze test tiles" },
   { id = "post-lena-bowls", src = "thumb-lena-1", alt = "Copper-red glaze tiles" },
@@ -781,16 +913,20 @@ posts = [
   { id = "post-lena-buckets", src = "thumb-lena-8", alt = "Glaze buckets labelled by cone" },
   { id = "post-lena-morning", src = "thumb-lena-9", alt = "Morning light across the studio bench" },
 ]
+reels = []
+saved = []
+tagged = [
+  { id = "post-priya-starter", src = "media-priya-starter", alt = "Fresh sourdough loaf" },
+]
 
 [profiles.mira]
 user = "@users.mira"
 bio = "Food and travel photographer in Lisbon. Usually awake before the trams."
+is-self = true
+viewer-follows = false
 post-count = 6
 follower-count = 4
 following-count = 6
-tagged = [
-  { id = "post-marco-baja", src = "media-marco-baja-1", alt = "Long left-hand wave peeling along a desert point" },
-]
 posts = [
   { id = "post-mira-pasteis", src = "thumb-mira-1", alt = "Pastéis de nata on a marble counter" },
   { id = "post-mira-tram", src = "thumb-mira-2", alt = "Tram rails catching dawn light" },
@@ -799,69 +935,107 @@ posts = [
   { id = "post-mira-sardines", src = "thumb-mira-5", alt = "Grilled sardines over coals" },
   { id = "post-mira-ferry", src = "thumb-mira-6", alt = "Ferry wake at golden hour" },
 ]
+reels = [
+  { id = "post-mira-ferry", src = "thumb-mira-6", alt = "Ferry wake at golden hour" },
+]
+saved = [
+  { id = "post-marco-baja", src = "media-marco-baja-1", alt = "Long left-hand wave peeling along a desert point" },
+  { id = "post-nils-aurora", src = "media-nils-aurora-poster", alt = "Green aurora over a fjord" },
+]
+tagged = [
+  { id = "post-marco-baja", src = "media-marco-baja-1", alt = "Long left-hand wave peeling along a desert point" },
+]
 
 [profiles.marco]
 user = "@users.marco"
 bio = "Surf photographer, road-trip cook, and reluctant morning person."
+is-self = false
+viewer-follows = true
 post-count = 1
 follower-count = 4
 following-count = 4
-tagged = []
 posts = [{ id = "post-marco-baja", src = "media-marco-baja-1", alt = "Long wave peeling along a desert point" }]
+reels = []
+saved = []
+tagged = [{ id = "post-kenji-copper", src = "media-kenji-copper", alt = "Road bike at Copper Pass" }]
 
 [profiles.nils]
 user = "@users.nils"
 bio = "Night skies and northern water, filmed around Tromsø."
+is-self = false
+viewer-follows = false
 post-count = 1
 follower-count = 2
 following-count = 3
-tagged = []
 posts = [{ id = "post-nils-aurora", src = "media-nils-aurora-poster", alt = "Green aurora over a fjord" }]
+reels = [{ id = "post-nils-aurora", src = "media-nils-aurora-poster", alt = "Green aurora over a fjord" }]
+saved = []
+tagged = []
 
 [profiles.priya]
 user = "@users.priya"
 bio = "Bread notebook, tiny kitchen, stubborn sourdough starter."
+is-self = false
+viewer-follows = true
 post-count = 1
 follower-count = 4
 following-count = 4
-tagged = []
 posts = [{ id = "post-priya-starter", src = "media-priya-starter", alt = "Fresh sourdough loaf" }]
+reels = []
+saved = []
+tagged = []
 
 [profiles.ayla]
 user = "@users.ayla"
 bio = "Istanbul by ferry. Architecture, tea, and ordinary light."
+is-self = false
+viewer-follows = true
 post-count = 1
 follower-count = 4
 following-count = 3
-tagged = []
 posts = [{ id = "post-ayla-ferry", src = "media-ayla-ferry", alt = "Morning ferry across the Bosphorus" }]
+reels = []
+saved = []
+tagged = [{ id = "post-june-lookbook", src = "media-june-lookbook", alt = "Linen garments arranged by shade" }]
 
 [profiles.june]
 user = "@users.june"
 bio = "Natural-fiber clothes made in a very crowded studio."
+is-self = false
+viewer-follows = true
 post-count = 1
 follower-count = 5
 following-count = 4
-tagged = []
 posts = [{ id = "post-june-lookbook", src = "media-june-lookbook", alt = "Linen garments arranged by shade" }]
+reels = []
+saved = []
+tagged = [{ id = "post-theo-court", src = "media-theo-court", alt = "Geometric basketball court mural" }]
 
 [profiles.theo]
 user = "@users.theo"
 bio = "Murals, community courts, and an unreliable jump shot."
+is-self = false
+viewer-follows = false
 post-count = 1
 follower-count = 3
 following-count = 3
-tagged = []
 posts = [{ id = "post-theo-court", src = "media-theo-court", alt = "Geometric basketball court mural" }]
+reels = [{ id = "post-theo-court", src = "media-theo-court", alt = "Geometric basketball court mural" }]
+saved = []
+tagged = [{ id = "post-lena-glaze", src = "media-lena-glaze", alt = "Grid of copper-red glaze test tiles" }]
 
 [profiles.kenji]
 user = "@users.kenji"
 bio = "Long climbs, quiet roads, and coffee at the turnaround."
+is-self = false
+viewer-follows = true
 post-count = 1
 follower-count = 2
 following-count = 4
-tagged = []
 posts = [{ id = "post-kenji-copper", src = "media-kenji-copper", alt = "Road bike at Copper Pass" }]
+reels = []
+saved = []
+tagged = []
 
 # ── relationships (connection / connection-list) ────────────────────────
 
@@ -903,13 +1077,45 @@ viewer-follows = true
 
 [people.search-all]
 people = [
+  "@connections.ayla", "@connections.june", "@connections.kenji",
   "@connections.lena", "@connections.marco", "@connections.nils",
-  "@connections.priya", "@connections.ayla", "@connections.june",
-  "@connections.theo", "@connections.kenji",
+  "@connections.priya", "@connections.theo",
+]
+posts = [
+  { id = "post-lena-glaze", src = "media-lena-glaze", alt = "Grid of copper-red glaze test tiles on a maple bench" },
+  { id = "post-marco-baja", src = "media-marco-baja-1", alt = "Long left-hand wave peeling along a desert point" },
+  { id = "post-nils-aurora", src = "media-nils-aurora-poster", alt = "Green aurora curtains over a dark fjord" },
+  { id = "post-priya-starter", src = "media-priya-starter", alt = "Open crumb of a sourdough loaf, sliced on a flour-dusted board" },
+  { id = "post-ayla-ferry", src = "media-ayla-ferry", alt = "Ferry deck railing over blue water, city skyline behind" },
+  { id = "post-june-lookbook", src = "media-june-lookbook", alt = "Folded linen garments stacked by shade on a workbench" },
+  { id = "post-theo-court", src = "media-theo-court", alt = "Basketball court painted with bold geometric shapes" },
+  { id = "post-kenji-copper", src = "media-kenji-copper", alt = "Road bike leaning on a stone wall at a mountain pass" },
+  { id = "post-lena-bowls", src = "thumb-lena-1", alt = "Copper-red glaze tiles" },
+  { id = "post-mira-pasteis", src = "thumb-mira-1", alt = "Pastéis de nata on a marble counter" },
+  { id = "post-lena-greenware", src = "thumb-lena-2", alt = "Stack of unglazed bowls" },
+  { id = "post-lena-kiln", src = "thumb-lena-3", alt = "Kiln shelf mid-load" },
+  { id = "post-mira-tram", src = "thumb-mira-2", alt = "Tram rails catching dawn light" },
+  { id = "post-lena-celadon", src = "thumb-lena-4", alt = "Celadon test cups" },
+  { id = "post-mira-citrus", src = "thumb-mira-3", alt = "Market citrus stacked in crates" },
+  { id = "post-lena-clay", src = "thumb-lena-5", alt = "Wedging table with fresh clay" },
+  { id = "post-lena-plates", src = "thumb-lena-6", alt = "Iron-speckled dinner plates" },
+  { id = "post-mira-tiles", src = "thumb-mira-4", alt = "Tiled facade in alternating blues" },
+  { id = "post-lena-throwing", src = "thumb-lena-7", alt = "Throwing a tall cylinder" },
+  { id = "post-mira-sardines", src = "thumb-mira-5", alt = "Grilled sardines over coals" },
+  { id = "post-lena-buckets", src = "thumb-lena-8", alt = "Glaze buckets labelled by cone" },
+  { id = "post-lena-morning", src = "thumb-lena-9", alt = "Morning light across the studio bench" },
+  { id = "post-mira-ferry", src = "thumb-mira-6", alt = "Ferry wake at golden hour" },
 ]
 
 [people.search-empty]
 people = []
+posts = []
+
+[people.search-nils]
+people = ["@connections.nils"]
+posts = [
+  { id = "post-nils-aurora", src = "media-nils-aurora-poster", alt = "Green aurora curtains over a dark fjord" },
+]
 
 [people.mira-followers]
 people = ["@connections.lena", "@connections.priya", "@connections.june", "@connections.theo"]

@@ -1,2 +1,2 @@
 error[UH5015 markup/bad-availability-arms]: availability match is missing its `{:when loading}` arm — absence is a state the design must show (§9.2)
-  --> app/profile/[user]/page.uhura:66:3
+  --> app/profile/[user]/page.uhura:111:3

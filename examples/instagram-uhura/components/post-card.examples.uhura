@@ -5,6 +5,8 @@ example image-post default {
     post = fixture.posts.lena-glaze
     liked = false
     like-pending = false
+    saved = false
+    save-pending = false
     show-open = true
   }
 }
@@ -14,18 +16,22 @@ example carousel-liked {
     post = fixture.posts.marco-baja
     liked = true
     like-pending = false
+    saved = true
+    save-pending = false
     show-open = true
   }
 }
 
-example video-poster {
+example video-post {
   props {
     post = fixture.posts.nils-aurora
     liked = false
     like-pending = false
+    saved = true
+    save-pending = false
     show-open = true
   }
-  note "capability honesty: poster + unsupported badge"
+  note "native video with a fixture MP4, poster, accessible label, and controls"
 }
 
 example like-pending {
@@ -33,7 +39,21 @@ example like-pending {
     post = fixture.posts.lena-glaze
     liked = true
     like-pending = true
+    saved = false
+    save-pending = false
     show-open = true
   }
   note "busy heart during the optimistic window"
+}
+
+example save-pending {
+  props {
+    post = fixture.posts.lena-glaze
+    liked = false
+    like-pending = false
+    saved = true
+    save-pending = true
+    show-open = true
+  }
+  note "optimistic bookmark while the private saved-library edge settles"
 }

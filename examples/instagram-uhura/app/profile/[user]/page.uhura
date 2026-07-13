@@ -1,14 +1,18 @@
 page
 
 use component bottom-nav
+use component notice-bar
 use component profile-header
-use port profile { projection profile }
+use port feed { projection viewer }
+use port profile { projection profile, command follow-user, command unfollow-user }
 
 param user: id
 
 store {
   state {
     active-tab: text = "posts"
+    relationship-pending: bool = false
+    notice: text? = none
   }
 
   on profile-tab-selected(tab: text) {
@@ -31,12 +35,52 @@ store {
     navigate post(id: post)
   }
 
+  on follow-toggled(target: id, now-following: bool) when now-following && !relationship-pending {
+    set relationship-pending = true
+    send follow-user(user: target)
+  }
+
+  on follow-toggled(target: id, now-following: bool) when !now-following && !relationship-pending {
+    set relationship-pending = true
+    send unfollow-user(user: target)
+  }
+
+  on follow-user.ok(tag, cmd) {
+    set relationship-pending = false
+  }
+
+  on follow-user.err(tag, cmd, refusal) {
+    set relationship-pending = false
+    set notice = "Couldn't follow this person."
+  }
+
+  on unfollow-user.ok(tag, cmd) {
+    set relationship-pending = false
+  }
+
+  on unfollow-user.err(tag, cmd, refusal) {
+    set relationship-pending = false
+    set notice = "Couldn't unfollow this person."
+  }
+
+  on create-tapped() {
+    navigate create()
+  }
+
+  on notice-dismissed() {
+    set notice = none
+  }
+
   on back-tapped() {
     navigate back
   }
 
+  on feed-tapped() {
+    navigate replace feed()
+  }
+
   on tab-selected(section: text) when section == "feed" {
-    navigate feed()
+    navigate replace feed()
   }
 
   on tab-selected(section: text) when section == "create" {
@@ -44,41 +88,77 @@ store {
   }
 
   on tab-selected(section: text) when section == "search" {
-    navigate search()
+    navigate replace search()
   }
 
   on tab-selected(section: text) when section == "reels" {
-    navigate reels()
+    navigate replace reels()
   }
 
-  on tab-selected(section: text) when section == "profile" {
+  on tab-selected(section: text) when section == "profile" && user == viewer.id {
     set active-tab = "posts"
+  }
+
+  on tab-selected(section: text) when section == "profile" && user != viewer.id {
+    navigate replace profile(user: viewer.id)
   }
 }
 
 <view class="screen profile-page">
-  <view class="top-bar">
-    <button label="Back" on:press={emit back-tapped()}>
-      <icon name="back" />
-    </button>
-    <text class="title">Profile</text>
-  </view>
+  {#if notice != none}
+    <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
+  {/if}
   {#match profile(user)}
     {:when loading}
+      <view class="top-bar">
+        {#if user != viewer.id}
+          <button label="Back" on:press={emit back-tapped()}>
+            <icon name="back" />
+          </button>
+        {/if}
+        <text class="title">Profile</text>
+      </view>
       <view class="fill-center">
         <text class="muted">Loading profile…</text>
       </view>
     {:when failed reason}
-      <view class="fill-center">
+      <view class="top-bar">
+        {#if user != viewer.id}
+          <button label="Back" on:press={emit back-tapped()}>
+            <icon name="back" />
+          </button>
+        {/if}
+        <text class="title">Profile</text>
+      </view>
+      <view class="fill-center stack-sm">
         <text class="muted">This profile didn't load.</text>
+        <button label="Go to home feed" on:press={emit feed-tapped()}>
+          <text>Go to feed</text>
+        </button>
       </view>
     {:when ready pr}
+      <view class="top-bar">
+        {#if !pr.is-self}
+          <button label="Back" on:press={emit back-tapped()}>
+            <icon name="back" />
+          </button>
+        {/if}
+        <text class="title">{pr.user.username}</text>
+      </view>
       <scroll class="profile-scroll">
-        <profile-header user={pr.user} bio={pr.bio} post-count={pr.post-count} follower-count={pr.follower-count} following-count={pr.following-count} on:posts-tapped on:followers-tapped on:following-tapped />
+        <profile-header user={pr.user} bio={pr.bio} is-self={pr.is-self} viewer-follows={pr.viewer-follows} relationship-pending={relationship-pending} post-count={pr.post-count} follower-count={pr.follower-count} following-count={pr.following-count} on:posts-tapped on:followers-tapped on:following-tapped on:follow-toggled on:create-tapped />
         <view role="tablist" class="profile-tabs">
           <button label="Posts" current={active-tab == "posts"} on:press={emit profile-tab-selected(tab: "posts")}>
             <icon name="grid" />
           </button>
+          <button label="Reels" current={active-tab == "reels"} on:press={emit profile-tab-selected(tab: "reels")}>
+            <icon name="reels" />
+          </button>
+          {#if pr.is-self}
+            <button label="Saved" current={active-tab == "saved"} on:press={emit profile-tab-selected(tab: "saved")}>
+              <icon name="bookmark" />
+            </button>
+          {/if}
           <button label="Tagged" current={active-tab == "tagged"} on:press={emit profile-tab-selected(tab: "tagged")}>
             <icon name="profile" />
           </button>
@@ -91,39 +171,85 @@ store {
           {:else}
             <view role="list" class="post-grid">
               {#each pr.posts as th (th.id)}
-                <region class="grid-link" label={"View post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                  <image class="grid-tile" src={th.src} alt={th.alt} />
-                </region>
+                <view class="grid-item">
+                  <region class="grid-link" label={"View post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
+                    <image class="grid-tile" src={th.src} alt={th.alt} />
+                  </region>
+                </view>
               {/each}
             </view>
           {/if}
         {:else}
-          {#if count(pr.tagged) == 0}
-            <view class="fill-center pad-lg">
-              <text class="muted">No tagged posts yet.</text>
-            </view>
+          {#if active-tab == "reels"}
+            {#if count(pr.reels) == 0}
+              <view class="fill-center pad-lg stack-sm">
+                <icon name="reels" />
+                <text class="muted">No reels yet.</text>
+              </view>
+            {:else}
+              <view role="list" class="post-grid">
+                {#each pr.reels as th (th.id)}
+                  <view class="grid-item">
+                    <region class="grid-link" label={"View reel: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
+                      <image class="grid-tile" src={th.src} alt={th.alt} />
+                    </region>
+                  </view>
+                {/each}
+              </view>
+            {/if}
           {:else}
-            <view role="list" class="post-grid">
-              {#each pr.tagged as th (th.id)}
-                <region class="grid-link" label={"View tagged post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                  <image class="grid-tile" src={th.src} alt={th.alt} />
-                </region>
-              {/each}
-            </view>
+            {#if active-tab == "saved"}
+              {#if count(pr.saved) == 0}
+                <view class="fill-center pad-lg stack-sm">
+                  <icon name="bookmark" />
+                  <text class="muted">Posts you save will appear here.</text>
+                </view>
+              {:else}
+                <view role="list" class="post-grid">
+                  {#each pr.saved as th (th.id)}
+                    <view class="grid-item">
+                      <region class="grid-link" label={"View saved post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
+                        <image class="grid-tile" src={th.src} alt={th.alt} />
+                      </region>
+                    </view>
+                  {/each}
+                </view>
+              {/if}
+            {:else}
+              {#if count(pr.tagged) == 0}
+                <view class="fill-center pad-lg">
+                  <text class="muted">No tagged posts yet.</text>
+                </view>
+              {:else}
+                <view role="list" class="post-grid">
+                  {#each pr.tagged as th (th.id)}
+                    <view class="grid-item">
+                      <region class="grid-link" label={"View tagged post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
+                        <image class="grid-tile" src={th.src} alt={th.alt} />
+                      </region>
+                    </view>
+                  {/each}
+                </view>
+              {/if}
+            {/if}
           {/if}
         {/if}
       </scroll>
   {/match}
-  <bottom-nav current="profile" on:tab-selected />
+  <bottom-nav current={if user == viewer.id then "profile" else ""} on:tab-selected />
 </view>
 
 <style>
 .profile-page { display: flex; flex-direction: column; block-size: 100%; }
-.profile-page .top-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.profile-page .top-bar { display: flex; align-items: center; gap: var(--space-2); min-block-size: 48px; padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); }
 .profile-page .title { font-weight: 600; }
 .profile-page .profile-scroll { flex: 1; min-block-size: 0; }
-.profile-page .profile-tabs { display: flex; justify-content: space-around; border-block-end: 1px solid var(--color-line); }
+.profile-page .profile-scroll > .fill-center { min-block-size: 320px; }
+.profile-page .profile-tabs { display: flex; justify-content: space-around; border-block: 1px solid var(--color-line); }
+.profile-page .profile-tabs .uh-button { flex: 1; justify-content: center; min-block-size: 44px; border-radius: 0; }
+.profile-page .profile-tabs .uh-button[aria-current="true"] { color: var(--color-ink); box-shadow: inset 0 -2px 0 var(--color-ink); }
 .profile-page .post-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
-.profile-page .post-grid .grid-link { display: block; aspect-ratio: 1; overflow: hidden; }
-.profile-page .post-grid .grid-tile { aspect-ratio: 1; inline-size: 100%; object-fit: cover; }
+.profile-page .post-grid .grid-item { min-inline-size: 0; }
+.profile-page .post-grid .grid-link { display: block; aspect-ratio: 3 / 4; overflow: hidden; }
+.profile-page .post-grid .grid-tile { inline-size: 100%; block-size: 100%; object-fit: cover; }
 </style>

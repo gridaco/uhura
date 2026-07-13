@@ -7,9 +7,20 @@ example loading {
 example videos default {
   projection feed.viewer = fixture.users.mira
   projection feed.reels = fixture.reels.page
+  note "three real video posts backed by local fixture MP4s"
 }
 
 example like-pending {
   from videos
   events [ like-toggled(post: "post-nils-aurora", now-liked: true) ]
+}
+
+example save-pending {
+  from videos
+  events [ save-toggled(post: "post-theo-court", now-saved: true) ]
+}
+
+example unsave-pending {
+  from videos
+  events [ save-toggled(post: "post-nils-aurora", now-saved: false) ]
 }

@@ -23,6 +23,11 @@ example like-pending {
   events [ like-toggled(post: "post-lena-glaze", now-liked: true) ]
 }
 
+example save-pending {
+  from lena
+  events [ save-toggled(post: "post-lena-glaze", now-saved: true) ]
+}
+
 example comments-open {
   from lena
   projection comments.for-post("post-lena-glaze") = fixture.comments.lena-glaze

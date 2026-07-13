@@ -9,15 +9,38 @@ example unseen default {
   params { id = "ring-lena" }
   projection feed.viewer = fixture.users.mira
   projection feed.story-by-id("ring-lena") = fixture.story-details.lena
+  note "first of three: no previous target, next target present, all segments unseen"
+}
+
+example lena-middle {
+  params { id = "ring-lena-glazes" }
+  projection feed.viewer = fixture.users.mira
+  projection feed.story-by-id("ring-lena-glazes") = fixture.story-details.lena-glazes
+  note "middle frame exposes both previous and next hit zones"
+}
+
+example lena-last {
+  params { id = "ring-lena-studio" }
+  projection feed.viewer = fixture.users.mira
+  projection feed.story-by-id("ring-lena-studio") = fixture.story-details.lena-studio
+  note "last frame replaces Next with the close affordance"
+}
+
+example self-middle-seen {
+  params { id = "ring-mira-tram" }
+  projection feed.viewer = fixture.users.mira
+  projection feed.story-by-id("ring-mira-tram") = fixture.story-details.mira-tram
+  note "Mira's own three-frame sequence is fully viewed"
 }
 
 example seen {
   params { id = "ring-priya" }
   projection feed.viewer = fixture.users.mira
   projection feed.story-by-id("ring-priya") = fixture.story-details.priya
+  note "a single-frame seen story has one progress segment and closes on advance"
 }
 
 example marking-seen {
   from unseen
-  events [ mark-seen-tapped(story: "ring-lena") ]
+  events [ story-selected(story: "ring-lena") ]
 }

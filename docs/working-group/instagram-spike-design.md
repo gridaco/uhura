@@ -36,15 +36,17 @@ replayable, headless machine. Styling is real CSS. The machine is the spec.
 6. **Example-defined design**: named, checked example states per
    page/component/surface, rendered as previews on an infinite canvas (§6).
 
-**Content: the Instagram main flow.** In: home feed (stories tray, image +
-carousel posts, one video post as an honest unsupported poster), optimistic
-like with refusal rollback, per-post comments sheet with optimistic append,
-near-end pagination with dedupe/failure/retry/exhausted, profile page
-(header + tabs + grid) with a dynamic route, bottom tab navigation,
-loading / failed / empty states throughout.
+**Content: the Instagram main flow.** In: a relationship-filtered home feed
+(story tray, image, carousel, and playable video), optimistic likes and private
+saves, comments, pagination, Search/Explore, vertical Reels, multi-frame Story
+viewing, post detail, profiles with posts/Reels/Saved/tagged grids and truthful
+relational counts, Followers/Following lists, follow/unfollow, and a signed
+storage upload-to-publish flow. Loading, failed, empty, pending, and refusal
+states are part of the checked experience rather than illustrative frames.
 
-Out: video playback, Stories viewer, Reels, DMs/realtime, creation/camera,
-search, follow, maps, charts, auth, i18n, post-detail page, rich text.
+Out: DMs and realtime delivery, camera capture and filters, Story authoring,
+audio selection, notifications, production auth (Play only switches the dev
+actor), i18n, rich text, and recommendation ranking.
 
 ### Why not Svelte itself (recorded once)
 
@@ -181,7 +183,7 @@ handleable events, `<command>.ok` / `<command>.err`.
 | `send <command>(args) [as <t>]` | Mints a core tag (`U.counters`), emits a command envelope, records pending. `as t` binds the tag (type `tag`) for keying optimistic state. Duplicate identical in-flight send → warning; suppression is the author's guard's job. |
 | `open-surface <name>(args)` | Structural, applied at dispatch end. Idempotent per (definition, canonical context). Records opener + triggering node for focus restore. |
 | `dismiss` | Surface scope only. Pops the instance; `FocusRestore` intent when topmost. No result plumbing (deferred). |
-| `navigate <route>(named-args)` / `navigate back` | Structural; ≤ 1/step. Closed route table; args cover dynamic segments exactly. `back` pops; revealed page keeps state; the popped page's surfaces force-close. |
+| `navigate <route>(named-args)` / `navigate replace <route>(named-args)` / `navigate back` | Structural; ≤ 1/step. Closed route table; args cover dynamic segments exactly. Plain navigation pushes. `replace` swaps only the top entry for a freshly initialized page and force-closes the replaced page's surfaces. `back` pops; the revealed page keeps state and the popped page's surfaces force-close. |
 
 No `emit` statement, no internal events, no lifecycle events — boot data is
 provider-seeded (§9), so every step dispatches exactly one external event.
@@ -709,10 +711,15 @@ origin-addressed, payload-echoing outcome delivery — never hidden policy.
 ### 7.4 Navigation and history
 
 `nav` is core state; the host's history moves only via intents. `navigate`
-pushes + `HistoryPush`; `back` pops (destroys popped page state,
-force-closes its surfaces) + `HistoryBack`; revealed pages keep state.
-**Spike shell executes history intents as no-ops (traced) and never
-synthesizes `LocationChanged`** — the reconcile design is deferred RFC
+pushes + `HistoryPush`; `navigate replace` keeps the stack depth but replaces
+the top with a freshly initialized page + `HistoryReplace`; `back` pops
+(destroys popped page state, force-closes its surfaces) + `HistoryBack`.
+Replace also force-closes the outgoing page's surfaces; pages revealed by
+`back` keep state. This gives redirect-like flows (for example, leaving a
+completed entry flow) a first-class operation without encoding a push/back
+trick in application code. **The spike shell mirrors these intents for page
+instance identity but does not mutate browser URL/history or synthesize
+`LocationChanged`** — physical history reconciliation remains deferred RFC
 material; the contract stays visible in `T`.
 
 ### 7.5 Determinism and trace
@@ -1012,7 +1019,7 @@ the permanent CI test double); fixture-only semantics disappear.
 
 ## 10. The semantic element catalog
 
-**Nine elements, three classes, checked by generic rules; layout and
+**Ten elements, three classes, checked by generic rules; layout and
 aesthetics belong to CSS.** The catalog is data (`catalog/base.toml`,
 versioned + hash-pinned); source cannot invent an element, prop, or event by
 naming it; the checker validates the catalog against a meta-schema (input
@@ -1025,6 +1032,7 @@ events only on interactive elements; observation events only on viewports).
 | `pager` | layout/viewport | `indicator(none\|dots)`, `label`; children from one keyed each; **uncontrolled** | (`page-change` when controlled — unused) |
 | `text` | content | content = typed data / interpolation | — |
 | `image` | content | `src` (asset ref), `alt` xor `decorative` | — |
+| `video` | content | `src`, optional `poster`, `label`, `autoplay`, `muted`, `loop`, `controls`, `playsinline` | native media controls |
 | `icon` | content | `name` (closed set), decorative by default | — |
 | `button` | interactive | `label`, `disabled`, `busy`, `pressed?`, `current?`; content children, no interactive descendants | `press` |
 | `text-field` | interactive | controlled `value`, `placeholder`, `label`, `disabled` | `change{value}`, `submit` |
@@ -1032,12 +1040,13 @@ events only on interactive elements; observation events only on viewports).
 
 Every element additionally takes `class` (opaque, CSS-owned). Icon set
 (closed, recomputed from slice usage): `home search plus reels profile heart
-heart-filled comment close back grid layers video-off progress`.
+heart-filled comment close back grid layers video-off progress bookmark
+bookmark-filled chevron-left chevron-right`.
 
 **What is deliberately NOT an element:** `column/row/stack/grid/spacer`
 (CSS layout on `view`), `card/avatar/tab-bar/app-bar/list` (documented
 patterns in `docs/patterns/`, golden-checked), `sheet/dialog` (core surface
-stack), `video` (poster + `video-off` fallback pattern), any styling prop
+stack), any styling prop
 (`gap/pad/ratio/shape/kind/size/color/lines` — all CSS now).
 
 **Extension is first-class in design, deferred in exercise:** a catalog is
@@ -1079,15 +1088,16 @@ through typed provider commands.
 ### 11.2 The cast (no lorem ipsum)
 
 Viewer: **Mira Santos** (`mira.santos`), food & travel photographer,
-Lisbon. Feed page 1: **Lena Holt** (ceramicist — glaze tiles, 7 real likes,
-4 comments), **Marco Reyes** (surfer — 3-slide Baja carousel), **Nils
-Bergman** (night-sky — aurora *video* → poster placeholder), and **Priya
-Raman** (baker — "Day 400 of the starter. She's earned a name: Clint
-Yeastwood."). Page 2: Ayla Demir, June Park, Theo Okafor, **Kenji Tanaka**
-(pre-liked — proves projection-truth hearts without overlays). Mira's demo
+Lisbon. Mira's home feed is derived from her six follow edges: **Lena Holt**
+(ceramicist — glaze tiles, 7 real likes, 4 comments), **Marco Reyes** (surfer
+— 3-slide Baja carousel), **Priya Raman** (baker — "Day 400 of the starter.
+She's earned a name: Clint Yeastwood."), Ayla Demir, June Park, and **Kenji
+Tanaka** (pre-liked — proves projection-truth hearts without overlays). Reels
+also exposes real stored video from Nils Bergman and Theo Okafor. Mira's demo
 comment: *"Saving this palette for my kitchen reno — stunning work!"*
 Counts are integers derived from relational rows; age labels are formatted
-from authority timestamps. Local JPEGs have manifest-required alt text.
+from authority timestamps. Local image posters and stored videos have
+manifest/port-checked accessible names.
 
 ### 11.3 Example sets (canvas board)
 
@@ -1101,8 +1111,8 @@ notice bar, and profile header.
 
 ### 11.4 Demo walkthrough (play mode) and CI scripts
 
-1. Launch → loading → feed settles (tray, image, carousel, video poster,
-   Priya's post).
+1. Launch → loading → feed settles with stories and posts only from Mira and
+   accounts she follows.
 2. Like Lena's post → heart fills **and count reads 8** instantly (the
    count is computed from the overlay in post-card, §4.6), button busy; ok
    settles via piggybacked update; trace shows exactly one command.
@@ -1124,10 +1134,11 @@ notice bar, and profile header.
    Kenji pre-filled; end cap; zero further commands.
 10. Tap `lena.holt` → profile (real stats and posts); open a grid tile into
     post detail; open Followers/Following and toggle a real edge.
-11. Open a story, Search for a person, visit Reels, and return through the
-    five live bottom tabs without losing feed state.
-12. Choose an image, author caption/alt text, upload through signed Spock
-    storage, and publish it into both Feed and Mira's profile.
+11. Open a multi-frame story; move previous/next; Search accounts and caption
+    text; play a stored MP4 in Reels; save it; return through the five live
+    destinations without manufacturing a stack entry for each tab hop.
+12. Choose an image, optionally author caption/alt text, upload through signed
+    Spock storage, and publish it into both Feed and Mira's profile.
 
 **Canonical trace scripts** (one list, used by §3, CI, and goldens):
 `like-ok`, `like-refused`, `comment-ok`, `paginate`, `feed-failed`,
@@ -1329,7 +1340,7 @@ Catalog: third-party catalog exercise (mechanism specified, §10).
 | # | Challenge | Resolution |
 |---|---|---|
 | 21 | "Let authors leverage CSS; the token/layout taxonomy is verbose reinvention" | **Conceded.** Styling is web-native CSS (`class`, co-located `<style>`, tokens as custom properties); style-prop closure and the generated class system deleted; checker does shallow selector/rooting/existence checks only. Consequence, named plainly: renderer neutrality is retained for *semantics* (V) and relinquished for *styling* (CSS is web-targeted; a native renderer would need its own style layer). |
-| 22 | "Drop the layout taxonomy" | **Conceded.** `column/row/stack/grid/spacer` and every style prop removed; `view` (+`role`) is the only container; CSS does layout. The element set shrinks to nine, covering exactly what must stay checkable: interaction, content safety, a11y, observation. |
+| 22 | "Drop the layout taxonomy" | **Conceded.** `column/row/stack/grid/spacer` and every style prop removed; `view` (+`role`) is the only container; CSS does layout. The initial element set shrank to nine; later media dogfooding added the tenth, `video`, because playback, policy flags, and accessible labeling could not truthfully be represented by an image poster. |
 | 23 | "View should be extensible; users define their own widgets; core is just xml/html" | **Half-conceded.** Markup-shaped Svelte-flavored syntax adopted; catalog extension specified as first-class data (user-registered elements with full signatures + a renderer that implements them). **Held:** the element set stays closed-but-extensible, never raw HTML — `<div onclick>` must not typecheck, because event eligibility, inert user content, a11y contracts, and the corpus's invented-signature P0s all die otherwise. |
 | 24 | "Why not Svelte / build on its compiler" | Svelte's surface adopted (SFC shape, blocks, `on:`, keyed each, co-located styles); its compiler rejected as a foundation (JS-hosted semantics, spec-by-implementation, unstable AST, no Rust/wasm core). Recorded in §1. |
 | 25 | "Uhura store + uhura view" split | Adopted as the file anatomy: `store { }` is the model/controller (unchanged machine language); markup is the view. The reframe confirmed rather than changed the machine design. |

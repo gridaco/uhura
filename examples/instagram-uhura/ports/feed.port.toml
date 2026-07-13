@@ -48,6 +48,17 @@ image = "image-ref"
 caption = "text"
 posted-label = "text"
 viewer-has-viewed = "bool"
+previous = "option<id>"
+next = "option<id>"
+progress = "list<story-progress>"
+
+[types.story-progress]
+kind = "record"
+
+[types.story-progress.fields]
+id = "id"
+is-current = "bool"
+is-viewed = "bool"
 
 [types.media]
 kind = "union"
@@ -59,6 +70,7 @@ image = "image-ref"
 slides = "list<slide>"
 
 [types.media.variants.video]
+src = "asset"
 poster = "image-ref"
 
 [types.post-summary]
@@ -72,6 +84,7 @@ caption = "text"
 like-count = "int"
 comment-count = "int"
 viewer-has-liked = "bool"
+viewer-has-saved = "bool"
 # provider-formatted; core has no clock (§9.1)
 posted-label = "text"
 
@@ -122,6 +135,14 @@ payload = { post = "id" }
 refusals = ["not-authorized", "not-found"]
 
 [commands.unlike-post]
+payload = { post = "id" }
+refusals = ["not-authorized"]
+
+[commands.save-post]
+payload = { post = "id" }
+refusals = ["not-authorized", "not-found"]
+
+[commands.unsave-post]
 payload = { post = "id" }
 refusals = ["not-authorized"]
 

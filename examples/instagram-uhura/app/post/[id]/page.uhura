@@ -9,6 +9,8 @@ use port feed {
   projection viewer
   command like-post
   command unlike-post
+  command save-post
+  command unsave-post
 }
 
 param id: id
@@ -17,6 +19,8 @@ store {
   state {
     like-overlay: map[id]bool = {}
     like-pending: map[id]bool = {}
+    save-overlay: map[id]bool = {}
+    save-pending: map[id]bool = {}
     notice: text? = none
   }
 
@@ -54,11 +58,49 @@ store {
     set notice = "Couldn't update this like. Try again."
   }
 
+  on save-toggled(post: id, now-saved: bool) when now-saved && !(save-pending[post] ?? false) {
+    set save-overlay[post] = true
+    set save-pending[post] = true
+    send save-post(post: post)
+  }
+
+  on save-toggled(post: id, now-saved: bool) when !now-saved && !(save-pending[post] ?? false) {
+    set save-overlay[post] = false
+    set save-pending[post] = true
+    send unsave-post(post: post)
+  }
+
+  on save-post.ok(tag, cmd) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+  }
+
+  on save-post.err(tag, cmd, refusal) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+    set notice = "Couldn't save this post."
+  }
+
+  on unsave-post.ok(tag, cmd) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+  }
+
+  on unsave-post.err(tag, cmd, refusal) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+    set notice = "Couldn't remove this post from saved."
+  }
+
   on comments-requested(post: id) {
     open-surface comments-sheet(post: post)
   }
 
-  on author-tapped(user: id) {
+  on author-tapped(user: id) when user == viewer.id {
+    navigate replace profile(user: user)
+  }
+
+  on author-tapped(user: id) when user != viewer.id {
     navigate profile(user: user)
   }
 
@@ -71,11 +113,11 @@ store {
   }
 
   on tab-selected(section: text) when section == "feed" {
-    navigate feed()
+    navigate replace feed()
   }
 
   on tab-selected(section: text) when section == "search" {
-    navigate search()
+    navigate replace search()
   }
 
   on tab-selected(section: text) when section == "create" {
@@ -83,11 +125,11 @@ store {
   }
 
   on tab-selected(section: text) when section == "reels" {
-    navigate reels()
+    navigate replace reels()
   }
 
   on tab-selected(section: text) when section == "profile" {
-    navigate profile(user: viewer.id)
+    navigate replace profile(user: viewer.id)
   }
 
   on notice-dismissed() {
@@ -116,7 +158,7 @@ store {
       </view>
     {:when ready p}
       <scroll class="post-scroll">
-        <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} show-open={false} on:like-toggled on:comments-requested on:author-tapped on:post-tapped />
+        <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} saved={save-overlay[p.id] ?? p.viewer-has-saved} save-pending={save-pending[p.id] ?? false} show-open={false} on:like-toggled on:save-toggled on:comments-requested on:author-tapped on:post-tapped />
       </scroll>
   {/match}
   <bottom-nav current="" on:tab-selected />

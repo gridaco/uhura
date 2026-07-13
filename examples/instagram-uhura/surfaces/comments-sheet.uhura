@@ -12,6 +12,7 @@ store {
   state {
     draft: text = ""
     pending-appends: map[tag]text = {}
+    comment-pending: bool = false
     notice: text? = none
   }
 
@@ -19,18 +20,21 @@ store {
     set draft = value
   }
 
-  on submit-requested() when draft != "" {
+  on submit-requested() when draft != "" && !comment-pending {
     send add-comment(post: post, body: draft) as t
     set pending-appends[t] = draft
+    set comment-pending = true
     set draft = ""
   }
 
   on add-comment.ok(tag, cmd) {
     set pending-appends[tag] = none
+    set comment-pending = false
   }
 
   on add-comment.err(tag, cmd, refusal) {
     set pending-appends[tag] = none
+    set comment-pending = false
     set draft = cmd.body
     set notice = "Couldn't post your comment. Try again."
   }
@@ -70,7 +74,7 @@ store {
       </view>
     {:when ready t}
       <scroll class="comment-list">
-        {#if count(t.comments) == 0}
+        {#if count(t.comments) == 0 && count(pending-appends) == 0}
           <view class="fill-center stack-sm">
             <text class="empty-title">No comments yet</text>
             <text class="muted">Start the conversation.</text>
@@ -91,8 +95,8 @@ store {
   {/match}
   <view class="composer">
     <image class="avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
-    <text-field value={draft} label="Add a comment" placeholder="Add a comment…" on:change={emit composer-changed()} on:submit={emit submit-requested()} />
-    <button label="Post" disabled={draft == ""} on:press={emit submit-requested()}>
+    <text-field value={draft} label="Add a comment" placeholder="Add a comment…" disabled={comment-pending} on:change={emit composer-changed()} on:submit={emit submit-requested()} />
+    <button label="Post" disabled={draft == "" || comment-pending} busy={comment-pending} on:press={emit submit-requested()}>
       <text>Post</text>
     </button>
   </view>

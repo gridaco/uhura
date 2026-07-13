@@ -10,9 +10,12 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
+// Spock v0 caps one collection read at 200 rows. The current demo fits inside
+// that ceiling per table; snapshot-consistent pagination is deferred dogfood
+// rather than pretending a clamped response is complete.
 const SNAPSHOT_QUERY = `
   query UhuraSnapshot {
-    users: user(limit: 500) {
+    users: user(limit: 200) {
       id
       username
       display_name
@@ -20,7 +23,7 @@ const SNAPSHOT_QUERY = `
       avatar_alt
       bio
     }
-    stories: story(limit: 500) {
+    stories: story(limit: 200) {
       id
       author { id }
       position
@@ -29,12 +32,12 @@ const SNAPSHOT_QUERY = `
       caption
       published_at
     }
-    storyViews: story_view(limit: 500) {
+    storyViews: story_view(limit: 200) {
       viewer { id }
       story { id }
       at
     }
-    posts: post(limit: 500) {
+    posts: post(limit: 200) {
       id
       author { id }
       caption
@@ -42,33 +45,39 @@ const SNAPSHOT_QUERY = `
       show_in_feed
       media_kind
       media_file { id }
+      video_file { id }
       media_alt
     }
-    slides: carousel_slide(limit: 500) {
+    slides: carousel_slide(limit: 200) {
       id
       post { id }
       position
       file { id }
       alt
     }
-    comments: comment(limit: 500) {
+    comments: comment(limit: 200) {
       id
       post { id }
       author { id }
       body
       created_at
     }
-    likes: like(limit: 500) {
+    likes: like(limit: 200) {
       user { id }
       post { id }
       at
     }
-    follows: follow(limit: 500) {
+    saves: save(limit: 200) {
+      user { id }
+      post { id }
+      at
+    }
+    follows: follow(limit: 200) {
       follower { id }
       followed { id }
       at
     }
-    postTags: post_tag(limit: 500) {
+    postTags: post_tag(limit: 200) {
       post { id }
       person { id }
     }
@@ -79,6 +88,8 @@ const SNAPSHOT_QUERY = `
 const COMMAND_REFUSALS = {
   "feed/like-post": ["not-authorized", "not-found"],
   "feed/unlike-post": ["not-authorized"],
+  "feed/save-post": ["not-authorized", "not-found"],
+  "feed/unsave-post": ["not-authorized"],
   "feed/mark-story-seen": ["not-authorized", "not-found"],
   "comments/add-comment": ["not-authorized", "comment-body-invalid", "not-found"],
   "profile/follow-user": [
@@ -175,6 +186,7 @@ const COMMAND_REFUSALS = {
  * @property {boolean} show_in_feed
  * @property {"image" | "carousel" | "video"} media_kind
  * @property {GraphRef | null} media_file
+ * @property {GraphRef | null} video_file
  * @property {string | null} media_alt
  */
 
@@ -187,6 +199,7 @@ const COMMAND_REFUSALS = {
  * @property {boolean} show_in_feed
  * @property {"image" | "carousel" | "video"} media_kind
  * @property {string | null} media_file
+ * @property {string | null} video_file
  * @property {string | null} media_alt
  */
 
@@ -234,6 +247,13 @@ const COMMAND_REFUSALS = {
  */
 
 /**
+ * @typedef {Object} GraphSave
+ * @property {GraphRef} user
+ * @property {GraphRef} post
+ * @property {string} at
+ */
+
+/**
  * @typedef {Object} GraphFollow
  * @property {GraphRef} follower
  * @property {GraphRef} followed
@@ -255,6 +275,7 @@ const COMMAND_REFUSALS = {
  * @property {GraphSlide[]} slides
  * @property {GraphComment[]} comments
  * @property {GraphLike[]} likes
+ * @property {GraphSave[]} saves
  * @property {GraphFollow[]} follows
  * @property {GraphPostTag[]} postTags
  */
@@ -451,6 +472,8 @@ export function createDriver(
   const signedAssets = new Map();
   /** @type {Map<string, Promise<string>>} */
   const signingAssets = new Map();
+  /** @type {Map<string, string>} */
+  const uploadedFileNames = new Map();
 
   /** @type {Map<string, number>} */
   const revisions = new Map();
@@ -697,6 +720,7 @@ export function createDriver(
     /** @type {Map<string, CommentRow[]>} */ commentsByPost: new Map(),
     /** @type {Map<string, number>} */ likeCounts: new Map(),
     /** @type {Set<string>} */ liked: new Set(),
+    /** @type {Set<string>} */ saved: new Set(),
     /** @type {Set<string>} */ follows: new Set(),
     /** @type {Map<string, string[]>} */ followersByUser: new Map(),
     /** @type {Map<string, string[]>} */ followingByUser: new Map(),
@@ -741,6 +765,7 @@ export function createDriver(
         show_in_feed: post.show_in_feed,
         media_kind: post.media_kind,
         media_file: post.media_file?.id ?? null,
+        video_file: post.video_file?.id ?? null,
         media_alt: post.media_alt,
       }))
       .sort((left, right) => {
@@ -818,6 +843,11 @@ export function createDriver(
         .filter((like) => like.user.id === resolved?.id)
         .map((like) => like.post.id),
     );
+    db.saved = new Set(
+      data.saves
+        .filter((save) => save.user.id === resolved?.id)
+        .map((save) => save.post.id),
+    );
   }
 
   /**
@@ -864,9 +894,13 @@ export function createDriver(
       throw new Error(`post \`${post.id}\` has incomplete ${post.media_kind} media`);
     }
     const ref = { src: post.media_file, alt: post.media_alt };
-    return post.media_kind === "video"
-      ? { video: { poster: ref } }
-      : { image: { image: ref } };
+    if (post.media_kind === "video") {
+      if (post.video_file === null) {
+        throw new Error(`video post \`${post.id}\` has no playable video_file`);
+      }
+      return { video: { src: post.video_file, poster: ref } };
+    }
+    return { image: { image: ref } };
   }
 
   /**
@@ -882,6 +916,7 @@ export function createDriver(
       "like-count": db.likeCounts.get(post.id) ?? 0,
       "comment-count": (db.commentsByPost.get(post.id) ?? []).length,
       "viewer-has-liked": db.liked.has(post.id),
+      "viewer-has-saved": db.saved.has(post.id),
       "posted-label": ageLabel(post.published_at),
     };
   }
@@ -922,9 +957,20 @@ export function createDriver(
     return { id: post.id, src: post.media_file, alt: post.media_alt };
   }
 
+  /**
+   * Home is a relationship projection, not a global dump: the actor sees
+   * their own publications and publications by accounts they currently
+   * follow. Explore and reels deliberately use their own broader policies.
+   * @param {string} author
+   * @returns {boolean}
+   */
+  function isHomeAuthor(author) {
+    return author === viewerId() || db.follows.has(edgeKey(viewerId(), author));
+  }
+
   /** @returns {PostRow[]} */
   function feedPosts() {
-    return db.posts.filter((post) => post.show_in_feed);
+    return db.posts.filter((post) => post.show_in_feed && isHomeAuthor(post.author));
   }
 
   /**
@@ -934,7 +980,10 @@ export function createDriver(
    * @returns {Record<string, unknown>[]}
    */
   function storyRingsValue() {
-    const grouped = groupBy(db.stories, (story) => story.author);
+    const grouped = groupBy(
+      db.stories.filter((story) => isHomeAuthor(story.author)),
+      (story) => story.author,
+    );
     const rings = [...grouped.entries()].map(([author, stories]) => {
       stories.sort(
         (left, right) => left.position - right.position || left.id.localeCompare(right.id),
@@ -942,12 +991,18 @@ export function createDriver(
       const unseen = stories.filter(
         (story) => !db.storyViews.has(edgeKey(viewerId(), story.id)),
       );
-      const selected = unseen[0] ?? stories[0];
+      const isSelf = author === viewerId();
+      const selected = isSelf ? stories[0] : unseen[0] ?? stories[0];
       if (!selected) throw new Error(`story author \`${author}\` has no frames`);
       const newest = stories.reduce((latest, story) =>
         newestFirst(latest.published_at, story.published_at) <= 0 ? latest : story,
       );
-      return { author, selected, newest, hasUnseen: unseen.length > 0 };
+      return {
+        author,
+        selected,
+        newest,
+        hasUnseen: !isSelf && unseen.length > 0,
+      };
     });
     rings.sort((left, right) => {
       const leftSelf = left.author === viewerId() ? 1 : 0;
@@ -1001,6 +1056,14 @@ export function createDriver(
    */
   function storyValue(storyId) {
     const story = requireStory(storyId);
+    const sequence = db.stories
+      .filter((candidate) => candidate.author === story.author)
+      .sort(
+        (left, right) =>
+          left.position - right.position || left.id.localeCompare(right.id),
+      );
+    const index = sequence.findIndex((candidate) => candidate.id === story.id);
+    if (index < 0) throw new Error(`story sequence lost frame \`${story.id}\``);
     return {
       id: story.id,
       author: userRef(requireUser(story.author)),
@@ -1008,6 +1071,13 @@ export function createDriver(
       caption: story.caption ?? "",
       "posted-label": ageLabel(story.published_at),
       "viewer-has-viewed": db.storyViews.has(edgeKey(viewerId(), story.id)),
+      previous: index > 0 ? sequence[index - 1].id : null,
+      next: index + 1 < sequence.length ? sequence[index + 1].id : null,
+      progress: sequence.map((frame) => ({
+        id: frame.id,
+        "is-current": frame.id === story.id,
+        "is-viewed": db.storyViews.has(edgeKey(viewerId(), frame.id)),
+      })),
     };
   }
 
@@ -1027,15 +1097,24 @@ export function createDriver(
   function profileValue(userId) {
     const user = requireUser(userId);
     const posts = db.posts.filter((post) => post.author === userId);
+    const reels = posts.filter((post) => post.media_kind === "video");
+    const saved =
+      userId === viewerId()
+        ? db.posts.filter((post) => db.saved.has(post.id))
+        : [];
     const taggedIds = new Set(db.taggedPostsByUser.get(userId) ?? []);
     const tagged = db.posts.filter((post) => taggedIds.has(post.id));
     return {
       user: userRef(user),
       bio: user.bio ?? "",
+      "is-self": userId === viewerId(),
+      "viewer-follows": db.follows.has(edgeKey(viewerId(), userId)),
       "post-count": posts.length,
       "follower-count": (db.followersByUser.get(userId) ?? []).length,
       "following-count": (db.followingByUser.get(userId) ?? []).length,
       posts: posts.map((post) => postThumb(post)),
+      reels: reels.map((post) => postThumb(post)),
+      saved: saved.map((post) => postThumb(post)),
       tagged: tagged.map((post) => postThumb(post)),
     };
   }
@@ -1080,7 +1159,7 @@ export function createDriver(
    */
   function searchValue(query) {
     const needle = query.trim().toLocaleLowerCase();
-    const ids = [...db.users.values()]
+    const people = [...db.users.values()]
       .filter((user) => user.id !== viewerId())
       .filter(
         (user) =>
@@ -1089,7 +1168,19 @@ export function createDriver(
           user.display_name.toLocaleLowerCase().includes(needle),
       )
       .map((user) => user.id);
-    return connectionsValue(ids);
+    const posts = db.posts.filter((post) => {
+      if (needle.length === 0) return true;
+      const author = requireUser(post.author);
+      return (
+        post.caption.toLocaleLowerCase().includes(needle) ||
+        author.username.toLocaleLowerCase().includes(needle) ||
+        author.display_name.toLocaleLowerCase().includes(needle)
+      );
+    });
+    return {
+      people: connectionsValue(people).people,
+      posts: posts.map((post) => postThumb(post)),
+    };
   }
 
   /**
@@ -1116,10 +1207,53 @@ export function createDriver(
     return updates;
   }
 
+  /**
+   * Saving changes every viewer-specific rendering of a post plus the private
+   * Saved grid on the actor's own profile.
+   * @param {string} postId
+   * @returns {ProjectionUpdate[]}
+   */
+  function saveSettlementUpdates(postId) {
+    return [
+      ...postSettlementUpdates(postId, false),
+      projectionUpdate(
+        "profile",
+        "profile",
+        viewerId(),
+        profileValue(viewerId()),
+      ),
+    ];
+  }
+
+  /**
+   * A viewed edge changes the ring and every frame's progress strip in that
+   * author's sequence, so settle them as one authority snapshot.
+   * @param {string} storyId
+   * @returns {ProjectionUpdate[]}
+   */
+  function storySettlementUpdates(storyId) {
+    const author = requireStory(storyId).author;
+    return [
+      projectionUpdate("feed", "feed-page", null, feedPageValue()),
+      ...db.stories
+        .filter((story) => story.author === author)
+        .map((story) =>
+          projectionUpdate(
+            "feed",
+            "story-by-id",
+            story.id,
+            storyValue(story.id),
+          ),
+        ),
+    ];
+  }
+
   /** @returns {ProjectionUpdate[]} */
   function allSocialUpdates() {
     /** @type {ProjectionUpdate[]} */
-    const updates = [];
+    const updates = [
+      projectionUpdate("feed", "feed-page", null, feedPageValue()),
+    ];
     for (const userId of db.users.keys()) {
       updates.push(
         projectionUpdate("profile", "profile", userId, profileValue(userId)),
@@ -1131,6 +1265,20 @@ export function createDriver(
       projectionUpdate("profile", "search-results", null, searchValue(searchQuery)),
     );
     return updates;
+  }
+
+  /**
+   * The provider cannot inspect pixels, so an omitted author description gets
+   * provenance-only text rather than invented visual content.
+   * @param {string} image
+   * @returns {string}
+   */
+  function fallbackUploadAlt(image) {
+    const author = requireUser(viewerId());
+    const fileName = uploadedFileNames.get(image)?.trim();
+    return fileName
+      ? `Uploaded image “${fileName}” by ${author.display_name}`
+      : `Image uploaded by ${author.display_name}`;
   }
 
   /**
@@ -1200,6 +1348,19 @@ export function createDriver(
           outcome(command, { ok: {} }, postSettlementUpdates(post, false));
           return;
         }
+        case "feed/save-post":
+        case "feed/unsave-post": {
+          const post = payloadString(command, "post");
+          const fn = command.command === "save-post" ? "save_post" : "unsave_post";
+          const reply = await rpc(fn, { post });
+          if (reply.ok === false) {
+            outcome(command, refuseOrUnavailable(route, reply.error));
+            return;
+          }
+          await loadAll();
+          outcome(command, { ok: {} }, saveSettlementUpdates(post));
+          return;
+        }
         case "comments/add-comment": {
           const post = payloadString(command, "post");
           const body = payloadString(command, "body");
@@ -1236,10 +1397,7 @@ export function createDriver(
             return;
           }
           await loadAll();
-          outcome(command, { ok: {} }, [
-            projectionUpdate("feed", "feed-page", null, feedPageValue()),
-            projectionUpdate("feed", "story-by-id", story, storyValue(story)),
-          ]);
+          outcome(command, { ok: {} }, storySettlementUpdates(story));
           return;
         }
         case "profile/follow-user":
@@ -1285,6 +1443,7 @@ export function createDriver(
             return;
           }
           const object = await uploadFile(picked.file);
+          uploadedFileNames.set(object, picked.file.name);
           outcome(command, { ok: {} }, [
             projectionUpdate("create", "draft", null, {
               uploaded: {
@@ -1299,7 +1458,10 @@ export function createDriver(
         case "create/publish-image": {
           const image = payloadString(command, "image");
           const caption = payloadString(command, "caption");
-          const alt = payloadString(command, "alt");
+          const requestedAlt = payloadString(command, "alt");
+          const alt = requestedAlt.trim().length > 0
+            ? requestedAlt
+            : fallbackUploadAlt(image);
           const reply = await rpc("create_image_post", { image, caption, alt });
           if (reply.ok === false) {
             outcome(command, refuseOrUnavailable(route, reply.error));
@@ -1315,6 +1477,7 @@ export function createDriver(
           }
           const post = reply.result.id;
           await loadAll();
+          uploadedFileNames.delete(image);
           outcome(command, { ok: {} }, [
             projectionUpdate("feed", "feed-page", null, feedPageValue()),
             projectionUpdate(
@@ -1325,6 +1488,12 @@ export function createDriver(
             ),
             projectionUpdate("comments", "for-post", post, threadValue(post)),
             projectionUpdate("profile", "profile", viewerId(), profileValue(viewerId())),
+            projectionUpdate(
+              "profile",
+              "search-results",
+              null,
+              searchValue(searchQuery),
+            ),
             projectionUpdate("create", "draft", null, { empty: {} }),
           ]);
           return;

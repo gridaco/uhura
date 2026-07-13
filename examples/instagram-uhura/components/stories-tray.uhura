@@ -13,12 +13,14 @@ emits {
 <scroll class="stories-tray" direction="horizontal">
   <view role="list" class="ring-row">
     {#each stories as story (story.id)}
-      <region label={if story.is-self then "View your story" else "View " ++ story.user.username ++ "'s story"} on:activate={emit story-tapped(story: story.id)}>
-        <view class="ring-item">
-          <image class={if story.has-unseen then "ring unseen" else "ring seen"} src={story.user.avatar.src} alt={story.user.avatar.alt} />
-          <text class="ring-name">{if story.is-self then "Your story" else story.user.username}</text>
-        </view>
-      </region>
+      <view class="ring-list-item">
+        <region label={if story.is-self then "View your story" else "View " ++ story.user.username ++ "'s story"} on:activate={emit story-tapped(story: story.id)}>
+          <view class="ring-item">
+            <image class={if story.has-unseen then "ring unseen" else "ring seen"} src={story.user.avatar.src} alt={story.user.avatar.alt} />
+            <text class="ring-name">{if story.is-self then "Your story" else story.user.username}</text>
+          </view>
+        </region>
+      </view>
     {/each}
   </view>
 </scroll>
@@ -26,6 +28,7 @@ emits {
 <style>
 .stories-tray { border-block-end: 1px solid var(--color-line); }
 .stories-tray .ring-row { display: flex; gap: var(--space-4); padding: var(--space-3) var(--space-4); }
+.stories-tray .ring-list-item { flex: none; }
 .stories-tray .ring-item { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); }
 .stories-tray .ring { inline-size: 56px; block-size: 56px; border-radius: var(--radius-full); object-fit: cover; padding: 2px; }
 .stories-tray .unseen { border: 2px solid var(--color-accent); }

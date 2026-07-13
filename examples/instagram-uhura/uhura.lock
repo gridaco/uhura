@@ -1,7 +1,7 @@
 # uhura.lock — canonical contract pins (§9.1). `uhura check` writes this
 # file when absent and errors on drift; delete it to re-pin intentionally.
-catalog base 0.1.0 sha256:120729b4cd31a07275d76ee2184ae989ed949c6544d1243cb29f42dfd65520d3
+catalog base 0.1.0 sha256:d1eacd3f2b244c3fca30144c7e83d9f161a292a31155098e447b45fb2413cb19
 port comments 0.1.0 sha256:3ab0bd261953917213e4932eb3ca62731f25452183b713a7776f61ccc2ffadc8
 port create 0.1.0 sha256:ff8666517391bcd8d87efcbfb2d1862af25ec9757f2fb280918fd852e5eb0731
-port feed 0.1.0 sha256:086cbfac930aefece8171d95baf48da324b3e8debd1f39124995721fc6159523
-port profile 0.1.0 sha256:f8fd20847d5a7da333c4de9ef7a86b5401ce5b8cc022547ed463e4b7471cea0a
+port feed 0.1.0 sha256:8a34a68363cc0492734a233c04bd0bbfd6d73cf4589ede56658a1743361e600d
+port profile 0.1.0 sha256:73e13ebb6b0cbb11b5331523430ca2f635f3d335456cfb1baa6f3307c12ae814

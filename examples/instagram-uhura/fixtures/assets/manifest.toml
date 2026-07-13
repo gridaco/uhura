@@ -4,6 +4,9 @@
 #   cargo run -p uhura-cli --bin gen-assets -- examples/instagram
 # Motifs: duotone (avatars), glaze (tile grids), wave, aurora, crumb
 # (speckle), field (soft gradient blocks). Same seed → same bytes.
+# Play-only `media-*.mp4` files intentionally sit beside this manifest rather
+# than becoming generator entries: `gen-assets` emits JPEGs, while the static
+# Canvas projects each video's listed poster and never embeds its source.
 
 # ── avatars (96×96) ─────────────────────────────────────────────────────
 

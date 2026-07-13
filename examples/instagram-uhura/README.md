@@ -1,15 +1,16 @@
 # Instagram — Uhura client slice
 
 This is the Uhura client half of the live Instagram example. It has a paged
-feed, real post and relationship counts, clickable profile and tagged grids
-with post details, viewable stories, follower/following lists with follow controls,
-people search, poster-based Reels, comments, optimistic likes, and
-single-image post creation. Every displayed count comes from post, like,
-comment, or follow rows rather than a seeded headline. The same checked
+feed filtered by the active actor's follow graph, real aggregate counts,
+clickable profile/Post/Reels/Saved/tagged grids, multi-frame stories,
+follower/following lists with follow controls, Search/Explore, playable stored
+Reels, comments, optimistic likes and private saves, and single-image post
+creation. Every displayed count comes from post, like, comment, or follow rows
+rather than a seeded headline. The same checked
 program has two deliberately separate data paths:
 
 - `uhura play` uses the app-owned provider in `providers/spock.js`.
-  It reads authority truth through Spock GraphQL, signs image downloads and
+  It reads authority truth through Spock GraphQL, signs image and video downloads and
   uploads selected files through Spock storage, and sends domain commands
   through Spock RPC.
 - `uhura editor` builds and hosts the read-only Canvas; examples, checks, and
@@ -41,12 +42,12 @@ cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
 ```
 
 Open <http://127.0.0.1:8787/>. The Play toolbar can restart the UI session,
-switch between the 390 × 844 Mobile and 1280 × 800 Desktop frames, select any
-seeded Spock actor, and switch between Remote and Fixture providers. Live play
-defaults to Mira and to the configured Spock endpoints in `uhura.toml`.
+switch between the 390 × 844 Mobile and 1280 × 800 Desktop frames, and select
+any seeded Spock actor. The app runs exclusively against the configured Spock
+provider; live play defaults to Mira and to the endpoints in `uhura.toml`.
 The Mobile/Desktop frame is Play-chrome preference state persisted in browser
-local storage. Provider and actor selections are tab-local session-storage
-state. Play never reads or rewrites the application's query parameters for any
+local storage. Actor selection is tab-local session-storage state. Play never
+reads or rewrites the application's query parameters for any
 of these controls, so the URL remains entirely available to the real Uhura app.
 
 Restart creates a clean Uhura UI session; it does not reset or roll back Spock
@@ -55,15 +56,17 @@ data. Actor selection is local prototype impersonation over the demo's
 is a visual frame in this placeholder host; true browser viewport/media-query
 emulation is intentionally deferred.
 
-To inspect the scripted test double, select Fixture in the toolbar. That
-override is intentionally bounded to the canonical trace walkthrough; the
-default Spock provider is the complete all-controls Play experience.
+The strict fixture script is intentionally bounded to deterministic Canvas,
+check, and trace walkthroughs, so it is not offered as a Play provider. This
+keeps every valid control in the interactive Instagram demo Spock-backed.
 
 Use the Create tab to choose a JPEG, PNG, or WebP file. Play sends the bytes
 directly to Spock's signed upload URL, then publishes the returned object id
-through `create_image_post`; the post appears first in the feed and in Mira's
-profile grid. Spock's demo database is in memory by default and starts from
-the seed on each server restart.
+through `create_image_post`; the post appears first in the active actor's feed
+and profile grid. Captions and authored alternative text are optional; the
+provider supplies a stable descriptive fallback when alternative text is left
+blank. Spock's demo database is in memory by default and starts from the seed
+on each server restart.
 
 This is intentionally a local v0 integration seam, not an authorization
 boundary: `X-Spock-Actor` is forgeable, the data floor is open, and storage v0

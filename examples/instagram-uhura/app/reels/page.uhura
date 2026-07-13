@@ -2,19 +2,23 @@ page
 
 use component bottom-nav
 use component notice-bar
-use component post-card
+use component reel-card
 use surface comments-sheet
 use port feed {
   projection reels
   projection viewer
   command like-post
   command unlike-post
+  command save-post
+  command unsave-post
 }
 
 store {
   state {
     like-overlay: map[id]bool = {}
     like-pending: map[id]bool = {}
+    save-overlay: map[id]bool = {}
+    save-pending: map[id]bool = {}
     notice: text? = none
   }
 
@@ -52,11 +56,49 @@ store {
     set notice = "Couldn't update this like."
   }
 
+  on save-toggled(post: id, now-saved: bool) when now-saved && !(save-pending[post] ?? false) {
+    set save-overlay[post] = true
+    set save-pending[post] = true
+    send save-post(post: post)
+  }
+
+  on save-toggled(post: id, now-saved: bool) when !now-saved && !(save-pending[post] ?? false) {
+    set save-overlay[post] = false
+    set save-pending[post] = true
+    send unsave-post(post: post)
+  }
+
+  on save-post.ok(tag, cmd) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+  }
+
+  on save-post.err(tag, cmd, refusal) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+    set notice = "Couldn't save this reel."
+  }
+
+  on unsave-post.ok(tag, cmd) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+  }
+
+  on unsave-post.err(tag, cmd, refusal) {
+    set save-pending[cmd.post] = none
+    set save-overlay[cmd.post] = none
+    set notice = "Couldn't remove this reel from saved."
+  }
+
   on comments-requested(post: id) {
     open-surface comments-sheet(post: post)
   }
 
-  on author-tapped(user: id) {
+  on author-tapped(user: id) when user == viewer.id {
+    navigate replace profile(user: user)
+  }
+
+  on author-tapped(user: id) when user != viewer.id {
     navigate profile(user: user)
   }
 
@@ -65,11 +107,11 @@ store {
   }
 
   on tab-selected(section: text) when section == "feed" {
-    navigate feed()
+    navigate replace feed()
   }
 
   on tab-selected(section: text) when section == "search" {
-    navigate search()
+    navigate replace search()
   }
 
   on tab-selected(section: text) when section == "create" {
@@ -77,11 +119,7 @@ store {
   }
 
   on tab-selected(section: text) when section == "profile" {
-    navigate profile(user: viewer.id)
-  }
-
-  on tab-selected(section: text) when section == "reels" {
-    navigate reels()
+    navigate replace profile(user: viewer.id)
   }
 
   on notice-dismissed() {
@@ -92,7 +130,6 @@ store {
 <view class="screen reels-page">
   <view class="reels-head">
     <text class="title">Reels</text>
-    <text class="muted">Poster previews from real posts</text>
   </view>
   {#if notice != none}
     <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
@@ -116,7 +153,7 @@ store {
         <scroll class="reels-scroll">
           <view role="list" class="reel-list">
             {#each r.posts as p (p.id)}
-              <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} show-open={true} on:like-toggled on:comments-requested on:author-tapped on:post-tapped />
+              <reel-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} saved={save-overlay[p.id] ?? p.viewer-has-saved} save-pending={save-pending[p.id] ?? false} on:like-toggled on:save-toggled on:comments-requested on:author-tapped on:post-tapped />
             {/each}
           </view>
         </scroll>
@@ -126,7 +163,12 @@ store {
 </view>
 
 <style>
-.reels-page .reels-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-line); }
-.reels-page .reels-scroll { flex: 1; min-block-size: 0; }
-.reels-page .reel-list { display: flex; flex-direction: column; gap: var(--space-6); padding-block: var(--space-3); }
+.reels-page { position: relative; background: #050505; }
+.reels-page .reels-head { position: absolute; inset: 0 0 auto; z-index: 4; padding: var(--space-4); color: #fff; background: linear-gradient(to bottom, rgba(0,0,0,.55), transparent); pointer-events: none; }
+.reels-page > .notice-bar { position: absolute; inset: 52px 0 auto; z-index: 7; color: var(--color-ink); }
+.reels-page .muted { color: rgba(255,255,255,.8); }
+.reels-page .reels-scroll { flex: 1; min-block-size: 0; scroll-snap-type: y mandatory; scroll-behavior: smooth; overscroll-behavior-y: contain; scrollbar-width: none; }
+.reels-page .reel-list { display: flex; flex-direction: column; block-size: 100%; }
+.reels-page .reel-list > * { flex: 0 0 100%; min-block-size: 100%; }
+.reels-page .bottom-nav { position: absolute; inset: auto 0 0; z-index: 5; color: #fff; background: linear-gradient(to top, rgba(0,0,0,.7), transparent); border-block-start: 0; }
 </style>
