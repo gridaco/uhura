@@ -32,6 +32,15 @@ function setAttr(el, name, value) {
   else if (el.getAttribute(name) !== value) el.setAttribute(name, value);
 }
 
+/** @param {HTMLElement} el @param {string} name @param {boolean} enabled */
+function setBooleanAttr(el, name, enabled) {
+  if (enabled) {
+    if (!el.hasAttribute(name)) el.setAttribute(name, "");
+  } else {
+    el.removeAttribute(name);
+  }
+}
+
 /**
  * The DOM tag an element renders as (everything else is a div).
  * @param {string} element
@@ -44,6 +53,8 @@ export function tagFor(element) {
       return "span";
     case "button":
       return "button";
+    case "video":
+      return "video";
     default:
       return "div";
   }
@@ -121,6 +132,36 @@ export function applyProps(el, node, ctx) {
         setAttr(el, "aria-label", textOf(props["alt"]));
         setAttr(el, "aria-hidden", undefined);
       }
+      break;
+    }
+
+    case "video": {
+      const video = /** @type {HTMLVideoElement} */ (el);
+      const autoplay = boolOf(props["autoplay"]);
+      const muted = boolOf(props["muted"]);
+      const loop = boolOf(props["loop"]);
+      const controls = boolOf(props["controls"]);
+      const playsInline = boolOf(props["playsinline"]);
+
+      // Apply policy flags before `src`: autoplay eligibility is evaluated as
+      // media selection starts, and browsers require autoplaying video to be
+      // muted in the common case. Set attributes for faithful DOM semantics
+      // and properties for the current playback state (`muted` in particular
+      // is not merely a reflected content attribute).
+      setBooleanAttr(video, "autoplay", autoplay);
+      setBooleanAttr(video, "muted", muted);
+      setBooleanAttr(video, "loop", loop);
+      setBooleanAttr(video, "controls", controls);
+      setBooleanAttr(video, "playsinline", playsInline);
+      video.autoplay = autoplay;
+      video.muted = muted;
+      video.loop = loop;
+      video.controls = controls;
+      video.playsInline = playsInline;
+      setAttr(video, "aria-label", textOf(props["label"]));
+
+      ctx.assets.applyVideoPoster(video, assetOf(props["poster"]));
+      ctx.assets.applyVideoSource(video, assetOf(props["src"]));
       break;
     }
 

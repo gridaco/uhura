@@ -14,7 +14,8 @@ pub struct StepTrace {
     pub applies: Vec<serde_json::Value>,
     pub disposition: Disposition,
     /// Structural ops in application order (`init`, `open-surface`,
-    /// `already-open`, `dismiss`, `navigate`, `back`, `nav-underflow`).
+    /// `already-open`, `dismiss`, `navigate`, `replace`, `back`,
+    /// `nav-underflow`).
     pub structural: Vec<serde_json::Value>,
     /// Emitted command envelopes, wire form.
     pub c: Vec<serde_json::Value>,

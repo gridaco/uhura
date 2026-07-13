@@ -462,6 +462,23 @@ fn node_html(node: &Node, parent_is_list: bool) -> String {
             }
             format!("<div{attrs}></div>")
         }
+        "video" => {
+            // Canvas is a static, network-free projection: render the poster
+            // rather than a media element that could load or autoplay. The
+            // semantic label keeps the inert preview meaningful to AT.
+            if let Some(poster) = prop_text("poster") {
+                let _ = write!(
+                    attrs,
+                    " style=\"background-image: var(--asset-{})\"",
+                    esc(&poster)
+                );
+            }
+            if let Some(label) = prop_text("label") {
+                let _ = write!(attrs, " role=\"img\" aria-label=\"{}\"", esc(&label));
+            }
+            attrs.push_str(" data-video-preview=\"poster\"");
+            format!("<div{attrs}></div>")
+        }
         "icon" => {
             let name = prop_text("name").unwrap_or_default();
             let glyph = icons::glyph(&name).unwrap_or(
@@ -533,7 +550,12 @@ fn descriptor_note(on: &[Descriptor]) -> Option<String> {
 }
 
 fn collect_assets(node: &Node, out: &mut BTreeSet<String>) {
-    for value in node.props.values() {
+    for (name, value) in &node.props {
+        // A Canvas never embeds or fetches playable media. Video `poster`
+        // remains an ordinary image asset; its `src` is Play-only.
+        if node.element.as_str() == "video" && name.as_str() == "src" {
+            continue;
+        }
         if let VValue::Image(asset) = value {
             out.insert(asset.clone());
         }
@@ -579,6 +601,7 @@ body.uhura-canvas { font: 14px/1.45 -apple-system, "Segoe UI", sans-serif; backg
 .uh-scroll[data-direction="horizontal"] { overflow-x: auto; overflow-y: hidden; }
 .uh-text { margin: 0; overflow-wrap: anywhere; }
 .uh-image { background-size: cover; background-position: center; background-color: #d9d9de; display: block; }
+.uh-video { display: block; inline-size: 100%; background: #111 center / cover no-repeat; object-fit: cover; }
 .uh-icon { display: inline-flex; }
 .uh-icon svg { display: block; }
 button.uh-button { appearance: none; background: none; border: 0; padding: 6px; font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; }
@@ -647,9 +670,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use uhura_base::Ident;
-    use uhura_core::view::Node;
+    use uhura_core::view::{Node, VValue};
 
-    use super::{FrameContent, FrameKind, PreviewFrame, render_canvas};
+    use super::{Asset, FrameContent, FrameKind, PreviewFrame, render_canvas};
 
     fn frame(kind: FrameKind, subject: &str, example: &str) -> PreviewFrame {
         PreviewFrame {
@@ -757,5 +780,63 @@ mod tests {
         assert!(canvas.contains("aria-labelledby=\"preview-frame-0-caption\""));
         assert!(canvas.contains("role=\"button\" tabindex=\"0\" aria-pressed=\"false\""));
         assert_eq!(canvas.matches("class=\"navigator-group\"").count(), 2);
+    }
+
+    #[test]
+    fn canvas_renders_a_video_as_an_inert_poster_without_embedding_its_source() {
+        let props = BTreeMap::from([
+            (
+                Ident::new("src").expect("valid prop"),
+                VValue::Image("clip-aurora".to_string()),
+            ),
+            (
+                Ident::new("poster").expect("valid prop"),
+                VValue::Image("poster-aurora".to_string()),
+            ),
+            (
+                Ident::new("label").expect("valid prop"),
+                VValue::Plain("Aurora <above> the fjord".to_string()),
+            ),
+            (
+                Ident::new("autoplay").expect("valid prop"),
+                VValue::Bool(true),
+            ),
+        ]);
+        let frame = PreviewFrame {
+            kind: FrameKind::Component,
+            subject: "Video".to_string(),
+            example: "poster".to_string(),
+            is_default: true,
+            pinned: false,
+            derived: false,
+            in_flight: 0,
+            from: None,
+            note: None,
+            content: FrameContent::Fragment(Node {
+                key: "video".to_string(),
+                element: Ident::new("video").expect("valid element"),
+                class: Some("hero".to_string()),
+                props,
+                children: Vec::new(),
+                on: Vec::new(),
+            }),
+        };
+        let assets = BTreeMap::from([(
+            "poster-aurora".to_string(),
+            Asset {
+                data_uri: "data:image/jpeg;base64,poster".to_string(),
+                alt: "Aurora poster".to_string(),
+            },
+        )]);
+
+        let canvas = render_canvas("Demo", &[frame], "", &assets);
+
+        assert!(canvas.contains("--asset-poster-aurora: url(\"data:image/jpeg;base64,poster\")"));
+        assert!(!canvas.contains("--asset-clip-aurora"));
+        assert!(!canvas.contains("<video"));
+        assert!(canvas.contains("class=\"uh-video hero\""));
+        assert!(canvas.contains("background-image: var(--asset-poster-aurora)"));
+        assert!(canvas.contains("role=\"img\" aria-label=\"Aurora &lt;above&gt; the fjord\""));
+        assert!(canvas.contains("data-video-preview=\"poster\""));
     }
 }

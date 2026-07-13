@@ -284,6 +284,7 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
             let provider_js = read(&provider.module)?;
             let provider_hash = sha256_hex(provider_js.as_bytes());
             let play_json = to_canonical_json(&serde_json::json!({
+                "allow_fixture": profile.allow_fixture,
                 "provider": {
                     "kind": "module",
                     "module": format!("/provider.js?sha256={provider_hash}"),
@@ -294,6 +295,7 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
         }
         None => (
             to_canonical_json(&serde_json::json!({
+                "allow_fixture": true,
                 "provider": { "kind": "fixture" },
             })),
             None,
@@ -659,6 +661,7 @@ fn ct(ext: &str) -> String {
         "json" => "application/json; charset=utf-8",
         "wasm" => "application/wasm",
         "jpg" | "jpeg" => "image/jpeg",
+        "mp4" => "video/mp4",
         "svg" => "image/svg+xml",
         _ => "application/octet-stream",
     }
@@ -673,7 +676,7 @@ fn header(name: &str, value: &str) -> tiny_http::Header {
 mod tests {
     use std::sync::Arc;
 
-    use super::{EntryDocument, HostEntry, play_document, split_request_url};
+    use super::{EntryDocument, HostEntry, ct, play_document, split_request_url};
 
     #[test]
     fn editor_and_dedicated_play_have_distinct_entry_routes() {
@@ -706,5 +709,10 @@ mod tests {
         assert!(!dedicated.contains("Return to Uhura Editor"));
         assert!(!editor.contains("uhura-editor-navigation"));
         assert!(editor.contains("Return to Uhura Editor"));
+    }
+
+    #[test]
+    fn fixture_video_assets_are_served_as_mp4() {
+        assert_eq!(ct("mp4"), "video/mp4");
     }
 }

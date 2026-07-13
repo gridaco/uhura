@@ -29,6 +29,10 @@ pub struct Manifest {
 pub struct PlayProfile {
     pub fixture: Ident,
     pub script: Ident,
+    /// Whether the deterministic fixture driver is selectable in the browser
+    /// Play shell. It remains available to checks, previews, and traces even
+    /// when this is false.
+    pub allow_fixture: bool,
     /// A live provider used only by the play shell. The fixture and script
     /// remain required because checks, previews, and traces keep using them.
     pub provider: Option<PlayProvider>,
@@ -161,7 +165,7 @@ pub fn load_manifest(text: &str) -> Result<Manifest, Vec<ManifestIssue>> {
                 continue;
             };
             for key in profile.keys() {
-                if !["fixture", "script", "provider"].contains(&key.as_str()) {
+                if !["fixture", "script", "allow_fixture", "provider"].contains(&key.as_str()) {
                     push(
                         &mut issues,
                         &format!("{path}.{key}"),
@@ -179,13 +183,33 @@ pub fn load_manifest(text: &str) -> Result<Manifest, Vec<ManifestIssue>> {
                 &format!("{path}.script"),
                 profile.get("script"),
             );
+            let allow_fixture = match profile.get("allow_fixture") {
+                None => true,
+                Some(toml::Value::Boolean(value)) => *value,
+                Some(_) => {
+                    push(
+                        &mut issues,
+                        &format!("{path}.allow_fixture"),
+                        "expected a boolean".into(),
+                    );
+                    true
+                }
+            };
             let provider = parse_play_provider(&mut issues, &path, profile.get("provider"));
+            if !allow_fixture && profile.get("provider").is_none() {
+                push(
+                    &mut issues,
+                    &format!("{path}.allow_fixture"),
+                    "cannot be false without a live provider".into(),
+                );
+            }
             if let (Some(fixture), Some(script)) = (fixture, script) {
                 play.insert(
                     profile_name,
                     PlayProfile {
                         fixture,
                         script,
+                        allow_fixture,
                         provider,
                     },
                 );

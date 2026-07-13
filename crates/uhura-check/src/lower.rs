@@ -607,6 +607,10 @@ impl LowerCtx<'_> {
                     route: Ident::new(name).ok()?,
                     args: self.lower_args(args),
                 }),
+                ast::NavTarget::Replace { name, args } => Some(ir::StmtIr::NavigateReplace {
+                    route: Ident::new(name).ok()?,
+                    args: self.lower_args(args),
+                }),
             },
         }
     }

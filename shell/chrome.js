@@ -22,6 +22,7 @@ const frameSizer = required("uh-frame-sizer");
 const frameLabel = required("uh-frame-label");
 const frameButtons = [...document.querySelectorAll("[data-uh-frame]")];
 const runtimeStatus = required("uh-runtime-status");
+const providerControl = required("uh-provider-control");
 /** @type {HTMLSelectElement} */
 const providerSelect = /** @type {HTMLSelectElement} */ (required("uh-provider-select"));
 /** @type {HTMLSelectElement} */
@@ -96,6 +97,7 @@ function renderStatus(state, message) {
 function renderSystem(system) {
   renderStatus(system.status, system.error);
   restart.disabled = system.status === "starting";
+  providerControl.hidden = system.providers.length < 2;
 
   const priorProvider = providerSelect.value;
   clearOptions(providerSelect);

@@ -53,12 +53,16 @@ impl StepResult {
     }
 }
 
-/// Host intents (§7.4): the machine owns `nav`; the host's history moves
-/// only via these. The spike shell executes them as no-ops — the contract
-/// stays visible in `T`.
+/// Host intents (§7.4): the machine owns `nav`; a host's physical history
+/// moves only via these. The spike shell mirrors page-instance identity but
+/// deliberately leaves browser URL/history policy to a fuller host.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntentEnvelope {
     HistoryPush {
+        route: Ident,
+        params: BTreeMap<Ident, Value>,
+    },
+    HistoryReplace {
         route: Ident,
         params: BTreeMap<Ident, Value>,
     },
@@ -75,6 +79,14 @@ impl IntentEnvelope {
         match self {
             IntentEnvelope::HistoryPush { route, params } => serde_json::json!({
                 "intent": "history-push",
+                "route": route.to_string(),
+                "params": params
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_json()))
+                    .collect::<serde_json::Map<_, _>>(),
+            }),
+            IntentEnvelope::HistoryReplace { route, params } => serde_json::json!({
+                "intent": "history-replace",
                 "route": route.to_string(),
                 "params": params
                     .iter()
@@ -709,6 +721,13 @@ impl<'a> Machine<'a> {
                             params,
                         });
                     }
+                    ir::StmtIr::NavigateReplace { route, args } => {
+                        let params = eval_args(args, &txn, &bindings)?;
+                        txn.ops.push(StagedOp::Replace {
+                            route: route.clone(),
+                            params,
+                        });
+                    }
                     ir::StmtIr::NavigateBack => txn.ops.push(StagedOp::Back),
                 }
                 Ok(())
@@ -800,6 +819,34 @@ impl<'a> Machine<'a> {
                     state: initial_state(def),
                 });
                 self.i.push(IntentEnvelope::HistoryPush { route, params });
+            }
+            StagedOp::Replace { route, params } => {
+                let def = self
+                    .p
+                    .pages
+                    .get(&route)
+                    .ok_or_else(|| EvalError(format!("no page for route `{route}`")))?;
+                let serial = self.u.counters.mint_page();
+                let replaced =
+                    self.u.nav.last_mut().ok_or_else(|| {
+                        EvalError("cannot replace an empty navigation stack".into())
+                    })?;
+                let from = replaced.route.clone();
+                *replaced = NavEntry {
+                    serial,
+                    route: route.clone(),
+                    params: params.clone(),
+                    state: initial_state(def),
+                };
+                self.sweep_orphans();
+                self.structural.push(serde_json::json!({
+                    "op": "replace",
+                    "from": from.to_string(),
+                    "route": route.to_string(),
+                    "serial": serial,
+                }));
+                self.i
+                    .push(IntentEnvelope::HistoryReplace { route, params });
             }
             StagedOp::Back => {
                 if self.u.nav.len() < 2 {
@@ -1041,6 +1088,10 @@ enum StagedOp {
         route: Ident,
         params: BTreeMap<Ident, Value>,
     },
+    Replace {
+        route: Ident,
+        params: BTreeMap<Ident, Value>,
+    },
     Back,
 }
 
@@ -1274,6 +1325,9 @@ impl FragmentMachine {
                 ir::StmtIr::OpenSurface { .. } => Err(Stop::Internal("open-surface".to_string())),
                 ir::StmtIr::Dismiss => Err(Stop::Internal("dismiss".to_string())),
                 ir::StmtIr::Navigate { .. } => Err(Stop::Internal("navigate".to_string())),
+                ir::StmtIr::NavigateReplace { .. } => {
+                    Err(Stop::Internal("navigate replace".to_string()))
+                }
                 ir::StmtIr::NavigateBack => Err(Stop::Internal("navigate back".to_string())),
             })();
             match result {
@@ -1285,6 +1339,7 @@ impl FragmentMachine {
                         ir::StmtIr::OpenSurface { .. }
                             | ir::StmtIr::Dismiss
                             | ir::StmtIr::Navigate { .. }
+                            | ir::StmtIr::NavigateReplace { .. }
                             | ir::StmtIr::NavigateBack
                     ) =>
                 {
@@ -1292,6 +1347,7 @@ impl FragmentMachine {
                         ir::StmtIr::OpenSurface { .. } => "open-surface",
                         ir::StmtIr::Dismiss => "dismiss",
                         ir::StmtIr::Navigate { .. } => "navigate",
+                        ir::StmtIr::NavigateReplace { .. } => "navigate replace",
                         ir::StmtIr::NavigateBack => "navigate back",
                         _ => unreachable!(),
                     };

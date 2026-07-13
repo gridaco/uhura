@@ -265,6 +265,10 @@ pub enum StmtIr {
         route: Ident,
         args: Vec<ArgIr>,
     },
+    NavigateReplace {
+        route: Ident,
+        args: Vec<ArgIr>,
+    },
     NavigateBack,
 }
 

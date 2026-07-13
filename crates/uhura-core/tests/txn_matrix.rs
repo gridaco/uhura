@@ -6,7 +6,7 @@
 //!   not-ready after a write / after a send (atomic abort: no writes, no
 //!   pending, no commands, counters rolled back), clean commit per
 //!   statement kind (set field / set map / send-with-bind / open-surface /
-//!   dismiss / navigate / back);
+//!   dismiss / navigate / replace / back);
 //! - scope: the same txn rules from page and surface origin;
 //! - acceptance (§7.2, in order): stale-scope, occluded, ineligible —
 //!   with stale `view_rev` ACCEPTED;
@@ -17,7 +17,7 @@
 //!   origin ⇒ `stale-outcome` with pending removed;
 //! - structure: idempotent open per (definition, canonical context),
 //!   dismiss + FocusRestore when topmost, navigate/back with History
-//!   intents, force-close cascade, nav underflow;
+//!   intents, replace-with-fresh-state, force-close cascade, nav underflow;
 //! - `rev + 1` always — commits, aborts, and every drop.
 
 use std::collections::BTreeMap;
@@ -328,6 +328,7 @@ fn program() -> ProgramIr {
             (ident("panel-send"), vec![]),
             (ident("panel-stall"), vec![]),
             (ident("panel-back"), vec![]),
+            (ident("panel-replace"), vec![]),
             (ident("reopen"), vec![]),
             (ident("respawn"), vec![]),
         ]),
@@ -378,6 +379,15 @@ fn program() -> ProgramIr {
                     set("c", None, E::Int(99)),
                     set("c", None, E::ProjectionRef(ident("spare-proj"))),
                 ],
+            ),
+            handler(
+                "panel-replace",
+                &[],
+                None,
+                vec![ir::StmtIr::NavigateReplace {
+                    route: ident("home"),
+                    args: vec![],
+                }],
             ),
         ],
         root: view_root(vec![]),
@@ -1090,6 +1100,56 @@ fn navigate_pushes_and_back_pops_with_history_intents() {
             .any(|i| i.to_json()["intent"] == "history-back"),
         "{:?}",
         back.i
+    );
+}
+
+#[test]
+fn replace_keeps_depth_but_mints_fresh_page_state_and_closes_surfaces() {
+    let p = program();
+    let bumped = run(
+        &p,
+        booted(&p),
+        ui("bump", "page:1", serde_json::json!({}), 1),
+    )
+    .u;
+    assert_eq!(page_state(&bumped, "n"), &Value::Int(1));
+    let opened = open_panel(&p, bumped, "a").u;
+
+    let replaced = run(
+        &p,
+        opened,
+        ui("panel-replace", "surface:1", serde_json::json!({}), 3),
+    );
+    assert_eq!(replaced.u.nav.len(), 1, "replace preserves stack depth");
+    assert_eq!(replaced.u.nav[0].route, ident("home"));
+    assert_eq!(replaced.u.nav[0].serial, 2, "replace mints a page instance");
+    assert_eq!(
+        page_state(&replaced.u, "n"),
+        &Value::Int(0),
+        "even same-route replace starts from initial state"
+    );
+    assert!(
+        replaced.u.surfaces.is_empty(),
+        "surfaces opened by the replaced page force-close"
+    );
+    assert!(
+        replaced
+            .t
+            .structural
+            .iter()
+            .any(|op| op["op"] == "force-close"),
+        "surface closure remains visible in the trace: {:?}",
+        replaced.t.structural
+    );
+    assert!(
+        replaced.i.iter().any(|intent| {
+            let json = intent.to_json();
+            json["intent"] == "history-replace"
+                && json["route"] == "home"
+                && json["params"] == serde_json::json!({})
+        }),
+        "history replacement intent: {:?}",
+        replaced.i
     );
 }
 

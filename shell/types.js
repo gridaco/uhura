@@ -25,9 +25,29 @@
 
 /**
  * §8.1 value: bool | int | bare token | inert human text | asset ref.
+ * The wire tag remains `image` for protocol compatibility, but the value is
+ * an opaque asset reference: both image and video semantic props use it.
+ * @typedef {{ t: "image", asset: string }} AssetValue
+ */
+
+/**
  * @typedef {boolean | number | string
  *   | { t: "plain", v: string }
- *   | { t: "image", asset: string }} VValue
+ *   | AssetValue} VValue
+ */
+
+/**
+ * Semantic props understood by the generic Play video renderer. Catalogs
+ * decide which are required; absent booleans are false.
+ * @typedef {Object} VideoProps
+ * @property {AssetValue} src
+ * @property {AssetValue} [poster]
+ * @property {string | { t: "plain", v: string }} label
+ * @property {boolean} [autoplay]
+ * @property {boolean} [muted]
+ * @property {boolean} [loop]
+ * @property {boolean} [controls]
+ * @property {boolean} [playsinline]
  */
 
 /**
@@ -82,7 +102,11 @@
  *   | { kind: "module", module: string, config: Record<string, string> }} PlayProvider
  */
 
-/** @typedef {{ provider: PlayProvider }} PlayConfig */
+/**
+ * `allow_fixture` controls only whether Fixture is a browser Play provider.
+ * Fixture artifacts remain available to Canvas, checking, and trace.
+ * @typedef {{ provider: PlayProvider, allow_fixture?: boolean }} PlayConfig
+ */
 
 /** @typedef {"starting" | "ready" | "error"} SystemStatus */
 /** @typedef {"remote" | "fixture"} ProviderMode */
@@ -137,9 +161,10 @@
  */
 
 /**
- * A host intent (§7.4) — the spike shell executes `focus-restore` and
- * treats history intents as visible no-ops.
+ * A host intent (§7.4) — the shell mirrors navigation intents for page
+ * instance identity while leaving physical URL/history policy to a host.
  * @typedef {{ intent: "history-push", route: string, params: Record<string, unknown> }
+ *   | { intent: "history-replace", route: string, params: Record<string, unknown> }
  *   | { intent: "history-back" }
  *   | { intent: "focus-restore", "key-path": string }} Intent
  */

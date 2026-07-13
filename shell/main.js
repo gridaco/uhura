@@ -9,6 +9,7 @@ import init, { FixtureDriver, Session, protocols } from "/wasm/uhura_wasm.js";
 import { createAssets } from "./assets.js";
 import * as focus from "./focus.js";
 import { createOverlay } from "./overlay.js";
+import { selectPlayProvider } from "./play-provider-selection.js";
 import { createPump, providerMsgToEvent } from "./pump.js";
 import { createProviderHost } from "./provider-host.js";
 import { createReconciler, findScope } from "./reconciler.js";
@@ -182,25 +183,19 @@ async function boot() {
   // auth actor are tab-local shell state and never enter the app's URL.
   /** @type {import("./types.js").PlayConfig} */
   const play = JSON.parse(playText);
-  const hasRemote = play.provider.kind === "module";
   const storedProvider = sessionStorage.getItem(SYSTEM_PROVIDER_STORAGE_KEY);
-  const providerOverride =
-    storedProvider === "remote" || storedProvider === "fixture" ? storedProvider : null;
-  if (storedProvider !== null && providerOverride === null) {
+  const selection = selectPlayProvider(play, storedProvider);
+  if (selection.clearStoredProvider) {
     sessionStorage.removeItem(SYSTEM_PROVIDER_STORAGE_KEY);
   }
-  if (providerOverride === "remote" && !hasRemote) {
-    sessionStorage.removeItem(SYSTEM_PROVIDER_STORAGE_KEY);
-  }
-  const inferredProvider =
-    providerOverride === "fixture" ? "fixture" : hasRemote ? "remote" : "fixture";
+  const inferredProvider = selection.provider;
   const configuredActor =
     play.provider.kind === "module" ? play.provider.config.actor ?? null : null;
   const storedActor = sessionStorage.getItem(SYSTEM_ACTOR_STORAGE_KEY)?.trim() || null;
   const selectedActor = storedActor ?? configuredActor;
   systemControls.starting({
     provider: inferredProvider,
-    providers: hasRemote ? ["remote", "fixture"] : ["fixture"],
+    providers: selection.providers,
     actor: inferredProvider === "remote" ? selectedActor : null,
     actors: [],
   });
@@ -242,11 +237,13 @@ async function boot() {
   let currentNavKey = null;
   /** @type {HTMLElement | null} */
   let pageEl = null;
-  // The machine owns nav (§7.4); its history intents mirror the stack
-  // here so page instances get identity: route + depth + params
-  // (register #17). Same key ⇒ same instance ⇒ scroll restores.
-  /** @type {string[]} */
-  const navParams = ["{}"];
+  // The machine owns nav (§7.4); the shell only mirrors its stack closely
+  // enough to key page instances. The minted local token matters for
+  // `replace`: replacing a route with the same route and params must still
+  // remount a fresh page subtree, while `back` must reveal the prior key.
+  let nextNavToken = 1;
+  /** @type {{ params: string, token: number }[]} */
+  const navFrames = [{ params: "{}", token: 0 }];
 
   /**
    * @param {import("./types.js").Descriptor} descriptor
@@ -274,7 +271,8 @@ async function boot() {
   /** @param {import("./types.js").Snapshot} snapshot */
   function renderPage(snapshot) {
     const scope = findScope(snapshot.page.root) ?? "page";
-    const navKey = `${snapshot.page.route}|${navParams.length}|${navParams.at(-1) ?? "{}"}`;
+    const topFrame = navFrames.at(-1) ?? { params: "{}", token: -1 };
+    const navKey = `${snapshot.page.route}|${navFrames.length}|${topFrame.params}|${topFrame.token}`;
     if (!pageEl || currentNavKey !== navKey) {
       // A page-instance change remounts the subtree (§8.4); scroll
       // positions round-trip through the per-instance cache.
@@ -298,12 +296,20 @@ async function boot() {
   function onStep(result) {
     currentRevision = result.v.revision;
     // Nav intents first: renderPage keys the incoming page instance off
-    // the mirrored stack (this step's push/back belongs to this view).
+    // the mirrored stack (this step's push/replace/back belongs to this view).
     for (const intent of result.i) {
       if (intent.intent === "history-push") {
-        navParams.push(JSON.stringify(intent.params ?? {}));
-      } else if (intent.intent === "history-back" && navParams.length > 1) {
-        navParams.pop();
+        navFrames.push({
+          params: JSON.stringify(intent.params ?? {}),
+          token: nextNavToken++,
+        });
+      } else if (intent.intent === "history-replace") {
+        navFrames[navFrames.length - 1] = {
+          params: JSON.stringify(intent.params ?? {}),
+          token: nextNavToken++,
+        };
+      } else if (intent.intent === "history-back" && navFrames.length > 1) {
+        navFrames.pop();
       }
     }
     renderPage(result.v);

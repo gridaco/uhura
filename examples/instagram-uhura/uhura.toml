@@ -24,8 +24,11 @@ manifest = "fixtures/assets/manifest.toml"
 [play.default]
 fixture = "standard"
 script = "demo"
+# This strict script is a deterministic preview/trace walkthrough, not a
+# complete interactive backend. Browser Play is therefore Spock-only.
+allow_fixture = false
 
-# The browser play shell uses the live provider by default. The fixture and
+# The browser play shell uses only the live provider. The fixture and
 # script above remain the deterministic source for checks, canvas examples,
 # and `uhura trace`.
 [play.default.provider]
