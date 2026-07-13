@@ -35,8 +35,10 @@ rename, source-compatible version, or incremental extension of Frame XML.
 Existing Frame and Wire v4 documents remain historical and migration inputs;
 they do not constrain Uhura's eventual grammar or ABI.
 
-Uhura is a sibling of [Spock](https://github.com/gridaco/spock), not a child of
-it:
+Uhura is a subsystem of the [Spock](https://github.com/gridaco/spock)
+project: Spock is the ecosystem and toolchain root, and this repository is
+included there as a git submodule. The two remain distinct languages with a
+hard semantic boundary:
 
 - **Spock** specifies and executes authoritative backend state and guarded
   product behavior.
@@ -59,9 +61,13 @@ The practical ownership test is:
 
 ## Repository status
 
-This is Uhura's dedicated repository. [Spock](https://github.com/gridaco/spock)
-is Uhura's canonical provider, developed in its own repository; the port seam
-stays provider-neutral.
+This repository is the canonical source of the Uhura language — its grammar,
+checker, runtime, and conformance suite. It is consumed by the
+[Spock](https://github.com/gridaco/spock) repository as a git submodule
+(`uhura/` at Spock's root): Spock is the ecosystem and toolchain root, and
+once Uhura is minimally stable its tooling will ship through the unified
+`spock` toolchain rather than as a standalone distribution. Spock is also
+Uhura's canonical provider; the port seam stays provider-neutral.
 
 Until an implementation RFC says otherwise:
 
