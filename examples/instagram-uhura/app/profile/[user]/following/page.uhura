@@ -1,0 +1,118 @@
+page
+
+use component bottom-nav
+use component connection-row
+use component notice-bar
+use port feed { projection viewer }
+use port profile { projection following, command follow-user, command unfollow-user }
+
+param user: id
+
+store {
+  state {
+    follow-pending: map[id]bool = {}
+    notice: text? = none
+  }
+
+  on follow-toggled(target: id, now-following: bool) when now-following && !(follow-pending[target] ?? false) {
+    set follow-pending[target] = true
+    send follow-user(user: target)
+  }
+
+  on follow-toggled(target: id, now-following: bool) when !now-following && !(follow-pending[target] ?? false) {
+    set follow-pending[target] = true
+    send unfollow-user(user: target)
+  }
+
+  on follow-user.ok(tag, cmd) {
+    set follow-pending[cmd.user] = none
+  }
+
+  on follow-user.err(tag, cmd, refusal) {
+    set follow-pending[cmd.user] = none
+    set notice = "Couldn't follow this person."
+  }
+
+  on unfollow-user.ok(tag, cmd) {
+    set follow-pending[cmd.user] = none
+  }
+
+  on unfollow-user.err(tag, cmd, refusal) {
+    set follow-pending[cmd.user] = none
+    set notice = "Couldn't unfollow this person."
+  }
+
+  on profile-tapped(target: id) {
+    navigate profile(user: target)
+  }
+
+  on back-tapped() {
+    navigate back
+  }
+
+  on tab-selected(section: text) when section == "feed" {
+    navigate feed()
+  }
+
+  on tab-selected(section: text) when section == "search" {
+    navigate search()
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate reels()
+  }
+
+  on tab-selected(section: text) when section == "profile" {
+    navigate profile(user: viewer.id)
+  }
+
+  on notice-dismissed() {
+    set notice = none
+  }
+}
+
+<view class="screen people-page">
+  <view class="people-bar">
+    <button label="Back" on:press={emit back-tapped()}>
+      <icon name="back" />
+    </button>
+    <text class="title">Following</text>
+  </view>
+  {#if notice != none}
+    <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
+  {/if}
+  {#match following(user)}
+    {:when loading}
+      <view class="fill-center">
+        <text class="muted">Loading following…</text>
+      </view>
+    {:when failed reason}
+      <view class="fill-center">
+        <text class="muted">Following isn't available.</text>
+      </view>
+    {:when ready list}
+      {#if count(list.people) == 0}
+        <view class="fill-center">
+          <text class="muted">Not following anyone yet.</text>
+        </view>
+      {:else}
+        <scroll class="people-scroll">
+          <view role="list">
+            {#each list.people as person (person.user.id)}
+              <connection-row person={person} viewer={viewer.id} pending={follow-pending[person.user.id] ?? false} on:profile-tapped on:follow-toggled />
+            {/each}
+          </view>
+        </scroll>
+      {/if}
+  {/match}
+  <bottom-nav current="" on:tab-selected />
+</view>
+
+<style>
+.people-page .people-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.people-page .people-scroll { flex: 1; min-block-size: 0; }
+</style>

@@ -86,11 +86,7 @@ pub fn render_canvas(
     // ── group frames into board rows (§6.3) ────────────────────────────
     let mut rows: Vec<(String, String, Vec<&PreviewFrame>)> = Vec::new();
     for frame in frames {
-        let kind_label = match frame.kind {
-            FrameKind::Page => "page",
-            FrameKind::Surface => "surface",
-            FrameKind::Component => "component",
-        };
+        let kind_label = frame_kind_label(frame.kind);
         let row_key = format!("{kind_label} {}", frame.subject);
         match rows.iter_mut().find(|(key, _, _)| *key == row_key) {
             Some((_, _, list)) => list.push(frame),
@@ -99,17 +95,56 @@ pub fn render_canvas(
     }
 
     let mut body = String::new();
-    for (row_key, kind_label, list) in &rows {
+    let mut navigator = String::new();
+    let mut frame_index = 0usize;
+    for (row_index, (row_key, kind_label, list)) in rows.iter().enumerate() {
+        let row_id = format!("preview-row-{row_index}");
         let _ = writeln!(
             body,
-            "<section class=\"row row-{kind_label}\">\n<h2 class=\"row-title\">{}</h2>\n<div class=\"row-frames\">",
+            "<section id=\"{row_id}\" class=\"row row-{kind_label}\" data-preview-row>\n<h2 class=\"row-title\">{}</h2>\n<div class=\"row-frames\">",
             esc(row_key)
         );
+        let subject = list.first().map_or("", |frame| frame.subject.as_str());
+        let _ = writeln!(
+            navigator,
+            "<section class=\"navigator-group\" data-navigator-group data-search=\"{}\">\n\
+             <button class=\"navigator-row\" type=\"button\" data-row-target=\"{row_id}\" aria-controls=\"{row_id}\">\
+             <span class=\"navigator-kind\" data-kind=\"{kind_label}\" aria-hidden=\"true\"></span>\
+             <span class=\"navigator-row-title\">{}</span><span class=\"navigator-count\">{}</span></button>\n\
+             <div class=\"navigator-frames\">",
+            esc(row_key),
+            esc(subject),
+            list.len(),
+        );
         for frame in list {
-            body.push_str(&render_frame(frame));
+            let frame_id = format!("preview-frame-{frame_index}");
+            body.push_str(&render_frame(frame, &frame_id));
+            let marker = if frame.derived {
+                "<span class=\"navigator-derived\" title=\"Replay-derived\">D</span>"
+            } else if frame.is_default {
+                "<span class=\"navigator-default\" title=\"Default preview\"></span>"
+            } else {
+                ""
+            };
+            let _ = writeln!(
+                navigator,
+                "<button class=\"navigator-frame\" type=\"button\" data-frame-target=\"{frame_id}\" data-search=\"{} {} {}\" aria-controls=\"{frame_id}\" aria-pressed=\"false\">\
+                 <span class=\"navigator-frame-icon\" aria-hidden=\"true\"></span>\
+                 <span class=\"navigator-frame-title\">{}</span>{marker}</button>",
+                esc(kind_label),
+                esc(&frame.subject),
+                esc(&frame.example),
+                esc(&frame.example),
+            );
+            frame_index += 1;
         }
         body.push_str("</div>\n</section>\n");
+        navigator.push_str("</div>\n</section>\n");
     }
+
+    let derived_count = frames.iter().filter(|frame| frame.derived).count();
+    let pinned_count = frames.iter().filter(|frame| frame.pinned).count();
+    let default_count = frames.iter().filter(|frame| frame.is_default).count();
 
     format!(
         r#"<!doctype html>
@@ -124,19 +159,84 @@ pub fn render_canvas(
 {stylesheet}
 </style>
 <style>
+{chrome_css}
 :root {{
 {asset_vars}}}
 </style>
 </head>
-<body>
-<header class="canvas-bar">
-  <strong>{app}</strong><span class="canvas-sub">uhura canvas — {frame_count} previews</span>
-  <span class="canvas-hint">drag to pan · wheel to zoom · double-click to fit</span>
-  <button id="fit" type="button">fit</button>
-</header>
-<div id="viewport"><div id="board">
+<body class="uhura-canvas">
+<nav id="canvas-navigator" aria-label="Preview navigator">
+  <div class="panel-heading"><div><span class="panel-eyebrow">{app}</span><h1>Previews</h1></div><span>{row_count} groups</span></div>
+  <label class="navigator-search">
+    <svg aria-hidden="true" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.25"/><path d="m10.25 10.25 3 3"/></svg>
+    <input id="navigator-search" type="search" placeholder="Search previews" autocomplete="off" aria-label="Search previews">
+  </label>
+  <div id="navigator-results" class="navigator-results">
+{navigator}
+    <p id="navigator-empty" hidden>No matching previews</p>
+  </div>
+  <footer class="navigator-help">Wheel to pan <span>·</span> Pinch to zoom <span>·</span> Space for Hand</footer>
+</nav>
+
+<main id="canvas-stage">
+  <div class="ruler-corner" aria-hidden="true"></div>
+  <canvas id="ruler-x" class="canvas-ruler ruler-x" aria-hidden="true"></canvas>
+  <canvas id="ruler-y" class="canvas-ruler ruler-y" aria-hidden="true"></canvas>
+  <div id="viewport" role="region" aria-label="Canvas viewport" tabindex="0">
+    <div class="canvas-tools" role="group" aria-label="Canvas tools">
+    <button id="tool-cursor" class="canvas-tool" type="button" aria-label="Cursor tool" aria-keyshortcuts="V" aria-pressed="true" title="Cursor (V)">
+      <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.25v11.5l3.05-3.05 2.15 3.72 2.08-1.2-2.13-3.69 4.15-1.12L3 2.25Z"/></svg>
+    </button>
+    <button id="tool-hand" class="canvas-tool" type="button" aria-label="Hand tool" aria-keyshortcuts="H" aria-pressed="false" title="Hand (H or hold Space)">
+      <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.15 7.4V3.75a1 1 0 0 1 2 0V6.5h.35V2.75a1 1 0 0 1 2 0V6.5h.35V3.75a1 1 0 0 1 2 0V7h.35V5.25a1 1 0 0 1 2 0v3.8c0 3.05-1.8 5.2-4.9 5.2H8.2c-1.5 0-2.45-.65-3.35-1.8L2.3 9.2a1.13 1.13 0 0 1 1.75-1.42l1.1 1.2V7.4Z"/></svg>
+    </button>
+    <span class="tool-divider" aria-hidden="true"></span>
+    <button id="zoom-out" class="canvas-tool" type="button" aria-label="Zoom out" title="Zoom out">
+      <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 8h9"/></svg>
+    </button>
+    <button id="canvas-zoom" class="canvas-zoom" type="button" aria-label="Reset zoom to 100%" title="Reset zoom to 100%">100%</button>
+    <button id="zoom-in" class="canvas-tool" type="button" aria-label="Zoom in" title="Zoom in">
+      <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 8h9M8 3.5v9"/></svg>
+    </button>
+    <span class="tool-divider" aria-hidden="true"></span>
+    <button id="focus-selection" class="canvas-tool" type="button" aria-label="Center selected preview" title="Center selected preview" disabled>
+      <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"/></svg>
+    </button>
+  </div>
+    <div id="board">
 {body}
-</div></div>
+    </div>
+  </div>
+</main>
+
+<aside id="canvas-inspector" aria-label="Preview details">
+  <div class="panel-heading"><div><span class="panel-eyebrow">Inspect</span><h2>Preview details</h2></div><span class="inspector-actions"><!-- uhura-editor-actions --></span></div>
+  <section id="inspector-overview" class="inspector-section">
+    <div class="inspector-hero"><span class="inspector-hero-icon" aria-hidden="true">U</span><div><strong>{app}</strong><span>Deterministic Canvas</span></div></div>
+    <dl class="inspector-grid">
+      <div><dt>Previews</dt><dd>{frame_count}</dd></div>
+      <div><dt>Groups</dt><dd>{row_count}</dd></div>
+      <div><dt>Defaults</dt><dd>{default_count}</dd></div>
+      <div><dt>Derived</dt><dd>{derived_count}</dd></div>
+      <div><dt>Pinned</dt><dd>{pinned_count}</dd></div>
+      <div><dt>Assets</dt><dd>{asset_count}</dd></div>
+    </dl>
+    <div class="inspector-callout"><strong>Read-only projection</strong><p>Edit the <code>.uhura</code> sources and restart Editor to regenerate these snapshots.</p></div>
+  </section>
+  <section id="inspector-selection" class="inspector-section" hidden>
+    <div class="selection-heading"><div><span id="selection-kind" class="selection-kind">Page</span><h2 id="selection-name">Preview</h2></div><button id="clear-selection" class="inspector-icon-button" type="button" aria-label="Clear preview selection" title="Clear selection"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></svg></button></div>
+    <dl class="property-list">
+      <div><dt>Subject</dt><dd id="selection-subject"></dd></div>
+      <div><dt>Example</dt><dd id="selection-example"></dd></div>
+      <div><dt>Size</dt><dd id="selection-size"></dd></div>
+      <div><dt>Origin</dt><dd id="selection-origin"></dd></div>
+      <div id="selection-from-row" hidden><dt>From</dt><dd id="selection-from"></dd></div>
+      <div><dt>Status</dt><dd id="selection-status"></dd></div>
+    </dl>
+    <div id="selection-note-block" class="inspector-block" hidden><h3>Note</h3><p id="selection-note"></p></div>
+    <div class="inspector-block"><h3>Declared interactions</h3><ul id="selection-interactions" class="interaction-list"></ul><p id="selection-no-interactions" class="inspector-muted">No interactions declared in this snapshot.</p></div>
+  </section>
+</aside>
 <script>
 {chrome_js}
 </script>
@@ -145,25 +245,27 @@ pub fn render_canvas(
 "#,
         app = esc(app),
         base_css = BASE_CSS,
+        chrome_css = CHROME_CSS,
         stylesheet = stylesheet,
         asset_vars = asset_vars,
         frame_count = frames.len(),
+        row_count = rows.len(),
+        default_count = default_count,
+        derived_count = derived_count,
+        pinned_count = pinned_count,
+        asset_count = used_assets.len(),
+        navigator = navigator,
         body = body,
         chrome_js = CHROME_JS,
     )
 }
 
-fn render_frame(frame: &PreviewFrame) -> String {
+fn render_frame(frame: &PreviewFrame, frame_id: &str) -> String {
     let mut badges = String::new();
     if frame.is_default {
         badges.push_str("<span class=\"badge badge-default\">default</span>");
     }
-    let provenance = match (&frame.from, frame.derived) {
-        (Some(parent), true) => format!("from {parent} → events…"),
-        (Some(parent), false) => format!("from {parent}"),
-        (None, true) => "derived".to_string(),
-        (None, false) => "pinned".to_string(),
-    };
+    let provenance = frame_provenance(frame);
     if frame.pinned {
         badges.push_str("<span class=\"badge badge-pinned\">pinned</span>");
     }
@@ -212,18 +314,46 @@ fn render_frame(frame: &PreviewFrame) -> String {
         .as_ref()
         .map(|n| format!("<p class=\"caption-note\">{}</p>", esc(n)))
         .unwrap_or_default();
+    let note_data = frame.note.as_deref().unwrap_or_default();
+    let from_data = frame.from.as_deref().unwrap_or_default();
     format!(
-        "<figure class=\"frame\">\n<div class=\"{frame_class}\">{content}</div>\n\
-         <figcaption><span class=\"caption-title\">{subject} / {example}</span>{badges}\
+        "<figure id=\"{frame_id}\" class=\"frame\" data-frame data-kind=\"{kind}\" data-subject=\"{subject}\" data-example=\"{example}\" data-provenance=\"{prov}\" data-default=\"{is_default}\" data-pinned=\"{pinned}\" data-derived=\"{derived}\" data-in-flight=\"{in_flight}\" data-from=\"{from_data}\" data-preview-note=\"{note_data}\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" aria-labelledby=\"{frame_id}-caption\">\n<div class=\"{frame_class}\">{content}</div>\n\
+         <figcaption id=\"{frame_id}-caption\"><span class=\"caption-title\">{subject} / {example}</span>{badges}\
          <span class=\"caption-prov\">{prov}</span>{note}</figcaption>\n</figure>\n",
+        frame_id = frame_id,
+        kind = frame_kind_label(frame.kind),
         frame_class = frame_class,
         content = content,
         subject = esc(&frame.subject),
         example = esc(&frame.example),
+        is_default = frame.is_default,
+        pinned = frame.pinned,
+        derived = frame.derived,
+        in_flight = frame.in_flight,
+        from_data = esc(from_data),
+        note_data = esc(note_data),
         badges = badges,
         prov = esc(&provenance),
         note = note,
     )
+}
+
+fn frame_kind_label(kind: FrameKind) -> &'static str {
+    match kind {
+        FrameKind::Page => "page",
+        FrameKind::Surface => "surface",
+        FrameKind::Component => "component",
+    }
+}
+
+fn frame_provenance(frame: &PreviewFrame) -> String {
+    match (&frame.from, frame.derived) {
+        (Some(parent), true) => format!("from {parent} → events…"),
+        (Some(parent), false) => format!("from {parent}"),
+        (None, true) => "derived".to_string(),
+        (None, false) if frame.pinned => "pinned".to_string(),
+        (None, false) => "checked example".to_string(),
+    }
 }
 
 // ── V → HTML (§8.3) ─────────────────────────────────────────────────────
@@ -441,7 +571,7 @@ fn esc(s: &str) -> String {
 const BASE_CSS: &str = r#"
 * { box-sizing: border-box; margin: 0; }
 html, body { height: 100%; }
-body { font: 14px/1.45 -apple-system, "Segoe UI", sans-serif; background: #14151a; color: #e8e8ec; overflow: hidden; }
+body.uhura-canvas { font: 14px/1.45 -apple-system, "Segoe UI", sans-serif; background: #09090a; color: #e8e8ec; overflow: hidden; }
 
 /* semantic element bases — layout/aesthetics stay authored (§10) */
 .uh-view { display: block; min-inline-size: 0; }
@@ -473,72 +603,159 @@ button.uh-button[aria-busy="true"] { opacity: 0.6; }
 [data-note]:hover::after { content: attr(data-note); position: absolute; inset-block-start: 100%; inset-inline-start: 0; z-index: 30; background: #111; color: #9fe0a8; font: 11px/1.4 ui-monospace, monospace; padding: 4px 8px; border-radius: 6px; white-space: pre; max-inline-size: 320px; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 
 /* board */
-.canvas-bar { position: fixed; inset-block-start: 0; inset-inline: 0; z-index: 50; display: flex; gap: 12px; align-items: baseline; padding: 10px 16px; background: rgba(20,21,26,0.9); backdrop-filter: blur(6px); border-block-end: 1px solid #2a2b33; }
-.canvas-sub { color: #9a9aa5; }
-.canvas-hint { margin-inline-start: auto; color: #6d6d78; font-size: 12px; }
-.canvas-bar button { font: inherit; background: #2a2b33; color: #e8e8ec; border: 0; border-radius: 6px; padding: 3px 12px; }
-#viewport { position: absolute; inset: 0; cursor: grab; }
-#viewport.panning { cursor: grabbing; }
+.canvas-tools { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid #303139; border-radius: 7px; background: #111217; }
+.canvas-tool svg { inline-size: 15px; block-size: 15px; fill: currentColor; }
+#canvas-zoom { min-inline-size: 42px; color: #9a9aa5; font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: end; }
+.canvas-actions { display: inline-flex; align-items: center; }
+#viewport { position: absolute; inset: 0; touch-action: none; cursor: default; }
+#viewport[data-tool="hand"] { cursor: grab; }
+#viewport.panning { cursor: grabbing; user-select: none; }
+#viewport:focus-visible { outline: 2px solid #7aa7ff; outline-offset: -2px; }
 #board { position: absolute; transform-origin: 0 0; padding: 72px 48px 48px; }
-.row { margin-block-end: 56px; }
-.row-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: #8a8a96; margin-block-end: 14px; }
-.row-frames { display: flex; align-items: flex-start; gap: 32px; }
-.frame { flex: none; }
-.shell { background: #fff; color: #16181c; border-radius: 24px; box-shadow: 0 12px 48px rgba(0,0,0,0.5), 0 0 0 1px #2e2f38; overflow: hidden; position: relative; }
-.shell.device { inline-size: 390px; block-size: 844px; }
-.shell.device .screen-root { block-size: 100%; overflow: hidden; }
-.shell.device .screen-root > * { block-size: 100%; }
-.shell.sheet { inline-size: 390px; block-size: 560px; border-radius: 16px; }
-.shell.sheet .fragment-root { block-size: 100%; }
-.shell.sheet .fragment-root > * { block-size: 100%; }
-.shell.component { inline-size: 390px; border-radius: 12px; background:
+#board > [data-preview-row] { margin-block-end: 56px; }
+[data-preview-row] > .row-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: #8a8a96; margin-block-end: 14px; }
+[data-preview-row] > .row-frames { display: flex; align-items: flex-start; gap: 32px; }
+[data-preview-row] > .row-frames > [data-frame] { flex: none; }
+#board > [data-preview-row] > .row-frames > [data-frame] > .shell { background: #fff; color: #16181c; border-radius: 24px; overflow: hidden; position: relative; }
+[data-frame] > .shell.device { inline-size: 390px; block-size: 844px; }
+[data-frame] > .shell.device .screen-root { block-size: 100%; overflow: hidden; }
+[data-frame] > .shell.device .screen-root > * { block-size: 100%; }
+[data-frame] > .shell.sheet { inline-size: 390px; block-size: 560px; border-radius: 16px; }
+[data-frame] > .shell.sheet .fragment-root { block-size: 100%; }
+[data-frame] > .shell.sheet .fragment-root > * { block-size: 100%; }
+[data-frame] > .shell.component { inline-size: 390px; border-radius: 12px; background:
   #fff radial-gradient(circle, #d8d8de 1px, transparent 1px);
   background-size: 16px 16px; }
-figcaption { margin-block-start: 10px; max-inline-size: 390px; }
-.caption-title { font-weight: 600; margin-inline-end: 8px; }
-.badge { font-size: 11px; border-radius: 999px; padding: 1px 8px; margin-inline-end: 6px; }
-.badge-default { background: #2e5c34; color: #b7edbe; }
-.badge-pinned { background: #4a4430; color: #e6d9a3; }
-.badge-in-flight { background: #2f3f52; color: #a3c6e6; }
-.caption-prov { color: #8a8a96; font-size: 12px; }
-.caption-note { color: #a9a9b4; font-size: 12px; font-style: italic; margin-block-start: 2px; }
+[data-frame] > figcaption { margin-block-start: 10px; max-inline-size: 390px; }
+[data-frame] > figcaption > .caption-title { font-weight: 600; margin-inline-end: 8px; }
+[data-frame] > figcaption > .badge { font-size: 11px; border-radius: 999px; padding: 1px 8px; margin-inline-end: 6px; }
+[data-frame] > figcaption > .badge-default { background: #2e5c34; color: #b7edbe; }
+[data-frame] > figcaption > .badge-pinned { background: #4a4430; color: #e6d9a3; }
+[data-frame] > figcaption > .badge-in-flight { background: #2f3f52; color: #a3c6e6; }
+[data-frame] > figcaption > .caption-prov { color: #8a8a96; font-size: 12px; }
+[data-frame] > figcaption > .caption-note { color: #a9a9b4; font-size: 12px; font-style: italic; margin-block-start: 2px; }
 "#;
 
-/// Pan/zoom/fit. Never reads V or Uhura data (§8.3) — pure chrome.
-const CHROME_JS: &str = r#"
-(() => {
-  const viewport = document.getElementById("viewport");
-  const board = document.getElementById("board");
-  let x = 0, y = 0, scale = 1;
-  const apply = () => { board.style.transform = `translate(${x}px, ${y}px) scale(${scale})`; };
-  const fit = () => {
-    const rect = board.getBoundingClientRect();
-    const w = rect.width / scale, h = rect.height / scale;
-    scale = Math.min(viewport.clientWidth / w, viewport.clientHeight / h, 1) * 0.96;
-    x = (viewport.clientWidth - w * scale) / 2;
-    y = 24;
-    apply();
-  };
-  let panning = false, px = 0, py = 0;
-  viewport.addEventListener("pointerdown", (e) => {
-    panning = true; px = e.clientX - x; py = e.clientY - y;
-    viewport.classList.add("panning"); viewport.setPointerCapture(e.pointerId);
-  });
-  viewport.addEventListener("pointermove", (e) => {
-    if (!panning) return;
-    x = e.clientX - px; y = e.clientY - py; apply();
-  });
-  viewport.addEventListener("pointerup", () => { panning = false; viewport.classList.remove("panning"); });
-  viewport.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const factor = Math.exp(-e.deltaY * 0.0015);
-    const next = Math.min(Math.max(scale * factor, 0.08), 3);
-    x = e.clientX - (e.clientX - x) * (next / scale);
-    y = e.clientY - (e.clientY - y) * (next / scale);
-    scale = next; apply();
-  }, { passive: false });
-  viewport.addEventListener("dblclick", fit);
-  document.getElementById("fit").addEventListener("click", fit);
-  fit();
-})();
-"#;
+const CHROME_CSS: &str = include_str!("canvas-chrome.css");
+
+/// Read-only editor chrome. It never reads or mutates Uhura state (§8.3):
+/// navigation, selection, rulers, and camera controls operate on the emitted DOM.
+const CHROME_JS: &str = include_str!("canvas-chrome.js");
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use uhura_base::Ident;
+    use uhura_core::view::Node;
+
+    use super::{FrameContent, FrameKind, PreviewFrame, render_canvas};
+
+    fn frame(kind: FrameKind, subject: &str, example: &str) -> PreviewFrame {
+        PreviewFrame {
+            kind,
+            subject: subject.to_string(),
+            example: example.to_string(),
+            is_default: true,
+            pinned: false,
+            derived: true,
+            in_flight: 2,
+            from: Some("base <state>".to_string()),
+            note: Some("A checked & safe note".to_string()),
+            content: FrameContent::Fragment(Node {
+                key: "root".to_string(),
+                element: Ident::new("view").expect("valid element"),
+                class: None,
+                props: BTreeMap::new(),
+                children: Vec::new(),
+                on: Vec::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn canvas_exposes_read_only_editor_chrome_and_tools_without_fit() {
+        let canvas = render_canvas("Demo", &[], "", &BTreeMap::new());
+
+        assert!(canvas.contains("id=\"canvas-navigator\""));
+        assert!(canvas.contains("id=\"canvas-inspector\""));
+        assert!(!canvas.contains("class=\"canvas-bar\""));
+        assert!(!canvas.contains("id=\"toggle-navigator\""));
+        assert!(!canvas.contains("id=\"toggle-inspector\""));
+        assert!(canvas.contains("id=\"navigator-search\""));
+        assert!(canvas.contains("id=\"ruler-x\""));
+        assert!(canvas.contains("id=\"ruler-y\""));
+        assert!(canvas.contains("Read-only projection"));
+        assert!(canvas.contains("role=\"group\" aria-label=\"Canvas tools\""));
+        assert!(canvas.contains("id=\"tool-cursor\""));
+        assert!(canvas.contains("aria-keyshortcuts=\"V\" aria-pressed=\"true\""));
+        assert!(canvas.contains("id=\"tool-hand\""));
+        assert!(canvas.contains("aria-keyshortcuts=\"H\" aria-pressed=\"false\""));
+        assert!(canvas.contains("Wheel to pan"));
+        assert!(canvas.contains("Pinch to zoom"));
+        assert!(canvas.contains("Space for Hand"));
+        assert_eq!(canvas.matches("<!-- uhura-editor-actions -->").count(), 1);
+        assert!(canvas.contains("class=\"inspector-actions\""));
+        assert!(!canvas.contains("id=\"fit\""));
+        assert!(!canvas.contains("dblclick"));
+        assert!(!canvas.contains("const fit"));
+        assert!(!canvas.contains("--canvas-shadow"));
+        assert!(canvas.contains("[data-frame] > .shell { border:"));
+        assert!(canvas.contains("box-shadow: none;"));
+    }
+
+    #[test]
+    fn canvas_chrome_supports_navigation_selection_rulers_and_gestures() {
+        let canvas = render_canvas("Demo", &[], "", &BTreeMap::new());
+
+        assert!(canvas.contains("if (event.ctrlKey || event.metaKey)"));
+        assert!(canvas.contains("const WHEEL_ZOOM_SENSITIVITY = 0.01"));
+        assert!(canvas.contains("Math.exp(exponent)"));
+        assert!(canvas.contains("x -= event.deltaX * unit"));
+        assert!(canvas.contains("const shouldPan = event.button === 1"));
+        assert!(canvas.contains("if (touches.size === 2)"));
+        assert!(canvas.contains("event.code === \"Space\""));
+        assert!(canvas.contains("event.code === \"KeyH\""));
+        assert!(canvas.contains("event.code === \"KeyV\""));
+        assert!(canvas.contains("pointercancel"));
+        assert!(canvas.contains("lostpointercapture"));
+        assert!(canvas.contains("const drawRulers"));
+        assert!(canvas.contains("const selectFrame"));
+        assert!(canvas.contains(
+            "selectFrame(document.getElementById(frameButton.dataset.frameTarget), true)"
+        ));
+        assert!(!canvas.contains("selectFrame(frame, true)"));
+        assert!(!canvas.contains("board.addEventListener(\"focusin\""));
+        assert!(canvas.contains("navigatorSearch.addEventListener(\"input\""));
+        assert!(canvas.contains("uhura.editor.ui-visible"));
+        assert!(canvas.contains("event.code === \"Backslash\""));
+        assert!(canvas.contains("event.metaKey || event.ctrlKey"));
+        assert!(canvas.contains("document.body.classList.toggle(\"ui-hidden\""));
+        assert!(!canvas.contains("PANEL_KEYS"));
+        assert!(!canvas.contains("navigator-closed"));
+        assert!(!canvas.contains("inspector-closed"));
+    }
+
+    #[test]
+    fn frames_have_stable_navigation_ids_and_escaped_inspector_metadata() {
+        let frames = [
+            frame(FrameKind::Page, "Feed & home", "default \"wide\""),
+            frame(FrameKind::Page, "Feed & home", "after like"),
+            frame(FrameKind::Component, "Post card", "compact"),
+        ];
+        let canvas = render_canvas("Demo", &frames, "", &BTreeMap::new());
+
+        assert!(canvas.contains("id=\"preview-row-0\""));
+        assert!(canvas.contains("id=\"preview-row-1\""));
+        assert!(canvas.contains("id=\"preview-frame-0\""));
+        assert!(canvas.contains("id=\"preview-frame-2\""));
+        assert!(canvas.contains("data-frame-target=\"preview-frame-1\""));
+        assert!(canvas.contains("data-subject=\"Feed &amp; home\""));
+        assert!(canvas.contains("data-example=\"default &quot;wide&quot;\""));
+        assert!(canvas.contains("data-from=\"base &lt;state&gt;\""));
+        assert!(canvas.contains("data-preview-note=\"A checked &amp; safe note\""));
+        assert!(canvas.contains("aria-labelledby=\"preview-frame-0-caption\""));
+        assert!(canvas.contains("role=\"button\" tabindex=\"0\" aria-pressed=\"false\""));
+        assert_eq!(canvas.matches("class=\"navigator-group\"").count(), 2);
+    }
+}

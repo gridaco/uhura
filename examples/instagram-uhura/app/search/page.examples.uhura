@@ -1,0 +1,23 @@
+use fixture standard
+
+example loading {
+  projection feed.viewer = fixture.users.mira
+}
+
+example people default {
+  projection feed.viewer = fixture.users.mira
+  projection profile.search-results = fixture.people.search-all
+}
+
+example searching {
+  from people
+  events [
+    query-changed(value: "nils")
+    search-submitted()
+  ]
+}
+
+example empty {
+  projection feed.viewer = fixture.users.mira
+  projection profile.search-results = fixture.people.search-empty
+}

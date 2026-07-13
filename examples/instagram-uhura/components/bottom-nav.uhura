@@ -12,13 +12,13 @@ emits {
   <button label="Home" current={current == "feed"} on:press={emit tab-selected(section: "feed")}>
     <icon name="home" />
   </button>
-  <button label="Search" disabled>
+  <button label="Search" current={current == "search"} on:press={emit tab-selected(section: "search")}>
     <icon name="search" />
   </button>
-  <button label="Create" disabled>
+  <button label="Create" current={current == "create"} on:press={emit tab-selected(section: "create")}>
     <icon name="plus" />
   </button>
-  <button label="Reels" disabled>
+  <button label="Reels" current={current == "reels"} on:press={emit tab-selected(section: "reels")}>
     <icon name="reels" />
   </button>
   <button label="Profile" current={current == "profile"} on:press={emit tab-selected(section: "profile")}>

@@ -571,8 +571,8 @@ example like-pending {
 
 example like-refused {
   from like-pending
-  events [ outcome like-post.err(refusal: rate-limited) ]
-  note "authority refused — rollback, notice explains"
+  events [ outcome like-post.err(reason: "network unavailable") ]
+  note "transport unavailable — rollback, notice explains"
 }
 
 example comments-open {
@@ -792,7 +792,7 @@ stress-test corpus's `ui:list` P0 — semantics (`role="list"` + keyed each),
 viewport (`scroll`), windowing (renderer license), pagination observation
 (split as above).
 
-### 8.3 Static renderer — `uhura project`
+### 8.3 Static renderer — `uhura editor` / `uhura project`
 
 Checked program → resolved example snapshots (§6.2) → `eval_view` → V →
 HTML per preview → one self-contained `renders/canvas.html`. Zero
@@ -801,18 +801,41 @@ role), `text` → `p/span`, `button` → `button`, etc., with authored classes
 attached and the compiled stylesheet (theme.css + concatenated `<style>`
 blocks) embedded once. Interactive elements render real (correct a11y tree)
 inside `inert` frames with a prerendered `data-note` ("would emit
-like-toggled {post: …}") for hover chrome. Board chrome: ~120 lines vanilla
-JS (pan/zoom/fit/hover) that never reads V or Uhura data. **Assets: real
+like-toggled {post: …}") for hover chrome. Board chrome is vanilla JS with
+Cursor and Hand tools: wheel/trackpad deltas pan, `H` or held Space enables
+drag-panning, and trackpad or two-touch pinch zooms around its midpoint.
+Cursor drag reserves marquee selection but is intentionally inert for this
+read-only editor. The chrome never reads V or Uhura data. **Assets: real
 JPEGs**, each inlined exactly once as a data-URI custom property
 (`--asset-lena-glaze`); duotone-SVG fallback for missing assets; manifest
-alt text required.
+alt text required. Bare `uhura` defaults to `uhura editor`: it generates this
+Canvas and hosts it as an explicitly read-only placeholder editor. The Editor
+keeps Cursor, Hand, zoom, and centering in a compact floating toolbar; its
+left navigator and right inspector hide together with the rest of the chrome
+through `Cmd+\` / `Ctrl+\`. Play lives in the inspector and enters the real
+Play shell at `/play` on the same origin; restart the command to rebuild the
+Canvas. `uhura project` retains the build-only artifact path for CI and export.
 
 ### 8.4 Play renderer — the TS shell
 
-`uhura dev` serves index, `shell.js` (hand-rolled, no deps, JSDoc-typed,
+`uhura play` serves index, `shell.js` (hand-rolled, no deps, JSDoc-typed,
 zero build step), wasm bundle, IR JSON, fixture JSON, and the compiled
 stylesheet. React remains a legitimate future renderer engine below the V
 protocol; the spike hand-rolls to keep the contract visible.
+
+The running prototype sits in host-owned chrome over a black stage. The host
+offers Mobile (390 × 844) and Desktop (1280 × 800) visual frames, a full UI
+session restart, provider selection, readiness, and provider-authored actor
+selection. None of these values enter Uhura state or author-visible events.
+Actor/provider changes and Restart perform a full navigation so the old
+session, ticks, browser capabilities, signed-media cache, and in-flight
+provider work retire together. Restart does **not** reset Spock authority
+truth. The frame choice is persistent browser-local Play-chrome state;
+provider and actor choices are tab-local session state. Host controls neither
+read nor rewrite the running Uhura program's query parameters. The frame switch
+is deliberately labeled as visual framing: because the v0 app is not isolated
+in an iframe, browser media queries and viewport units still observe the host
+window. True device emulation is deferred.
 
 - **Reconciler:** keyed `insertBefore`-sweep (~350 lines): element change ⇒
   replace; semantic-prop appliers + class swap; keyed child reconciliation
@@ -896,12 +919,12 @@ cursor = "option<feed-cursor>"  has-more = "bool"
 [projections.viewer]     type = "user-ref"   boot = true   # delivered before Init
 [projections.feed-page]  type = "feed-page"
 
-[refusals.not-authorized]  [refusals.rate-limited]  [refusals.not-found]
+[refusals.not-authorized]  [refusals.not-found]
 
 [commands.like-post]       payload = { post = "id" }
-refusals = ["not-authorized", "rate-limited", "not-found"]
-[commands.unlike-post]     payload = { post = "id" }
 refusals = ["not-authorized", "not-found"]
+[commands.unlike-post]     payload = { post = "id" }
+refusals = ["not-authorized"]
 [commands.load-next-page]  payload = { cursor = "option<feed-cursor>" }
 [commands.reload]          payload = {}
 ```
@@ -1045,44 +1068,46 @@ is a lint).
 
 ### 11.1 Inventory
 
-Two routed pages (`/feed`, `/profile/[user]`), one surface
-(`comments-sheet`), bottom-nav chrome (5 tabs, 3 honestly disabled),
-notice bar (persists until dismissed — no timers exist). Out: post-detail,
-follow, viewer/creation/realtime. Profile grid tiles are **plain images** —
-no dead affordances.
+Nine routed pages: Feed, Search, Create, Reels, profile, post detail,
+story detail, and separate profile follower/following lists. One comments surface,
+five live bottom-nav destinations, and a notice bar (persists until dismissed
+— no timers exist). Profile and tagged tiles carry real post ids and open the
+shared post-detail route; story rings, relationship counts/lists, tags, likes,
+comments, and uploaded posts all derive from authority rows and reconcile
+through typed provider commands.
 
 ### 11.2 The cast (no lorem ipsum)
 
 Viewer: **Mira Santos** (`mira.santos`), food & travel photographer,
-Lisbon. Feed page 1: **Lena Holt** (ceramicist — glaze tiles, 214 likes, 4
-comments), **Marco Reyes** (surfer — 3-slide Baja carousel, 892), **Nils
-Bergman** (night-sky — aurora *video* → poster placeholder, 2,431), **Priya
+Lisbon. Feed page 1: **Lena Holt** (ceramicist — glaze tiles, 7 real likes,
+4 comments), **Marco Reyes** (surfer — 3-slide Baja carousel), **Nils
+Bergman** (night-sky — aurora *video* → poster placeholder), and **Priya
 Raman** (baker — "Day 400 of the starter. She's earned a name: Clint
 Yeastwood."). Page 2: Ayla Demir, June Park, Theo Okafor, **Kenji Tanaka**
 (pre-liked — proves projection-truth hearts without overlays). Mira's demo
 comment: *"Saving this palette for my kitchen reno — stunning work!"*
-Time/count labels are provider-formatted strings ("2h", "18.2k"). ~37 local
-JPEGs with manifest-required alt text.
+Counts are integers derived from relational rows; age labels are formatted
+from authority timestamps. Local JPEGs have manifest-required alt text.
 
 ### 11.3 Example sets (canvas board)
 
-Feed: `loading · first-page (default) · like-pending · like-refused ·
-comments-open · load-pending · load-failed · appended · exhausted · empty ·
-failed`. Profile: `loading · lena-posts (default) · tagged-empty · self`.
-Comments-sheet standalone: `populated (default) · composing ·
-pending-append · empty`. Components: post-card (image / carousel-liked /
-video-poster / long-caption), stories-tray, comment-row (settled/pending),
-bottom-nav, notice-bar, profile-header.
+Feed: loading, first page, optimistic/rollback states, comments, story
+navigation, pagination, empty, exhausted, and failure. Profile: loading,
+Lena, self, tabs, post navigation, and follower navigation. Dedicated rows
+cover post detail, story detail, followers, following, Search, Reels, and
+Create. Comments-sheet remains standalone. Components cover post-card media
+variants, stories, connection rows, comments, all five bottom-nav states,
+notice bar, and profile header.
 
 ### 11.4 Demo walkthrough (play mode) and CI scripts
 
 1. Launch → loading → feed settles (tray, image, carousel, video poster,
    Priya's post).
-2. Like Lena's post → heart fills **and count reads 215** instantly (the
+2. Like Lena's post → heart fills **and count reads 8** instantly (the
    count is computed from the overlay in post-card, §4.6), button busy; ok
    settles via piggybacked update; trace shows exactly one command.
-3. Like Marco's → optimistic beat → `rate-limited` refusal → heart and
-   count roll back; notice bar appears; **after dismissing the notice, the
+3. A scripted unavailable like → optimistic beat → heart and count roll
+   back; notice bar appears; **after dismissing the notice, the
    feed subtree is byte-identical to pre-like** (the scoped invariant).
 4. Double-tap Priya's photo → same event via `region` (keyboard: focus,
    Enter).
@@ -1097,10 +1122,12 @@ bottom-nav, notice-bar, profile-header.
    command (guard).
 9. Failure → retry → page 2 appends with zero scroll jump, keys preserved;
    Kenji pre-filled; end cap; zero further commands.
-10. Tap `lena.holt` → profile (header, stats, grid); Tagged → empty; back →
-    feed intact (page 2 present, Lena still liked).
-11. Bottom tab → self profile; Home → intact feed; disabled tabs
-    unfocusable.
+10. Tap `lena.holt` → profile (real stats and posts); open a grid tile into
+    post detail; open Followers/Following and toggle a real edge.
+11. Open a story, Search for a person, visit Reels, and return through the
+    five live bottom tabs without losing feed state.
+12. Choose an image, author caption/alt text, upload through signed Spock
+    storage, and publish it into both Feed and Mira's profile.
 
 **Canonical trace scripts** (one list, used by §3, CI, and goldens):
 `like-ok`, `like-refused`, `comment-ok`, `paginate`, `feed-failed`,
@@ -1136,7 +1163,7 @@ uhura/crates/
   uhura-fixture    # scripted driver (native + wasm)
   uhura-project    # resolved examples → HTML + embedded CSS → canvas.html
   uhura-wasm       # wasm-bindgen: Session + FixtureDriver, JSON-string ABI
-  uhura-cli        # bin `uhura`: check | fmt | project | dev | trace (all I/O here)
+  uhura-cli        # bin `uhura`: check | fmt | editor | play | trace (all I/O here)
   uhura-tests      # goldens, purity tests, acceptance integration test
 ```
 
@@ -1163,7 +1190,7 @@ diagnostic codes, trivia-preserving formatter round-trip, recovery trees;
 the closed grammar makes generators overhead). CSS handling is a selector
 tokenizer only — declarations pass through verbatim. The checked IR **is
 serialized** (versioned canonical JSON, hard version check) and is the
-artifact shipped to the browser: `uhura dev` checks natively and ships IR +
+artifact shipped to the browser: `uhura play` checks natively and ships IR +
 compiled stylesheet, so `.uhura`/CSS edits never trigger a wasm rebuild.
 
 ### 12.3 Wasm ABI
@@ -1181,11 +1208,15 @@ envelope JSON — the seam stays visible. No timers/fetch/DOM inside wasm.
 
 ### 12.4 CLI and diagnostics
 
-`uhura check [--emit-ir]` · `uhura fmt [--check]` · `uhura project [--out]`
-· `uhura dev [--port]` (tiny_http + SSE; watch → recheck → **full-restart
-hot reload on last-good IR** + diagnostics overlay — state-preserving reload
-is an open RFC topic the spike must not fake) · `uhura trace --script
-[--expanded]`. Exit codes 0/1/2; `--deny-warnings` in CI. One versioned
+`uhura [path] [--port] [--out=<dir>]` (default Editor) · `uhura check
+[--emit-ir]` · `uhura fmt [--check]` · `uhura editor [--port]
+[--out=<dir>]` (explicit default spelling) · `uhura play [--port]`
+(tiny_http + SSE; watch → recheck → **full-restart hot reload on last-good
+IR** + diagnostics overlay — state-preserving reload is an open RFC topic the
+spike must not fake) · `uhura trace --script [--expanded]`. The Editor serves
+its read-only Canvas at `/` and this same Play runtime at `/play`; `uhura
+project` remains build-only and `uhura dev` aliases `play`. Exit codes 0/1/2;
+`--deny-warnings` in CI. One versioned
 diagnostics envelope (`uhura-diagnostics/0`: `code UHnxxx` + `rule` slug,
 span, labels, notes, `fix{title, edits}`).
 
@@ -1210,9 +1241,9 @@ artifact.
 | M0 | Workspace skeleton, toolchain pin, purity tests, CI green | the boundary exists before any feature |
 | M1 | Lexer/parser (store DSL + markup + CSS selectors), formatter; `uhura fmt`, parse-only `check` | format the whole example; spanned diagnostic on a planted error |
 | M2 | Full check: routes, types, catalog rules, ports L1–L8, style checks, IR emit | `check` clean on the slice; `on:press` on a `view` fails correctly |
-| M3 | `eval_view` + stylesheet compile + **pinned** examples + `uhura project` | **the good-looking canvas** — pan/zoom every pinned preview |
+| M3 | `eval_view` + stylesheet compile + **pinned** examples + `uhura editor` / `uhura project` | **the good-looking canvas** — pan/zoom every pinned preview |
 | M4 | step_u (dispatch, guards, sends, overlays, surfaces), fixture driver, `uhura trace`, **derived-example replay** | headless like→optimistic→refusal→rollback as diffable golden JSON; derived previews join the canvas |
-| M5 | wasm Session + Driver, play shell (reconciler, pump, text-field), `uhura dev` | live prototype; edit a file → hot restart |
+| M5 | wasm Session + Driver, play shell (reconciler, pump, text-field), `uhura play` | live prototype; edit a file → hot restart |
 | M6 | Pagination, profile route, focus restore, full acceptance test | the complete walkthrough in CI and on screen |
 
 (Derived examples fold `step_u`, so replay lands in M4, after the machine

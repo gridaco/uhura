@@ -1,19 +1,26 @@
-// uhura play (§8.4, §12.3): wires the wasm Session to the FixtureDriver
-// by passing envelope JSON — the Spock seam stays visible in DevTools.
+// uhura play (§8.4, §12.3): wires the wasm Session to the selected provider
+// through envelope JSON — the provider seam stays visible in DevTools.
 // Boot: fetch artifacts → assert protocols → boot deliveries → Init →
-// tick cadence. `uhura dev` pushes recheck results over SSE: a good edit
+// tick cadence. The Play server pushes recheck results over SSE: a good edit
 // full-restart reloads onto the new IR; a broken one overlays diagnostics
 // over the still-running last-good app.
 
 import init, { FixtureDriver, Session, protocols } from "/wasm/uhura_wasm.js";
+import { createAssets } from "./assets.js";
 import * as focus from "./focus.js";
 import { createOverlay } from "./overlay.js";
 import { createPump, providerMsgToEvent } from "./pump.js";
+import { createProviderHost } from "./provider-host.js";
 import { createReconciler, findScope } from "./reconciler.js";
 import { createScrolls } from "./scroll.js";
 import { createSurfaces } from "./surfaces.js";
+import {
+  SYSTEM_ACTOR_STORAGE_KEY,
+  SYSTEM_PROVIDER_STORAGE_KEY,
+  createSystemControls,
+} from "./system-controls.js";
 import { createTextFields } from "./textfield.js";
-import { createTicks, tickMillis } from "./ticks.js";
+import { createTicks, DEFAULT_TICK_MS } from "./ticks.js";
 
 /** @param {string} id */
 function el(id) {
@@ -26,6 +33,41 @@ const overlay = createOverlay(el("uh-overlay"));
 const pageHost = el("uh-page");
 const surfaceHost = el("uh-surfaces");
 
+// Install one stable handle before the first await. Prototype chrome can read
+// the starting state immediately, and even a failed remote boot keeps enough
+// host control to choose another provider/actor and navigate to a clean run.
+const systemControls = createSystemControls({
+  target: window,
+  storage: sessionStorage,
+  reload: () => location.reload(),
+});
+const runtime = /** @type {any} */ ({
+  session: null,
+  driver: null,
+  steps: [],
+  ticks: null,
+  get system() {
+    return systemControls.state;
+  },
+  restart: () => systemControls.restart(),
+  setActor: (/** @type {string} */ actor) => systemControls.setActor(actor),
+  setProvider: (/** @type {"remote" | "fixture"} */ provider) =>
+    systemControls.setProvider(provider),
+});
+/** @type {any} */ (window).__uhura = runtime;
+
+/** @returns {import("./types.js").RemoteSystemInfo | undefined} */
+function currentRemoteSystemInfo() {
+  const driver = runtime.driver;
+  if (!driver || typeof driver.systemInfo !== "function") return undefined;
+  try {
+    return driver.systemInfo();
+  } catch (error) {
+    console.error("uhura provider system metadata failed", error);
+    return undefined;
+  }
+}
+
 /** @param {string} url */
 async function fetchText(url) {
   const response = await fetch(url);
@@ -35,7 +77,28 @@ async function fetchText(url) {
 }
 
 /**
- * Fetches the five build artifacts and REFUSES a mixed-generation set (a
+ * Imports the content-addressed app provider. A recheck can retire that exact
+ * hash after play.json was fetched, so mirror the artifact loader's one silent
+ * retry before surfacing a real module error.
+ * @param {string} module
+ */
+async function importProvider(module) {
+  try {
+    const loaded = await import(module);
+    sessionStorage.removeItem("uh-provider-retry");
+    return loaded;
+  } catch (error) {
+    if (sessionStorage.getItem("uh-provider-retry") === null) {
+      sessionStorage.setItem("uh-provider-retry", "1");
+      location.reload();
+      await new Promise(() => {}); // reloading — never resolve
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches the build artifacts and REFUSES a mixed-generation set (a
  * recheck can land between fetches): one silent retry via reload, then
  * fatal. The dev server stamps `X-Uhura-Generation` on each.
  * @param {string[]} urls
@@ -87,15 +150,19 @@ events.onmessage = (/** @type {MessageEvent<string>} */ message) => {
   }
 };
 
-boot().catch((error) => overlay.showFatal(String(error)));
+boot().catch((error) => {
+  systemControls.failed(error, currentRemoteSystemInfo());
+  overlay.showFatal(String(error));
+});
 
 async function boot() {
-  const [irText, bootText, fixtureText, scriptText, iconsText] = await fetchArtifacts([
+  const [irText, bootText, fixtureText, scriptText, iconsText, playText] = await fetchArtifacts([
     "/ir.json",
     "/boot.json",
     "/fixture.json",
     "/script.json",
     "/icons.json",
+    "/play.json",
   ]);
   await init();
 
@@ -110,9 +177,63 @@ async function boot() {
     }
   }
 
+  // Play alone may select an app-owned remote provider. Static canvas,
+  // checking, examples, and trace keep using the fixture. Play's provider and
+  // auth actor are tab-local shell state and never enter the app's URL.
+  /** @type {import("./types.js").PlayConfig} */
+  const play = JSON.parse(playText);
+  const hasRemote = play.provider.kind === "module";
+  const storedProvider = sessionStorage.getItem(SYSTEM_PROVIDER_STORAGE_KEY);
+  const providerOverride =
+    storedProvider === "remote" || storedProvider === "fixture" ? storedProvider : null;
+  if (storedProvider !== null && providerOverride === null) {
+    sessionStorage.removeItem(SYSTEM_PROVIDER_STORAGE_KEY);
+  }
+  if (providerOverride === "remote" && !hasRemote) {
+    sessionStorage.removeItem(SYSTEM_PROVIDER_STORAGE_KEY);
+  }
+  const inferredProvider =
+    providerOverride === "fixture" ? "fixture" : hasRemote ? "remote" : "fixture";
+  const configuredActor =
+    play.provider.kind === "module" ? play.provider.config.actor ?? null : null;
+  const storedActor = sessionStorage.getItem(SYSTEM_ACTOR_STORAGE_KEY)?.trim() || null;
+  const selectedActor = storedActor ?? configuredActor;
+  systemControls.starting({
+    provider: inferredProvider,
+    providers: hasRemote ? ["remote", "fixture"] : ["fixture"],
+    actor: inferredProvider === "remote" ? selectedActor : null,
+    actors: [],
+  });
+  const useRemote = inferredProvider === "remote";
   const session = new Session(irText);
-  session.boot(bootText);
-  const driver = new FixtureDriver(fixtureText, scriptText);
+  runtime.session = session;
+  /** @type {import("./types.js").Driver} */
+  let driver;
+  /** @type {((assetRef: string) => Promise<string>) | undefined} */
+  let resolveAsset;
+  if (useRemote) {
+    if (play.provider.kind !== "module") {
+      throw new Error("remote play was selected without a provider module");
+    }
+    /** @type {{ createDriver?: (config: Record<string, string>, host?: import("./types.js").ProviderHost) => import("./types.js").RemoteDriver }} */
+    const providerModule = await importProvider(play.provider.module);
+    if (typeof providerModule.createDriver !== "function") {
+      throw new Error(`${play.provider.module} must export createDriver(config, host)`);
+    }
+    const config = { ...play.provider.config };
+    if (selectedActor !== null) config.actor = selectedActor;
+    const remote = providerModule.createDriver(config, createProviderHost());
+    runtime.driver = remote;
+    session.boot(await remote.assembleBoot());
+    driver = remote;
+    if (typeof remote.resolveAsset === "function") {
+      resolveAsset = remote.resolveAsset.bind(remote);
+    }
+  } else {
+    session.boot(bootText);
+    driver = new FixtureDriver(fixtureText, scriptText);
+    runtime.driver = driver;
+  }
   /** @type {Record<string, string>} */
   const glyphs = JSON.parse(iconsText);
 
@@ -141,7 +262,8 @@ async function boot() {
 
   const textFields = createTextFields({ emit });
   const scrolls = createScrolls({ emit });
-  const reconciler = createReconciler({ emit, glyphs, textFields, scrolls });
+  const assets = createAssets(resolveAsset);
+  const reconciler = createReconciler({ emit, glyphs, assets, textFields, scrolls });
   const surfaces = createSurfaces({
     host: surfaceHost,
     pageHost,
@@ -207,7 +329,7 @@ async function boot() {
     idle: () => driver.idle(),
     enqueue: (eventJson) => pump.enqueue(eventJson),
     toEvent: providerMsgToEvent,
-    intervalMs: tickMillis(location.search),
+    intervalMs: DEFAULT_TICK_MS,
   });
 
   // Boot projections are already applied — bare reads are legal from the
@@ -216,6 +338,8 @@ async function boot() {
   pump.enqueue(JSON.stringify({ kind: "init", route: entry, params: {} }));
   ticks.start();
 
-  // Debug/verification handle (the M5 gate reads this).
-  /** @type {any} */ (window).__uhura = { session, driver, steps, ticks };
+  // Debug/verification handle (the M5 gate reads this). Keep the object
+  // identity installed before boot so system chrome never loses its methods.
+  Object.assign(runtime, { session, driver, steps, ticks });
+  systemControls.ready(currentRemoteSystemInfo());
 }

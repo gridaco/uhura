@@ -17,11 +17,15 @@ Instagram slice at `examples/instagram-uhura/`. The design doc
 accepted grammar freeze, package, or compatibility promise yet.
 
 Quick tour (run from the repo root): `cargo run -p uhura-cli --
-check examples/instagram-uhura`, `… project examples/instagram-uhura`
-(static canvas), `… trace examples/instagram-uhura --script=like-refused
---expanded` (headless machine), and `scripts/build-wasm.sh && cargo run -p
-uhura-cli -- dev examples/instagram-uhura` (live play shell at
-http://127.0.0.1:8787/). `cargo test --workspace` runs the
+examples/instagram-uhura` opens the default read-only Editor at
+http://127.0.0.1:8787/; its Play button enters the live shell on the same
+server. `… check examples/instagram-uhura` checks the project, `… trace
+examples/instagram-uhura --script=like-refused --expanded` (headless
+machine), and `scripts/build-wasm.sh && cargo run -p uhura-cli -- play
+examples/instagram-uhura` opens the interactive Play shell directly.
+`editor` remains an explicit spelling of the default, `project` remains the
+build-only Canvas command, and `dev` remains an alias for `play`.
+`cargo test --workspace` runs the
 golden suites plus the design's §13 acceptance battery
 (`crates/uhura-tests/tests/acceptance_feed.rs`); the battery's native↔wasm
 parity criterion runs when `node` and the wasm package are present and is

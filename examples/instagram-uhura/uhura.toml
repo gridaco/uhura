@@ -12,6 +12,7 @@ path = "catalog/base.toml"
 feed = "ports/feed.port.toml"
 comments = "ports/comments.port.toml"
 profile = "ports/profile.port.toml"
+create = "ports/create.port.toml"
 
 [fixtures]
 standard = "fixtures/standard.toml"
@@ -19,7 +20,19 @@ standard = "fixtures/standard.toml"
 [assets]
 manifest = "fixtures/assets/manifest.toml"
 
-# `uhura dev`/`uhura trace` profiles: which fixture data + script to drive.
+# `uhura play`/`uhura trace` profiles: which fixture data + script to drive.
 [play.default]
 fixture = "standard"
 script = "demo"
+
+# The browser play shell uses the live provider by default. The fixture and
+# script above remain the deterministic source for checks, canvas examples,
+# and `uhura trace`.
+[play.default.provider]
+module = "providers/spock.js"
+
+[play.default.provider.config]
+graphql_url = "http://127.0.0.1:4000/graphql/v1"
+rpc_url = "http://127.0.0.1:4000/rest/v1/rpc"
+storage_url = "http://127.0.0.1:4000/storage/v1"
+actor = "10000000-0000-4000-8000-000000000001"

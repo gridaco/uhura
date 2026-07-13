@@ -1,0 +1,23 @@
+use fixture standard
+
+example loading {
+  params { id = "ring-lena" }
+  projection feed.viewer = fixture.users.mira
+}
+
+example unseen default {
+  params { id = "ring-lena" }
+  projection feed.viewer = fixture.users.mira
+  projection feed.story-by-id("ring-lena") = fixture.story-details.lena
+}
+
+example seen {
+  params { id = "ring-priya" }
+  projection feed.viewer = fixture.users.mira
+  projection feed.story-by-id("ring-priya") = fixture.story-details.priya
+}
+
+example marking-seen {
+  from unseen
+  events [ mark-seen-tapped(story: "ring-lena") ]
+}

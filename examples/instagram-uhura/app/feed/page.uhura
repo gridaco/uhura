@@ -12,6 +12,7 @@ use port feed {
   command unlike-post
   command load-next-page
   command reload
+  command mark-story-seen
 }
 
 store {
@@ -101,8 +102,34 @@ store {
     navigate profile(user: user)
   }
 
+  on post-tapped(post: id) {
+    navigate post(id: post)
+  }
+
+  on story-tapped(story: id) {
+    send mark-story-seen(story: story)
+    navigate story(id: story)
+  }
+
   on tab-selected(section: text) when section == "profile" {
     navigate profile(user: viewer.id)
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "search" {
+    navigate search()
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate reels()
+  }
+
+  on tab-selected(section: text) when section == "feed" && !reload-pending {
+    set reload-pending = true
+    send reload()
   }
 
   on notice-dismissed() {
@@ -133,10 +160,10 @@ store {
         </view>
       {:else}
         <scroll class="feed-scroll" on:near-end={emit feed-near-end()}>
-          <stories-tray stories={f.stories} />
+          <stories-tray stories={f.stories} on:story-tapped />
           <view role="list" class="post-list">
             {#each f.posts as p (p.id)}
-              <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} on:like-toggled on:comments-requested on:author-tapped />
+              <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} show-open={true} on:like-toggled on:comments-requested on:author-tapped on:post-tapped />
             {/each}
           </view>
           {#if load-pending}

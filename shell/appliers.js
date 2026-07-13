@@ -22,11 +22,6 @@ function assetOf(v) {
   return undefined;
 }
 
-/** Asset ids resolve against the dev server (§12.4). */
-function assetUrl(/** @type {string} */ id) {
-  return `/assets/${encodeURIComponent(id)}.jpg`;
-}
-
 /**
  * @param {HTMLElement} el
  * @param {string} name
@@ -61,6 +56,7 @@ export function tagFor(element) {
  * @param {HTMLElement} el
  * @param {import("./types.js").VNode} node
  * @param {{ glyphs: Record<string, string>,
+ *           assets: ReturnType<import("./assets.js").createAssets>,
  *           textFields: ReturnType<import("./textfield.js").createTextFields>,
  *           holderOf: (el: HTMLElement) => { path: string,
  *             on: Record<string, import("./types.js").Descriptor> } }} ctx
@@ -115,7 +111,7 @@ export function applyProps(el, node, ctx) {
 
     case "image": {
       const asset = assetOf(props["src"]);
-      el.style.backgroundImage = asset ? `url("${assetUrl(asset)}")` : "";
+      ctx.assets.apply(el, asset);
       if (boolOf(props["decorative"])) {
         setAttr(el, "aria-hidden", "true");
         setAttr(el, "role", undefined);

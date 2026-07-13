@@ -1,5 +1,5 @@
-# The profile read surface (design §9.1: keyed projection `profile`).
-# Read-only in the spike: no commands, so no refusals either.
+# Profiles and their relationship lists. Counts are integers derived from
+# authority rows; the client owns formatting, never pre-seeded labels.
 
 [port]
 name = "profile"
@@ -25,9 +25,23 @@ avatar = "image-ref"
 kind = "record"
 
 [types.thumb.fields]
+# The real post id, so a grid tile can navigate to feed.post(id).
 id = "id"
 src = "asset"
 alt = "text"
+
+[types.connection]
+kind = "record"
+
+[types.connection.fields]
+user = "user-ref"
+viewer-follows = "bool"
+
+[types.connection-list]
+kind = "record"
+
+[types.connection-list.fields]
+people = "list<connection>"
 
 [types.profile-view]
 kind = "record"
@@ -35,10 +49,9 @@ kind = "record"
 [types.profile-view.fields]
 user = "user-ref"
 bio = "text"
-# provider-formatted counts; core does no number formatting
-posts-label = "text"
-followers-label = "text"
-following-label = "text"
+post-count = "int"
+follower-count = "int"
+following-count = "int"
 posts = "list<thumb>"
 tagged = "list<thumb>"
 
@@ -46,3 +59,32 @@ tagged = "list<thumb>"
 [projections.profile]
 type = "profile-view"
 key = "id"
+
+[projections.followers]
+type = "connection-list"
+key = "id"
+
+[projections.following]
+type = "connection-list"
+key = "id"
+
+# Initially all other people; search-people replaces this slice with the
+# provider-filtered result. Search remains useful in Play and deterministic
+# in Canvas without leaking a database query primitive into Core.
+[projections.search-results]
+type = "connection-list"
+
+[refusals.not-authorized]
+[refusals.not-found]
+[refusals.cannot-follow-self]
+
+[commands.follow-user]
+payload = { user = "id" }
+refusals = ["not-authorized", "not-found", "cannot-follow-self"]
+
+[commands.unfollow-user]
+payload = { user = "id" }
+refusals = ["not-authorized"]
+
+[commands.search-people]
+payload = { query = "text" }

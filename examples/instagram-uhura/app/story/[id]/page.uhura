@@ -1,0 +1,107 @@
+page
+
+use component bottom-nav
+use port feed { projection story-by-id, projection viewer, command mark-story-seen }
+
+param id: id
+
+store {
+  state {
+    mark-pending: bool = false
+  }
+
+  on mark-seen-tapped(story: id) when !mark-pending {
+    set mark-pending = true
+    send mark-story-seen(story: story)
+  }
+
+  on mark-story-seen.ok(tag, cmd) {
+    set mark-pending = false
+  }
+
+  on mark-story-seen.err(tag, cmd, refusal) {
+    set mark-pending = false
+  }
+
+  on author-tapped(user: id) {
+    navigate profile(user: user)
+  }
+
+  on back-tapped() {
+    navigate back
+  }
+
+  on tab-selected(section: text) when section == "feed" {
+    navigate feed()
+  }
+
+  on tab-selected(section: text) when section == "search" {
+    navigate search()
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate reels()
+  }
+
+  on tab-selected(section: text) when section == "profile" {
+    navigate profile(user: viewer.id)
+  }
+}
+
+<view class="screen story-page">
+  {#match story-by-id(id)}
+    {:when loading}
+      <view class="fill-center">
+        <text class="muted">Loading story…</text>
+      </view>
+    {:when failed reason}
+      <view class="fill-center stack-sm">
+        <text class="muted">This story is no longer available.</text>
+        <button label="Go back" on:press={emit back-tapped()}>
+          <text>Go back</text>
+        </button>
+      </view>
+    {:when ready s}
+      <view class="story-stage">
+        <image class="story-media" src={s.image.src} alt={s.image.alt} />
+        <view class="story-overlay">
+          <view class="story-head">
+            <button label="Back" on:press={emit back-tapped()}>
+              <icon name="back" />
+            </button>
+            <region label={"View " ++ s.author.username} on:activate={emit author-tapped(user: s.author.id)}>
+              <view class="story-author">
+                <image class="avatar" src={s.author.avatar.src} alt={s.author.avatar.alt} />
+                <text>{s.author.username ++ " · " ++ s.posted-label}</text>
+              </view>
+            </region>
+          </view>
+          <view class="story-caption">
+            <text>{s.caption}</text>
+            {#if !s.viewer-has-viewed}
+              <button label="Mark story seen" busy={mark-pending} on:press={emit mark-seen-tapped(story: s.id)}>
+                <text>Mark seen</text>
+              </button>
+            {/if}
+          </view>
+        </view>
+      </view>
+  {/match}
+  <bottom-nav current="" on:tab-selected />
+</view>
+
+<style>
+.story-page { background: var(--color-ink); color: var(--color-on-media); }
+.story-page .story-stage { flex: 1; min-block-size: 0; display: grid; }
+.story-page .story-stage > * { grid-area: 1 / 1; }
+.story-page .story-media { inline-size: 100%; block-size: 100%; object-fit: cover; }
+.story-page .story-overlay { display: flex; flex-direction: column; justify-content: space-between; padding: var(--space-4); background: linear-gradient(to bottom, rgba(0,0,0,.5), transparent 35%, transparent 65%, rgba(0,0,0,.65)); }
+.story-page .story-head { display: flex; align-items: center; gap: var(--space-3); }
+.story-page .story-author { display: flex; align-items: center; gap: var(--space-2); }
+.story-page .avatar { inline-size: 36px; block-size: 36px; border-radius: var(--radius-full); object-fit: cover; }
+.story-page .story-caption { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+</style>

@@ -228,17 +228,19 @@ pub fn decode_against_ty(json: &serde_json::Value, ty: &Ty) -> Result<Value, Str
         },
         Ty::Map(key_kind, inner) => match json {
             J::Object(map) => {
-                let mut record = BTreeMap::new();
+                let mut entries = BTreeMap::new();
                 for (k, v) in map {
                     if *key_kind == MapKey::Tag {
                         return Err(
                             "tag-keyed maps are core state; fixtures never carry them".to_string()
                         );
                     }
-                    let key = Ident::new(k).map_err(|e| e.to_string())?;
-                    record.insert(key, decode_against_ty(v, inner)?);
+                    // Map keys are canonical key strings, not identifiers:
+                    // external ids (UUIDs) are valid keys (in lock-step
+                    // with uhura-core's wire decoder).
+                    entries.insert(k.clone(), decode_against_ty(v, inner)?);
                 }
-                Ok(Value::Record(record))
+                Ok(Value::Map(entries))
             }
             other => Err(mismatch(&ty.describe(), other)),
         },

@@ -11,5 +11,5 @@
     "baseUrl": ".",
     "paths": { "/wasm/uhura_wasm.js": ["./wasm.d.ts"] }
   },
-  "include": ["*.js", "wasm.d.ts"]
+  "include": ["*.js", "wasm.d.ts", "../examples/instagram-uhura/providers/*.js"]
 }

@@ -44,8 +44,9 @@ type = "comment-thread"
 key = "id"
 
 [refusals.not-authorized]
-[refusals.rate-limited]
+[refusals.comment-body-invalid]
+[refusals.not-found]
 
 [commands.add-comment]
 payload = { post = "id", body = "text" }
-refusals = ["not-authorized", "rate-limited"]
+refusals = ["not-authorized", "comment-body-invalid", "not-found"]

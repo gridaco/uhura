@@ -5,27 +5,33 @@ use port profile { type user-ref }
 props {
   user: user-ref
   bio: text
-  posts-label: text
-  followers-label: text
-  following-label: text
+  post-count: int
+  follower-count: int
+  following-count: int
+}
+
+emits {
+  posts-tapped()
+  followers-tapped(target: id)
+  following-tapped(target: id)
 }
 
 <view class="profile-header">
   <view class="head-row">
     <image class="avatar" src={user.avatar.src} alt={user.avatar.alt} />
     <view class="stats">
-      <view class="stat">
-        <text class="stat-num">{posts-label}</text>
-        <text class="stat-name">Posts</text>
-      </view>
-      <view class="stat">
-        <text class="stat-num">{followers-label}</text>
-        <text class="stat-name">Followers</text>
-      </view>
-      <view class="stat">
-        <text class="stat-num">{following-label}</text>
+      <button class="stat" label={to-text(post-count) ++ (if post-count == 1 then " post" else " posts")} on:press={emit posts-tapped()}>
+        <text class="stat-num">{to-text(post-count)}</text>
+        <text class="stat-name">{if post-count == 1 then "Post" else "Posts"}</text>
+      </button>
+      <button class="stat" label={to-text(follower-count) ++ (if follower-count == 1 then " follower" else " followers")} on:press={emit followers-tapped(target: user.id)}>
+        <text class="stat-num">{to-text(follower-count)}</text>
+        <text class="stat-name">{if follower-count == 1 then "Follower" else "Followers"}</text>
+      </button>
+      <button class="stat" label={to-text(following-count) ++ " following"} on:press={emit following-tapped(target: user.id)}>
+        <text class="stat-num">{to-text(following-count)}</text>
         <text class="stat-name">Following</text>
-      </view>
+      </button>
     </view>
   </view>
   <text class="display-name">{user.display-name}</text>

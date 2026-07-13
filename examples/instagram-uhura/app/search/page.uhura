@@ -1,0 +1,143 @@
+page
+
+use component bottom-nav
+use component connection-row
+use component notice-bar
+use port feed { projection viewer }
+use port profile {
+  projection search-results
+  command search-people
+  command follow-user
+  command unfollow-user
+}
+
+store {
+  state {
+    query: text = ""
+    search-pending: bool = false
+    follow-pending: map[id]bool = {}
+    notice: text? = none
+  }
+
+  on query-changed(value: text) {
+    set query = value
+  }
+
+  on search-submitted() when !search-pending {
+    set search-pending = true
+    send search-people(query: query)
+  }
+
+  on search-people.ok(tag, cmd) {
+    set search-pending = false
+  }
+
+  on search-people.err(tag, cmd, refusal) {
+    set search-pending = false
+    set notice = "Search isn't available right now."
+  }
+
+  on follow-toggled(target: id, now-following: bool) when now-following && !(follow-pending[target] ?? false) {
+    set follow-pending[target] = true
+    send follow-user(user: target)
+  }
+
+  on follow-toggled(target: id, now-following: bool) when !now-following && !(follow-pending[target] ?? false) {
+    set follow-pending[target] = true
+    send unfollow-user(user: target)
+  }
+
+  on follow-user.ok(tag, cmd) {
+    set follow-pending[cmd.user] = none
+  }
+
+  on follow-user.err(tag, cmd, refusal) {
+    set follow-pending[cmd.user] = none
+    set notice = "Couldn't follow this person."
+  }
+
+  on unfollow-user.ok(tag, cmd) {
+    set follow-pending[cmd.user] = none
+  }
+
+  on unfollow-user.err(tag, cmd, refusal) {
+    set follow-pending[cmd.user] = none
+    set notice = "Couldn't unfollow this person."
+  }
+
+  on profile-tapped(target: id) {
+    navigate profile(user: target)
+  }
+
+  on tab-selected(section: text) when section == "feed" {
+    navigate feed()
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate reels()
+  }
+
+  on tab-selected(section: text) when section == "profile" {
+    navigate profile(user: viewer.id)
+  }
+
+  on tab-selected(section: text) when section == "search" && !search-pending {
+    set search-pending = true
+    send search-people(query: query)
+  }
+
+  on notice-dismissed() {
+    set notice = none
+  }
+}
+
+<view class="screen search-page">
+  <view class="search-head">
+    <text class="title">Search people</text>
+    <view class="search-controls">
+      <text-field value={query} label="Name or username" placeholder="Search people…" disabled={search-pending} on:change={emit query-changed()} on:submit={emit search-submitted()} />
+      <button label="Search" busy={search-pending} on:press={emit search-submitted()}>
+        <icon name="search" />
+      </button>
+    </view>
+  </view>
+  {#if notice != none}
+    <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
+  {/if}
+  {#match search-results}
+    {:when loading}
+      <view class="fill-center">
+        <text class="muted">Finding people…</text>
+      </view>
+    {:when failed reason}
+      <view class="fill-center">
+        <text class="muted">Search isn't available.</text>
+      </view>
+    {:when ready results}
+      {#if count(results.people) == 0}
+        <view class="fill-center stack-sm">
+          <text>No people found.</text>
+          <text class="muted">Try a display name or username.</text>
+        </view>
+      {:else}
+        <scroll class="search-results">
+          <view role="list">
+            {#each results.people as person (person.user.id)}
+              <connection-row person={person} viewer={viewer.id} pending={follow-pending[person.user.id] ?? false} on:profile-tapped on:follow-toggled />
+            {/each}
+          </view>
+        </scroll>
+      {/if}
+  {/match}
+  <bottom-nav current="search" on:tab-selected />
+</view>
+
+<style>
+.search-page .search-head { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.search-page .search-controls { display: flex; align-items: flex-end; gap: var(--space-2); }
+.search-page .search-results { flex: 1; min-block-size: 0; }
+</style>

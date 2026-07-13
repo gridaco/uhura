@@ -1,0 +1,128 @@
+page
+
+use component bottom-nav
+use component notice-bar
+use component post-card
+use surface comments-sheet
+use port feed {
+  projection post-by-id
+  projection viewer
+  command like-post
+  command unlike-post
+}
+
+param id: id
+
+store {
+  state {
+    like-overlay: map[id]bool = {}
+    like-pending: map[id]bool = {}
+    notice: text? = none
+  }
+
+  on like-toggled(post: id, now-liked: bool) when now-liked && !(like-pending[post] ?? false) {
+    set like-overlay[post] = true
+    set like-pending[post] = true
+    send like-post(post: post)
+  }
+
+  on like-toggled(post: id, now-liked: bool) when !now-liked && !(like-pending[post] ?? false) {
+    set like-overlay[post] = false
+    set like-pending[post] = true
+    send unlike-post(post: post)
+  }
+
+  on like-post.ok(tag, cmd) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+  }
+
+  on like-post.err(tag, cmd, refusal) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+    set notice = "Couldn't update this like. Try again."
+  }
+
+  on unlike-post.ok(tag, cmd) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+  }
+
+  on unlike-post.err(tag, cmd, refusal) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+    set notice = "Couldn't update this like. Try again."
+  }
+
+  on comments-requested(post: id) {
+    open-surface comments-sheet(post: post)
+  }
+
+  on author-tapped(user: id) {
+    navigate profile(user: user)
+  }
+
+  on post-tapped(post: id) {
+    navigate post(id: post)
+  }
+
+  on back-tapped() {
+    navigate back
+  }
+
+  on tab-selected(section: text) when section == "feed" {
+    navigate feed()
+  }
+
+  on tab-selected(section: text) when section == "search" {
+    navigate search()
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate reels()
+  }
+
+  on tab-selected(section: text) when section == "profile" {
+    navigate profile(user: viewer.id)
+  }
+
+  on notice-dismissed() {
+    set notice = none
+  }
+}
+
+<view class="screen post-page">
+  <view class="detail-bar">
+    <button label="Back" on:press={emit back-tapped()}>
+      <icon name="back" />
+    </button>
+    <text class="title">Post</text>
+  </view>
+  {#if notice != none}
+    <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
+  {/if}
+  {#match post-by-id(id)}
+    {:when loading}
+      <view class="fill-center">
+        <text class="muted">Loading post…</text>
+      </view>
+    {:when failed reason}
+      <view class="fill-center">
+        <text class="muted">This post isn't available.</text>
+      </view>
+    {:when ready p}
+      <scroll class="post-scroll">
+        <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} show-open={false} on:like-toggled on:comments-requested on:author-tapped on:post-tapped />
+      </scroll>
+  {/match}
+  <bottom-nav current="" on:tab-selected />
+</view>
+
+<style>
+.post-page .detail-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.post-page .post-scroll { flex: 1; min-block-size: 0; padding-block: var(--space-3); }
+</style>

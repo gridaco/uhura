@@ -16,6 +16,13 @@ use uhura_project::{Asset, FrameContent, FrameKind, PreviewFrame, render_canvas}
 use crate::CommonArgs;
 
 pub fn run(common: &CommonArgs, out_dir: Option<&str>) -> ExitCode {
+    run_as(common, out_dir, "uhura project")
+}
+
+/// Shared Canvas build path for the build-only compatibility command and the
+/// read-only editor host. The command label keeps diagnostics honest about the
+/// entry point the user actually invoked.
+pub(crate) fn run_as(common: &CommonArgs, out_dir: Option<&str>, command: &str) -> ExitCode {
     let root = &common.root;
     let input = match super::assemble_input(root) {
         Ok(input) => input,
@@ -28,11 +35,11 @@ pub fn run(common: &CommonArgs, out_dir: Option<&str>) -> ExitCode {
         .any(|d| d.severity == Severity::Error)
     {
         print!("{}", render_text(&output.diagnostics, &output.source_map));
-        eprintln!("uhura project: the check must come up clean first");
+        eprintln!("{command}: the check must come up clean first");
         return ExitCode::from(1);
     }
     let Some(lowered) = &output.lowered else {
-        eprintln!("uhura project: no checked program");
+        eprintln!("{command}: no checked program");
         return ExitCode::from(1);
     };
     let program = &lowered.program;
@@ -53,7 +60,7 @@ pub fn run(common: &CommonArgs, out_dir: Option<&str>) -> ExitCode {
             PreviewPayload::Page { u, x, .. } => match eval_view(program, u, x) {
                 Ok(snapshot) => FrameContent::Snapshot(snapshot),
                 Err(e) => {
-                    eprintln!("uhura project: {subject}/{}: {e}", preview.example);
+                    eprintln!("{command}: {subject}/{}: {e}", preview.example);
                     return ExitCode::from(1);
                 }
             },
@@ -70,13 +77,13 @@ pub fn run(common: &CommonArgs, out_dir: Option<&str>) -> ExitCode {
                     program.components.get(name)
                 };
                 let Some(def) = def else {
-                    eprintln!("uhura project: no definition `{name}`");
+                    eprintln!("{command}: no definition `{name}`");
                     return ExitCode::from(1);
                 };
                 match eval_fragment(program, def, props, state, x) {
                     Ok(node) => FrameContent::Fragment(node),
                     Err(e) => {
-                        eprintln!("uhura project: {subject}/{}: {e}", preview.example);
+                        eprintln!("{command}: {subject}/{}: {e}", preview.example);
                         return ExitCode::from(1);
                     }
                 }
@@ -100,7 +107,7 @@ pub fn run(common: &CommonArgs, out_dir: Option<&str>) -> ExitCode {
     let assets = match load_assets(root, input.manifest.assets_manifest.as_deref()) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("uhura project: assets: {e}");
+            eprintln!("{command}: assets: {e}");
             return ExitCode::from(2);
         }
     };
@@ -116,22 +123,29 @@ pub fn run(common: &CommonArgs, out_dir: Option<&str>) -> ExitCode {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("renders"));
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
-        eprintln!("uhura project: {}: {e}", out_dir.display());
+        eprintln!("{command}: {}: {e}", out_dir.display());
         return ExitCode::from(2);
     }
     let out_path = out_dir.join("canvas.html");
     if let Err(e) = std::fs::write(&out_path, &html) {
-        eprintln!("uhura project: {}: {e}", out_path.display());
+        eprintln!("{command}: {}: {e}", out_path.display());
         return ExitCode::from(2);
     }
     println!(
-        "projected {} previews ({} replay-derived) → {} ({} KiB)",
+        "{command}: projected {} previews ({} replay-derived) → {} ({} KiB)",
         frames.len(),
         derived,
         out_path.display(),
         html.len() / 1024
     );
     ExitCode::SUCCESS
+}
+
+pub(crate) fn output_path(out_dir: Option<&str>) -> PathBuf {
+    out_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("renders"))
+        .join("canvas.html")
 }
 
 fn load_assets(

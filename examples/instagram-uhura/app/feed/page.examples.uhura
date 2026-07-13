@@ -17,8 +17,8 @@ example like-pending {
 
 example like-refused {
   from like-pending
-  events [ outcome like-post.err(refusal: rate-limited) ]
-  note "authority refused — rollback, notice explains"
+  events [ outcome like-post.err(reason: "network unavailable") ]
+  note "transport unavailable — rollback, notice explains"
 }
 
 example comments-open {

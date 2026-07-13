@@ -52,6 +52,7 @@ export function findScope(node) {
  *          data?: Record<string, unknown>,
  *          onApplied?: () => void) => void,
  *   glyphs: Record<string, string>,
+ *   assets: ReturnType<typeof import("./assets.js").createAssets>,
  *   textFields: ReturnType<typeof import("./textfield.js").createTextFields>,
  *   scrolls: ReturnType<typeof import("./scroll.js").createScrolls>,
  * }} ctx
@@ -124,6 +125,7 @@ export function createReconciler(ctx) {
 
     applyProps(el, node, {
       glyphs: ctx.glyphs,
+      assets: ctx.assets,
       textFields: ctx.textFields,
       holderOf,
     });

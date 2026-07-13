@@ -5,6 +5,7 @@ example image-post default {
     post = fixture.posts.lena-glaze
     liked = false
     like-pending = false
+    show-open = true
   }
 }
 
@@ -13,6 +14,7 @@ example carousel-liked {
     post = fixture.posts.marco-baja
     liked = true
     like-pending = false
+    show-open = true
   }
 }
 
@@ -21,6 +23,7 @@ example video-poster {
     post = fixture.posts.nils-aurora
     liked = false
     like-pending = false
+    show-open = true
   }
   note "capability honesty: poster + unsupported badge"
 }
@@ -30,6 +33,7 @@ example like-pending {
     post = fixture.posts.lena-glaze
     liked = true
     like-pending = true
+    show-open = true
   }
   note "busy heart during the optimistic window"
 }

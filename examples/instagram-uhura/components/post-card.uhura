@@ -6,12 +6,14 @@ props {
   post: post-summary
   liked: bool
   like-pending: bool
+  show-open: bool
 }
 
 emits {
   like-toggled(post: id, now-liked: bool)
   comments-requested(post: id)
   author-tapped(user: id)
+  post-tapped(post: id)
 }
 
 <view class="post-card">
@@ -50,10 +52,15 @@ emits {
     <button label="Comments" on:press={emit comments-requested(post: post.id)}>
       <icon name="comment" />
     </button>
+    {#if show-open}
+      <button label="View post" on:press={emit post-tapped(post: post.id)}>
+        <text>Open</text>
+      </button>
+    {/if}
   </view>
-  <text class="likes">{to-text(post.like-count + (if liked && !post.viewer-has-liked then 1 else if !liked && post.viewer-has-liked then 0 - 1 else 0)) ++ " likes"}</text>
+  <text class="likes">{to-text(post.like-count + (if liked && !post.viewer-has-liked then 1 else if !liked && post.viewer-has-liked then 0 - 1 else 0)) ++ (if post.like-count + (if liked && !post.viewer-has-liked then 1 else if !liked && post.viewer-has-liked then 0 - 1 else 0) == 1 then " like" else " likes")}</text>
   <text class="caption">{post.caption}</text>
-  <text class="meta">{to-text(post.comment-count) ++ " comments · " ++ post.posted-label}</text>
+  <text class="meta">{to-text(post.comment-count) ++ (if post.comment-count == 1 then " comment · " else " comments · ") ++ post.posted-label}</text>
 </view>
 
 <style>

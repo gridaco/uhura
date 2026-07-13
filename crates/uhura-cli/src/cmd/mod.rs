@@ -1,5 +1,6 @@
 pub mod check;
 pub mod dev;
+pub mod editor;
 pub mod fmt;
 pub mod project;
 pub mod trace;

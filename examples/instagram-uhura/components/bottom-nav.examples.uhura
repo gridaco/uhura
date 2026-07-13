@@ -7,3 +7,15 @@ example feed-active default {
 example profile-active {
   props { current = "profile" }
 }
+
+example create-active {
+  props { current = "create" }
+}
+
+example search-active {
+  props { current = "search" }
+}
+
+example reels-active {
+  props { current = "reels" }
+}

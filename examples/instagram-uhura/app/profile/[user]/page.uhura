@@ -15,12 +15,44 @@ store {
     set active-tab = tab
   }
 
+  on posts-tapped() {
+    set active-tab = "posts"
+  }
+
+  on followers-tapped(target: id) {
+    navigate profile-followers(user: target)
+  }
+
+  on following-tapped(target: id) {
+    navigate profile-following(user: target)
+  }
+
+  on post-tapped(post: id) {
+    navigate post(id: post)
+  }
+
   on back-tapped() {
     navigate back
   }
 
   on tab-selected(section: text) when section == "feed" {
     navigate feed()
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "search" {
+    navigate search()
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate reels()
+  }
+
+  on tab-selected(section: text) when section == "profile" {
+    set active-tab = "posts"
   }
 }
 
@@ -42,7 +74,7 @@ store {
       </view>
     {:when ready pr}
       <scroll class="profile-scroll">
-        <profile-header user={pr.user} bio={pr.bio} posts-label={pr.posts-label} followers-label={pr.followers-label} following-label={pr.following-label} />
+        <profile-header user={pr.user} bio={pr.bio} post-count={pr.post-count} follower-count={pr.follower-count} following-count={pr.following-count} on:posts-tapped on:followers-tapped on:following-tapped />
         <view role="tablist" class="profile-tabs">
           <button label="Posts" current={active-tab == "posts"} on:press={emit profile-tab-selected(tab: "posts")}>
             <icon name="grid" />
@@ -59,7 +91,9 @@ store {
           {:else}
             <view role="list" class="post-grid">
               {#each pr.posts as th (th.id)}
-                <image class="grid-tile" src={th.src} alt={th.alt} />
+                <region class="grid-link" label={"View post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
+                  <image class="grid-tile" src={th.src} alt={th.alt} />
+                </region>
               {/each}
             </view>
           {/if}
@@ -71,7 +105,9 @@ store {
           {:else}
             <view role="list" class="post-grid">
               {#each pr.tagged as th (th.id)}
-                <image class="grid-tile" src={th.src} alt={th.alt} />
+                <region class="grid-link" label={"View tagged post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
+                  <image class="grid-tile" src={th.src} alt={th.alt} />
+                </region>
               {/each}
             </view>
           {/if}
@@ -88,5 +124,6 @@ store {
 .profile-page .profile-scroll { flex: 1; min-block-size: 0; }
 .profile-page .profile-tabs { display: flex; justify-content: space-around; border-block-end: 1px solid var(--color-line); }
 .profile-page .post-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.profile-page .post-grid .grid-link { display: block; aspect-ratio: 1; overflow: hidden; }
 .profile-page .post-grid .grid-tile { aspect-ratio: 1; inline-size: 100%; object-fit: cover; }
 </style>

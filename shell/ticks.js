@@ -1,17 +1,10 @@
 // Wall time → driver ticks (§8.4): the fixture driver schedules in
 // integer ticks (`after-ticks ≥ 1`, so optimistic states are always
-// observable); the shell fires `driver.tick()` on a fixed cadence —
-// 250 ms default, `?tick=<ms>` override (plan micro-decision #18).
-// Traces depend only on tick ordinals, never on wall time.
+// observable); the shell fires `driver.tick()` on one fixed cadence.
+// Traces depend only on tick ordinals, never on wall time. Host mechanics do
+// not consume the prototype's URL query namespace.
 
 export const DEFAULT_TICK_MS = 250;
-
-/** @param {string} search e.g. `location.search` */
-export function tickMillis(search) {
-  const raw = new URLSearchParams(search).get("tick");
-  const ms = raw === null ? Number.NaN : Number(raw);
-  return Number.isInteger(ms) && ms > 0 ? ms : DEFAULT_TICK_MS;
-}
 
 /**
  * @param {{

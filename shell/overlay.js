@@ -10,9 +10,10 @@ export function createOverlay(host) {
   // Fatal overlays cover a page with NOTHING running underneath — only a
   // reload clears them; diagnostics overlays sit over the last-good app.
   let fatal = false;
-  // The backdrop dismisses — the app underneath is still running.
+  // A diagnostics backdrop dismisses because the app underneath still runs;
+  // a fatal boot stays visible until a host restart/provider/actor change.
   host.addEventListener("click", (event) => {
-    if (event.target === host) host.hidden = true;
+    if (event.target === host && !fatal) host.hidden = true;
   });
 
   /** @param {string} title @param {HTMLElement[]} body */

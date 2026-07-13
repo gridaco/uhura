@@ -1,0 +1,32 @@
+# The create-post seam. Picking and uploading a file are provider/platform
+# concerns; Core sees only a storage-object id and serializable preview/name
+# metadata, never the browser File or its bytes.
+
+[port]
+name = "create"
+version = "0.1.0"
+
+[types.create-draft]
+kind = "union"
+
+[types.create-draft.variants.empty]
+
+[types.create-draft.variants.uploaded]
+object = "id"
+preview = "asset"
+name = "text"
+
+[projections.draft]
+type = "create-draft"
+
+[refusals.not-authorized]
+[refusals.image-not-ready]
+[refusals.unsupported-media-type]
+
+[commands.choose-image]
+payload = {}
+refusals = ["unsupported-media-type"]
+
+[commands.publish-image]
+payload = { image = "id", caption = "text", alt = "text" }
+refusals = ["not-authorized", "image-not-ready", "unsupported-media-type"]

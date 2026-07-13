@@ -1,0 +1,15 @@
+use fixture standard
+
+example loading {
+  projection feed.viewer = fixture.users.mira
+}
+
+example videos default {
+  projection feed.viewer = fixture.users.mira
+  projection feed.reels = fixture.reels.page
+}
+
+example like-pending {
+  from videos
+  events [ like-toggled(post: "post-nils-aurora", now-liked: true) ]
+}

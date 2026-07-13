@@ -95,10 +95,11 @@ fn every_pinned_preview_evaluates_to_its_v_golden() {
         golden_names.push(name);
     }
 
-    // The corpus example sets are fixed (§11.3): 10 page/surface pinned +
-    // 11 component pinned = 21; 9 resolve by replay (M4).
-    assert_eq!(pinned, 21, "pinned preview count");
-    assert_eq!(derived, 9, "derived preview count");
+    // The corpus example sets are fixed: the complete demo now includes
+    // post/story detail, relationship lists, Search, Reels, and Create in
+    // addition to the original feed/profile/component states.
+    assert_eq!(pinned, 47, "pinned preview count");
+    assert_eq!(derived, 20, "derived preview count");
 
     // Determinism: a fresh full run yields byte-identical V for a sample.
     let again = check(&corpus_input(true, &identity));

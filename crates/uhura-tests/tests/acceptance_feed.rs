@@ -111,7 +111,7 @@ fn criterion_2_like(program: &ProgramIr) {
     // itself (found by its heart icon, not by position).
     let card = lena_card(&steps[press - 1]["v"]["page"]["root"], "§13.2 pre-press");
     assert!(
-        find_text(card, "214 likes"),
+        find_text(card, "7 likes"),
         "pre-like shows the authored count"
     );
     let like = like_button(card);
@@ -130,7 +130,7 @@ fn criterion_2_like(program: &ProgramIr) {
     // word arrives (§11.4 step 2).
     let card = lena_card(&steps[press]["v"]["page"]["root"], "§13.2 press");
     assert!(
-        find_text(card, "215 likes"),
+        find_text(card, "8 likes"),
         "the optimistic count computes in-card"
     );
     let like = like_button(card);
@@ -155,7 +155,7 @@ fn criterion_2_like(program: &ProgramIr) {
             &format!("§13.2 flicker window, step {i}"),
         );
         assert!(
-            find_text(card, "215 likes") && !find_text(card, "214 likes"),
+            find_text(card, "8 likes") && !find_text(card, "7 likes"),
             "§13.2: step {i} flickered the count"
         );
         let like = like_button(card);
@@ -270,7 +270,7 @@ fn criterion_3_comments(program: &ProgramIr) {
 // ── §13.4 — pagination: dedupe, failure → retry, exhaustion is truth ────────
 
 /// Test-local script (the canonical list stays closed): the first
-/// `load-next-page` is refused, the author-visible retry sends the
+/// `load-next-page` is unavailable, the author-visible retry sends the
 /// second, page 2 appends. File order is the fixture's reply order.
 const PAGINATE_RETRY: &str = r#"
 [[deliver]]
@@ -282,8 +282,8 @@ slice = "feed.page-1"
 [[reply]]
 on = { command = "load-next-page", where = { cursor = "cursor-page-2" } }
 after-ticks = 1
-outcome = "refused"
-refusal = "rate-limited"
+outcome = "unavailable"
+reason = "network unavailable"
 
 [[reply]]
 on = { command = "load-next-page", where = { cursor = "cursor-page-2" } }

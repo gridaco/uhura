@@ -1,0 +1,132 @@
+page
+
+use component bottom-nav
+use component notice-bar
+use component post-card
+use surface comments-sheet
+use port feed {
+  projection reels
+  projection viewer
+  command like-post
+  command unlike-post
+}
+
+store {
+  state {
+    like-overlay: map[id]bool = {}
+    like-pending: map[id]bool = {}
+    notice: text? = none
+  }
+
+  on like-toggled(post: id, now-liked: bool) when now-liked && !(like-pending[post] ?? false) {
+    set like-overlay[post] = true
+    set like-pending[post] = true
+    send like-post(post: post)
+  }
+
+  on like-toggled(post: id, now-liked: bool) when !now-liked && !(like-pending[post] ?? false) {
+    set like-overlay[post] = false
+    set like-pending[post] = true
+    send unlike-post(post: post)
+  }
+
+  on like-post.ok(tag, cmd) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+  }
+
+  on like-post.err(tag, cmd, refusal) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+    set notice = "Couldn't update this like."
+  }
+
+  on unlike-post.ok(tag, cmd) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+  }
+
+  on unlike-post.err(tag, cmd, refusal) {
+    set like-pending[cmd.post] = none
+    set like-overlay[cmd.post] = none
+    set notice = "Couldn't update this like."
+  }
+
+  on comments-requested(post: id) {
+    open-surface comments-sheet(post: post)
+  }
+
+  on author-tapped(user: id) {
+    navigate profile(user: user)
+  }
+
+  on post-tapped(post: id) {
+    navigate post(id: post)
+  }
+
+  on tab-selected(section: text) when section == "feed" {
+    navigate feed()
+  }
+
+  on tab-selected(section: text) when section == "search" {
+    navigate search()
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "profile" {
+    navigate profile(user: viewer.id)
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate reels()
+  }
+
+  on notice-dismissed() {
+    set notice = none
+  }
+}
+
+<view class="screen reels-page">
+  <view class="reels-head">
+    <text class="title">Reels</text>
+    <text class="muted">Poster previews from real posts</text>
+  </view>
+  {#if notice != none}
+    <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
+  {/if}
+  {#match reels}
+    {:when loading}
+      <view class="fill-center">
+        <text class="muted">Loading reels…</text>
+      </view>
+    {:when failed reason}
+      <view class="fill-center">
+        <text class="muted">Reels aren't available.</text>
+      </view>
+    {:when ready r}
+      {#if count(r.posts) == 0}
+        <view class="fill-center stack-sm">
+          <icon name="reels" />
+          <text>No reels yet.</text>
+        </view>
+      {:else}
+        <scroll class="reels-scroll">
+          <view role="list" class="reel-list">
+            {#each r.posts as p (p.id)}
+              <post-card post={p} liked={like-overlay[p.id] ?? p.viewer-has-liked} like-pending={like-pending[p.id] ?? false} show-open={true} on:like-toggled on:comments-requested on:author-tapped on:post-tapped />
+            {/each}
+          </view>
+        </scroll>
+      {/if}
+  {/match}
+  <bottom-nav current="reels" on:tab-selected />
+</view>
+
+<style>
+.reels-page .reels-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.reels-page .reels-scroll { flex: 1; min-block-size: 0; }
+.reels-page .reel-list { display: flex; flex-direction: column; gap: var(--space-6); padding-block: var(--space-3); }
+</style>

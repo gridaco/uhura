@@ -97,6 +97,11 @@ pub enum Value {
     Some(Box<Value>),
     List(Vec<Value>),
     Record(BTreeMap<Ident, Value>),
+    /// A `map[id]V` / `map[tag]V` container. Keys are canonical map-key
+    /// strings (an id's text, a tag's `"t-<n>"`), NOT identifiers: an
+    /// external id (UUID, provider-minted key) is a valid map key even
+    /// though it is not a valid `Ident`.
+    Map(BTreeMap<String, Value>),
 }
 
 impl Value {
@@ -118,6 +123,12 @@ impl Value {
                 fields
                     .iter()
                     .map(|(k, v)| (k.as_str().to_string(), v.to_json()))
+                    .collect(),
+            ),
+            Value::Map(entries) => J::Object(
+                entries
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.to_json()))
                     .collect(),
             ),
         }
@@ -146,6 +157,23 @@ mod tests {
     fn ident_rejects_over_64_chars() {
         let long = "a".repeat(65);
         assert!(Ident::new(&long).is_err());
+    }
+
+    #[test]
+    fn map_keys_are_not_idents() {
+        // External ids (UUIDv7 and friends) are valid map keys even though
+        // they are not valid identifiers — the provider mints them.
+        let mut map = BTreeMap::new();
+        map.insert(
+            "01890a5d-ac96-774b-bcce-b302099a8057".to_string(),
+            Value::Bool(true),
+        );
+        map.insert("t-3".to_string(), Value::Int(1));
+        let v = Value::Map(map);
+        assert_eq!(
+            v.to_json().to_string(),
+            r#"{"01890a5d-ac96-774b-bcce-b302099a8057":true,"t-3":1}"#
+        );
     }
 
     #[test]

@@ -631,9 +631,7 @@ impl<'a> Machine<'a> {
                                 let key_str = map_key_string(&key_value).ok_or_else(|| {
                                     Stop::Internal(format!("non-identity map key {key_value:?}"))
                                 })?;
-                                let key_ident = Ident::new(&key_str)
-                                    .map_err(|e| Stop::Internal(format!("map key: {e}")))?;
-                                let Some(Value::Record(map)) = txn.state.get_mut(field) else {
+                                let Some(Value::Map(map)) = txn.state.get_mut(field) else {
                                     return Err(Stop::Internal(format!("`{field}` is not a map")));
                                 };
                                 txn.writes.push(serde_json::json!({
@@ -643,9 +641,9 @@ impl<'a> Machine<'a> {
                                 }));
                                 // `= none` removes the entry (§4.2).
                                 if value == Value::None {
-                                    map.remove(&key_ident);
+                                    map.remove(&key_str);
                                 } else {
-                                    map.insert(key_ident, value);
+                                    map.insert(key_str, value);
                                 }
                             }
                         }
@@ -1229,15 +1227,13 @@ impl FragmentMachine {
                             let key_str = map_key_string(&key_value).ok_or_else(|| {
                                 Stop::Internal("non-identity map key".to_string())
                             })?;
-                            let key_ident = Ident::new(&key_str)
-                                .map_err(|e| Stop::Internal(format!("map key: {e}")))?;
-                            let Some(Value::Record(map)) = state.get_mut(field) else {
+                            let Some(Value::Map(map)) = state.get_mut(field) else {
                                 return Err(Stop::Internal(format!("`{field}` is not a map")));
                             };
                             if value == Value::None {
-                                map.remove(&key_ident);
+                                map.remove(&key_str);
                             } else {
-                                map.insert(key_ident, value);
+                                map.insert(key_str, value);
                             }
                         }
                     }

@@ -1,2 +1,2 @@
 error[UH5009 markup/a11y-alt]: `<image>` takes exactly one of alt / decorative
-  --> components/post-card.uhura:27:9
+  --> components/post-card.uhura:29:9

@@ -376,7 +376,7 @@ fn every_derived_preview_replays_to_its_v_golden() {
         };
         assert_golden(&name, &v_json);
     }
-    assert_eq!(derived, 9, "nine derived examples replay");
+    assert_eq!(derived, 20, "twenty derived examples replay");
 
     // The optimistic like really is in the derived like-pending state.
     let like_pending = out

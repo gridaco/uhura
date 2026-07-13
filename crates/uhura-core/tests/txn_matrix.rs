@@ -873,7 +873,7 @@ fn outcome_ok_dispatches_to_origin_with_echoed_payload() {
         &Value::Int(7),
         "cmd echoes the sent payload"
     );
-    let Value::Record(m) = page_state(&r.u, "m") else {
+    let Value::Map(m) = page_state(&r.u, "m") else {
         panic!()
     };
     assert!(m.is_empty(), "`set m[tag] = none` removes the entry");
@@ -1108,7 +1108,7 @@ fn back_force_closes_the_popped_pages_surfaces_and_never_underflows() {
         params: BTreeMap::new(),
         state: BTreeMap::from([
             (ident("n"), Value::Int(0)),
-            (ident("m"), Value::Record(BTreeMap::new())),
+            (ident("m"), Value::Map(BTreeMap::new())),
             (ident("note"), Value::None),
         ]),
     });

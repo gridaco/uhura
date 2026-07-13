@@ -10,6 +10,12 @@ projection = "feed-page"
 slice = "feed.page-1"
 
 [[deliver]]
+after-ticks = 1
+port = "create"
+projection = "draft"
+slice = "create.empty"
+
+[[deliver]]
 after-ticks = 5
 port = "comments"
 projection = "for-post"
@@ -60,6 +66,33 @@ port = "feed"
 projection = "feed-page"
 slice = "feed.pages-1-2-liked-commented"
 
+# Hand-play create flow. File selection/upload remains a platform/provider
+# concern in live play; this deterministic driver settles the same contract.
+[[reply]]
+on = { command = "choose-image" }
+after-ticks = 1
+outcome = "ok"
+
+[[reply.updates]]
+port = "create"
+projection = "draft"
+slice = "create.uploaded"
+
+[[reply]]
+on = { command = "publish-image", where = { image = "object-mira-draft" } }
+after-ticks = 1
+outcome = "ok"
+
+[[reply.updates]]
+port = "create"
+projection = "draft"
+slice = "create.empty"
+
+[[reply.updates]]
+port = "feed"
+projection = "feed-page"
+slice = "feed.page-1-created"
+
 [[ui]]
 at-tick = 2
 emit = "like-toggled"
@@ -101,12 +134,12 @@ emit = "back-tapped"
 # shell does. One-shot, file-order — the closed world stays closed.
 
 # Walkthrough step 3: Marco's like survives one optimistic beat, then the
-# provider refuses — rollback + notice bar.
+# provider is unavailable — rollback + notice bar.
 [[reply]]
 on = { command = "like-post", where = { post = "post-marco-baja" } }
 after-ticks = 2
-outcome = "refused"
-refusal = "rate-limited"
+outcome = "unavailable"
+reason = "network unavailable"
 
 # Walkthrough step 11: the bottom tab visits the viewer's own profile.
 [[deliver]]

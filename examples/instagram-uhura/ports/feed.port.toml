@@ -38,6 +38,17 @@ user = "user-ref"
 has-unseen = "bool"
 is-self = "bool"
 
+[types.story-detail]
+kind = "record"
+
+[types.story-detail.fields]
+id = "id"
+author = "user-ref"
+image = "image-ref"
+caption = "text"
+posted-label = "text"
+viewer-has-viewed = "bool"
+
 [types.media]
 kind = "union"
 
@@ -76,6 +87,12 @@ posts = "list<post-summary>"
 cursor = "option<feed-cursor>"
 has-more = "bool"
 
+[types.reels-page]
+kind = "record"
+
+[types.reels-page.fields]
+posts = "list<post-summary>"
+
 # Delivered before Init; bare reads are legal (§9.2).
 [projections.viewer]
 type = "user-ref"
@@ -84,20 +101,36 @@ boot = true
 [projections.feed-page]
 type = "feed-page"
 
+# Keyed detail carriers make profile-grid navigation and story viewing use
+# the same authority-owned records as the feed.
+[projections.post-by-id]
+type = "post-summary"
+key = "id"
+
+[projections.story-by-id]
+type = "story-detail"
+key = "id"
+
+[projections.reels]
+type = "reels-page"
+
 [refusals.not-authorized]
-[refusals.rate-limited]
 [refusals.not-found]
 
 [commands.like-post]
 payload = { post = "id" }
-refusals = ["not-authorized", "rate-limited", "not-found"]
+refusals = ["not-authorized", "not-found"]
 
 [commands.unlike-post]
 payload = { post = "id" }
-refusals = ["not-authorized", "not-found"]
+refusals = ["not-authorized"]
 
 [commands.load-next-page]
 payload = { cursor = "option<feed-cursor>" }
 
 [commands.reload]
 payload = {}
+
+[commands.mark-story-seen]
+payload = { story = "id" }
+refusals = ["not-authorized", "not-found"]

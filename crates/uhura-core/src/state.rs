@@ -177,13 +177,14 @@ pub fn init_value(init: &ir::InitValue) -> Value {
         ir::InitValue::Text(s) => Value::Text(s.clone()),
         ir::InitValue::Bool(b) => Value::Bool(*b),
         ir::InitValue::None => Value::None,
-        ir::InitValue::EmptyMap => Value::Record(BTreeMap::new()),
+        ir::InitValue::EmptyMap => Value::Map(BTreeMap::new()),
     }
 }
 
 /// The canonical map-key string of a key value: ids keep their text,
-/// tags render `"t-<n>"` (maps are records keyed by this string — IR
-/// micro-decision; entity-id shapes are linted, §6.2).
+/// tags render `"t-<n>"` (`Value::Map` is keyed by this string — IR
+/// micro-decision; keys are NOT identifiers, so external ids such as
+/// UUIDs are valid; entity-id shapes are linted, §6.2).
 pub fn map_key_string(key: &Value) -> Option<String> {
     match key {
         Value::Id(s) | Value::Text(s) => Some(s.clone()),

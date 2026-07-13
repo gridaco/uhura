@@ -36,3 +36,19 @@ export class FixtureDriver {
   idle(): boolean;
   free(): void;
 }
+
+declare global {
+  interface Window {
+    /** Stable debug + system-control handle installed before play boots. */
+    __uhura?: {
+      readonly system: import("./types.js").SystemState;
+      restart(): void;
+      setActor(actor: string): void;
+      setProvider(provider: "remote" | "fixture"): void;
+      session: unknown;
+      driver: unknown;
+      steps: Record<string, unknown>[];
+      ticks: unknown;
+    };
+  }
+}

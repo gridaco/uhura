@@ -21,3 +21,9 @@ example self {
   projection feed.viewer = fixture.users.mira
   projection profile.profile("user-mira") = fixture.profiles.mira
 }
+
+example self-tagged {
+  from self
+  events [ profile-tab-selected(tab: "tagged") ]
+  note "Mira's tagged grid carries Marco's real Baja post id and opens shared post detail"
+}
