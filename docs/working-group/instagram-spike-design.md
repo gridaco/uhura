@@ -3,9 +3,7 @@
 - **Status:** Working-group design draft — non-normative, pre-RFC, pre-implementation
 - **Owner:** [Uhura Working Group](README.md)
 - **Foundation:** [RFC 0001](../rfcs/0001-project-foundation.md), [Uhura specification](../spec/README.md)
-- **Requirements evidence:** [Frame stress-test handoff](frame-stress-test-handoff.md),
-  [Instagram corpus](../../../docs/frame/examples/instagram/README.md) and its
-  [feedback](../../../docs/frame/examples/instagram/FEEDBACK.md)
+- **Requirements evidence:** [Application-scale stress-test requirements](application-scale-stress-test.md)
 - **Provenance:** v1 was synthesized from seven parallel subsystem designs +
   an examples-system design, reconciled against ~90 adversarial critique
   findings. **v2 reframes the view layer** after a direction challenge
@@ -789,9 +787,10 @@ Near-end contract: descriptor presence = someone listens (core); physical
 proximity = remaining extent below **100% of one viewport extent** (integer
 percentage, stated once in the catalog); edge-triggered latch re-armed on
 content-extent growth (renderer); exactly-one in-flight command (core
-guard); cursor meaning (port). The four-way split that discharges the Frame
-`ui:list` P0 — semantics (`role="list"` + keyed each), viewport (`scroll`),
-windowing (renderer license), pagination observation (split as above).
+guard); cursor meaning (port). The four-way split that discharges the
+stress-test corpus's `ui:list` P0 — semantics (`role="list"` + keyed each),
+viewport (`scroll`), windowing (renderer license), pagination observation
+(split as above).
 
 ### 8.3 Static renderer — `uhura project`
 

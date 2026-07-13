@@ -4,7 +4,7 @@
 - **Master specification:** [Uhura specification](spec/README.md)
 - **Foundational proposal:** [RFC 0001](rfcs/0001-project-foundation.md)
 - **Research and stewardship:** [Uhura Working Group](working-group/README.md)
-- **Historical requirements input:** [Frame stress-test handoff](working-group/frame-stress-test-handoff.md)
+- **Historical requirements input:** [Application-scale stress-test requirements](working-group/application-scale-stress-test.md)
 
 This directory is the documentation root for the standalone Uhura project.
 The project landing page provides orientation; the living specification defines

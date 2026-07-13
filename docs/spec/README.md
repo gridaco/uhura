@@ -4,7 +4,7 @@
 - **Target:** Unversioned
 - **Owner:** [Uhura Working Group](../working-group/README.md)
 - **Foundational RFC:** [RFC 0001](../rfcs/0001-project-foundation.md)
-- **Historical workstream:** Frame
+- **Prior art:** XAML, Svelte, QML, Elm
 
 This is the living master document for **Uhura**, a declarative UI language,
 checker/compiler, and deterministic headless experience runtime. Its canonical
@@ -326,7 +326,7 @@ and executable conformance cases before it enters a versioned specification.
 
 ## 14. Historical research evidence
 
-The [Frame application-scale stress-test handoff](../working-group/frame-stress-test-handoff.md)
-records which findings from the closed Frame workstream remain valid, which
-responsibilities move into Uhura Core, and which Frame assumptions and syntax
-must not be carried forward.
+The [application-scale stress-test requirements](../working-group/application-scale-stress-test.md)
+record which findings from an earlier application-scale stress study remain
+valid, which responsibilities move into Uhura Core, and which assumptions and
+syntax must not be carried forward.

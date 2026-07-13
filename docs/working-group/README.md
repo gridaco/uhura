@@ -46,9 +46,9 @@ accepted.
 
 ## Research inputs
 
-- [Frame application-scale stress-test handoff](frame-stress-test-handoff.md)
-  preserves reusable requirements and explicitly reassigns state ownership for
-  Uhura without treating historical Frame XML as Uhura syntax.
+- [Application-scale stress-test requirements](application-scale-stress-test.md)
+  preserves reusable requirements from an earlier application-scale stress
+  study and explicitly reassigns state ownership for Uhura.
 
 ## Immediate research queue
 
@@ -61,7 +61,6 @@ accepted.
 - forms, navigation, optimistic UI, offline behavior, and infinite scrolling
 - Spock export/import contract representation
 - message and localization model, including MessageFormat 2
-- compatibility strategy for Frame and Wire v4 inputs
 
 Implementation should follow accepted semantics closely enough to produce
 evidence, but prototypes do not become specification by being first.

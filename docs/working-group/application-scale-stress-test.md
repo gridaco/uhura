@@ -1,27 +1,22 @@
-# Frame application-scale stress-test handoff
+# Application-scale stress-test requirements
 
-- **Status:** Non-normative research handoff
-- **Source workstream:** Historical Frame proposal
+- **Status:** Non-normative research input
+- **Source:** An earlier internal application-scale stress study (closed)
 - **Destination:** Uhura Working Group
-- **Evidence:** [Frame examples](../../../docs/frame/examples/README.md),
-  [Instagram-scale corpus](../../../docs/frame/examples/instagram/README.md),
-  [feedback](../../../docs/frame/examples/instagram/FEEDBACK.md), and
-  [research questions](../../../docs/frame/working-group/application-scale-stress-test-questions.md)
 
-This note carries reusable evidence from the closed Frame workstream into
-Uhura without carrying forward Frame syntax or its consumer-only state boundary.
+This note carries reusable evidence from an earlier internal application-scale
+stress study into Uhura without carrying forward that study's syntax or its
+consumer-only state boundary.
 
-The source corpus is intentionally preserved under `docs/frame/`. Its
-`.frame.xml` files are historical, non-runnable stress fixtures. They are not
-`.uhura` examples, migration promises, or accepted widget catalogs.
+## Why the evidence remains useful
 
-## Why the corpus remains useful
+The study's Instagram-scale source exercised 16 view roots, 10 surface roots,
+15 pure templates, 253 distinct external invocation names, 215 distinct
+external model paths, 36 collection expansions, 44 structural matches, and 294
+bindings.
 
-The Instagram-scale source exercised 16 view roots, 10 surface roots, 15 pure
-templates, 253 distinct external invocation names, 215 distinct external model
-paths, 36 collection expansions, 44 structural matches, and 294 bindings.
-
-Those counts do not validate Frame. They expose specification pressure across:
+Those counts do not validate the study's design. They expose specification
+pressure across:
 
 - feeds, pagination, refresh, and windowed collections;
 - Stories, Reels, media playback, calls, and live presentation;
@@ -73,8 +68,8 @@ The following mechanism-neutral findings remain valid for Uhura:
 
 ## Findings reassigned for Uhura
 
-Frame externalized all application state to a Host Contract. Uhura deliberately
-uses a three-owner model instead:
+The study externalized all application state to an omnibus host contract.
+Uhura deliberately uses a three-owner model instead:
 
 | Stress-test concern | Uhura disposition |
 |---|---|
@@ -99,10 +94,11 @@ The ownership test from the Uhura foundation remains decisive:
 
 Uhura does not inherit:
 
-- Frame XML vocabulary, namespaces, widgets, properties, or event names;
+- the predecessor's XML vocabulary, namespaces, widgets, properties, or event
+  names;
 - the claim that every page-, form-, tab-, route-, or surface-local transition
   must be declared outside the UI language;
-- the omnibus Frame Host Contract as one owner for UI state, product behavior,
+- the omnibus host contract as one owner for UI state, product behavior,
   routes, surfaces, effects, and outcomes;
 - the assumption that every one of the corpus's 253 invocation names is an
   external action—many should become local events and Uhura transitions;

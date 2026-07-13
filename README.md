@@ -30,10 +30,10 @@ failure).
 
 ## Project position
 
-Uhura is a greenfield proposed successor to the Frame workstream. It is not a
-rename, source-compatible version, or incremental extension of Frame XML.
-Existing Frame and Wire v4 documents remain historical and migration inputs;
-they do not constrain Uhura's eventual grammar or ABI.
+Uhura is a greenfield design: no earlier format constrains its grammar or
+ABI. It stands on well-known prior art — Svelte, XAML, QML, Elm (see
+[References and prior work](#references-and-prior-work)) — without being a
+rename, source-compatible version, or extension of any of it.
 
 Uhura is a subsystem of the [Spock](https://github.com/gridaco/spock)
 project: Spock is the ecosystem and toolchain root, and this repository is
@@ -81,6 +81,25 @@ Until an implementation RFC says otherwise:
 
 Cross-project integration must go through versioned contracts and conformance
 fixtures.
+
+## References and prior work
+
+Uhura draws on well-known prior art in declarative UI and deterministic state
+management:
+
+- Svelte, for markup-first components over a closed template language —
+  `{#if}`/`{#each}`-style control blocks compiled ahead of time rather than
+  interpreted framework calls.
+- XAML, for declarative UI held apart from imperative code, with a closed,
+  checkable element vocabulary.
+- QML, for a typed declarative UI language backed by its own runtime rather
+  than a general-purpose scripting host.
+- Elm, for the pure state machine: typed messages advance the model, the view
+  is a pure function of state, and effects leave the language as data.
+- Redux, for replayable state transitions and the action log as a debugging
+  surface — time travel as a consequence of purity.
+- Storybook, for component examples as first-class, checkable artifacts
+  (`.examples.uhura`).
 
 ## Documentation
 

@@ -4,7 +4,8 @@
 - **Scope:** Project identity, responsibility boundaries, repository posture,
   and the minimum semantic model
 - **Supersedes:** None
-- **Related work:** Frame language foundation and Spock language/runtime
+- **Related work:** Spock language/runtime; prior art in XAML, Svelte, QML,
+  and Elm
 
 ## 1. Proposal
 
@@ -18,8 +19,8 @@ Uhura will own both:
 2. a deterministic headless core runtime that checks and evaluates those
    semantics without performing concrete rendering or I/O.
 
-Uhura is a greenfield proposed successor to the Frame workstream. It is not a
-Frame rename, Frame 2 syntax commitment, or source-compatible continuation.
+Uhura is a greenfield proposal. It is not a rename, second syntax, or
+source-compatible continuation of any earlier workstream.
 
 The canonical source suffix is `.uhura`. Exact syntax is deferred. If a future
 RFC adds an XML interchange serialization, it should use an explicit compound
@@ -115,21 +116,25 @@ concerns explicitly separable:
 Behavior must not be hidden inside renderer callbacks or arbitrary code in
 widget markup.
 
-## 7. Relationship to Frame
+## 7. Prior art and inherited requirements
 
-Frame's greenfield proposal established useful requirements: deterministic
-parsing, explicit typed dependencies, pure templates, stable diagnostics,
-portable widget semantics, static projection, and lowercase kebab-case source.
-Uhura should retain those properties where they survive scrutiny.
+An earlier internal application-scale stress study established useful
+requirements: deterministic parsing, explicit typed dependencies, pure
+templates, stable diagnostics, portable widget semantics, static projection,
+and lowercase kebab-case source. Uhura should retain those properties where
+they survive scrutiny. The public prior art points the same way: XAML and QML
+for closed, checkable declarative vocabularies; Svelte for markup-first
+components over a compiled template language; Elm for the pure message-driven
+state machine.
 
-Uhura deliberately rejects Frame's strongest consumer-only restriction. A
+Uhura deliberately rejects the study's strongest consumer-only restriction. A
 Uhura program may define non-authoritative UI state and transitions, and Uhura
 Core executes them. Durable application state, business behavior, policy, and
 effects remain external.
 
-Existing Frame XML and Wire v4 formats remain governed by their current
-documents. Any future migration requires an explicit adapter and diagnostics;
-this RFC promises no automatic or lossless conversion.
+No earlier format governs Uhura. Any future migration from a legacy format
+requires an explicit adapter and diagnostics; this RFC promises no automatic
+or lossless conversion.
 
 ## 8. Repository posture
 
@@ -198,5 +203,5 @@ This foundation can be accepted when the project agrees that:
 4. All I/O occurs through explicit commands or platform intents.
 5. Spock and Uhura contracts are linked through a language-neutral boundary.
 6. Uhura remains isolated and independently extractable during incubation.
-7. The Frame relationship is described without implying compatibility or
-   prematurely performing migration.
+7. Prior art is credited without implying compatibility or prematurely
+   performing migration.
