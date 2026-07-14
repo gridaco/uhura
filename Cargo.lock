@@ -467,6 +467,7 @@ dependencies = [
  "uhura-base",
  "uhura-check",
  "uhura-core",
+ "uhura-editor-model",
  "uhura-fixture",
  "uhura-host",
  "uhura-port",
@@ -487,6 +488,7 @@ dependencies = [
 name = "uhura-editor-model"
 version = "0.0.0"
 dependencies = [
+ "serde",
  "serde_json",
  "uhura-base",
  "uhura-check",

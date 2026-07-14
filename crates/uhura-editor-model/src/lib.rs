@@ -7,6 +7,7 @@
 //! filesystem access, or transport.
 
 pub mod icons;
+pub mod interaction_graph;
 
 use std::collections::{BTreeMap, BTreeSet};
 
