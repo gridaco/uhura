@@ -8,10 +8,15 @@ use std::process::ExitCode;
 
 use uhura_base::{Severity, render_text};
 use uhura_check::check;
-use uhura_check::preview::PreviewPayload;
+use uhura_check::preview::{
+    PreviewDataKind, PreviewDataValue, PreviewOrigin, PreviewPayload, PreviewSource,
+};
 use uhura_check::resolve::SubjectKind;
 use uhura_core::eval::{eval_fragment, eval_view};
-use uhura_project::{Asset, FrameContent, FrameKind, PreviewFrame, render_canvas};
+use uhura_project::{
+    Asset, FrameContent, FrameKind, PreviewField, PreviewFieldGroup, PreviewFieldValue,
+    PreviewFrame, render_canvas,
+};
 
 use crate::CommonArgs;
 
@@ -99,6 +104,30 @@ pub(crate) fn run_as(common: &CommonArgs, out_dir: Option<&str>, command: &str) 
             in_flight: preview.in_flight,
             from: preview.from.clone(),
             note: preview.note.clone(),
+            data: preview
+                .data
+                .iter()
+                .map(|item| PreviewField {
+                    group: match item.kind {
+                        PreviewDataKind::Property => PreviewFieldGroup::Properties,
+                        PreviewDataKind::PageAddress => PreviewFieldGroup::PageAddress,
+                        PreviewDataKind::ProvidedData => PreviewFieldGroup::ProvidedData,
+                    },
+                    name: item.name.to_string(),
+                    key: item.key.clone(),
+                    value: match &item.value {
+                        PreviewDataValue::Ready(value) => PreviewFieldValue::Ready(value.clone()),
+                        PreviewDataValue::Waiting => PreviewFieldValue::Waiting,
+                        PreviewDataValue::Failed(reason) => {
+                            PreviewFieldValue::Failed(reason.clone())
+                        }
+                    },
+                    source: item
+                        .origin
+                        .as_ref()
+                        .map(|origin| source_label(origin, &preview.example)),
+                })
+                .collect(),
             content,
         });
     }
@@ -139,6 +168,55 @@ pub(crate) fn run_as(common: &CommonArgs, out_dir: Option<&str>, command: &str) 
         html.len() / 1024
     );
     ExitCode::SUCCESS
+}
+
+fn source_label(origin: &PreviewOrigin, selected_example: &str) -> String {
+    let inherited = origin
+        .declared_in
+        .as_deref()
+        .filter(|declared| *declared != selected_example);
+    match &origin.source {
+        PreviewSource::Inline if origin.timeline => origin
+            .declared_in
+            .as_deref()
+            .map(|example| format!("Calculated by “{example}” example steps"))
+            .unwrap_or_else(|| "Calculated by example steps".to_string()),
+        PreviewSource::Inline => inherited
+            .map(|example| format!("Inherited from “{example}”"))
+            .unwrap_or_else(|| "Set in this example".to_string()),
+        PreviewSource::Fixture { fixture, path } => {
+            let mut label = sample_data_label("From", fixture, path);
+            if origin.timeline {
+                if let Some(example) = origin.declared_in.as_deref() {
+                    label.push_str(&format!(" · updated by “{example}” steps"));
+                }
+            } else if let Some(example) = inherited {
+                label.push_str(&format!(" · via “{example}”"));
+            }
+            label
+        }
+        PreviewSource::AutomaticFixture { fixture, path } => {
+            sample_data_label("Automatically from", fixture, path)
+        }
+    }
+}
+
+fn sample_data_label(prefix: &str, fixture: &str, path: &[String]) -> String {
+    let path = path
+        .iter()
+        .map(|segment| friendly_name(segment))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    format!("{prefix} {} sample data · {path}", friendly_name(fixture))
+}
+
+fn friendly_name(name: &str) -> String {
+    let words = name.replace('-', " ");
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 pub(crate) fn output_path(out_dir: Option<&str>) -> PathBuf {

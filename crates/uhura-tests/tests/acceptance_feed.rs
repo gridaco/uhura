@@ -452,7 +452,7 @@ fn criterion_5_navigation(program: &ProgramIr) {
 
     // History intents are emitted and traced, in walkthrough order:
     // dismiss, navigate, back. (§13.5's "executed as no-ops" half is the
-    // SHELL's contract — §7.4, shell/main.js — outside this headless
+    // SHELL's contract — §7.4, web/src/play/main.ts — outside this headless
     // battery; no automated test pins it.)
     let intents: Vec<String> = steps
         .iter()

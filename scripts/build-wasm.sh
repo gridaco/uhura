@@ -34,8 +34,8 @@ cargo build --locked -p uhura-wasm --target wasm32-unknown-unknown --release
 
 WASM="target/wasm32-unknown-unknown/release/uhura_wasm.wasm"
 rm -rf crates/uhura-wasm/pkg
-"$WBG" --target web    --out-dir crates/uhura-wasm/pkg/web  --no-typescript "$WASM"
-"$WBG" --target nodejs --out-dir crates/uhura-wasm/pkg/node --no-typescript "$WASM"
+"$WBG" --target web    --out-dir crates/uhura-wasm/pkg/web  "$WASM"
+"$WBG" --target nodejs --out-dir crates/uhura-wasm/pkg/node "$WASM"
 
 # The repo root's package.json says `"type": "module"`; pin each bundle's
 # own module kind so node never misparses the CommonJS output.

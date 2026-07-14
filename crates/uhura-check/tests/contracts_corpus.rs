@@ -129,7 +129,7 @@ fn manifest_loads_and_binds_all_four_ports() {
     assert_eq!(play.script.as_str(), "demo");
     assert!(!play.allow_fixture, "Instagram browser Play is Spock-only");
     let provider = play.provider.as_ref().expect("live play provider");
-    assert_eq!(provider.module, "providers/spock.js");
+    assert_eq!(provider.module, "providers/dist/spock.js");
     assert_eq!(
         provider.config["graphql_url"],
         "http://127.0.0.1:4000/graphql/v1"
@@ -170,7 +170,7 @@ fixture = "standard"
 script = "demo"
 allow_fixture = false
 "#;
-    let issues = load_manifest(&fixture_only).unwrap_err();
+    let issues = load_manifest(fixture_only).unwrap_err();
     assert!(
         issues.iter().any(|issue| {
             issue.path == "play.default.allow_fixture"
@@ -183,7 +183,7 @@ allow_fixture = false
 #[test]
 fn manifest_rejects_unsafe_provider_modules_and_non_string_config() {
     let unsafe_module = MANIFEST.replace(
-        "module = \"providers/spock.js\"",
+        "module = \"providers/dist/spock.js\"",
         "module = \"../outside.js\"",
     );
     let issues = load_manifest(&unsafe_module).unwrap_err();

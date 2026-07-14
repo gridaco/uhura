@@ -318,7 +318,8 @@ The foundation deliberately leaves these unsettled:
 - renderer and host capability negotiation;
 - Spock import/export schema and linker ownership packaging;
 - static projection bounds and scenario format;
-- Rust/Wasm and TypeScript host packaging; and
+- long-term Rust/Wasm and TypeScript host release packaging beyond the
+  checked-in v0 browser artifacts; and
 - public naming, licensing, release, and repository extraction policy.
 
 Each material decision requires focused research, examples, counterexamples,

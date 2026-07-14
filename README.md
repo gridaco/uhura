@@ -11,7 +11,7 @@ perform I/O, or own authoritative product truth.
 
 The project is an incubating spike: a Rust workspace under `crates/`
 implements the checker, core machine, fixture driver, static canvas, wasm
-session, play shell (`shell/`), and `uhura` CLI, exercised end to end by the
+session, TypeScript Play host (`web/src/play/`), and `uhura` CLI, exercised end to end by the
 Instagram slice at `examples/instagram-uhura/`. The design doc
 (`docs/working-group/instagram-spike-design.md`) is authoritative; there is no
 accepted grammar freeze, package, or compatibility promise yet.
@@ -31,6 +31,16 @@ golden suites plus the design's §13 acceptance battery
 parity criterion runs when `node` and the wasm package are present and is
 reported as skipped otherwise (`UHURA_REQUIRE_PARITY=1` makes that a
 failure).
+
+The browser host and read-only Editor controller are authored as strict,
+framework-free TypeScript under `web/`. Their small compiled assets are
+checked in so Cargo, `uhura editor`, and `uhura play` remain usable without a
+Node runtime. Contributors changing web source run
+`(cd web && corepack pnpm install --frozen-lockfile)` once and then
+`(cd web && corepack pnpm check)` under the versions pinned by `.nvmrc` and the
+package manager declaration. The umbrella Spock checkout and this repository
+share the same Node 24 LTS patch and pnpm 10.11.0; React remains deliberately
+deferred.
 
 ## Why Uhura exists
 

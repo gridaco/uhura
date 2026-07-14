@@ -14,6 +14,7 @@ pub mod icons;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+use uhura_base::Value;
 use uhura_core::view::{Descriptor, Node, Snapshot, VValue};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,7 +36,31 @@ pub struct PreviewFrame {
     pub in_flight: usize,
     pub from: Option<String>,
     pub note: Option<String>,
+    pub data: Vec<PreviewField>,
     pub content: FrameContent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewFieldGroup {
+    Properties,
+    PageAddress,
+    ProvidedData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreviewFieldValue {
+    Ready(Value),
+    Waiting,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreviewField {
+    pub group: PreviewFieldGroup,
+    pub name: String,
+    pub key: Option<Value>,
+    pub value: PreviewFieldValue,
+    pub source: Option<String>,
 }
 
 pub enum FrameContent {
@@ -233,8 +258,15 @@ pub fn render_canvas(
       <div id="selection-from-row" hidden><dt>From</dt><dd id="selection-from"></dd></div>
       <div><dt>Status</dt><dd id="selection-status"></dd></div>
     </dl>
+    <section class="inspector-block" aria-labelledby="selection-data-title">
+      <h3 id="selection-data-title">Example data</h3>
+      <p class="inspector-block-intro">Values used to build this preview.</p>
+      <div id="selection-data"></div>
+      <p id="selection-no-data" class="inspector-muted">No example data is set directly for this preview.</p>
+    </section>
     <div id="selection-note-block" class="inspector-block" hidden><h3>Note</h3><p id="selection-note"></p></div>
     <div class="inspector-block"><h3>Declared interactions</h3><ul id="selection-interactions" class="interaction-list"></ul><p id="selection-no-interactions" class="inspector-muted">No interactions declared in this snapshot.</p></div>
+    <p id="selection-announcement" class="visually-hidden" aria-live="polite"></p>
   </section>
 </aside>
 <script>
@@ -316,8 +348,9 @@ fn render_frame(frame: &PreviewFrame, frame_id: &str) -> String {
         .unwrap_or_default();
     let note_data = frame.note.as_deref().unwrap_or_default();
     let from_data = frame.from.as_deref().unwrap_or_default();
+    let preview_data = render_preview_data(&frame.data);
     format!(
-        "<figure id=\"{frame_id}\" class=\"frame\" data-frame data-kind=\"{kind}\" data-subject=\"{subject}\" data-example=\"{example}\" data-provenance=\"{prov}\" data-default=\"{is_default}\" data-pinned=\"{pinned}\" data-derived=\"{derived}\" data-in-flight=\"{in_flight}\" data-from=\"{from_data}\" data-preview-note=\"{note_data}\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" aria-labelledby=\"{frame_id}-caption\">\n<div class=\"{frame_class}\">{content}</div>\n\
+        "<figure id=\"{frame_id}\" class=\"frame\" data-frame data-kind=\"{kind}\" data-subject=\"{subject}\" data-example=\"{example}\" data-provenance=\"{prov}\" data-default=\"{is_default}\" data-pinned=\"{pinned}\" data-derived=\"{derived}\" data-in-flight=\"{in_flight}\" data-from=\"{from_data}\" data-preview-note=\"{note_data}\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" aria-labelledby=\"{frame_id}-caption\">\n<div class=\"{frame_class}\">{content}</div>\n{preview_data}\
          <figcaption id=\"{frame_id}-caption\"><span class=\"caption-title\">{subject} / {example}</span>{badges}\
          <span class=\"caption-prov\">{prov}</span>{note}</figcaption>\n</figure>\n",
         frame_id = frame_id,
@@ -332,10 +365,178 @@ fn render_frame(frame: &PreviewFrame, frame_id: &str) -> String {
         in_flight = frame.in_flight,
         from_data = esc(from_data),
         note_data = esc(note_data),
+        preview_data = preview_data,
         badges = badges,
         prov = esc(&provenance),
         note = note,
     )
+}
+
+fn render_preview_data(fields: &[PreviewField]) -> String {
+    let mut content = String::new();
+    for group in [
+        PreviewFieldGroup::PageAddress,
+        PreviewFieldGroup::Properties,
+        PreviewFieldGroup::ProvidedData,
+    ] {
+        let matching: Vec<&PreviewField> =
+            fields.iter().filter(|field| field.group == group).collect();
+        if matching.is_empty() {
+            continue;
+        }
+        let _ = write!(
+            content,
+            "<section class=\"preview-data-group\"><h4>{}</h4><dl class=\"preview-data-list\">",
+            preview_group_label(group)
+        );
+        for field in matching {
+            let label = match &field.key {
+                Some(key) => format!("{} for {}", human_label(&field.name), short_value(key)),
+                None => human_label(&field.name),
+            };
+            let value = match &field.value {
+                PreviewFieldValue::Ready(value) => render_data_value(value),
+                PreviewFieldValue::Waiting => {
+                    "<span class=\"preview-data-state\">Waiting for data</span>".to_string()
+                }
+                PreviewFieldValue::Failed(reason) => format!(
+                    "<span class=\"preview-data-state\">Couldn’t load</span>\
+                     <span class=\"preview-data-reason\">{}</span>",
+                    esc(reason)
+                ),
+            };
+            let source = field
+                .source
+                .as_ref()
+                .map(|source| {
+                    format!(
+                        "<p class=\"preview-data-source\">Source: {}</p>",
+                        esc(source)
+                    )
+                })
+                .unwrap_or_default();
+            let _ = write!(
+                content,
+                "<div class=\"preview-data-row\"><dt>{}</dt><dd>{value}{source}</dd></div>",
+                esc(&label)
+            );
+        }
+        content.push_str("</dl></section>");
+    }
+    format!("<template data-preview-data>{content}</template>")
+}
+
+fn preview_group_label(group: PreviewFieldGroup) -> &'static str {
+    match group {
+        PreviewFieldGroup::Properties => "Properties",
+        PreviewFieldGroup::PageAddress => "Page address",
+        PreviewFieldGroup::ProvidedData => "Provided data",
+    }
+}
+
+fn render_data_value(value: &Value) -> String {
+    match value {
+        Value::Unit | Value::None => {
+            "<span class=\"preview-data-value\">Not set</span>".to_string()
+        }
+        Value::Bool(value) => format!(
+            "<span class=\"preview-data-value\">{}</span>",
+            if *value { "Yes" } else { "No" }
+        ),
+        Value::Int(value) => {
+            format!("<span class=\"preview-data-value\">{value}</span>")
+        }
+        Value::Text(value) | Value::Id(value) => format!(
+            "<span class=\"preview-data-value\">{}</span>",
+            if value.is_empty() {
+                "Empty".to_string()
+            } else {
+                esc(value)
+            }
+        ),
+        Value::Tag(value) => {
+            format!("<span class=\"preview-data-value\">Generated value t-{value}</span>")
+        }
+        Value::Some(value) => render_data_value(value),
+        Value::List(values) => render_data_collection(
+            &format!("{} {}", values.len(), plural(values.len(), "item", "items")),
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| (format!("Item {}", index + 1), value))
+                .collect(),
+        ),
+        Value::Record(fields) => render_data_collection(
+            &format!(
+                "{} {}",
+                fields.len(),
+                plural(fields.len(), "field", "fields")
+            ),
+            fields
+                .iter()
+                .map(|(name, value)| (human_label(name.as_str()), value))
+                .collect(),
+        ),
+        Value::Map(entries) => render_data_collection(
+            &format!(
+                "{} {}",
+                entries.len(),
+                plural(entries.len(), "entry", "entries")
+            ),
+            entries
+                .iter()
+                .map(|(name, value)| (name.clone(), value))
+                .collect(),
+        ),
+    }
+}
+
+fn render_data_collection(summary: &str, rows: Vec<(String, &Value)>) -> String {
+    let mut body = String::new();
+    for (label, value) in rows {
+        let _ = write!(
+            body,
+            "<div><dt>{}</dt><dd>{}</dd></div>",
+            esc(&label),
+            render_data_value(value)
+        );
+    }
+    format!(
+        "<details class=\"preview-data-details\"><summary>{}</summary>\
+         <dl class=\"preview-data-nested\">{body}</dl></details>",
+        esc(summary)
+    )
+}
+
+fn plural<'a>(count: usize, one: &'a str, many: &'a str) -> &'a str {
+    if count == 1 { one } else { many }
+}
+
+fn human_label(name: &str) -> String {
+    let words = name.replace('-', " ");
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn short_value(value: &Value) -> String {
+    match value {
+        Value::Bool(value) => {
+            if *value {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            }
+        }
+        Value::Int(value) => value.to_string(),
+        Value::Text(value) | Value::Id(value) => value.clone(),
+        Value::Tag(value) => format!("t-{value}"),
+        Value::Some(value) => short_value(value),
+        Value::None | Value::Unit => "not set".to_string(),
+        Value::List(_) | Value::Record(_) | Value::Map(_) => "selected item".to_string(),
+    }
 }
 
 fn frame_kind_label(kind: FrameKind) -> &'static str {
@@ -661,18 +862,26 @@ button.uh-button[aria-busy="true"] { opacity: 0.6; }
 
 const CHROME_CSS: &str = include_str!("canvas-chrome.css");
 
-/// Read-only editor chrome. It never reads or mutates Uhura state (§8.3):
-/// navigation, selection, rulers, and camera controls operate on the emitted DOM.
-const CHROME_JS: &str = include_str!("canvas-chrome.js");
+/// Compiled read-only Editor controller. It never mutates Uhura state: camera
+/// controls operate on the emitted DOM and selection copies pre-rendered,
+/// editor-only preview metadata into the inspector. The deterministic artifact
+/// is checked in; Cargo never invokes the TypeScript toolchain.
+const CHROME_JS: &str = include_str!("../../../web/dist/editor/canvas-chrome.js");
+
+#[cfg(test)]
+const CHROME_TS: &str = include_str!("../../../web/src/editor/canvas-chrome.ts");
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use uhura_base::Ident;
+    use uhura_base::{Ident, Value};
     use uhura_core::view::{Node, VValue};
 
-    use super::{Asset, FrameContent, FrameKind, PreviewFrame, render_canvas};
+    use super::{
+        Asset, CHROME_TS, FrameContent, FrameKind, PreviewField, PreviewFieldGroup,
+        PreviewFieldValue, PreviewFrame, render_canvas,
+    };
 
     fn frame(kind: FrameKind, subject: &str, example: &str) -> PreviewFrame {
         PreviewFrame {
@@ -685,6 +894,7 @@ mod tests {
             in_flight: 2,
             from: Some("base <state>".to_string()),
             note: Some("A checked & safe note".to_string()),
+            data: Vec::new(),
             content: FrameContent::Fragment(Node {
                 key: "root".to_string(),
                 element: Ident::new("view").expect("valid element"),
@@ -709,6 +919,9 @@ mod tests {
         assert!(canvas.contains("id=\"ruler-x\""));
         assert!(canvas.contains("id=\"ruler-y\""));
         assert!(canvas.contains("Read-only projection"));
+        assert!(canvas.contains("id=\"selection-data-title\">Example data</h3>"));
+        assert!(canvas.contains("Values used to build this preview."));
+        assert!(canvas.contains("id=\"selection-announcement\""));
         assert!(canvas.contains("role=\"group\" aria-label=\"Canvas tools\""));
         assert!(canvas.contains("id=\"tool-cursor\""));
         assert!(canvas.contains("aria-keyshortcuts=\"V\" aria-pressed=\"true\""));
@@ -730,33 +943,113 @@ mod tests {
     #[test]
     fn canvas_chrome_supports_navigation_selection_rulers_and_gestures() {
         let canvas = render_canvas("Demo", &[], "", &BTreeMap::new());
+        assert!(canvas.contains("canvas-chrome"));
 
-        assert!(canvas.contains("if (event.ctrlKey || event.metaKey)"));
-        assert!(canvas.contains("const WHEEL_ZOOM_SENSITIVITY = 0.01"));
-        assert!(canvas.contains("Math.exp(exponent)"));
-        assert!(canvas.contains("x -= event.deltaX * unit"));
-        assert!(canvas.contains("const shouldPan = event.button === 1"));
-        assert!(canvas.contains("if (touches.size === 2)"));
-        assert!(canvas.contains("event.code === \"Space\""));
-        assert!(canvas.contains("event.code === \"KeyH\""));
-        assert!(canvas.contains("event.code === \"KeyV\""));
-        assert!(canvas.contains("pointercancel"));
-        assert!(canvas.contains("lostpointercapture"));
-        assert!(canvas.contains("const drawRulers"));
-        assert!(canvas.contains("const selectFrame"));
-        assert!(canvas.contains(
-            "selectFrame(document.getElementById(frameButton.dataset.frameTarget), true)"
+        assert!(CHROME_TS.contains("if (event.ctrlKey || event.metaKey)"));
+        assert!(CHROME_TS.contains("const WHEEL_ZOOM_SENSITIVITY = 0.01"));
+        assert!(CHROME_TS.contains("Math.exp(exponent)"));
+        assert!(CHROME_TS.contains("x -= event.deltaX * unit"));
+        assert!(CHROME_TS.contains("const shouldPan = event.button === 1"));
+        assert!(CHROME_TS.contains("if (touches.size === 2)"));
+        assert!(CHROME_TS.contains("event.code === \"Space\""));
+        assert!(CHROME_TS.contains("event.code === \"KeyH\""));
+        assert!(CHROME_TS.contains("event.code === \"KeyV\""));
+        assert!(CHROME_TS.contains("pointercancel"));
+        assert!(CHROME_TS.contains("lostpointercapture"));
+        assert!(CHROME_TS.contains("const drawRulers"));
+        assert!(CHROME_TS.contains("const selectFrame"));
+        assert!(CHROME_TS.contains(":scope > template[data-preview-data]"));
+        assert!(CHROME_TS.contains("dataTemplate.content.cloneNode(true)"));
+        assert!(CHROME_TS.contains("selectionData.replaceChildren"));
+        assert!(CHROME_TS.contains(
+            "document.getElementById(frameButton.dataset.frameTarget) as FrameElement | null"
         ));
-        assert!(!canvas.contains("selectFrame(frame, true)"));
-        assert!(!canvas.contains("board.addEventListener(\"focusin\""));
-        assert!(canvas.contains("navigatorSearch.addEventListener(\"input\""));
-        assert!(canvas.contains("uhura.editor.ui-visible"));
-        assert!(canvas.contains("event.code === \"Backslash\""));
-        assert!(canvas.contains("event.metaKey || event.ctrlKey"));
-        assert!(canvas.contains("document.body.classList.toggle(\"ui-hidden\""));
+        assert!(!CHROME_TS.contains("selectFrame(frame, true)"));
+        assert!(!CHROME_TS.contains("board.addEventListener(\"focusin\""));
+        assert!(CHROME_TS.contains("navigatorSearch.addEventListener(\"input\""));
+        assert!(CHROME_TS.contains("uhura.editor.ui-visible"));
+        assert!(CHROME_TS.contains("event.code === \"Backslash\""));
+        assert!(CHROME_TS.contains("event.metaKey || event.ctrlKey"));
+        assert!(CHROME_TS.contains("document.body.classList.toggle(\"ui-hidden\""));
         assert!(!canvas.contains("PANEL_KEYS"));
         assert!(!canvas.contains("navigator-closed"));
         assert!(!canvas.contains("inspector-closed"));
+    }
+
+    #[test]
+    fn selected_preview_data_is_read_only_readable_and_escaped() {
+        let mut preview = frame(FrameKind::Component, "Profile", "public");
+        preview.data = vec![
+            PreviewField {
+                group: PreviewFieldGroup::Properties,
+                name: "follower-count".to_string(),
+                key: None,
+                value: PreviewFieldValue::Ready(Value::Int(8)),
+                source: Some("Set in this <example>".to_string()),
+            },
+            PreviewField {
+                group: PreviewFieldGroup::Properties,
+                name: "is-public".to_string(),
+                key: None,
+                value: PreviewFieldValue::Ready(Value::Bool(true)),
+                source: Some("From Standard sample data · Profiles & Lena".to_string()),
+            },
+            PreviewField {
+                group: PreviewFieldGroup::Properties,
+                name: "person".to_string(),
+                key: None,
+                value: PreviewFieldValue::Ready(Value::Record(BTreeMap::from([
+                    (
+                        Ident::new("display-name").unwrap(),
+                        Value::Text("Lena <Holt>".to_string()),
+                    ),
+                    (
+                        Ident::new("roles").unwrap(),
+                        Value::List(vec![Value::Text("Maker & teacher".to_string())]),
+                    ),
+                ]))),
+                source: Some("From Standard sample data · Users · Lena".to_string()),
+            },
+            PreviewField {
+                group: PreviewFieldGroup::ProvidedData,
+                name: "feed-page".to_string(),
+                key: None,
+                value: PreviewFieldValue::Waiting,
+                source: None,
+            },
+            PreviewField {
+                group: PreviewFieldGroup::ProvidedData,
+                name: "profile".to_string(),
+                key: Some(Value::Id("user-lena".to_string())),
+                value: PreviewFieldValue::Failed("network <offline>".to_string()),
+                source: Some("Set in this example".to_string()),
+            },
+        ];
+
+        let canvas = render_canvas("Demo", &[preview], "", &BTreeMap::new());
+        let data = canvas
+            .split_once("<template data-preview-data>")
+            .and_then(|(_, rest)| rest.split_once("</template>"))
+            .map(|(data, _)| data)
+            .expect("frame carries one data template");
+
+        assert!(data.contains("<h4>Properties</h4>"));
+        assert!(data.contains("<h4>Provided data</h4>"));
+        assert!(data.contains("<dt>Follower count</dt>"));
+        assert!(data.contains("<span class=\"preview-data-value\">8</span>"));
+        assert!(data.contains("<span class=\"preview-data-value\">Yes</span>"));
+        assert!(data.contains("<summary>2 fields</summary>"));
+        assert!(data.contains("<summary>1 item</summary>"));
+        assert!(data.contains("Lena &lt;Holt&gt;"));
+        assert!(data.contains("Maker &amp; teacher"));
+        assert!(data.contains("Source: Set in this &lt;example&gt;"));
+        assert!(data.contains("Profiles &amp; Lena"));
+        assert!(data.contains("Waiting for data"));
+        assert!(data.contains("Profile for user-lena"));
+        assert!(data.contains("Couldn’t load"));
+        assert!(data.contains("network &lt;offline&gt;"));
+        assert!(!data.contains("<input"));
+        assert!(!data.contains("contenteditable"));
     }
 
     #[test]
@@ -812,6 +1105,7 @@ mod tests {
             in_flight: 0,
             from: None,
             note: None,
+            data: Vec::new(),
             content: FrameContent::Fragment(Node {
                 key: "video".to_string(),
                 element: Ident::new("video").expect("valid element"),

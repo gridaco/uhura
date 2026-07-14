@@ -9,7 +9,8 @@ creation. Every displayed count comes from post, like, comment, or follow rows
 rather than a seeded headline. The same checked
 program has two deliberately separate data paths:
 
-- `uhura play` uses the app-owned provider in `providers/spock.js`.
+- `uhura play` uses the app-owned TypeScript provider built to
+  `providers/dist/spock.js`.
   It reads authority truth through Spock GraphQL, signs image and video downloads and
   uploads selected files through Spock storage, and sends domain commands
   through Spock RPC.
@@ -26,9 +27,26 @@ Core. Browser `File` values stay between the play shell and the provider;
 Uhura Core sees only the resulting storage-object id plus serializable display
 metadata such as the filename—never the file object or its bytes.
 
-## Run live play directly
+## Run the Editor with live Play
 
-From the Spock repository root, start the authority and the Uhura play server
+From the Spock repository root, use the general Spock–Uhura composition runner
+with this example's two inputs. It starts the authority, waits for it, launches
+the Uhura Editor, and stops both together:
+
+```sh
+./scripts/spock-uhura.sh \
+  examples/instagram-poc/app.spock \
+  uhura/examples/instagram-uhura
+```
+
+Open <http://127.0.0.1:8787/> and use **Play** in the Editor's right details
+panel to enter the live prototype at `/play`. The frontend and Wasm artifacts
+are built as part of contributor setup and then served without a Node process
+at runtime.
+
+For low-level development, the equivalent two-terminal commands are:
+
+From the Spock repository root, start the authority and the Uhura Editor server
 in separate terminals:
 
 ```sh
@@ -38,13 +56,14 @@ cargo run --locked -p spock-cli -- run examples/instagram-poc/app.spock --port 4
 ```sh
 uhura/scripts/build-wasm.sh # needed once, and after wasm changes
 cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
-  play uhura/examples/instagram-uhura --port 8787
+  editor uhura/examples/instagram-uhura --port 8787
 ```
 
-Open <http://127.0.0.1:8787/>. The Play toolbar can restart the UI session,
-switch between the 390 × 844 Mobile and 1280 × 800 Desktop frames, and select
-any seeded Spock actor. The app runs exclusively against the configured Spock
-provider; live play defaults to Mira and to the endpoints in `uhura.toml`.
+Open <http://127.0.0.1:8787/> and click **Play**. The Play toolbar can restart
+the UI session, switch between the 390 × 844 Mobile and 1280 × 800 Desktop
+frames, and select any seeded Spock actor. The app runs exclusively against the
+configured Spock provider; live play defaults to Mira and to the endpoints in
+`uhura.toml`.
 The Mobile/Desktop frame is Play-chrome preference state persisted in browser
 local storage. Actor selection is tab-local session-storage state. Play never
 reads or rewrites the application's query parameters for any

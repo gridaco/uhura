@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use uhura_base::render_text;
 use uhura_check::manifest::load_manifest;
-use uhura_check::preview::PreviewPayload;
+use uhura_check::preview::{PreviewDataKind, PreviewDataValue, PreviewPayload, PreviewSource};
 use uhura_check::{CheckInput, SourceInput, check};
 use uhura_core::eval::{eval_fragment, eval_view};
 use uhura_core::state::Projections;
@@ -149,6 +149,65 @@ fn boot_projections_auto_bind_so_loading_previews_evaluate() {
         "the loading arm renders"
     );
     assert_no_dangling_keys(root, &mut BTreeMap::new());
+}
+
+#[test]
+fn preview_data_keeps_computed_values_and_top_level_origins() {
+    let out = check(&corpus_input(true, &identity));
+
+    let post = out
+        .previews
+        .iter()
+        .find(|preview| {
+            preview.subject.name().as_str() == "post-card" && preview.example == "image-post"
+        })
+        .expect("post-card image-post");
+    let post_value = post
+        .data
+        .iter()
+        .find(|item| item.kind == PreviewDataKind::Property && item.name.as_str() == "post")
+        .expect("post property");
+    let PreviewDataValue::Ready(uhura_base::Value::Record(fields)) = &post_value.value else {
+        panic!("post resolves to its typed record");
+    };
+    assert_eq!(
+        fields[&uhura_base::Ident::new("id").unwrap()],
+        uhura_base::Value::Id("post-lena-glaze".to_string())
+    );
+    let origin = post_value.origin.as_ref().expect("authored origin");
+    assert_eq!(origin.declared_in.as_deref(), Some("image-post"));
+    assert_eq!(
+        origin.source,
+        PreviewSource::Fixture {
+            fixture: "standard".to_string(),
+            path: vec!["posts".to_string(), "lena-glaze".to_string()],
+        }
+    );
+
+    let loading = out
+        .previews
+        .iter()
+        .find(|preview| preview.subject.name().as_str() == "feed" && preview.example == "loading")
+        .expect("feed loading");
+    let feed_page = loading
+        .data
+        .iter()
+        .find(|item| {
+            item.kind == PreviewDataKind::ProvidedData && item.name.as_str() == "feed-page"
+        })
+        .expect("unkeyed feed data is represented while absent");
+    assert_eq!(feed_page.value, PreviewDataValue::Waiting);
+
+    let viewer = loading
+        .data
+        .iter()
+        .find(|item| item.kind == PreviewDataKind::ProvidedData && item.name.as_str() == "viewer")
+        .expect("boot viewer");
+    assert!(matches!(
+        viewer.origin.as_ref().map(|origin| &origin.source),
+        Some(PreviewSource::AutomaticFixture { fixture, path })
+            if fixture == "standard" && path == &["boot".to_string(), "viewer".to_string()]
+    ));
 }
 
 /// Keys are sibling-unique everywhere (§8.1 — collisions unrepresentable).

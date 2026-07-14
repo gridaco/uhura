@@ -812,8 +812,11 @@ like-toggled {post: …}") for hover chrome. Board chrome is vanilla JS with
 Cursor and Hand tools: wheel/trackpad deltas pan, `H` or held Space enables
 drag-panning, and trackpad or two-touch pinch zooms around its midpoint.
 Cursor drag reserves marquee selection but is intentionally inert for this
-read-only editor. The chrome never reads V or Uhura data. **Assets: real
-JPEGs**, each inlined exactly once as a data-URI custom property
+read-only editor. Selection may copy pre-rendered, editor-only example values
+and their authored origins into the inspector; the chrome never reads runtime
+IR, fixture files, or Core state, and exposes no mutation path. See the
+[read-only provenance design note](referential-example-data-and-read-only-provenance.md).
+**Assets: real JPEGs**, each inlined exactly once as a data-URI custom property
 (`--asset-lena-glaze`); duotone-SVG fallback for missing assets; manifest
 alt text required. Bare `uhura` defaults to `uhura editor`: it generates this
 Canvas and hosts it as an explicitly read-only placeholder editor. The Editor
@@ -823,12 +826,21 @@ through `Cmd+\` / `Ctrl+\`. Play lives in the inspector and enters the real
 Play shell at `/play` on the same origin; restart the command to rebuild the
 Canvas. `uhura project` retains the build-only artifact path for CI and export.
 
-### 8.4 Play renderer — the TS shell
+### 8.4 Play renderer — the TypeScript host
 
-`uhura play` serves index, `shell.js` (hand-rolled, no deps, JSDoc-typed,
-zero build step), wasm bundle, IR JSON, fixture JSON, and the compiled
-stylesheet. React remains a legitimate future renderer engine below the V
-protocol; the spike hand-rolls to keep the contract visible.
+`uhura play` serves a Vite-built, framework-free TypeScript host, wasm bundle,
+IR JSON, fixture JSON, and the compiled stylesheet. The source under
+`web/src/play/` remains a hand-rolled DOM renderer so adopting TypeScript does
+not silently replace the V protocol or its focus, scroll, reconciliation, and
+pump mechanics with a framework. React remains a legitimate future choice for
+Editor and host chrome, but is a separate decision.
+
+The Play build emits hashed ESM/CSS under `web/dist/play`; the Editor controller
+emits one deterministic IIFE under `web/dist/editor` for inlining into the
+self-contained Canvas; app-owned TypeScript providers emit one dependency-free
+ESM each. These small generated artifacts are checked in and CI verifies that
+regeneration is clean. Node/pnpm are authoring tools only: Cargo builds and
+distributed execution never invoke them.
 
 The running prototype sits in host-owned chrome over a black stage. The host
 offers Mobile (390 × 844) and Desktop (1280 × 800) visual frames, a full UI
@@ -1157,8 +1169,11 @@ the list-concern split in both directions.
 
 ### 12.1 Crates
 
-Cargo workspace under `uhura/`; pinned Rust toolchain only; no pnpm/node
-coupling; `edition = "2024"`, `unsafe_code = "forbid"`, all `publish = false`.
+Cargo workspace under `uhura/`; pinned Rust toolchain, independently buildable
+from checked-in web artifacts with no pnpm/node runtime coupling;
+`edition = "2024"`, `unsafe_code = "forbid"`, all `publish = false`. The
+separate `web/` pnpm package owns TypeScript authoring, tests, and deterministic
+browser builds; Cargo never shells out to it.
 
 ```
 uhura/crates/

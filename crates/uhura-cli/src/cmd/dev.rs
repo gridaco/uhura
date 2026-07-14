@@ -441,7 +441,7 @@ impl Read for SseStream {
 
 // ── request handling ────────────────────────────────────────────────────────
 
-/// The uhura workspace root — the shell and wasm bundle live in the
+/// The uhura workspace root — the compiled web host and wasm bundle live in the
 /// TOOLCHAIN tree, not the corpus (compile-time anchored; `uhura play`
 /// is a dev tool run from this repo).
 fn tool_root() -> PathBuf {
@@ -527,7 +527,7 @@ fn handle(
             "/provider.js" => provider_artifact(state, query),
             _ => {
                 if let Some(rel) = path.strip_prefix("/shell/") {
-                    serve_tree(&tool_root().join("shell"), rel)
+                    serve_tree(&tool_root().join("web/dist/play"), rel)
                 } else if let Some(rel) = path.strip_prefix("/wasm/") {
                     serve_tree(&tool_root().join("crates/uhura-wasm/pkg/web"), rel).map_err(
                         |(code, msg)| {
@@ -577,12 +577,16 @@ fn split_request_url(url: &str) -> (&str, Option<&str>) {
 /// The editor's `/play` document differs from dedicated Play by one host-owned
 /// return link. The runtime scripts and every endpoint remain identical.
 fn play_document(with_editor_navigation: bool) -> Served {
-    let bytes = file_bytes(&tool_root().join("shell/index.html"))?;
+    let bytes = file_bytes(&tool_root().join("web/dist/play/index.html"))?;
     if !with_editor_navigation {
         return Ok((ct("html"), bytes, None));
     }
-    let shell = String::from_utf8(bytes)
-        .map_err(|error| (500, format!("shell/index.html is not UTF-8: {error}")))?;
+    let shell = String::from_utf8(bytes).map_err(|error| {
+        (
+            500,
+            format!("web/dist/play/index.html is not UTF-8: {error}"),
+        )
+    })?;
     Ok((
         ct("html"),
         super::editor::play_html(&shell).into_bytes(),

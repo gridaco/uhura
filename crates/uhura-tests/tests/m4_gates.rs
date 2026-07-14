@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use uhura_base::render_text;
 use uhura_check::manifest::load_manifest;
-use uhura_check::preview::PreviewPayload;
+use uhura_check::preview::{PreviewDataKind, PreviewPayload, PreviewSource};
 use uhura_check::{CheckInput, SourceInput, check};
 use uhura_cli::cmd::trace::run_script;
 use uhura_core::eval::{eval_fragment, eval_view};
@@ -393,6 +393,32 @@ fn every_derived_preview_replays_to_its_v_golden() {
         .find(|p| p.subject.name().as_str() == "feed" && p.example == "like-pending")
         .expect("feed like-pending");
     assert_eq!(like_pending.in_flight, 1, "one command in flight");
+
+    let appended = out
+        .previews
+        .iter()
+        .find(|preview| preview.subject.name().as_str() == "feed" && preview.example == "appended")
+        .expect("feed appended");
+    let feed_page = appended
+        .data
+        .iter()
+        .find(|item| {
+            item.kind == PreviewDataKind::ProvidedData && item.name.as_str() == "feed-page"
+        })
+        .expect("final feed-page value");
+    let origin = feed_page
+        .origin
+        .as_ref()
+        .expect("timeline projection origin");
+    assert!(origin.timeline);
+    assert_eq!(origin.declared_in.as_deref(), Some("appended"));
+    assert_eq!(
+        origin.source,
+        PreviewSource::Fixture {
+            fixture: "standard".to_string(),
+            path: vec!["feed".to_string(), "pages-1-2".to_string()],
+        }
+    );
 
     // comments-open mounted the sheet through the machine.
     let comments_open = out
