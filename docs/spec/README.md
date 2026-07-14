@@ -593,7 +593,9 @@ The foundation deliberately leaves these unsettled:
 - reducer, statechart, or hybrid UI machine model;
 - expression language and totality restrictions;
 - async command ordering, concurrency, cancellation, and retries;
-- checkpoint and hot-reload compatibility;
+- checkpoint and state-preserving Play hot-reload compatibility;
+- live rebuilding of static Editor previews, proposed separately by
+  [RFC 0002](../rfcs/0002-live-static-editor-preview-rebuilds.md);
 - checked IR and stable ABI representation;
 - widget taxonomy and catalog versioning;
 - message and localization model, including MessageFormat 2;

@@ -1,6 +1,366 @@
 // Generated from web/src/editor/canvas-chrome.ts; do not edit.
 (function() {
+	//#region src/editor/live-preview.ts
+	var EDITOR_HOST_META_NAME = "uhura-editor-host";
+	var EDITOR_BUILD_META_NAME = "uhura-editor-build";
+	var EDITOR_EVENTS_PATH = "/editor/events";
+	var EDITOR_CHECKPOINT_KEY = "uhura.editor.live-checkpoint.v2";
+	var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+	var isGeneration = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+	var isActiveGeneration = (value) => isGeneration(value) && value > 0;
+	var isBuildId = (value) => typeof value === "string" && value.length > 0;
+	var isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+	var optionalString = (value, fallback = "") => typeof value === "string" ? value : fallback;
+	/**
+	* Parses the hosted document's active generation. `0` is the cold-invalid
+	* sentinel: the Editor is live, but there is no last-known-good Canvas yet.
+	*/
+	var parseHostedGeneration = (content) => {
+		if (content === null || content.trim() === "") return void 0;
+		const generation = Number(content);
+		if (!Number.isSafeInteger(generation) || generation < 0) return void 0;
+		return generation === 0 ? null : generation;
+	};
+	/**
+	* Parses the content-derived identity of the hosted Canvas. An empty value is
+	* the cold-invalid sentinel; a missing meta element is represented by the
+	* caller as `undefined` so standalone exports remain entirely offline.
+	*/
+	var parseHostedBuildId = (content) => {
+		if (content === null) return void 0;
+		const buildId = content.trim();
+		return buildId === "" ? null : buildId;
+	};
+	/** Runtime-checks the SSE boundary instead of trusting a TypeScript cast. */
+	var parseEditorLiveEvent = (value) => {
+		if (!isRecord(value)) return null;
+		const candidateGeneration = value["candidateGeneration"];
+		const activeGeneration = value["activeGeneration"];
+		const activeBuildId = value["activeBuildId"];
+		const status = value["status"];
+		const diagnostics = value["diagnostics"];
+		if (!isGeneration(candidateGeneration) || !(activeGeneration === null || isActiveGeneration(activeGeneration)) || !(activeBuildId === null || isBuildId(activeBuildId)) || activeGeneration === null !== (activeBuildId === null) || status !== "active" && status !== "rejected" || diagnostics !== void 0 && !isRecord(diagnostics) || status === "active" && activeGeneration !== candidateGeneration || status === "rejected" && activeGeneration !== null && activeGeneration >= candidateGeneration) return null;
+		return {
+			candidateGeneration,
+			activeGeneration,
+			activeBuildId,
+			status,
+			...diagnostics === void 0 ? {} : { diagnostics }
+		};
+	};
+	/** Numeric generations are process-local labels; only the content identity
+	* can decide whether a hosted document has converged after a restart. */
+	var shouldReloadEditor = (documentBuildId, event) => event.activeBuildId !== documentBuildId;
+	/** Process-local event ordering and exactly-once reload state. Transport and
+	* DOM effects stay in the Editor controller; this state machine is pure. */
+	var EditorLiveSession = class {
+		#documentBuildId;
+		#highestCandidate = -1;
+		#reloading = false;
+		constructor(documentBuildId) {
+			this.#documentBuildId = documentBuildId;
+		}
+		get reloading() {
+			return this.#reloading;
+		}
+		reconnect() {
+			this.#highestCandidate = -1;
+		}
+		accept(event) {
+			if (this.#reloading || event.candidateGeneration < this.#highestCandidate) return { kind: "ignored" };
+			this.#highestCandidate = event.candidateGeneration;
+			if (shouldReloadEditor(this.#documentBuildId, event)) {
+				this.#reloading = true;
+				return {
+					kind: "reload",
+					event
+				};
+			}
+			return event.status === "rejected" ? {
+				kind: "rejected",
+				event
+			} : {
+				kind: "active",
+				event
+			};
+		}
+	};
+	var parseSemanticKey = (value) => {
+		if (value === null) return null;
+		if (!isRecord(value)) return void 0;
+		const kind = value["kind"];
+		const subject = value["subject"];
+		const example = value["example"];
+		if (typeof kind !== "string" || typeof subject !== "string" || typeof example !== "string" || !kind || !subject || !example) return;
+		return {
+			kind,
+			subject,
+			example
+		};
+	};
+	var parseCheckpoint = (value) => {
+		if (!isRecord(value) || value["version"] !== 2) return null;
+		const targetBuildId = value["targetBuildId"];
+		const camera = value["camera"];
+		const tool = value["tool"];
+		const search = value["search"];
+		const uiVisible = value["uiVisible"];
+		const selection = parseSemanticKey(value["selection"]);
+		if (!isBuildId(targetBuildId) || !isRecord(camera) || !isFiniteNumber(camera["x"]) || !isFiniteNumber(camera["y"]) || !isFiniteNumber(camera["scale"]) || camera["scale"] <= 0 || tool !== "cursor" && tool !== "hand" || typeof search !== "string" || typeof uiVisible !== "boolean" || selection === void 0) return null;
+		return {
+			version: 2,
+			targetBuildId,
+			camera: {
+				x: camera["x"],
+				y: camera["y"],
+				scale: camera["scale"]
+			},
+			tool,
+			search,
+			uiVisible,
+			selection
+		};
+	};
+	/**
+	* Reads and consumes a checkpoint for one reload handoff. Whichever active
+	* build the navigation serves may consume it: another candidate or a rapid
+	* source reversion can win after the reload has already started.
+	*/
+	var takeEditorCheckpoint = (storage, activeBuildId) => {
+		let raw;
+		try {
+			raw = storage.getItem(EDITOR_CHECKPOINT_KEY);
+			storage.removeItem(EDITOR_CHECKPOINT_KEY);
+		} catch {
+			return null;
+		}
+		if (raw === null || activeBuildId === null) return null;
+		try {
+			const checkpoint = parseCheckpoint(JSON.parse(raw));
+			if (!checkpoint) return null;
+			return {
+				camera: checkpoint.camera,
+				tool: checkpoint.tool,
+				search: checkpoint.search,
+				uiVisible: checkpoint.uiVisible,
+				selection: checkpoint.selection
+			};
+		} catch {
+			return null;
+		}
+	};
+	var storeEditorCheckpoint = (storage, targetBuildId, state) => {
+		const checkpoint = {
+			version: 2,
+			targetBuildId,
+			...state
+		};
+		try {
+			storage.setItem(EDITOR_CHECKPOINT_KEY, JSON.stringify(checkpoint));
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	var diagnosticLocation = (diagnostic) => {
+		const file = optionalString(diagnostic["file"]);
+		const span = diagnostic["span"];
+		if (!isRecord(span)) return file;
+		const start = span["start"];
+		if (!isRecord(start)) return file;
+		const line = start["line"];
+		const col = start["col"];
+		if (typeof line !== "number") return file;
+		return `${file || "source"}:${line}${typeof col === "number" ? `:${col}` : ""}`;
+	};
+	var summarizeDiagnostics = (envelope) => {
+		const diagnostics = envelope?.["diagnostics"];
+		if (!Array.isArray(diagnostics)) return [];
+		return diagnostics.filter(isRecord).map((diagnostic) => ({
+			code: optionalString(diagnostic["code"], "UH????"),
+			rule: optionalString(diagnostic["rule"]),
+			severity: optionalString(diagnostic["severity"], "error"),
+			message: optionalString(diagnostic["message"], "The Canvas candidate was rejected."),
+			location: diagnosticLocation(diagnostic)
+		}));
+	};
+	//#endregion
 	//#region src/editor/canvas-chrome.ts
+	var createLiveStatus = () => {
+		const style = document.createElement("style");
+		style.textContent = `
+    #uhura-editor-live-status {
+      position: fixed;
+      inset: 14px auto auto 50%;
+      z-index: 1000;
+      inline-size: min(540px, calc(100vw - 28px));
+      max-block-size: min(430px, calc(100vh - 28px));
+      overflow: auto;
+      padding: 13px 14px;
+      border: 1px solid #e5b45a;
+      border-radius: 10px;
+      color: #382a14;
+      background: rgb(255 249 235 / 97%);
+      box-shadow: 0 12px 32px rgb(51 38 14 / 18%);
+      font: 12px/1.45 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      transform: translateX(-50%);
+      backdrop-filter: blur(12px);
+    }
+    #uhura-editor-live-status[hidden] { display: none; }
+    .uhura-editor-live-heading { display: flex; align-items: flex-start; gap: 12px; }
+    .uhura-editor-live-heading > div { min-inline-size: 0; flex: 1; }
+    .uhura-editor-live-heading strong { display: block; font-size: 13px; }
+    .uhura-editor-live-heading p { margin: 2px 0 0; color: #725d36; }
+    .uhura-editor-live-dismiss {
+      flex: none;
+      inline-size: 26px;
+      block-size: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      color: #725d36;
+      background: transparent;
+      font: 18px/1 sans-serif;
+      cursor: pointer;
+    }
+    .uhura-editor-live-dismiss:hover { background: rgb(114 93 54 / 10%); }
+    .uhura-editor-live-dismiss:focus-visible { outline: 2px solid #9a6500; outline-offset: 1px; }
+    .uhura-editor-live-diagnostics { display: grid; gap: 8px; margin: 11px 0 0; padding: 0; list-style: none; }
+    .uhura-editor-live-diagnostic { padding-block-start: 8px; border-block-start: 1px solid rgb(114 93 54 / 18%); }
+    .uhura-editor-live-diagnostic p { margin: 2px 0 0; overflow-wrap: anywhere; }
+    .uhura-editor-live-diagnostic small { display: block; color: #806b45; overflow-wrap: anywhere; }
+    .uhura-editor-live-diagnostic code { color: #8a4b18; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  `;
+		document.head.append(style);
+		const host = document.createElement("section");
+		host.id = "uhura-editor-live-status";
+		host.setAttribute("role", "status");
+		host.setAttribute("aria-live", "polite");
+		host.hidden = true;
+		const heading = document.createElement("div");
+		heading.className = "uhura-editor-live-heading";
+		const copy = document.createElement("div");
+		const title = document.createElement("strong");
+		const detail = document.createElement("p");
+		copy.append(title, detail);
+		const dismiss = document.createElement("button");
+		dismiss.className = "uhura-editor-live-dismiss";
+		dismiss.type = "button";
+		dismiss.setAttribute("aria-label", "Dismiss preview diagnostics");
+		dismiss.title = "Dismiss";
+		dismiss.textContent = "×";
+		heading.append(copy, dismiss);
+		const list = document.createElement("ol");
+		list.className = "uhura-editor-live-diagnostics";
+		host.append(heading, list);
+		document.body.append(host);
+		dismiss.addEventListener("click", () => {
+			host.hidden = true;
+		});
+		const show = (headingText, detailText) => {
+			title.textContent = headingText;
+			detail.textContent = detailText;
+			host.hidden = false;
+		};
+		const renderDiagnostics = (diagnostics, emptyMessage) => {
+			const summaries = summarizeDiagnostics(diagnostics);
+			const visible = summaries.slice(0, 8);
+			list.replaceChildren(...visible.map((diagnostic) => {
+				const item = document.createElement("li");
+				item.className = "uhura-editor-live-diagnostic";
+				const label = document.createElement("code");
+				label.textContent = [
+					diagnostic.severity.toUpperCase(),
+					diagnostic.code,
+					diagnostic.rule
+				].filter(Boolean).join(" · ");
+				const message = document.createElement("p");
+				message.textContent = diagnostic.message;
+				const location = document.createElement("small");
+				location.textContent = diagnostic.location;
+				item.append(label, message);
+				if (diagnostic.location) item.append(location);
+				return item;
+			}));
+			if (summaries.length > visible.length) {
+				const remainder = document.createElement("li");
+				remainder.className = "uhura-editor-live-diagnostic";
+				remainder.textContent = `${summaries.length - visible.length} more diagnostics`;
+				list.append(remainder);
+			} else if (summaries.length === 0) {
+				const unavailable = document.createElement("li");
+				unavailable.className = "uhura-editor-live-diagnostic";
+				unavailable.textContent = emptyMessage;
+				list.append(unavailable);
+			}
+			return summaries.length;
+		};
+		return {
+			hide() {
+				host.hidden = true;
+				list.replaceChildren();
+			},
+			showActiveWarnings(activeGeneration, diagnostics) {
+				if (renderDiagnostics(diagnostics, "The active Canvas reported a warning without details.") === 0) {
+					host.hidden = true;
+					list.replaceChildren();
+					return;
+				}
+				show("Preview updated with warnings", `Canvas ${activeGeneration} is active. Review the checker warnings below.`);
+			},
+			showRejected(candidateGeneration, activeGeneration, diagnostics) {
+				renderDiagnostics(diagnostics, "The Canvas candidate was rejected without diagnostic details.");
+				show(activeGeneration === null ? "No valid preview yet" : "Previewing the last valid version", activeGeneration === null ? `Canvas candidate ${candidateGeneration} has errors. The first valid save will open automatically.` : `Canvas candidate ${candidateGeneration} has errors. Canvas ${activeGeneration} remains active.`);
+			},
+			showReconnecting() {
+				list.replaceChildren();
+				show("Live preview disconnected", "Reconnecting to the Editor host…");
+			},
+			showWaiting() {
+				list.replaceChildren();
+				show("Waiting for a valid preview", "Fix the saved source errors; the first valid Canvas will open automatically.");
+			}
+		};
+	};
+	var startLiveUpdates = (documentGeneration, documentBuildId, checkpoint) => {
+		const status = createLiveStatus();
+		if (documentGeneration === null) status.showWaiting();
+		const events = new EventSource(EDITOR_EVENTS_PATH);
+		const live = new EditorLiveSession(documentBuildId);
+		let opened = false;
+		events.addEventListener("open", () => {
+			if (opened) live.reconnect();
+			opened = true;
+		});
+		events.addEventListener("error", () => {
+			if (!live.reloading) status.showReconnecting();
+		});
+		events.addEventListener("message", (message) => {
+			let decoded;
+			try {
+				decoded = JSON.parse(message.data);
+			} catch {
+				console.warn("ignored malformed Uhura Editor event");
+				return;
+			}
+			const event = parseEditorLiveEvent(decoded);
+			if (!event) {
+				console.warn("ignored invalid Uhura Editor event", decoded);
+				return;
+			}
+			const decision = live.accept(event);
+			if (decision.kind === "ignored") return;
+			if (decision.kind === "reload") {
+				if (event.activeBuildId !== null) checkpoint?.(event.activeBuildId);
+				events.close();
+				window.location.reload();
+				return;
+			}
+			if (decision.kind === "rejected") status.showRejected(event.candidateGeneration, event.activeGeneration, event.diagnostics);
+			else if (event.diagnostics && event.activeGeneration !== null) status.showActiveWarnings(event.activeGeneration, event.diagnostics);
+			else status.hide();
+		});
+	};
 	(() => {
 		const requiredElement = (id) => {
 			const element = document.getElementById(id);
@@ -13,6 +373,20 @@
 			return element;
 		};
 		const closestElement = (target, selector) => target instanceof Element ? target.closest(selector) : null;
+		const hostMarker = document.querySelector(`meta[name="${EDITOR_HOST_META_NAME}"]`);
+		const buildMarker = document.querySelector(`meta[name="${EDITOR_BUILD_META_NAME}"]`);
+		const documentGeneration = hostMarker ? parseHostedGeneration(hostMarker.content) : void 0;
+		const documentBuildId = hostMarker && buildMarker ? parseHostedBuildId(buildMarker.content) : void 0;
+		const validHostedIdentity = documentGeneration !== void 0 && documentBuildId !== void 0 && documentGeneration === null === (documentBuildId === null);
+		if (hostMarker && !validHostedIdentity) console.warn("ignored an invalid Uhura Editor host identity");
+		if (!document.getElementById("viewport")) {
+			if (validHostedIdentity) startLiveUpdates(documentGeneration, documentBuildId, null);
+			return;
+		}
+		let restoredState = null;
+		if (validHostedIdentity) try {
+			restoredState = takeEditorCheckpoint(window.sessionStorage, documentBuildId);
+		} catch {}
 		const viewport = requiredElement("viewport");
 		const board = requiredElement("board");
 		const tools = requiredQuery(".canvas-tools");
@@ -51,10 +425,10 @@
 		const ZOOM_STEP = 1.2;
 		const WHEEL_ZOOM_SENSITIVITY = .01;
 		const UI_VISIBLE_KEY = "uhura.editor.ui-visible";
-		let x = 0;
-		let y = 0;
-		let scale = 1;
-		let selectedTool = "cursor";
+		let x = restoredState?.camera.x ?? 0;
+		let y = restoredState?.camera.y ?? 0;
+		let scale = Math.min(Math.max(restoredState?.camera.scale ?? 1, MIN_SCALE), MAX_SCALE);
+		let selectedTool = restoredState?.tool ?? "cursor";
 		let selectedFrame = null;
 		let spaceHeld = false;
 		let pan = null;
@@ -294,12 +668,18 @@
 			selectionAnnouncement.textContent = `${frame.dataset.subject} / ${frame.dataset.example} selected; details updated.`;
 			if (reveal) revealElement(frame);
 		};
+		const semanticKeyForFrame = (frame) => ({
+			kind: frame.dataset.kind,
+			subject: frame.dataset.subject,
+			example: frame.dataset.example
+		});
+		const findFrameBySemanticKey = (key) => Array.from(document.querySelectorAll("[data-frame]")).find((frame) => frame.dataset.kind === key.kind && frame.dataset.subject === key.subject && frame.dataset.example === key.example) ?? null;
 		const setUiVisible = (visible, persist = true) => {
 			document.body.classList.toggle("ui-hidden", !visible);
 			if (persist) storeBoolean(UI_VISIBLE_KEY, visible);
 			requestRulers();
 		};
-		setUiVisible(storedBoolean(UI_VISIBLE_KEY, true), false);
+		setUiVisible(restoredState?.uiVisible ?? storedBoolean(UI_VISIBLE_KEY, true), false);
 		cursorButton.addEventListener("click", () => selectTool("cursor"));
 		handButton.addEventListener("click", () => selectTool("hand"));
 		zoomOutButton.addEventListener("click", () => zoomAt(scale / ZOOM_STEP, viewportCenter()));
@@ -341,6 +721,7 @@
 			navigatorSearch.value = "";
 			navigatorSearch.dispatchEvent(new Event("input"));
 		});
+		navigatorSearch.value = restoredState?.search ?? "";
 		navigatorSearch.dispatchEvent(new Event("input"));
 		board.addEventListener("click", (event) => {
 			if (effectiveTool() !== "cursor" || performance.now() < suppressClickUntil) return;
@@ -479,8 +860,29 @@
 		});
 		if (window.ResizeObserver) new ResizeObserver(requestRulers).observe(viewport);
 		else window.addEventListener("resize", requestRulers);
+		if (restoredState?.selection) selectFrame(findFrameBySemanticKey(restoredState.selection));
 		renderTools();
 		apply();
+		if (validHostedIdentity) {
+			const liveHelp = document.querySelector(".inspector-callout p");
+			if (liveHelp) liveHelp.textContent = "Save changes to rebuild these static previews automatically.";
+			startLiveUpdates(documentGeneration, documentBuildId, (targetBuildId) => {
+				const state = {
+					camera: {
+						x,
+						y,
+						scale
+					},
+					tool: selectedTool,
+					search: navigatorSearch.value,
+					uiVisible: !document.body.classList.contains("ui-hidden"),
+					selection: selectedFrame ? semanticKeyForFrame(selectedFrame) : null
+				};
+				try {
+					storeEditorCheckpoint(window.sessionStorage, targetBuildId, state);
+				} catch {}
+			});
+		}
 	})();
 	//#endregion
 })();

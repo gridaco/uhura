@@ -5,6 +5,7 @@
 - **Scope:** Static examples, fixture-backed data, and the Canvas inspector
 - **Authority:** Non-normative working-group material
 - **Related:** [Instagram spike design, §6](instagram-spike-design.md#6-examples--example-defined-design)
+  and [RFC 0002: live static Editor previews](../rfcs/0002-live-static-editor-preview-rebuilds.md)
 
 ## Decision for the current milestone
 

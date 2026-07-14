@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub mod cmd;
 pub mod fsio;
 
+#[derive(Clone)]
 pub struct CommonArgs {
     pub root: PathBuf,
     pub format_json: bool,

@@ -826,8 +826,14 @@ Canvas and hosts it as an explicitly read-only placeholder editor. The Editor
 keeps Cursor, Hand, zoom, and centering in a compact floating toolbar; its
 left navigator and right inspector hide together with the rest of the chrome
 through `Cmd+\` / `Ctrl+\`. Play lives in the inspector and enters the real
-Play shell at `/play` on the same origin; restart the command to rebuild the
-Canvas. `uhura project` retains the build-only artifact path for CI and export.
+Play shell at `/play` on the same origin. Saved project changes build a complete
+Canvas candidate in memory; a valid candidate reloads the static Editor while
+preserving its camera, tools, search, chrome visibility, and semantic preview
+selection. An invalid candidate leaves the last valid Canvas visible with
+source diagnostics, and an initially invalid project recovers in place. Draft
+[RFC 0002](../rfcs/0002-live-static-editor-preview-rebuilds.md) defines this
+live static preview lifecycle. `uhura project` retains the build-only artifact
+path for CI and export.
 
 ### 8.4 Play renderer — the TypeScript host
 
@@ -1242,9 +1248,12 @@ envelope JSON — the seam stays visible. No timers/fetch/DOM inside wasm.
 [--out=<dir>]` (explicit default spelling) · `uhura play [--port]`
 (tiny_http + SSE; watch → recheck → **full-restart hot reload on last-good
 IR** + diagnostics overlay — state-preserving reload is an open RFC topic the
-spike must not fake) · `uhura trace --script [--expanded]`. The Editor serves
-its read-only Canvas at `/` and this same Play runtime at `/play`; `uhura
-project` remains build-only and `uhura dev` aliases `play`. Exit codes 0/1/2;
+spike must not fake; this is the Play path, not Canvas rebuilding) · `uhura
+trace --script [--expanded]`. The Editor serves
+its read-only Canvas at `/` and this same Play runtime at `/play`. Editor uses
+its own content-addressed, last-known-good static Canvas rebuild stream; this
+does not preserve or migrate Play runtime state. `uhura project` remains
+build-only and `uhura dev` aliases `play`. Exit codes 0/1/2;
 `--deny-warnings` in CI. One versioned
 diagnostics envelope (`uhura-diagnostics/0`: `code UHnxxx` + `rule` slug,
 span, labels, notes, `fix{title, edits}`).
