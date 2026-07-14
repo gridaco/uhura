@@ -29,6 +29,7 @@ const preview = (id: string, previewIdentity: PreviewIdentity): EditorPreview =>
   derived: false,
   inFlight: 0,
   from: null,
+  replaySteps: [],
   note: null,
   data: [],
   interactions: [],

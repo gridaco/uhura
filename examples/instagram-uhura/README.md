@@ -120,7 +120,11 @@ Open <http://127.0.0.1:8787/>. The Editor exposes deterministic,
 fixture-backed examples as a read-only projection. Its searchable navigator
 and artboards select previews; the details panel then shows that preview's
 metadata, computed example values and provenance, and declared interactions.
-The headerless Editor uses a compact floating toolbar for Cursor, Hand, zoom,
+Replay-derived previews are connected to their direct parent in a dedicated
+rail above each row. Edge labels summarize directly authored replay steps,
+and selection highlights immediate parent/child relationships. These are
+checked example provenance edges, not a second runtime state graph. The
+headerless Editor uses a compact floating toolbar for Cursor, Hand, zoom,
 and centering. Press
 `Cmd+\` (`Ctrl+\` on Windows/Linux) to hide or restore all editor chrome;
 that preference is remembered in local browser storage. The wheel pans,

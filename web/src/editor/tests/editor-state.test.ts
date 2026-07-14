@@ -107,6 +107,7 @@ const stateFixture = (): unknown => ({
       derived: false,
       inFlight: 0,
       from: null,
+      replaySteps: [],
       note: null,
       data: [{
         group: "properties",
@@ -322,6 +323,12 @@ test("enforces group references, identity matching, and unique IDs", () => {
   duplicate.render.previews.push(structuredClone(duplicate.render.previews[0]));
   duplicate.render.groups[0]!.previews.push("page-feed-default");
   assert.throws(() => decodeEditorState(duplicate), /unique values/);
+
+  const missingParent = stateFixture() as {
+    render: { previews: Array<{ from: string | null }> };
+  };
+  missingParent.render.previews[0]!.from = "missing";
+  assert.throws(() => decodeEditorState(missingParent), /existing example in the same subject/);
 });
 
 test("strictly validates authoring classes, ranges, kinds, and references", () => {

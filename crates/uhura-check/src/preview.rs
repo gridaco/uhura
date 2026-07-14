@@ -43,6 +43,9 @@ pub struct ResolvedPreview {
     pub in_flight: usize,
     /// Direct parent, for the provenance caption (`from first-page`).
     pub from: Option<String>,
+    /// Steps authored directly on this example. Editor provenance edges use
+    /// only these steps; inherited ancestor steps remain on their own edge.
+    pub replay_steps: Vec<String>,
     pub note: Option<String>,
     /// Editor-only, read-only values and authored origins. This sidecar is
     /// deliberately excluded from ProgramIr: examples never affect runtime
@@ -232,6 +235,16 @@ fn resolve_file(
         let mut effective = Effective::default();
         let mut from: Option<String> = None;
         let mut note: Option<String> = None;
+        let replay_steps = example
+            .clauses
+            .iter()
+            .filter_map(|clause| match clause {
+                ast::ExampleClause::Events { entries, .. } => Some(entries),
+                _ => None,
+            })
+            .flatten()
+            .map(replay_step_label)
+            .collect();
 
         // Parent first (earlier-declared only — legality enforced).
         for clause in &example.clauses {
@@ -412,6 +425,7 @@ fn resolve_file(
             derived,
             in_flight,
             from,
+            replay_steps,
             note,
             data,
             declaration_doc_id,
@@ -431,6 +445,22 @@ fn definition_address(subject: &SubjectKind) -> uhura_core::template::Definition
         }
         SubjectKind::Surface { name, .. } => {
             DefinitionAddress::new(DefinitionKind::Surface, name.clone())
+        }
+    }
+}
+
+fn replay_step_label(event: &ast::ExampleEvent) -> String {
+    match event {
+        ast::ExampleEvent::Semantic { name, .. } => name.clone(),
+        ast::ExampleEvent::Outcome { command, which, .. } => format!(
+            "{command}.{}",
+            match which {
+                ast::OutcomeKind::Ok => "ok",
+                ast::OutcomeKind::Err => "err",
+            }
+        ),
+        ast::ExampleEvent::Projection(pin) => {
+            format!("projection {}.{}", pin.port, pin.projection)
         }
     }
 }

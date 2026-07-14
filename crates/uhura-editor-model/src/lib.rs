@@ -83,6 +83,7 @@ pub struct Preview {
     pub derived: bool,
     pub in_flight: usize,
     pub from: Option<String>,
+    pub replay_steps: Vec<String>,
     pub note: Option<String>,
     pub data: Vec<PreviewField>,
     pub interactions: Vec<Interaction>,
@@ -371,6 +372,10 @@ pub enum ValidationError {
         expected: String,
         actual: String,
     },
+    UnknownPreviewParent {
+        preview: String,
+        parent: String,
+    },
     DuplicateGroupId(String),
     UnknownGroupedPreview {
         group: String,
@@ -472,6 +477,10 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidPreviewId { expected, actual } => write!(
                 f,
                 "preview id `{actual}` does not match its stable identity id `{expected}`"
+            ),
+            ValidationError::UnknownPreviewParent { preview, parent } => write!(
+                f,
+                "preview `{preview}` refers to unknown parent example `{parent}`"
             ),
             ValidationError::DuplicateGroupId(id) => {
                 write!(f, "preview group id `{id}` occurs more than once")
@@ -1216,6 +1225,23 @@ impl EditorRender {
             by_id.insert(preview.id.clone(), preview);
         }
 
+        for preview in &self.previews {
+            let Some(parent) = &preview.from else {
+                continue;
+            };
+            let parent_id = stable_preview_id(&PreviewIdentity {
+                kind: preview.identity.kind,
+                subject: preview.identity.subject.clone(),
+                example: parent.clone(),
+            });
+            if !by_id.contains_key(&parent_id) {
+                return Err(ValidationError::UnknownPreviewParent {
+                    preview: preview.id.clone(),
+                    parent: parent.clone(),
+                });
+            }
+        }
+
         let mut group_ids = BTreeSet::new();
         let mut grouped = BTreeSet::new();
         for group in &self.groups {
@@ -1378,6 +1404,7 @@ impl Preview {
             "derived": self.derived,
             "inFlight": self.in_flight,
             "from": self.from,
+            "replaySteps": self.replay_steps,
             "note": self.note,
             "data": self.data.iter().map(PreviewField::to_json).collect::<Vec<_>>(),
             "interactions": self.interactions.iter().map(Interaction::to_json).collect::<Vec<_>>(),
@@ -1904,6 +1931,7 @@ fn build_preview(
         derived: checked.derived,
         in_flight: checked.in_flight,
         from: checked.from.clone(),
+        replay_steps: checked.replay_steps.clone(),
         note: checked.note.clone(),
         data: checked.data.iter().map(build_field).collect(),
         interactions,
@@ -2207,6 +2235,7 @@ mod tests {
                 derived: false,
                 in_flight: 0,
                 from: None,
+                replay_steps: Vec::new(),
                 note: Some("Entry page".to_string()),
                 data: fields,
                 declaration_doc_id: None,
@@ -2229,6 +2258,7 @@ mod tests {
                 derived: false,
                 in_flight: 0,
                 from: None,
+                replay_steps: Vec::new(),
                 note: None,
                 data: Vec::new(),
                 declaration_doc_id: None,
@@ -2249,7 +2279,8 @@ mod tests {
                 pinned: false,
                 derived: true,
                 in_flight: 2,
-                from: Some("default".to_string()),
+                from: None,
+                replay_steps: vec!["activated".to_string()],
                 note: None,
                 data: Vec::new(),
                 declaration_doc_id: None,
@@ -2667,6 +2698,19 @@ mod tests {
                 "expected invalid kind `{kind}`"
             );
         }
+    }
+
+    #[test]
+    fn validation_rejects_a_replay_parent_outside_the_same_subject() {
+        let mut render = build_render(3, &clean_output(), BTreeMap::new()).unwrap();
+        render.previews[0].from = Some("missing".to_string());
+        assert_eq!(
+            render.validate(),
+            Err(ValidationError::UnknownPreviewParent {
+                preview: "page/home/default".to_string(),
+                parent: "missing".to_string(),
+            })
+        );
     }
 
     #[test]

@@ -65,6 +65,7 @@ const preview = (entries: { id: string; targetId: string; anchored: boolean }[])
   derived: false,
   inFlight: 0,
   from: null,
+  replaySteps: [],
   note: null,
   data: [],
   interactions: [],

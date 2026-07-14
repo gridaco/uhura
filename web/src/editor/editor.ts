@@ -15,6 +15,7 @@ import {
   reconcilePreparedEditorModel,
   watchPreparedEditorModel,
   type PreparedEditorModel,
+  type PreparedWorkflowConnector,
 } from "./editor-board.js";
 import {
   AnnotationOverlay,
@@ -123,6 +124,8 @@ interface EditorShell {
   selectionSource: HTMLButtonElement;
   selectionFromRow: HTMLElement;
   selectionFrom: HTMLElement;
+  selectionReplayRow: HTMLElement;
+  selectionReplay: HTMLElement;
   selectionStatus: HTMLElement;
   selectionData: HTMLElement;
   selectionNoData: HTMLElement;
@@ -201,6 +204,7 @@ const SHELL_HTML = `
         <div><dt>Origin</dt><dd class="selection-origin"></dd></div>
         <div class="selection-source-row" hidden><dt>Source</dt><dd><button class="selection-source source-location" type="button"></button></dd></div>
         <div class="selection-from-row" hidden><dt>From</dt><dd class="selection-from"></dd></div>
+        <div class="selection-replay-row" hidden><dt>Replay</dt><dd class="selection-replay"></dd></div>
         <div><dt>Status</dt><dd class="selection-status"></dd></div>
       </dl>
       <section class="inspector-block" aria-labelledby="selection-data-title">
@@ -282,6 +286,8 @@ const buildShell = (root: HTMLElement): EditorShell => {
     selectionSource: required(shell, ".selection-source"),
     selectionFromRow: required(shell, ".selection-from-row"),
     selectionFrom: required(shell, ".selection-from"),
+    selectionReplayRow: required(shell, ".selection-replay-row"),
+    selectionReplay: required(shell, ".selection-replay"),
     selectionStatus: required(shell, ".selection-status"),
     selectionData: required(shell, ".selection-data"),
     selectionNoData: required(shell, ".selection-no-data"),
@@ -407,6 +413,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let focusFitGeneration = 0;
   let focusState: PreviewFocusState | null = null;
   let focusFrameObserver: ResizeObserver | null = null;
+  let connectorFrame = 0;
   let destroyed = false;
   let retryTimer: number | undefined;
   const touches = new Map<number, Point>();
@@ -444,13 +451,70 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (!rulerFrame) rulerFrame = window.requestAnimationFrame(drawRulers);
   };
 
+  const boardLocalRect = (node: Element): Rect => {
+    const nodeRect = node.getBoundingClientRect();
+    const boardRect = shell.board.getBoundingClientRect();
+    return {
+      x: (nodeRect.left - boardRect.left) / scale,
+      y: (nodeRect.top - boardRect.top) / scale,
+      width: nodeRect.width / scale,
+      height: nodeRect.height / scale,
+    };
+  };
+
+  const layoutConnector = (connector: PreparedWorkflowConnector): void => {
+    const sourceShell = model.frameById.get(connector.sourceId)
+      ?.querySelector<HTMLElement>(":scope > .preview-shell");
+    const targetShell = model.frameById.get(connector.targetId)
+      ?.querySelector<HTMLElement>(":scope > .preview-shell");
+    const path = connector.element.querySelector<SVGPathElement>(".workflow-connector-path");
+    const arrow = connector.element.querySelector<SVGPathElement>(".workflow-connector-arrow");
+    const origin = connector.element.querySelector<SVGCircleElement>(".workflow-connector-origin");
+    const label = connector.element.querySelector<SVGTextElement>(".workflow-connector-label");
+    if (!sourceShell || !targetShell || !path || !arrow || !origin || !label) return;
+
+    const source = boardLocalRect(sourceShell);
+    const target = boardLocalRect(targetShell);
+    const startX = source.x + source.width / 2;
+    const startY = source.y;
+    const endX = target.x + target.width / 2;
+    const endY = target.y;
+    const railY = Math.min(startY, endY) - 18 - connector.lane * 20;
+    path.setAttribute(
+      "d",
+      `M ${startX} ${startY} L ${startX} ${railY} L ${endX} ${railY} L ${endX} ${endY}`,
+    );
+    arrow.setAttribute(
+      "d",
+      `M ${endX - 4} ${endY - 8} L ${endX} ${endY} L ${endX + 4} ${endY - 8} Z`,
+    );
+    origin.setAttribute("cx", String(startX));
+    origin.setAttribute("cy", String(startY));
+    label.setAttribute("x", String((startX + endX) / 2));
+    label.setAttribute("y", String(railY - 6));
+  };
+
+  const layoutConnectors = (): void => {
+    connectorFrame = 0;
+    const boardRect = shell.board.getBoundingClientRect();
+    model.connectorLayer.setAttribute("width", String(boardRect.width / scale));
+    model.connectorLayer.setAttribute("height", String(boardRect.height / scale));
+    for (const connector of model.connectors) layoutConnector(connector);
+  };
+
+  const requestConnectors = (): void => {
+    if (!connectorFrame) connectorFrame = window.requestAnimationFrame(layoutConnectors);
+  };
+
   const applyCamera = (): void => {
     shell.board.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     shell.board.style.setProperty("--selection-stroke", `${2 / scale}px`);
     shell.board.style.setProperty("--selection-offset", `${4 / scale}px`);
+    shell.board.style.setProperty("--connector-stroke", `${1.5 / scale}px`);
     shell.zoomOutput.textContent = `${Math.round(scale * 100)}%`;
     requestRulers();
     annotationOverlay.invalidate();
+    requestConnectors();
   };
 
   const clampScale = (value: number): number => Math.min(Math.max(value, MIN_SCALE), MAX_SCALE);
@@ -724,10 +788,53 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     observeFocusedFrame(frame);
   };
 
+  const revealPreviewFlow = (previewId: string): void => {
+    const selected = model.frameById.get(previewId);
+    if (!selected) return;
+    const active = model.connectors.filter((connector) =>
+      connector.sourceId === previewId || connector.targetId === previewId);
+    if (active.length === 0) {
+      revealElement(selected);
+      return;
+    }
+
+    const frameIds = new Set([previewId]);
+    for (const connector of active) {
+      frameIds.add(connector.sourceId);
+      frameIds.add(connector.targetId);
+    }
+    const rects = [...frameIds].flatMap((id) => {
+      const frame = model.frameById.get(id);
+      return frame ? [frameWorldRect(frame)] : [];
+    });
+    if (rects.length === 0) return;
+
+    const minX = Math.min(...rects.map((rect) => rect.x));
+    const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+    const frameTop = Math.min(...rects.map((rect) => rect.y));
+    const minY = frameTop - 30 - Math.max(...active.map((connector) => connector.lane + 1)) * 20;
+    const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    const padding = 72;
+    const fitScale = Math.min(
+      (shell.viewport.clientWidth - padding) / width,
+      (shell.viewport.clientHeight - padding) / height,
+    );
+    scale = clampScale(Math.min(scale, fitScale));
+    x = shell.viewport.clientWidth / 2 - (minX + width / 2) * scale;
+    y = shell.viewport.clientHeight / 2 - (minY + height / 2) * scale;
+    applyCamera();
+  };
+
   const clearSelectionDom = (): void => {
     for (const frame of model.frameById.values()) {
-      frame.classList.remove("is-selected");
+      frame.classList.remove("is-selected", "is-related");
       frame.setAttribute("aria-pressed", "false");
+    }
+    model.connectorLayer.classList.remove("has-selection");
+    for (const connector of model.connectors) {
+      connector.element.classList.remove("is-active");
     }
     shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]").forEach((button) => {
       button.setAttribute("aria-pressed", "false");
@@ -807,6 +914,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       : "Copy page source path";
     shell.selectionFromRow.hidden = preview.from === null || preview.from === "";
     shell.selectionFrom.textContent = preview.from ?? "";
+    shell.selectionReplayRow.hidden = preview.replaySteps.length === 0;
+    shell.selectionReplay.textContent = preview.replaySteps.join(" → ");
     const status = preview.default ? ["Default"] : [];
     status.push(preview.inFlight > 0 ? `${preview.inFlight} in flight` : "Settled");
     shell.selectionStatus.textContent = status.join(" · ");
@@ -869,6 +978,16 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     annotationOverlay.activatePreviewOccurrences(previewId);
     frame.classList.add("is-selected");
     frame.setAttribute("aria-pressed", "true");
+    model.connectorLayer.classList.add("has-selection");
+    for (const connector of model.connectors) {
+      const active = connector.sourceId === previewId || connector.targetId === previewId;
+      connector.element.classList.toggle("is-active", active);
+      if (!active) continue;
+      const relatedId = connector.sourceId === previewId
+        ? connector.targetId
+        : connector.sourceId;
+      model.frameById.get(relatedId)?.classList.add("is-related");
+    }
     const navigatorButton = Array.from(
       shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]"),
     ).find((button) => button.dataset.previewId === previewId);
@@ -878,7 +997,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       navigatorButton.scrollIntoView({ block: "nearest" });
     }
     renderInspector(preview);
-    if (reveal) revealElement(frame);
+    if (reveal) revealPreviewFlow(previewId);
   };
 
   const focusPreview = (previewId: string): void => {
@@ -950,6 +1069,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       stat(document, "Defaults", previews.filter((preview) => preview.default).length),
       stat(document, "Derived", previews.filter((preview) => preview.derived).length),
       stat(document, "Pinned", previews.filter((preview) => preview.pinned).length),
+      stat(document, "Flows", previews.filter((preview) => preview.from !== null).length),
       stat(document, "Assets", Object.keys(render?.assets ?? {}).length),
     );
     const callout = shell.overviewCallout.querySelector("p");
@@ -1066,6 +1186,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       resourcesByPreviewId: prospectiveResources,
     });
     reconcilePreparedEditorModel(previousModel, nextModel);
+    nextModel.board.style.setProperty("--connector-stroke", `${1.5 / scale}px`);
     previousBoard.replaceWith(nextModel.board);
     shell.board = nextModel.board;
     shell.navigatorResults.replaceChildren(nextModel.navigator);
@@ -1087,6 +1208,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     }
     requestRulers();
     annotationOverlay.invalidate();
+    requestConnectors();
   };
 
   const scheduleRetry = (
@@ -1165,7 +1287,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       return;
     }
     const selectedId = previewIdForIdentity(model, selectedIdentity);
-    if (selectedId) revealElement(model.frameById.get(selectedId) ?? null);
+    if (selectedId) revealPreviewFlow(selectedId);
   });
   listen(shell.exitFocusButton, "click", () => leavePreviewFocus());
   listen(shell.sourceDrawerButton, "click", () => {
@@ -1431,6 +1553,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       requestRulers();
       annotationOverlay.invalidate();
       scheduleFocusFit();
+      requestConnectors();
     });
     resizeObserver.observe(shell.viewport);
   } else {
@@ -1438,6 +1561,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       requestRulers();
       annotationOverlay.invalidate();
       scheduleFocusFit();
+      requestConnectors();
     });
   }
 
@@ -1481,6 +1605,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     if (rulerFrame) window.cancelAnimationFrame(rulerFrame);
     if (focusFitFrame) window.cancelAnimationFrame(focusFitFrame);
+    if (connectorFrame) window.cancelAnimationFrame(connectorFrame);
     for (const dispose of disposers.splice(0)) dispose();
     root.replaceChildren();
   };

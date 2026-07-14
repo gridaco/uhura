@@ -16,6 +16,16 @@ import {
   reusablePreviewFrameIds,
   reusablePreviewIds,
 } from "./editor-updates.js";
+import {
+  buildWorkflowConnectors,
+  type WorkflowConnector,
+  workflowConnectorDescription,
+  workflowConnectorLabel,
+} from "./workflow-connectors.js";
+
+export interface PreparedWorkflowConnector extends WorkflowConnector {
+  element: SVGGElement;
+}
 
 export interface PreparedEditorModel {
   board: HTMLElement;
@@ -27,6 +37,8 @@ export interface PreparedEditorModel {
   previewById: Map<string, EditorPreview>;
   previewIdByIdentity: Map<string, string>;
   authoring: PreparedAuthoring;
+  connectorLayer: SVGSVGElement;
+  connectors: PreparedWorkflowConnector[];
   render: EditorRender | null;
   stylesheet: CSSStyleSheet | null;
   reusableRealizationIds: ReadonlySet<string>;
@@ -43,6 +55,37 @@ const element = <K extends keyof HTMLElementTagNameMap>(
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+};
+
+const svgElement = <K extends keyof SVGElementTagNameMap>(
+  document: Document,
+  tag: K,
+  className?: string,
+): SVGElementTagNameMap[K] => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  if (className) node.setAttribute("class", className);
+  return node;
+};
+
+const prepareWorkflowConnector = (
+  document: Document,
+  connector: WorkflowConnector,
+): PreparedWorkflowConnector => {
+  const group = svgElement(document, "g", "workflow-connector");
+  group.dataset.sourcePreviewId = connector.sourceId;
+  group.dataset.targetPreviewId = connector.targetId;
+  group.dataset.lane = String(connector.lane);
+
+  const title = svgElement(document, "title");
+  title.textContent = `Checked replay provenance via ${workflowConnectorDescription(connector)}`;
+  const path = svgElement(document, "path", "workflow-connector-path");
+  const arrow = svgElement(document, "path", "workflow-connector-arrow");
+  const origin = svgElement(document, "circle", "workflow-connector-origin");
+  origin.setAttribute("r", "3");
+  const label = svgElement(document, "text", "workflow-connector-label");
+  label.textContent = workflowConnectorLabel(connector.steps);
+  group.append(title, path, arrow, origin, label);
+  return { ...connector, element: group };
 };
 
 const isSnapshot = (content: Snapshot | VNode): content is Snapshot =>
@@ -233,6 +276,10 @@ export const prepareEditorModel = (
   const previewById = new Map<string, EditorPreview>();
   const previewIdByIdentity = new Map<string, string>();
   const authoring = prepareAuthoring(render);
+  const connectorLayer = svgElement(document, "svg", "workflow-connectors");
+  connectorLayer.setAttribute("aria-hidden", "true");
+  const connectors: PreparedWorkflowConnector[] = [];
+  board.append(connectorLayer);
 
   if (!render) {
     const empty = element(document, "section", "empty-board");
@@ -251,6 +298,8 @@ export const prepareEditorModel = (
       previewById,
       previewIdByIdentity,
       authoring,
+      connectorLayer,
+      connectors,
       render,
       stylesheet: null,
       reusableRealizationIds: new Set(),
@@ -283,6 +332,10 @@ export const prepareEditorModel = (
         throw new Error(`Editor group ${group.id} refers to an unknown preview`);
       }
       const typedPreviews = previews as EditorPreview[];
+      const groupConnectors = buildWorkflowConnectors(group.id, typedPreviews).map((connector) =>
+        prepareWorkflowConnector(document, connector));
+      connectors.push(...groupConnectors);
+      connectorLayer.append(...groupConnectors.map((connector) => connector.element));
       const row = element(document, "section", "preview-row");
       row.dataset.groupId = group.id;
       row.append(element(
@@ -292,6 +345,13 @@ export const prepareEditorModel = (
         `${group.kind} ${group.subject}`,
       ));
       const frames = element(document, "div", "row-frames");
+      const laneCount = groupConnectors.reduce(
+        (count, connector) => Math.max(count, connector.lane + 1),
+        0,
+      );
+      if (laneCount > 0) {
+        frames.style.setProperty("--workflow-rail-height", `${28 + laneCount * 20}px`);
+      }
       for (const preview of typedPreviews) {
         const resources = new RealizationResources();
         resources.claim(resourceOwner);
@@ -327,6 +387,8 @@ export const prepareEditorModel = (
     previewById,
     previewIdByIdentity,
     authoring,
+    connectorLayer,
+    connectors,
     render,
     stylesheet,
     reusableRealizationIds,

@@ -172,6 +172,7 @@ export interface EditorPreview {
   derived: boolean;
   inFlight: number;
   from: string | null;
+  replaySteps: string[];
   note: string | null;
   data: PreviewDataField[];
   interactions: PreviewInteraction[];
@@ -711,7 +712,7 @@ const preview = (value: unknown, path: string): EditorPreview => {
   const object = record(value, path);
   exact(object, path, [
     "id", "identity", "sourceFile", "default", "pinned", "derived", "inFlight", "from", "note",
-    "data", "interactions", "documentation", "provenance", "content",
+    "replaySteps", "data", "interactions", "documentation", "provenance", "content",
   ]);
   const previewIdentity = identity(object["identity"], `${path}.identity`);
   const previewContent = content(object["content"], `${path}.content`);
@@ -730,6 +731,8 @@ const preview = (value: unknown, path: string): EditorPreview => {
     derived: boolean(object["derived"], `${path}.derived`),
     inFlight: nonNegativeInteger(object["inFlight"], `${path}.inFlight`),
     from: nullableString(object["from"], `${path}.from`),
+    replaySteps: array(object["replaySteps"], `${path}.replaySteps`).map((item, index) =>
+      string(item, `${path}.replaySteps[${index}]`)),
     note: nullableString(object["note"], `${path}.note`),
     data: array(object["data"], `${path}.data`).map((item, index) =>
       dataField(item, `${path}.data[${index}]`)),
@@ -1006,6 +1009,21 @@ const validateReferences = (groups: PreviewGroup[], previews: EditorPreview[]): 
   "$.render.previews[].identity");
 
   const byId = new Map(previews.map((item) => [item.id, item]));
+  const identities = new Set(previews.map((item) => semanticPreviewKey(item.identity)));
+  for (const previewValue of previews) {
+    if (previewValue.from === null) continue;
+    const parentKey = semanticPreviewKey({
+      kind: previewValue.identity.kind,
+      subject: previewValue.identity.subject,
+      example: previewValue.from,
+    });
+    if (!identities.has(parentKey)) {
+      throw new EditorContractError(
+        `$.render.previews[${JSON.stringify(previewValue.id)}].from`,
+        `an existing example in the same subject (missing ${JSON.stringify(previewValue.from)})`,
+      );
+    }
+  }
   const referenced: string[] = [];
   for (const groupValue of groups) {
     unique(groupValue.previews, `$.render.groups[${JSON.stringify(groupValue.id)}].previews`);
