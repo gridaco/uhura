@@ -57,6 +57,8 @@ pub fn snapshot_json(
 /// Static, renderer-independent behavior topology extracted from checked IR.
 /// Node identifiers deliberately align definition/handler ids with the
 /// compiler span-table keys and live trace `(definition, selected, on)` data.
+/// The `spans` map is deliberately empty; source-aware callers must populate
+/// it from the compiler span table before exposing the artifact.
 pub fn program_graph(program: &ProgramIr) -> serde_json::Value {
     let mut nodes = BTreeMap::<String, serde_json::Value>::new();
     let mut edges = Vec::<serde_json::Value>::new();

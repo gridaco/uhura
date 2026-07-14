@@ -429,22 +429,41 @@ function projectionRuntime(
   };
 }
 
-function debugNode(
-  node: ProgramNode,
-  state: InspectionState,
-  spans: DeepReadonly<Record<string, InspectSourceSpan>>,
-  writtenStateIds: ReadonlySet<string>,
-  activeIds: ReadonlySet<string>,
-  currentEventId: string | null,
-  selectedHandlerId: string | null,
-  consultedHandlers: ReadonlyMap<string, TraceGuardNote["guard"]>,
-  runtimeWrittenIds: ReadonlySet<string>,
-  sentCommandIds: ReadonlySet<string>,
-  instance: DefinitionInstance | null,
-  pendingByCommand: ReadonlyMap<string, number>,
-  applies: ReadonlyMap<string, DebugProjectionApply>,
-  transitionTargets: ReadonlySet<string>,
-): DebugGraphNode {
+interface EdgeActivityContext {
+  readonly currentEventId: string | null;
+  readonly selectedHandlerId: string | null;
+  readonly consultedHandlers: ReadonlyMap<string, TraceGuardNote["guard"]>;
+  readonly runtimeWrittenIds: ReadonlySet<string>;
+  readonly sentCommandIds: ReadonlySet<string>;
+  readonly transitionTargets: ReadonlySet<string>;
+}
+
+interface DebugNodeContext extends EdgeActivityContext {
+  readonly state: InspectionState;
+  readonly spans: DeepReadonly<Record<string, InspectSourceSpan>>;
+  readonly writtenStateIds: ReadonlySet<string>;
+  readonly activeIds: ReadonlySet<string>;
+  readonly instance: DefinitionInstance | null;
+  readonly pendingByCommand: ReadonlyMap<string, number>;
+  readonly applies: ReadonlyMap<string, DebugProjectionApply>;
+}
+
+function debugNode(node: ProgramNode, context: DebugNodeContext): DebugGraphNode {
+  const {
+    state,
+    spans,
+    writtenStateIds,
+    activeIds,
+    currentEventId,
+    selectedHandlerId,
+    consultedHandlers,
+    runtimeWrittenIds,
+    sentCommandIds,
+    instance,
+    pendingByCommand,
+    applies,
+    transitionTargets,
+  } = context;
   const definitionId = definitionIdForNode(node);
   const view = presentation(node, state, instance, pendingByCommand);
   const consulted = consultedHandlers.get(node.id) ?? null;
@@ -492,13 +511,16 @@ function debugNode(
 
 function edgeActivity(
   edge: ProgramEdge,
-  currentEventId: string | null,
-  selectedHandlerId: string | null,
-  consultedHandlers: ReadonlyMap<string, TraceGuardNote["guard"]>,
-  runtimeWrittenIds: ReadonlySet<string>,
-  sentCommandIds: ReadonlySet<string>,
-  transitionTargets: ReadonlySet<string>,
+  context: EdgeActivityContext,
 ): DebugEdgeActivity {
+  const {
+    currentEventId,
+    selectedHandlerId,
+    consultedHandlers,
+    runtimeWrittenIds,
+    sentCommandIds,
+    transitionTargets,
+  } = context;
   switch (edge.kind) {
     case "handles":
       if (edge.from === currentEventId && edge.to === selectedHandlerId) return "taken";
@@ -711,26 +733,26 @@ export function deriveDebugGraph(
   const focusedTransitionTargets: ReadonlySet<string> = traceMatchesFocus
     ? transitionTargets
     : new Set();
+  const debugContext: DebugNodeContext = {
+    state,
+    spans: program.spans,
+    writtenStateIds,
+    activeIds: active.ids,
+    currentEventId,
+    selectedHandlerId,
+    consultedHandlers,
+    runtimeWrittenIds,
+    sentCommandIds,
+    instance,
+    pendingByCommand,
+    applies,
+    transitionTargets: focusedTransitionTargets,
+  };
 
   const nodes = [...includedNodeIds]
     .map((id) => nodesById.get(id))
     .filter((node): node is ProgramNode => node !== undefined)
-    .map((node) => debugNode(
-      node,
-      state,
-      program.spans,
-      writtenStateIds,
-      active.ids,
-      currentEventId,
-      selectedHandlerId,
-      consultedHandlers,
-      runtimeWrittenIds,
-      sentCommandIds,
-      instance,
-      pendingByCommand,
-      applies,
-      focusedTransitionTargets,
-    ))
+    .map((node) => debugNode(node, debugContext))
     .sort((left, right) =>
       LANE_ORDER[left.lane] - LANE_ORDER[right.lane]
       || NODE_KIND_ORDER[left.kind] - NODE_KIND_ORDER[right.kind]
@@ -754,15 +776,7 @@ export function deriveDebugGraph(
       label: edgeLabel(edge),
       order: staticEdgeOrder(edge),
       mode: staticEdgeMode(edge),
-      activity: edgeActivity(
-        edge,
-        currentEventId,
-        selectedHandlerId,
-        consultedHandlers,
-        runtimeWrittenIds,
-        sentCommandIds,
-        focusedTransitionTargets,
-      ),
+      activity: edgeActivity(edge, debugContext),
     };
   });
 
