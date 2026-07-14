@@ -9,8 +9,10 @@ use std::io::{Cursor, Read};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::path::{Component, Path};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::mpsc::{
+    Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel,
+};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
 use uhura_base::{Severity, sha256_hex, to_canonical_json, to_envelope};
@@ -466,8 +468,8 @@ impl Host {
         Ok((
             Self {
                 state: RwLock::new(DevState { play, editor }),
-                play_clients: Arc::new(Mutex::new(Vec::new())),
-                editor_clients: Arc::new(Mutex::new(Vec::new())),
+                play_clients: Arc::new(Mutex::new(ClientRegistry::default())),
+                editor_clients: Arc::new(Mutex::new(ClientRegistry::default())),
                 web: Arc::new(web),
             },
             report,
@@ -522,7 +524,13 @@ fn publication_report(play: &PlayState, summary: CandidateSummary) -> Publicatio
 // subscriber therefore has a one-frame queue. If it is stalled, the already
 // queued frame remains a sufficient invalidation and later publications are
 // intentionally coalesced instead of growing memory without bound.
-type Clients = Arc<Mutex<Vec<SyncSender<String>>>>;
+#[derive(Default)]
+struct ClientRegistry {
+    next_id: u64,
+    clients: BTreeMap<u64, SyncSender<String>>,
+}
+
+type Clients = Arc<Mutex<ClientRegistry>>;
 
 fn play_sse_payload(play: &PlayState) -> String {
     let mut event = serde_json::json!({
@@ -554,16 +562,20 @@ fn sse_frame(value: &serde_json::Value) -> String {
 
 fn broadcast(clients: &Clients, payload: &str) {
     let mut clients = clients.lock().expect("clients lock");
-    clients.retain(|sender| match sender.try_send(payload.to_string()) {
-        Ok(()) | Err(TrySendError::Full(_)) => true,
-        Err(TrySendError::Disconnected(_)) => false,
-    });
+    clients
+        .clients
+        .retain(|_, sender| match sender.try_send(payload.to_string()) {
+            Ok(()) | Err(TrySendError::Full(_)) => true,
+            Err(TrySendError::Disconnected(_)) => false,
+        });
 }
 
 pub struct EventStream {
     receiver: Receiver<String>,
     buffer: Vec<u8>,
     offset: usize,
+    subscription_id: u64,
+    clients: Weak<Mutex<ClientRegistry>>,
 }
 
 /// One bounded wait on a host-session event stream.
@@ -575,6 +587,15 @@ pub enum EventStreamPoll {
 }
 
 impl EventStream {
+    /// Poll once without occupying an executor thread.
+    pub fn try_next_frame(&self) -> EventStreamPoll {
+        match self.receiver.try_recv() {
+            Ok(frame) => EventStreamPoll::Frame(frame),
+            Err(TryRecvError::Empty) => EventStreamPoll::Timeout,
+            Err(TryRecvError::Disconnected) => EventStreamPoll::Closed,
+        }
+    }
+
     /// Wait at most `timeout` for one complete SSE frame.
     ///
     /// Async adapters can repeat this bounded wait and drop the stream when
@@ -586,6 +607,18 @@ impl EventStream {
             Ok(frame) => EventStreamPoll::Frame(frame),
             Err(RecvTimeoutError::Timeout) => EventStreamPoll::Timeout,
             Err(RecvTimeoutError::Disconnected) => EventStreamPoll::Closed,
+        }
+    }
+}
+
+impl Drop for EventStream {
+    fn drop(&mut self) {
+        if let Some(clients) = self.clients.upgrade() {
+            clients
+                .lock()
+                .expect("clients lock")
+                .clients
+                .remove(&self.subscription_id);
         }
     }
 }
@@ -610,7 +643,7 @@ impl Read for EventStream {
 
 fn subscribe(clients: &Clients, hello: impl FnOnce() -> String) -> EventStream {
     let (sender, receiver) = sync_channel::<String>(1);
-    {
+    let subscription_id = {
         // Registration and snapshot share the broadcast lock: an update can
         // be coalesced with the initial invalidation but can never leave the
         // subscriber without an invalidation to refetch current state.
@@ -618,12 +651,17 @@ fn subscribe(clients: &Clients, hello: impl FnOnce() -> String) -> EventStream {
         sender
             .try_send(hello())
             .expect("new event queue has one available slot");
-        clients.push(sender);
-    }
+        let subscription_id = clients.next_id;
+        clients.next_id += 1;
+        clients.clients.insert(subscription_id, sender);
+        subscription_id
+    };
     EventStream {
         receiver,
         buffer: Vec::new(),
         offset: 0,
+        subscription_id,
+        clients: Arc::downgrade(clients),
     }
 }
 
@@ -634,6 +672,18 @@ pub struct WebAssets {
     files: Arc<BTreeMap<String, WebFile>>,
     index: Arc<Vec<u8>>,
     wasm_files: Arc<BTreeMap<String, WebFile>>,
+}
+
+/// One immutable file captured in a [`WebAssets`] snapshot.
+///
+/// Paths are manifest-relative and begin with `web/` or `wasm/`. Aggregate
+/// hosts can compare this inventory with a package manifest without rereading
+/// mutable filesystem state after the served bytes have been captured.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebAssetDigest {
+    pub path: String,
+    pub sha256: String,
+    pub size: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -655,6 +705,24 @@ impl WebAssets {
     /// hosts should use [`Self::from_directories`] instead.
     pub fn from_frontend_directory(web_root: &Path) -> Result<Self, String> {
         load_web_assets(web_root, None)
+    }
+
+    /// Describe the exact immutable bytes held by this snapshot.
+    #[must_use]
+    pub fn inventory(&self) -> Vec<WebAssetDigest> {
+        let mut inventory = Vec::with_capacity(self.files.len() + self.wasm_files.len());
+        inventory.extend(self.files.iter().map(|(path, file)| WebAssetDigest {
+            path: format!("web/{path}"),
+            sha256: sha256_hex(file.bytes.as_slice()),
+            size: file.bytes.len() as u64,
+        }));
+        inventory.extend(self.wasm_files.iter().map(|(path, file)| WebAssetDigest {
+            path: format!("wasm/{path}"),
+            sha256: sha256_hex(file.bytes.as_slice()),
+            size: file.bytes.len() as u64,
+        }));
+        inventory.sort_by(|left, right| left.path.cmp(&right.path));
+        inventory
     }
 }
 
@@ -1396,10 +1464,11 @@ mod tests {
     use crate::source::EditorModelArtifact;
 
     use super::{
-        ApiRoute, EditorHostState, EventStream, EventStreamPoll, PlayArtifact, RequestMethod,
-        RouteBody, RouteRequest, WebAssets, api_route, app_document, application_path, broadcast,
-        captured_play_asset, content_type, decode_play_asset_path, editor_sse_payload,
-        load_web_app_from, recheck_play, serve_file_map, split_request_url, subscribe, tool_root,
+        ApiRoute, ClientRegistry, EditorHostState, EventStream, EventStreamPoll, PlayArtifact,
+        RequestMethod, RouteBody, RouteRequest, WebAssets, api_route, app_document,
+        application_path, broadcast, captured_play_asset, content_type, decode_play_asset_path,
+        editor_sse_payload, load_web_app_from, recheck_play, serve_file_map, split_request_url,
+        subscribe, tool_root,
     };
 
     fn render(revision: u64, name: &str) -> EditorRender {
@@ -1659,7 +1728,7 @@ mod tests {
 
     #[test]
     fn stalled_event_subscriber_keeps_only_one_invalidation() {
-        let clients = Arc::new(Mutex::new(Vec::new()));
+        let clients = Arc::new(Mutex::new(ClientRegistry::default()));
         let stream = subscribe(&clients, || editor_sse_payload(1));
 
         for revision in 2..=128 {
@@ -1680,15 +1749,14 @@ mod tests {
     }
 
     #[test]
-    fn publication_prunes_disconnected_event_subscribers() {
-        let clients = Arc::new(Mutex::new(Vec::new()));
+    fn dropping_event_stream_unregisters_immediately() {
+        let clients = Arc::new(Mutex::new(ClientRegistry::default()));
         let stream = subscribe(&clients, || editor_sse_payload(1));
-        assert_eq!(clients.lock().expect("clients lock").len(), 1);
+        assert_eq!(clients.lock().expect("clients lock").clients.len(), 1);
 
         drop(stream);
-        broadcast(&clients, &editor_sse_payload(2));
 
-        assert!(clients.lock().expect("clients lock").is_empty());
+        assert!(clients.lock().expect("clients lock").clients.is_empty());
     }
 
     #[test]
