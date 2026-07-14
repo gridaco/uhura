@@ -105,11 +105,11 @@ const COMMAND_REFUSALS: Readonly<Record<string, readonly string[]>> = {
 };
 
 export interface SpockDriverConfig {
-  /** Full Spock `/graphql/v1` endpoint. */
+  /** Standalone fallback for the full Spock `/graphql/v1` endpoint. */
   graphql_url: string;
-  /** Spock `/rest/v1/rpc` prefix. */
+  /** Standalone fallback for the Spock `/rest/v1/rpc` prefix. */
   rpc_url: string;
-  /** Spock `/storage/v1` prefix. */
+  /** Standalone fallback for the Spock `/storage/v1` prefix. */
   storage_url: string;
   /** Seeded user UUID or unique username. */
   actor: string;
@@ -164,11 +164,12 @@ const AUTHORITY_COMMANDS = new Set([
 ]);
 
 const AUTHORITY_REQUEST_TIMEOUT_MS = 15_000;
+const HOST_ENVIRONMENT_TIMEOUT_MS = 2_000;
 const HOST_ENVIRONMENT_PATH = "/~project/environment";
 const HOST_ENVIRONMENT_PROTOCOL = "spock-host-environment/1";
 
 interface AuthorityEndpoints {
-  graphqlUrl: string;
+  graphqlUrl: string | null;
   rpcUrl: string;
   storageUrl: string;
   whoamiUrl: string;
@@ -237,10 +238,19 @@ function integratedAuthority(value: unknown): AuthorityEndpoints | null {
     return null;
   }
 
-  const graphqlUrl = authorityPath(value.authority.graphql_path);
+  const graphqlPath = value.authority.graphql_path;
+  // `null` is an explicit capability absence in the integrated environment,
+  // not invalid metadata and never a reason to contact the standalone host.
+  const graphqlUrl = graphqlPath === null ? null : authorityPath(graphqlPath);
   const rpcUrl = authorityPath(value.authority.rpc_path);
   const storageUrl = authorityPath(value.authority.storage_path);
-  if (graphqlUrl === null || rpcUrl === null || storageUrl === null) return null;
+  if (
+    (graphqlPath !== null && graphqlUrl === null) ||
+    rpcUrl === null ||
+    storageUrl === null
+  ) {
+    return null;
+  }
 
   return {
     graphqlUrl,
@@ -622,11 +632,22 @@ export function createDriver(
 
   function authorityEndpoints(): Promise<AuthorityEndpoints> {
     authorityResolution ??= (async () => {
+      // Discovery is opportunistic for standalone Uhura sessions. Bound it so
+      // a same-origin route that accepts but never answers cannot stall boot.
+      const discovery = new AbortController();
+      const abortDiscovery = (): void => discovery.abort();
+      if (cancellable.signal.aborted) abortDiscovery();
+      else {
+        cancellable.signal.addEventListener("abort", abortDiscovery, {
+          once: true,
+        });
+      }
+      const timeout = setTimeout(abortDiscovery, HOST_ENVIRONMENT_TIMEOUT_MS);
       try {
         const response = await fetch(HOST_ENVIRONMENT_PATH, {
           method: "GET",
           headers: { accept: "application/json" },
-          signal: cancellable.signal,
+          signal: discovery.signal,
         });
         assertLive();
         if (!response.ok) return configuredAuthority;
@@ -637,6 +658,9 @@ export function createDriver(
       } catch (error) {
         if (disposed || cancellable.signal.aborted) throw error;
         return configuredAuthority;
+      } finally {
+        clearTimeout(timeout);
+        cancellable.signal.removeEventListener("abort", abortDiscovery);
       }
     })();
     return authorityResolution;
@@ -711,6 +735,11 @@ export function createDriver(
    */
   async function fetchSnapshot(): Promise<SnapshotData> {
     const { graphqlUrl } = await authorityEndpoints();
+    if (graphqlUrl === null) {
+      throw new Error(
+        "integrated Spock host does not advertise a GraphQL capability",
+      );
+    }
     const response = await fetch(graphqlUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { test } from "vitest";
+import { test, vi } from "vitest";
 
 import {
   createDriver,
@@ -470,6 +470,75 @@ test("falls back for unavailable or invalid framework metadata", async () => {
       candidate.name,
     );
   }
+});
+
+test("bounds framework discovery before using standalone fallback endpoints", async () => {
+  const calls: string[] = [];
+  const data = snapshot();
+  vi.useFakeTimers();
+  try {
+    await withFetch(async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "/~project/environment") {
+        return await new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal;
+          const abort = (): void =>
+            reject(
+              new DOMException("environment discovery timed out", "AbortError"),
+            );
+          if (signal?.aborted) abort();
+          else signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+      if (url === "http://spock.test/graphql/v1") return graphql(data);
+      if (url === "http://spock.test/~whoami") return whoami(init);
+      throw new Error(`unexpected fetch ${url}`);
+    }, async () => {
+      const remote = driver();
+      const boot = remote.assembleBoot();
+      await vi.advanceTimersByTimeAsync(2_001);
+      await boot;
+      remote.dispose();
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+
+  assert.deepEqual(calls.slice(0, 2), [
+    "/~project/environment",
+    "http://spock.test/graphql/v1",
+  ]);
+});
+
+test("treats nullable integrated GraphQL as capability absence, not fallback", async () => {
+  const calls: string[] = [];
+  await withFetch(async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url === "/~project/environment") {
+      return new Response(
+        JSON.stringify(
+          frameworkEnvironment({
+            graphql_path: null,
+            rpc_path: "/framework/rpc",
+            storage_path: "/framework/storage",
+          }),
+        ),
+      );
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }, async () => {
+    const remote = driver();
+    await assert.rejects(
+      remote.assembleBoot(),
+      /integrated Spock host does not advertise a GraphQL capability/,
+    );
+    remote.dispose();
+  });
+
+  assert.deepEqual(calls, ["/~project/environment"]);
+  assert.equal(calls.some((url) => url.startsWith("http://spock.test")), false);
 });
 
 test("disposing during environment discovery aborts without authority fallback", async () => {
