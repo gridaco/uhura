@@ -458,8 +458,8 @@ dependencies = [
  "uhura-base",
  "uhura-check",
  "uhura-core",
- "uhura-editor-model",
  "uhura-fixture",
+ "uhura-host",
  "uhura-port",
  "uhura-syntax",
 ]
@@ -493,6 +493,21 @@ dependencies = [
  "toml",
  "uhura-base",
  "uhura-port",
+]
+
+[[package]]
+name = "uhura-host"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "toml",
+ "uhura-base",
+ "uhura-check",
+ "uhura-core",
+ "uhura-editor-model",
+ "uhura-fixture",
+ "uhura-port",
+ "uhura-syntax",
 ]
 
 [[package]]

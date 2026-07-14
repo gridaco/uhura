@@ -15,14 +15,16 @@ use std::process::ExitCode;
 
 use uhura_base::{Ident, Severity, render_text, to_canonical_json};
 use uhura_check::check;
-use uhura_check::fixture::{FixtureData, load_fixture};
+use uhura_check::fixture::load_fixture;
 use uhura_core::event::{ApplyNote, Event, apply_failure, apply_updates, decode_carried_data};
 use uhura_core::ir::ProgramIr;
 use uhura_core::state::{Projections, UiState};
 use uhura_core::step::step_u;
 use uhura_core::view::{Descriptor, Node, Snapshot};
 use uhura_fixture::FixtureDriver;
-use uhura_port::envelope::{ProjectionUpdate, ProviderMsg};
+use uhura_port::envelope::ProviderMsg;
+
+pub use uhura_host::{boot_updates, fixture_slices_json};
 
 use crate::CommonArgs;
 
@@ -250,50 +252,6 @@ fn deliver_commands(
         driver.deliver(&json)?;
     }
     Ok(())
-}
-
-/// The boot deliveries (§9.2): every `boot = true` projection from its
-/// `boot.<name>` fixture slice, revision 1 (driver mints start at 2 —
-/// micro-decision #43). `uhura play`'s `/api/play/boot.json` and the wasm ABI
-/// contract test build the same envelope.
-pub fn boot_updates(
-    program: &ProgramIr,
-    fixture: &FixtureData,
-) -> Result<Vec<ProjectionUpdate>, String> {
-    let mut updates = Vec::new();
-    for (name, decl) in &program.projections {
-        if !decl.boot {
-            continue;
-        }
-        let Some(value) = fixture.get("boot", name.as_str()) else {
-            return Err(format!(
-                "boot projection `{name}` needs a `boot.{name}` fixture slice (§6.1)"
-            ));
-        };
-        updates.push(ProjectionUpdate {
-            port: decl.port.clone(),
-            projection: name.clone(),
-            key: None,
-            revision: 1,
-            value: value.clone(),
-        });
-    }
-    Ok(updates)
-}
-
-/// The resolved fixture slices as one canonical JSON object — the
-/// `FixtureDriver::new` input (`uhura play` serves it as
-/// `/api/play/fixture.json`).
-pub fn fixture_slices_json(fixture: &FixtureData) -> String {
-    let mut root = serde_json::Map::new();
-    for (ns, slices) in &fixture.slices {
-        let mut ns_map = serde_json::Map::new();
-        for (name, value) in slices {
-            ns_map.insert(name.clone(), value.clone());
-        }
-        root.insert(ns.clone(), serde_json::Value::Object(ns_map));
-    }
-    to_canonical_json(&serde_json::Value::Object(root))
 }
 
 // ── the harness-only [[ui]] stimulus section ────────────────────────────────
