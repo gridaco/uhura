@@ -14,7 +14,7 @@ uhura-port = { workspace = true, features = ["toml"] }
 uhura-check = { workspace = true }
 uhura-core = { workspace = true }
 uhura-fixture = { workspace = true }
-uhura-project = { workspace = true }
+uhura-editor-model = { workspace = true }
 uhura-cli = { workspace = true }
 cargo_metadata = { workspace = true }
 serde_json = { workspace = true }

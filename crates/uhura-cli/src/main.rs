@@ -1,6 +1,6 @@
 //! The `uhura` CLI: check | fmt | editor | play | trace. With no command it
-//! opens the read-only editor for the current directory. `project` and `dev`
-//! remain compatibility aliases for the original command names. Thin argument
+//! opens the read-only editor for the current directory. `dev` remains a
+//! compatibility alias for Play. Thin argument
 //! parsing over the library crate (`uhura_cli::cmd`) — the same code the gate
 //! tests drive.
 
@@ -15,7 +15,6 @@ enum CliCommand {
     Fmt,
     Editor,
     Play,
-    Project,
     Trace,
 }
 
@@ -26,7 +25,6 @@ impl CliCommand {
             "fmt" => Some(Self::Fmt),
             "editor" => Some(Self::Editor),
             "play" | "dev" => Some(Self::Play),
-            "project" => Some(Self::Project),
             "trace" => Some(Self::Trace),
             _ => None,
         }
@@ -76,7 +74,6 @@ fn main() -> ExitCode {
     let mut deny_warnings = false;
     let mut check_only = false;
     let mut emit_ir = false;
-    let mut out_dir: Option<String> = None;
     let mut script: Option<String> = None;
     let mut expanded = false;
     let mut port: u16 = 8787;
@@ -105,16 +102,6 @@ fn main() -> ExitCode {
             "--deny-warnings" => deny_warnings = true,
             "--check" => check_only = true,
             "--emit-ir" => emit_ir = true,
-            "--out" => match args.next() {
-                Some(value) => out_dir = Some(value),
-                None => {
-                    eprintln!("--out takes a directory");
-                    return ExitCode::from(2);
-                }
-            },
-            other if other.starts_with("--out=") => {
-                out_dir = Some(other["--out=".len()..].to_string());
-            }
             other if other.starts_with("--script=") => {
                 script = Some(other["--script=".len()..].to_string());
             }
@@ -153,18 +140,17 @@ fn main() -> ExitCode {
     match command {
         CliCommand::Fmt => cmd::fmt::run(&common, check_only),
         CliCommand::Check => cmd::check::run(&common),
-        CliCommand::Editor => cmd::editor::run(&common, port, out_dir.as_deref()),
-        CliCommand::Project => cmd::project::run(&common, out_dir.as_deref()),
+        CliCommand::Editor => cmd::editor::run(&common, port),
         CliCommand::Trace => cmd::trace::run(&common, script.as_deref(), expanded),
         CliCommand::Play => cmd::dev::run(&common, port),
     }
 }
 
 fn print_usage() {
-    eprintln!("usage: uhura [path] [--port <n>] [--out <dir>]");
+    eprintln!("usage: uhura [path] [--port <n>]");
     eprintln!("       uhura <check|fmt|editor|play|trace> [path] [flags]");
     eprintln!("       no command selects the editor (path defaults to the current directory)");
-    eprintln!("       compatibility aliases: project (build Canvas), dev (play)");
+    eprintln!("       compatibility alias: dev (play)");
 }
 
 #[cfg(test)]
@@ -206,8 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_the_original_mode_names_as_compatibility_aliases() {
-        assert_eq!(CliCommand::parse("project"), Some(CliCommand::Project));
+    fn preserves_dev_as_a_play_compatibility_alias() {
         assert_eq!(CliCommand::parse("dev"), Some(CliCommand::Play));
     }
 }

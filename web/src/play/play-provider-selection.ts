@@ -1,5 +1,5 @@
 // Pure selection policy for the browser Play runtime. A live-provider profile
-// may keep its fixture for Canvas/check/trace without exposing that deliberately
+// may keep its fixture for Editor/check/trace without exposing that deliberately
 // partial script as an interactive Play backend.
 
 import type { PlayConfig, ProviderMode } from "../protocol/types.js";

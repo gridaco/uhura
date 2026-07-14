@@ -40,8 +40,8 @@ truthfully reconstruct them from `image` plus a decorative play icon.
 
 Choice: add a catalog `video` content element. Play renders a native
 `<video>` and resolves both signed source and poster assets independently.
-Canvas remains deterministic and network-free by rendering only the inert
-poster. No playback state enters the Uhura machine.
+Editor previews remain deterministic and network-free by rendering only the
+inert poster. No playback state enters the Uhura machine.
 
 ### Replace navigation
 
@@ -94,9 +94,9 @@ emits a distinct history-replace intent. Push and Back semantics are unchanged.
 | Profile | Derived post/follower/following counts; real follow edges; clickable Posts, Reels, private Saved, and Tagged grids; working follower/following lists |
 | Story | Twelve stored frames grouped into author sequences, real seen state, progress, previous/next traversal, close, and author-profile navigation |
 | Post / Comments | One canonical post projection across entry points, Back behavior, serialized optimistic comment submission, and authority refusal recovery |
-| Prototype host | Mobile/desktop frames, clean restart, and actor switching; Instagram Play stays on the configured Spock provider while Canvas/check/trace retain deterministic fixtures |
+| Prototype host | Mobile/desktop frames, clean restart, and actor switching; Instagram Play stays on the configured Spock provider while Editor/check/trace retain deterministic fixtures |
 
-The fixture dataset mirrors these projection shapes for read-only Canvas and
+The fixture dataset mirrors these projection shapes for read-only Editor previews and
 golden tests. Its strict command script remains a deterministic trace driver,
 not an alternate interactive authority.
 

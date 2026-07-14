@@ -1,151 +1,272 @@
-// Host-owned Play controls. These values are deliberately outside the Uhura
-// program: frame size, provider selection, actor identity, and restart are
-// properties of the prototype runner rather than application session state.
+// Route-owned Play controls. Frame size, provider, actor, and restart remain
+// host state rather than Uhura application state.
 
 import type { SystemState } from "../protocol/types.js";
 import {
   readFramePreference,
   writeFramePreference,
 } from "./frame-preference.js";
+import type { FramePreferenceStorage } from "./frame-preference.js";
+import type { PlayShell } from "./shell.js";
 
 const FRAME_SPECS = {
   mobile: { label: "Mobile", width: 390, height: 844 },
   desktop: { label: "Desktop", width: 1280, height: 800 },
 } as const;
 
+// Keep the centered prototype clear of the 52px toolbar and its frame label.
+// Reserving the same space below keeps the prototype centered in the viewport.
+const FRAME_VERTICAL_SAFE_INSET = 84;
+
 type FrameName = keyof typeof FRAME_SPECS;
 
-function required(id: string): HTMLElement {
-  const node = document.getElementById(id);
-  if (!node) throw new Error(`index.html lost #${id}`);
-  return node;
+interface ResizeObserverHandle {
+  observe(target: Element): void;
+  disconnect(): void;
 }
 
-const stage = required("uh-stage");
-const frame = required("uh-frame");
-const frameSizer = required("uh-frame-sizer");
-const frameLabel = required("uh-frame-label");
-const frameButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-uh-frame]")];
-const runtimeStatus = required("uh-runtime-status");
-const providerControl = required("uh-provider-control");
-const providerSelect = required("uh-provider-select") as HTMLSelectElement;
-const actorSelect = required("uh-actor-select") as HTMLSelectElement;
-const restart = required("uh-restart") as HTMLButtonElement;
-
-let frameName: FrameName = "mobile";
-
-function fitFrame() {
-  const spec = FRAME_SPECS[frameName];
-  const availableWidth = Math.max(1, stage.clientWidth - 48);
-  const availableHeight = Math.max(1, stage.clientHeight - 76);
-  const scale = Math.min(1, availableWidth / spec.width, availableHeight / spec.height);
-  frame.style.inlineSize = `${spec.width}px`;
-  frame.style.blockSize = `${spec.height}px`;
-  frame.style.transform = `scale(${scale})`;
-  frameSizer.style.inlineSize = `${Math.round(spec.width * scale)}px`;
-  frameSizer.style.blockSize = `${Math.round(spec.height * scale)}px`;
+export interface PlayChromeOptions {
+  window?: Window;
+  storage?: FramePreferenceStorage;
+  createResizeObserver?: (
+    callback: ResizeObserverCallback,
+  ) => ResizeObserverHandle;
 }
 
-function selectFrame(next: FrameName, persist: boolean): void {
-  frameName = next;
-  const spec = FRAME_SPECS[next];
-  frame.dataset.frame = next;
-  frameLabel.replaceChildren(
-    document.createTextNode(`${spec.label} `),
-    Object.assign(document.createElement("span"), {
-      textContent: `${spec.width} × ${spec.height}`,
-    }),
-  );
-  for (const button of frameButtons) {
-    button.setAttribute("aria-pressed", String(button.getAttribute("data-uh-frame") === next));
+export interface PlayChrome {
+  dispose(): void;
+}
+
+function windowStorage(view: Window): FramePreferenceStorage | undefined {
+  try {
+    return view.localStorage;
+  } catch {
+    return undefined;
   }
-  if (persist) writeFramePreference(next);
-  fitFrame();
 }
-
-for (const button of frameButtons) {
-  button.addEventListener("click", () => {
-    const next = button.getAttribute("data-uh-frame");
-    if (next === "mobile" || next === "desktop") selectFrame(next, true);
-  });
-}
-
-new ResizeObserver(fitFrame).observe(stage);
-selectFrame(readFramePreference(), false);
 
 function clearOptions(select: HTMLSelectElement): void {
   while (select.firstChild) select.firstChild.remove();
 }
 
-function renderStatus(state: SystemState["status"], message?: string): void {
-  runtimeStatus.dataset.status = state;
-  const label = state === "ready" ? "Running" : state === "error" ? "Error" : "Starting";
-  runtimeStatus.replaceChildren(document.createElement("span"), document.createTextNode(` ${label}`));
-  runtimeStatus.title = message ?? "";
-}
+export function mountPlayChrome(
+  shell: PlayShell,
+  options: PlayChromeOptions = {},
+): PlayChrome {
+  const AUTO_HIDE_DELAY_MS = 3_000;
+  const view = options.window ?? shell.document.defaultView ?? window;
+  const storage = options.storage ?? windowStorage(view);
+  let frameName: FrameName = "mobile";
+  let disposed = false;
+  let autoHideTimer: number | undefined;
 
-function renderSystem(system: SystemState): void {
-  renderStatus(system.status, system.error);
-  restart.disabled = system.status === "starting";
-  providerControl.hidden = system.providers.length < 2;
-
-  const priorProvider = providerSelect.value;
-  clearOptions(providerSelect);
-  for (const provider of system.providers) {
-    const option = document.createElement("option");
-    option.value = provider;
-    option.textContent = provider === "remote" ? "Remote" : "Fixture";
-    providerSelect.append(option);
+  function hideShellUi(): void {
+    if (autoHideTimer !== undefined) view.clearTimeout(autoHideTimer);
+    autoHideTimer = undefined;
+    shell.container.dataset["uiHidden"] = "true";
   }
-  if (system.provider) providerSelect.value = system.provider;
-  else if (priorProvider) providerSelect.value = priorProvider;
-  providerSelect.disabled = system.status === "starting" || system.providers.length < 2;
 
-  clearOptions(actorSelect);
-  if (system.actors.length === 0) {
-    const option = document.createElement("option");
-    option.textContent = system.provider === "fixture" ? "Fixture identity" : "Unavailable";
-    actorSelect.append(option);
-  } else {
-    const hasCurrent = system.actors.some((actor) => actor.id === system.actor);
-    if (!hasCurrent) {
-      const prompt = document.createElement("option");
-      prompt.value = "";
-      prompt.textContent = "Choose actor…";
-      prompt.disabled = true;
-      prompt.selected = true;
-      actorSelect.append(prompt);
+  function scheduleAutoHide(): void {
+    if (autoHideTimer !== undefined) view.clearTimeout(autoHideTimer);
+    delete shell.container.dataset["uiHidden"];
+    autoHideTimer = view.setTimeout(hideShellUi, AUTO_HIDE_DELAY_MS);
+  }
+
+  function toggleShellUi(): void {
+    if (shell.container.dataset["uiHidden"] === "true") scheduleAutoHide();
+    else hideShellUi();
+  }
+
+  function fitFrame(): void {
+    if (disposed) return;
+    const spec = FRAME_SPECS[frameName];
+    const availableWidth = Math.max(1, shell.stage.clientWidth - 48);
+    const availableHeight = Math.max(
+      1,
+      shell.stage.clientHeight - FRAME_VERTICAL_SAFE_INSET * 2,
+    );
+    const scale = Math.min(
+      1,
+      availableWidth / spec.width,
+      availableHeight / spec.height,
+    );
+    shell.frame.style.inlineSize = `${spec.width}px`;
+    shell.frame.style.blockSize = `${spec.height}px`;
+    shell.frame.style.transform = `scale(${scale})`;
+    shell.frameSizer.style.inlineSize = `${Math.round(spec.width * scale)}px`;
+    shell.frameSizer.style.blockSize = `${Math.round(spec.height * scale)}px`;
+  }
+
+  function selectFrame(next: FrameName, persist: boolean): void {
+    frameName = next;
+    const spec = FRAME_SPECS[next];
+    shell.frame.dataset.frame = next;
+    shell.frameLabel.replaceChildren(
+      shell.document.createTextNode(`${spec.label} `),
+      Object.assign(shell.document.createElement("span"), {
+        textContent: `${spec.width} × ${spec.height}`,
+      }),
+    );
+    for (const button of shell.frameButtons) {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.getAttribute("data-uh-frame") === next),
+      );
     }
-    for (const actor of system.actors) {
-      const option = document.createElement("option");
-      option.value = actor.id;
-      option.textContent = `${actor.label} (@${actor.username})`;
-      actorSelect.append(option);
+    if (persist) writeFramePreference(next, storage);
+    fitFrame();
+  }
+
+  function renderStatus(state: SystemState["status"], message?: string): void {
+    shell.runtimeStatus.dataset.status = state;
+    const label = state === "ready" ? "Running" : state === "error" ? "Error" : "Starting";
+    const dot = shell.document.createElement("span");
+    dot.setAttribute("aria-hidden", "true");
+    shell.runtimeStatus.replaceChildren(dot);
+    if (state !== "ready") {
+      shell.runtimeStatus.append(shell.document.createTextNode(label));
     }
-    if (hasCurrent && system.actor) actorSelect.value = system.actor;
+    shell.runtimeStatus.setAttribute("aria-label", label);
+    shell.runtimeStatus.title = message ?? label;
   }
-  actorSelect.disabled = system.status === "starting" || !system.canSwitchActor;
+
+  function renderSystem(system: SystemState): void {
+    if (disposed) return;
+    renderStatus(system.status, system.error);
+    shell.restart.disabled = system.status === "starting";
+    shell.providerControl.hidden = system.providers.length < 2;
+
+    const priorProvider = shell.providerSelect.value;
+    clearOptions(shell.providerSelect);
+    for (const provider of system.providers) {
+      const option = shell.document.createElement("option");
+      option.value = provider;
+      option.textContent = provider === "remote" ? "Remote" : "Fixture";
+      shell.providerSelect.append(option);
+    }
+    if (system.provider) shell.providerSelect.value = system.provider;
+    else if (priorProvider) shell.providerSelect.value = priorProvider;
+    shell.providerSelect.disabled =
+      system.status === "starting" || system.providers.length < 2;
+
+    clearOptions(shell.actorSelect);
+    if (system.actors.length === 0) {
+      const option = shell.document.createElement("option");
+      option.textContent =
+        system.provider === "fixture" ? "Fixture identity" : "Unavailable";
+      shell.actorSelect.append(option);
+    } else {
+      const hasCurrent = system.actors.some((actor) => actor.id === system.actor);
+      if (!hasCurrent) {
+        const prompt = shell.document.createElement("option");
+        prompt.value = "";
+        prompt.textContent = "Choose actor…";
+        prompt.disabled = true;
+        prompt.selected = true;
+        shell.actorSelect.append(prompt);
+      }
+      for (const actor of system.actors) {
+        const option = shell.document.createElement("option");
+        option.value = actor.id;
+        option.textContent = `${actor.label} (@${actor.username})`;
+        shell.actorSelect.append(option);
+      }
+      if (hasCurrent && system.actor) shell.actorSelect.value = system.actor;
+    }
+    shell.actorSelect.disabled =
+      system.status === "starting" || !system.canSwitchActor;
+  }
+
+  const frameListeners = new Map<HTMLButtonElement, () => void>();
+  for (const button of shell.frameButtons) {
+    const listener = (): void => {
+      const next = button.getAttribute("data-uh-frame");
+      if (next === "mobile" || next === "desktop") selectFrame(next, true);
+    };
+    frameListeners.set(button, listener);
+    button.addEventListener("click", listener);
+  }
+
+  const onSystemState = (event: Event): void => {
+    const detail = (event as CustomEvent<unknown>).detail;
+    if (typeof detail === "object" && detail !== null) {
+      renderSystem(detail as SystemState);
+    }
+  };
+  const onProviderChange = (): void => {
+    const provider = shell.providerSelect.value;
+    if (provider === "remote" || provider === "fixture") {
+      view.__uhura?.setProvider(provider);
+    }
+  };
+  const onActorChange = (): void => {
+    view.__uhura?.setActor(shell.actorSelect.value);
+  };
+  const renderFullscreen = (): void => {
+    const active = shell.document.fullscreenElement !== null;
+    const label = active ? "Exit fullscreen" : "Enter fullscreen";
+    shell.fullscreen.setAttribute("aria-label", label);
+    shell.fullscreen.setAttribute("title", label);
+    shell.fullscreen.setAttribute("aria-pressed", String(active));
+  };
+  const onFullscreen = (): void => {
+    const action = shell.document.fullscreenElement
+      ? shell.document.exitFullscreen()
+      : shell.document.documentElement.requestFullscreen();
+    void action.catch((error: unknown) => {
+      console.error("uhura fullscreen request failed", error);
+    });
+  };
+  const onRestart = (): void => view.__uhura?.restart();
+  const onStageClick = (event: MouseEvent): void => {
+    const target = event.target;
+    if (target instanceof Node && !shell.frame.contains(target)) toggleShellUi();
+  };
+  const onShellInteraction = (): void => scheduleAutoHide();
+
+  view.addEventListener("uhura:system-state", onSystemState);
+  shell.providerSelect.addEventListener("change", onProviderChange);
+  shell.actorSelect.addEventListener("change", onActorChange);
+  shell.fullscreen.addEventListener("click", onFullscreen);
+  shell.document.addEventListener("fullscreenchange", renderFullscreen);
+  shell.restart.addEventListener("click", onRestart);
+  shell.stage.addEventListener("click", onStageClick);
+  shell.container
+    .querySelector("#uh-shell-toolbar")
+    ?.addEventListener("pointerdown", onShellInteraction);
+  shell.restart.addEventListener("pointerdown", onShellInteraction);
+
+  const observer = options.createResizeObserver
+    ? options.createResizeObserver(fitFrame)
+    : new ResizeObserver(fitFrame);
+  observer.observe(shell.stage);
+  selectFrame(readFramePreference(storage), false);
+  renderFullscreen();
+  scheduleAutoHide();
+  if (view.__uhura?.system) renderSystem(view.__uhura.system);
+
+  return {
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      if (autoHideTimer !== undefined) view.clearTimeout(autoHideTimer);
+      autoHideTimer = undefined;
+      observer.disconnect();
+      view.removeEventListener("uhura:system-state", onSystemState);
+      shell.providerSelect.removeEventListener("change", onProviderChange);
+      shell.actorSelect.removeEventListener("change", onActorChange);
+      shell.fullscreen.removeEventListener("click", onFullscreen);
+      shell.document.removeEventListener("fullscreenchange", renderFullscreen);
+      shell.restart.removeEventListener("click", onRestart);
+      shell.stage.removeEventListener("click", onStageClick);
+      shell.container
+        .querySelector("#uh-shell-toolbar")
+        ?.removeEventListener("pointerdown", onShellInteraction);
+      shell.restart.removeEventListener("pointerdown", onShellInteraction);
+      for (const [button, listener] of frameListeners) {
+        button.removeEventListener("click", listener);
+      }
+      frameListeners.clear();
+    },
+  };
 }
-
-window.addEventListener("uhura:system-state", (event) => {
-  if (event instanceof CustomEvent) renderSystem(event.detail as SystemState);
-});
-
-providerSelect.addEventListener("change", () => {
-  const provider = providerSelect.value;
-  if (provider === "remote" || provider === "fixture") {
-    window.__uhura?.setProvider(provider);
-  }
-});
-
-actorSelect.addEventListener("change", () => {
-  window.__uhura?.setActor(actorSelect.value);
-});
-
-restart.addEventListener("click", () => {
-  window.__uhura?.restart();
-});
-
-if (window.__uhura?.system) renderSystem(window.__uhura.system);
-
-export {};

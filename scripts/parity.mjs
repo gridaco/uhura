@@ -6,15 +6,16 @@
 //
 // Inputs (a directory of prepared artifacts):
 //   ir.json      — canonical uhura-ir/0 (uhura check --emit-ir)
-//   fixture.json — resolved slices (what `uhura dev` serves)
+//   fixture.json — resolved slices (what `uhura play` serves)
 //   script.json  — the script as JSON
 //   boot.json    — {"updates": […]} boot deliveries
 //   native.jsonl — `uhura trace --script=<name>` output
 //
 // Usage: node scripts/parity.mjs <artifact-dir>
 // M6 automates artifact preparation per canonical script; until then the
-// quickest source is a running `uhura dev` (curl the four endpoints) plus
-// `uhura trace` for native.jsonl.
+// quickest source is a running `uhura play` (curl `/api/play/ir.json`,
+// `/api/play/fixture.json`, `/api/play/script.json`, and `/api/play/boot.json`)
+// plus `uhura trace` for native.jsonl.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

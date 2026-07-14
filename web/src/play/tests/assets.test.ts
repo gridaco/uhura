@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { createAssets } from "../assets.js";
+import { createPlayAssets } from "../../renderer/play.js";
 
 class FakeElement {
   readonly style = { backgroundImage: "" };
@@ -40,7 +40,7 @@ async function flushPromises(): Promise<void> {
 }
 
 test("fixture assets select an encoded JPEG or MP4 rendition by semantic slot", () => {
-  const assets = createAssets();
+  const assets = createPlayAssets();
   const image = new FakeElement();
   const video = new FakeElement();
 
@@ -48,13 +48,16 @@ test("fixture assets select an encoded JPEG or MP4 rendition by semantic slot", 
   assets.applyVideoPoster(asVideo(video), "poster/one");
   assets.applyVideoSource(asVideo(video), "clip/one");
 
-  assert.equal(image.style.backgroundImage, 'url("/assets/still%20one.jpg")');
-  assert.equal(video.getAttribute("poster"), "/assets/poster%2Fone.jpg");
-  assert.equal(video.getAttribute("src"), "/assets/clip%2Fone.mp4");
+  assert.equal(
+    image.style.backgroundImage,
+    'url("/api/play/assets/still%20one.jpg")',
+  );
+  assert.equal(video.getAttribute("poster"), "/api/play/assets/poster%2Fone.jpg");
+  assert.equal(video.getAttribute("src"), "/api/play/assets/clip%2Fone.mp4");
 
   assets.applyVideoSource(asVideo(video), "clip/two");
   assert.equal(video.loadCalls, 1, "replacing a loaded src resets old playback");
-  assert.equal(video.getAttribute("src"), "/assets/clip%2Ftwo.mp4");
+  assert.equal(video.getAttribute("src"), "/api/play/assets/clip%2Ftwo.mp4");
 
   assets.applyVideoSource(asVideo(video), undefined);
   assets.applyVideoPoster(asVideo(video), undefined);
@@ -68,7 +71,7 @@ test("fixture assets select an encoded JPEG or MP4 rendition by semantic slot", 
 test("signed video source and poster resolutions are independent and stale-safe", async () => {
   const pending = new Map<string, (url: string) => void>();
   const requested: string[] = [];
-  const assets = createAssets(
+  const assets = createPlayAssets(
     (ref) =>
       new Promise((resolve) => {
         requested.push(ref);

@@ -7,37 +7,41 @@
 // (micro-decision #17).
 
 import type { Descriptor } from "../protocol/types.js";
+import type {
+  NearEndState,
+  ScrollController,
+  ScrollHolder,
+} from "../renderer/contracts.js";
 
 interface ScrollPosition {
   top: number;
   left: number;
 }
 
-export interface NearEndState {
-  sentinel: HTMLElement;
-  io: IntersectionObserver;
-  armed: boolean;
-  lastHeight: number;
-}
-
-export interface ScrollHolder {
-  path: string;
-  on: Record<string, Descriptor>;
-  nearEnd?: NearEndState;
-}
+/** Bounds stale page-instance positions minted by long-running navigation. */
+export const SCROLL_POSITION_CACHE_LIMIT = 64;
 
 interface ScrollWiring {
   emit(descriptor: Descriptor): void;
 }
 
-export interface ScrollController {
-  sync(el: HTMLElement, holder: ScrollHolder): void;
-  savePositions(navKey: string, pageEl: HTMLElement): void;
-  restorePositions(navKey: string, pageEl: HTMLElement): void;
+export interface PlayScrollController extends ScrollController {
+  dispose(): void;
 }
 
-export function createScrolls({ emit }: ScrollWiring): ScrollController {
+export function createScrolls({ emit }: ScrollWiring): PlayScrollController {
   const routeCache = new Map<string, Map<string, ScrollPosition>>();
+  const observed = new Map<HTMLElement, ScrollHolder>();
+
+  function disposeObservation(el: HTMLElement, holder: ScrollHolder): void {
+    const nearEnd = holder.nearEnd;
+    if (nearEnd) {
+      nearEnd.io.disconnect();
+      nearEnd.sentinel.remove();
+      holder.nearEnd = undefined;
+    }
+    observed.delete(el);
+  }
 
   /**
    * Keeps one scroll element's near-end observation in sync with its
@@ -48,11 +52,7 @@ export function createScrolls({ emit }: ScrollWiring): ScrollController {
   function sync(el: HTMLElement, holder: ScrollHolder): void {
     const descriptor = holder.on["near-end"];
     if (!descriptor) {
-      if (holder.nearEnd) {
-        holder.nearEnd.io.disconnect();
-        holder.nearEnd.sentinel.remove();
-        holder.nearEnd = undefined;
-      }
+      disposeObservation(el, holder);
       return;
     }
     if (!holder.nearEnd) {
@@ -66,6 +66,9 @@ export function createScrolls({ emit }: ScrollWiring): ScrollController {
         lastHeight: -1,
         io: new IntersectionObserver(
           (entries) => {
+            // A delivery already queued before disconnect must not outlive
+            // the renderer subtree that owned this observation.
+            if (holder.nearEnd !== nearEnd) return;
             for (const entry of entries) {
               if (entry.isIntersecting && nearEnd.armed) {
                 nearEnd.armed = false;
@@ -81,6 +84,7 @@ export function createScrolls({ emit }: ScrollWiring): ScrollController {
       };
       nearEnd.io.observe(sentinel);
       holder.nearEnd = nearEnd;
+      observed.set(el, holder);
     }
     const nearEnd = holder.nearEnd;
     if (nearEnd.sentinel !== el.lastElementChild) {
@@ -120,7 +124,15 @@ export function createScrolls({ emit }: ScrollWiring): ScrollController {
         });
       }
     }
+    // Map insertion order gives a small LRU: refreshing a key moves it to
+    // the back, and the least-recent page instance is evicted first.
+    routeCache.delete(navKey);
     routeCache.set(navKey, positions);
+    while (routeCache.size > SCROLL_POSITION_CACHE_LIMIT) {
+      const oldest = routeCache.keys().next().value;
+      if (oldest === undefined) break;
+      routeCache.delete(oldest);
+    }
   }
 
   /**
@@ -131,6 +143,8 @@ export function createScrolls({ emit }: ScrollWiring): ScrollController {
   function restorePositions(navKey: string, pageEl: HTMLElement): void {
     const positions = routeCache.get(navKey);
     if (!positions) return;
+    routeCache.delete(navKey);
+    routeCache.set(navKey, positions);
     for (const candidate of pageEl.querySelectorAll(".uh-scroll")) {
       if (!(candidate instanceof HTMLElement)) continue;
       const key = candidate.getAttribute("data-key");
@@ -142,5 +156,24 @@ export function createScrolls({ emit }: ScrollWiring): ScrollController {
     }
   }
 
-  return { sync, savePositions, restorePositions };
+  /** Disconnects observations before a renderer-owned subtree is detached. */
+  function disposeSubtree(root: HTMLElement): void {
+    for (const [el, holder] of observed) {
+      if (el === root || root.contains(el)) disposeObservation(el, holder);
+    }
+  }
+
+  function dispose(): void {
+    for (const [el, holder] of observed) disposeObservation(el, holder);
+    observed.clear();
+    routeCache.clear();
+  }
+
+  return { sync, disposeSubtree, savePositions, restorePositions, dispose };
 }
+
+export type {
+  NearEndState,
+  ScrollController,
+  ScrollHolder,
+} from "../renderer/contracts.js";

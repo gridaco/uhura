@@ -1,0 +1,20 @@
+# Purity enforcement (design §12.1): the Editor model may not reach the OS.
+# The cargo-metadata allowlist test is the structural check; this is the
+# in-crate usage check. CI runs clippy with -D warnings.
+disallowed-types = [
+  "std::collections::HashMap",
+  "std::collections::HashSet",
+  "std::time::Instant",
+  "std::time::SystemTime",
+]
+disallowed-methods = [
+  "std::fs::read",
+  "std::fs::read_to_string",
+  "std::fs::write",
+  "std::fs::File::open",
+  "std::fs::File::create",
+  "std::env::var",
+  "std::env::vars",
+  "std::thread::spawn",
+  "std::net::TcpStream::connect",
+]

@@ -1,10 +1,10 @@
-/* Shell chrome + semantic element bases (§8.4). The uh-* bases mirror the
-   static renderer's BASE_CSS 1:1 — layout/aesthetics stay authored (§10);
-   the compiled app stylesheet loads after this file and wins. */
+/* Shell chrome + semantic element bases (§8.4). The uh-* rules provide the
+   shared renderer's browser vocabulary; layout/aesthetics stay authored (§10),
+   and the compiled app stylesheet loads after this file and wins. */
 
-* { box-sizing: border-box; margin: 0; }
-html, body { height: 100%; }
+.uh-play-route, .uh-play-route * { box-sizing: border-box; margin: 0; }
 body.uh-play-shell {
+  min-block-size: 100%;
   color: #f4f4f5;
   background: #050505;
   overflow: hidden;
@@ -30,31 +30,14 @@ body.uh-play-shell {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-}
-.uh-shell-brand { display: flex; align-items: center; gap: 8px; min-inline-size: 0; }
-.uh-shell-brand strong { font-size: 13px; letter-spacing: -0.01em; }
-.uh-shell-mark {
-  display: grid;
-  place-items: center;
-  inline-size: 24px;
-  block-size: 24px;
-  border-radius: 7px;
-  color: #111;
-  background: #f3f3f4;
-  font-size: 12px;
-  font-weight: 750;
-}
-.uh-shell-mode {
-  color: #aaaab0;
-  font-size: 12px;
-  padding-inline-start: 8px;
-  border-inline-start: 1px solid #38383c;
+  transition: opacity 220ms ease, transform 220ms ease;
 }
 .uh-editor-link {
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-inline-start: auto;
+  inline-size: max-content;
   padding: 3px 6px;
   border-radius: 5px;
   color: #aaaab0;
@@ -69,9 +52,9 @@ body.uh-play-shell {
   display: flex;
   align-items: center;
   padding: 2px;
-  border: 1px solid #36363a;
+  border: 0;
   border-radius: 8px;
-  background: #202023;
+  background: transparent;
 }
 #uh-shell-toolbar button {
   appearance: none;
@@ -91,9 +74,9 @@ body.uh-play-shell {
 }
 .uh-frame-switch button[aria-pressed="true"] {
   color: #fff;
-  background: #3a3a3f;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  background: transparent;
 }
+.uh-frame-switch button:hover { color: #fff; background: #2c2c30; }
 #uh-shell-toolbar svg {
   inline-size: 15px;
   block-size: 15px;
@@ -113,6 +96,7 @@ body.uh-play-shell {
 .uh-runtime-status {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   color: #b8b8be;
   white-space: nowrap;
   font-size: 12px;
@@ -161,28 +145,61 @@ body.uh-play-shell {
   font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .uh-system-select select:disabled { color: #7d7d83; opacity: 0.72; }
-#uh-shell-toolbar .uh-restart {
+.uh-restart {
+  position: fixed;
+  inset: auto 18px 18px auto;
+  z-index: 300;
+  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-block-size: 30px;
-  padding: 4px 10px;
+  min-block-size: 32px;
+  padding: 5px 12px;
   border: 1px solid #3d3d41;
-  border-radius: 7px;
+  border-radius: 999px;
   color: #eeeeef;
-  background: #29292c;
+  background: rgba(41, 41, 44, 0.94);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+  transition: opacity 220ms ease, transform 220ms ease, background-color 160ms ease;
 }
-#uh-shell-toolbar .uh-restart:hover:not(:disabled) { background: #353539; }
+.uh-restart svg {
+  inline-size: 14px;
+  block-size: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.uh-restart:hover:not(:disabled) { background: rgba(53, 53, 57, 0.98); }
 #uh-shell-toolbar button:focus-visible,
+.uh-restart:focus-visible,
 .uh-system-select select:focus-visible {
   outline: 2px solid #7aa7ff;
   outline-offset: 2px;
 }
 #uh-shell-toolbar button:disabled { cursor: default; opacity: 0.45; }
+.uh-fullscreen {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 30px;
+  block-size: 30px;
+  border: 0 !important;
+  border-radius: 7px;
+  background: transparent !important;
+}
+.uh-fullscreen:hover { color: #fff !important; background: #2c2c30 !important; }
+.uh-fullscreen[aria-pressed="true"] { color: #fff !important; }
+.uh-restart:disabled { cursor: default; opacity: 0.45; }
 
 #uh-stage {
   position: fixed;
-  inset: 52px 0 0;
+  inset: 0;
   z-index: 0;
   display: grid;
   place-items: center;
@@ -190,14 +207,35 @@ body.uh-play-shell {
   color: #f4f4f5;
   background: #050505;
 }
-#uh-frame-stack { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+#uh-frame-stack { position: relative; }
 #uh-frame-label {
-  align-self: stretch;
+  position: absolute;
+  inset: auto 0 calc(100% + 10px);
   color: #9a9aa0;
   font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.02em;
+  transition: opacity 220ms ease;
 }
 #uh-frame-label span { float: inline-end; color: #606066; }
+
+.uh-play-route[data-ui-hidden="true"] #uh-shell-toolbar {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+.uh-play-route[data-ui-hidden="true"] .uh-restart {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+.uh-play-route[data-ui-hidden="true"] #uh-frame-label {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #uh-shell-toolbar, .uh-restart, #uh-frame-label { transition: none; }
+}
 #uh-frame-sizer { position: relative; flex: none; }
 #uh-frame {
   position: absolute;
@@ -224,7 +262,7 @@ body.uh-play-shell {
 #uh-page, .uh-page-root { block-size: 100%; min-block-size: 0; }
 .uh-page-root > * { block-size: 100%; }
 
-/* semantic element bases — identical to the canvas renderer */
+/* semantic element bases used by the shared browser renderer */
 .uh-view { display: block; min-inline-size: 0; }
 .uh-scroll { overflow-y: auto; overflow-x: hidden; min-block-size: 0; }
 .uh-scroll[data-direction="horizontal"] { overflow-x: auto; overflow-y: hidden; }
@@ -245,7 +283,7 @@ button.uh-button[aria-busy="true"] { opacity: 0.6; }
 .uh-dot { inline-size: 6px; block-size: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.55); }
 .uh-dot.on { background: #fff; }
 
-/* the surface stack (live: interactive, unlike the canvas frames) */
+/* interactive Play surface stack */
 .uh-surface-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; z-index: 10; }
 .uh-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.4); }
 .uh-surface { position: relative; background: #fff; border-radius: 16px 16px 0 0; max-block-size: 72%; block-size: 72%; box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35); outline: none; }
@@ -283,5 +321,5 @@ button.uh-button[aria-busy="true"] { opacity: 0.6; }
   }
   .uh-system-select > span, .uh-runtime-status { display: none; }
   .uh-system-select select { max-inline-size: 150px; }
-  #uh-stage { inset-block-end: 54px; }
+  .uh-restart { inset-block-end: 70px; }
 }

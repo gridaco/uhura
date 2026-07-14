@@ -1,6 +1,6 @@
-# Uhura spike design — Instagram vertical slice (v2, reframed)
+# Uhura spike design — Instagram vertical slice (v3, model-driven Editor)
 
-- **Status:** Working-group design draft — non-normative, pre-RFC, pre-implementation
+- **Status:** Working-group design — non-normative, implementation-guiding
 - **Owner:** [Uhura Working Group](README.md)
 - **Foundation:** [RFC 0001](../rfcs/0001-project-foundation.md), [Uhura specification](../spec/README.md)
 - **Requirements evidence:** [Application-scale stress-test requirements](application-scale-stress-test.md)
@@ -8,7 +8,9 @@
   an examples-system design, reconciled against ~90 adversarial critique
   findings. **v2 reframes the view layer** after a direction challenge
   ("successor of HTML/CSS + widgets; a minimal Svelte that does not support
-  JS") and folds in a final verification pass. §15 logs every adjudication.
+  JS") and folds in a final verification pass. **v3 replaces the generated
+  Editor document with a versioned native read model and one browser
+  application for Editor and Play.** §15 logs the direction changes.
 
 **Elevator pitch:** Uhura is a minimal Svelte without JavaScript — Svelte-
 flavored markup and bindings over a closed, total transition language and
@@ -26,15 +28,16 @@ replayable, headless machine. Styling is real CSS. The machine is the spec.
    (`app/feed/page.uhura`, `components/post-card.uhura`).
 2. A deterministic, I/O-free core: `step-u(P, U, X, E) → (U', V, C, I, G, T)`.
 3. A renderer-neutral **semantic** view `V` (styling is deliberately
-   web-native CSS — see adjudication #21) consumed by two dumb renderers —
-   static HTML canvas and a live wasm-driven play shell.
+   web-native CSS — see adjudication #21) consumed by one shared browser
+   renderer under explicit inert-Editor and interactive-Play policies.
 4. A language-neutral port seam a real Spock provider could satisfy without
    touching Uhura source, IR, or core (§9.6).
 5. A **small, closed-but-extensible semantic element set** with a checked
    ruleset — interaction/content semantics only; layout and aesthetics
    belong to CSS and are free to drift.
 6. **Example-defined design**: named, checked example states per
-   page/component/surface, rendered as previews on an infinite canvas (§6).
+   page/component/surface, rendered as previews on the Editor's infinite
+   board (§6).
 
 **Content: the Instagram main flow.** In: a relationship-filtered home feed
 (story tray, image, carousel, and playable video), optimistic likes and private
@@ -67,27 +70,36 @@ semantics, a deterministic headless step with traces, and typed ports.
 
 ```
  .uhura source ──► uhura-check ──► checked IR (versioned canonical JSON)
- (+ CSS)                │                │
-                        │      ┌────────┴──────────┐
-                 style sheet   ▼                   ▼
-                 (validated,  uhura-core       example resolver
-                  passed thru) step-u/eval_view (replay = fold step-u)
-                        │       │                  │
-                        ▼       ▼                  ▼
-                  ┌───────────────────┐      uhura-project
-                  │ play shell (dumb) │   previews → canvas.html
-                  │ keyed V→DOM + CSS │
-                  └───────────────────┘
-                        ▲
-             provider envelope (JSON, the seam)
-                        ▼
-                 fixture driver (scripted, ticks)  ⇄  future Spock adapter
+ (+ CSS/examples)      │                 │
+                       │       ┌─────────┴──────────┐
+              diagnostics      ▼                    ▼
+                              core             example resolver
+                       step-u / eval-view      + pure replay
+                              │                    │
+                              │                    ▼
+                              │          uhura-editor-model
+                              │          immutable EditorState
+                              │                    │
+                              └─────────┐  native host  ◄── saved-file watch
+                                        │   HTTP + SSE
+                                        ▼       ▼
+                              one browser application
+                              `/` Editor · `/play` Play
+                                        │
+                              shared semantic renderer
+                              Editor policy · Play policy
+                                        ▲
+                         provider envelope (JSON, the Spock seam)
+                                        ▼
+                    fixture driver (scripted ticks) ⇄ Spock adapter
 ```
 
-Hard boundaries, each enforced mechanically (§12): core interprets, V
-carries, renderers realize; the provider envelope is the Spock seam; no
-ambient anything in core (clock, randomness, floats, unordered maps,
-network, geometry).
+Hard boundaries, each enforced mechanically (§12): native crates own
+language/project truth and publish a complete versioned read model; the web
+application owns all browser presentation; core interprets, V carries, and
+the shared renderer realizes according to policy. The provider envelope is
+the Spock seam. Core admits no ambient clock, randomness, floats, unordered
+maps, network, or geometry.
 
 ### Reconciliation constitution — one owner per contract
 
@@ -96,11 +108,11 @@ network, geometry).
 | Source syntax, file convention, expression/machine language | §4 |
 | Example files and replay semantics | §6 |
 | Step, dispatch, identity, state semantics | §7 |
-| V JSON, descriptor shape, renderer obligations | §8 |
+| V JSON, descriptor shape, `EditorState`, renderer policies | §8 |
 | Port TOML schema, provider envelope, fixture format | §9 |
 | Semantic element catalog + extension rules | §10 |
 | Content: screens, port inventory, fixtures, cast | §11 |
-| Crate layout, wasm ABI, CLI, diagnostics envelope, CI | §12 |
+| Crate layout, native host, wasm ABI, CLI, diagnostics envelope, CI | §12 |
 
 ---
 
@@ -252,7 +264,7 @@ Svelte-flavored, closed:
 ### 4.5 Styling — real CSS, checked shallowly
 
 Per-file `<style>` blocks and `styles/theme.css` are **actual CSS**, passed
-through to both renderers. Design tokens are custom properties in
+through to both browser surfaces. Design tokens are custom properties in
 `theme.css`. The checker's whole CSS surface is: (1) selectors in a
 component/page `<style>` must be class-rooted, with a lint recommending the
 subject's root class (`.post-card`, `.feed-page`); (2) a class referenced in
@@ -546,7 +558,7 @@ machine, not markup syntax).
 
 **Terms:** an **example** is the authored artifact (pinned or derived
 presentation state of a page/component/surface); a **preview** is one
-rendered example frame on the canvas. Rejected: *snapshot* (collides with
+rendered example frame on the Editor board. Rejected: *snapshot* (collides with
 V), *scenario* (reserved for cross-artifact flows), *story* (borrowed), *variant*
 (collides with props).
 
@@ -628,18 +640,19 @@ Derived examples are **self-verifying** — change the machine and
 `uhura check` fails them. The modal case falls out for free: `comments-open`
 fires the real event; in Figma that connection is a wire that can drift,
 here it *is* the transition. **Replay is a build/check phase** resolving
-each example to a frozen `(route, U, X, surface stack)` snapshot;
-`uhura project` consumes only resolved snapshots and executes zero
+each example to a frozen `(route, U, X, surface stack)` snapshot. The
+`uhura-editor-model` layer consumes only checked, resolved results and
+evaluates their semantic preview content; it does not execute new
 transitions. Entity-id payloads are linted against bound fixture slices.
 
-### 6.3 Canvas presentation
+### 6.3 Editor presentation
 
 One row per page (390×844 device frames, declaration order, `default`
 badged); components content-sized on a dotted backdrop; surfaces standalone
 + in-context under the deriving page example. Captions: `subject /
 example-name`, provenance (`pinned` | `from X → events…`), in-flight
 commands, `note`. No examples ⇒ page renders initial state + info lint;
-component absent from canvas + same lint.
+component absent from the Editor board + same lint.
 
 ---
 
@@ -738,7 +751,7 @@ full V per step as presentation.
 
 ---
 
-## 8. The semantic view protocol and both renderers
+## 8. The semantic view protocol and shared browser renderer
 
 ### 8.1 Snapshot (`uhura-view/0`)
 
@@ -802,48 +815,69 @@ stress-test corpus's `ui:list` P0 — semantics (`role="list"` + keyed each),
 viewport (`scroll`), windowing (renderer license), pagination observation
 (split as above).
 
-### 8.3 Static renderer — `uhura editor` / `uhura project`
+### 8.3 Model-driven Editor — `uhura editor`
 
-Checked program → resolved example snapshots (§6.2) → `eval_view` → V →
-HTML per preview → one self-contained `renders/canvas.html`. Zero
-transitions, commands, network. V maps to plain HTML: `view` → `div` (+
-role), `text` → `p/span`, `button` → `button`, etc., with authored classes
-attached and the compiled stylesheet (theme.css + concatenated `<style>`
-blocks) embedded once. Interactive elements render real (correct a11y tree)
-inside `inert` frames with a prerendered `data-note` ("would emit
-like-toggled {post: …}") for hover chrome. Board chrome is vanilla JS with
-Cursor and Hand tools: wheel/trackpad deltas pan, `H` or held Space enables
-drag-panning, and trackpad or two-touch pinch zooms around its midpoint.
-Cursor drag reserves marquee selection but is intentionally inert for this
-read-only editor. Selection may copy pre-rendered, editor-only example values
-and their authored origins into the inspector; the chrome never reads runtime
-IR, fixture files, or Core state, and exposes no mutation path. See the
+The native side captures one coherent saved-file revision, checks it, resolves
+examples, evaluates semantic page snapshots/component fragments, and asks
+`uhura-editor-model` to serialize one immutable `uhura-editor-state/0`
+document. The document contains source and render revisions, current
+diagnostics, application metadata, stable preview groups and identities,
+semantic content, example values and provenance, interaction summaries, the
+compiled application stylesheet, structured icons, and an asset table. It
+contains no prepared DOM, Editor layout, selectors, or browser behavior.
+
+Revision identity is explicit. A renderable candidate publishes matching
+source/render revisions with `freshness: current`. A broken saved revision
+publishes its current diagnostics with the last renderable payload marked
+`freshness: stale`; an initially broken project has `render: null`. Thus the
+browser never presents diagnostics and old preview content as though they came
+from one revision. The native host exposes the complete state at
+`/api/editor/state`; `/api/editor/events` announces revision changes over SSE.
+Events carry ordering, not fragments: the browser refetches, decodes, realizes,
+and atomically replaces one whole state.
+
+The `/` route owns the complete read-only Editor UI in TypeScript: navigator,
+search, frames, selection, inspector, toolbar, camera, pan, zoom, Cursor and
+Hand tools. The shared renderer's Editor policy realizes semantic nodes
+one-shot inside inert preview hosts, ignores runtime descriptors, performs no
+provider/scroll/text-field effects, and treats source-less video as poster-only.
+Controls still have honest platform and accessibility structure, while the
+inspector presents what an interaction would emit. Example values and their
+authored origins remain visible but immutable; see the
 [read-only provenance design note](referential-example-data-and-read-only-provenance.md).
-**Assets: real JPEGs**, each inlined exactly once as a data-URI custom property
-(`--asset-lena-glaze`); duotone-SVG fallback for missing assets; manifest
-alt text required. Bare `uhura` defaults to `uhura editor`: it generates this
-Canvas and hosts it as an explicitly read-only placeholder editor. The Editor
-keeps Cursor, Hand, zoom, and centering in a compact floating toolbar; its
-left navigator and right inspector hide together with the rest of the chrome
-through `Cmd+\` / `Ctrl+\`. Play lives in the inspector and enters the real
-Play shell at `/play` on the same origin; restart the command to rebuild the
-Canvas. `uhura project` retains the build-only artifact path for CI and export.
+Application styles and Editor chrome have separate ownership so app CSS does
+not become chrome CSS. Assets use the state's data-URI table; icons arrive as
+structured drawing commands rather than markup strings.
 
-### 8.4 Play renderer — the TypeScript host
+Wheel/trackpad deltas pan; `H` or held Space enables drag-panning; pinch zooms
+around its midpoint; Cursor drag reserves an intentionally inert marquee.
+`Cmd+\` / `Ctrl+\` hides the UI, and Play is entered from the inspector at
+`/play`. Bare `uhura` defaults to `uhura editor`. Because the web application
+stays mounted during state replacement, camera, tools, search, chrome
+visibility, and semantic selection survive valid → invalid → valid edits as
+ordinary browser state. No document replacement or reload-survival storage is
+involved. RFC 0002 defines the saved-change and last-renderable lifecycle.
 
-`uhura play` serves a Vite-built, framework-free TypeScript host, wasm bundle,
-IR JSON, fixture JSON, and the compiled stylesheet. The source under
-`web/src/play/` remains a hand-rolled DOM renderer so adopting TypeScript does
-not silently replace the V protocol or its focus, scroll, reconciliation, and
-pump mechanics with a framework. React remains a legitimate future choice for
-Editor and host chrome, but is a separate decision.
+### 8.4 Play policy and the unified TypeScript host
 
-The Play build emits hashed ESM/CSS under `web/dist/play`; the Editor controller
-emits one deterministic IIFE under `web/dist/editor` for inlining into the
-self-contained Canvas; app-owned TypeScript providers emit one dependency-free
-ESM each. These small generated artifacts are checked in and CI verifies that
-regeneration is clean. Node/pnpm are authoring tools only: Cargo builds and
-distributed execution never invoke them.
+`uhura play` enters `/play` in the same framework-free TypeScript application
+used by the Editor. The native host serves the same entry document for `/` and
+`/play`, plus namespaced Play artifacts and provider endpoints. The Play mount
+boots the wasm `Session`, checked IR, fixtures or configured provider, and
+compiled stylesheet. The semantic DOM mechanics live under the shared
+renderer; the Play policy adds reconciliation, descriptors, focus, scroll,
+text-field, surface, media, and runtime-delivery effects. This keeps the V
+protocol and its mechanics independent of any future framework choice.
+
+`web/src/` and its Vite configuration are authoritative. One application build
+emits hashed ESM/CSS into generated, ignored `web/dist/`; generated provider
+bundles are ignored as well. CI runs the frontend typecheck, lint, production
+build, and tests before the Rust checks. Release packaging builds the web app,
+Wasm, and release CLI, then installs the generated assets beside the native
+executable under `share/uhura`; Node and pnpm are build-time dependencies only.
+During development Vite serves the same app and proxies `/api` to the native
+host. Production uses no Node server: the native process serves the compiled
+application unchanged.
 
 The running prototype sits in host-owned chrome over a black stage. The host
 offers Mobile (390 × 844) and Desktop (1280 × 800) visual frames, a full UI
@@ -1024,7 +1058,8 @@ pin), every `.uhura` file (no fixture vocabulary in the grammar —
 grep-provable), checked IR and core (no provider-identity input;
 `uhura-core`'s dependency closure excludes `uhura-fixture`, CI-enforced),
 the envelope and its rules (conformance suite runs against any driver), V,
-both renderers, the stylesheet, examples, and replay determinism. What
+the shared renderer and both policies, the stylesheet, examples, and replay
+determinism. What
 changes: one `uhura.lock` binding line per port; the driver implementation
 (ticks vanish; wall-clock lives only in the adapter); live delivery order
 becomes nondeterministic (per-step determinism untouched; the fixture stays
@@ -1114,7 +1149,7 @@ Counts are integers derived from relational rows; age labels are formatted
 from authority timestamps. Local image posters and stored videos have
 manifest/port-checked accessible names.
 
-### 11.3 Example sets (canvas board)
+### 11.3 Example sets (Editor board)
 
 Feed: loading, first page, optimistic/rollback states, comments, story
 navigation, pagination, empty, exhausted, and failure. Profile: loading,
@@ -1172,11 +1207,12 @@ the list-concern split in both directions.
 
 ### 12.1 Crates
 
-Cargo workspace under `uhura/`; pinned Rust toolchain, independently buildable
-from checked-in web artifacts with no pnpm/node runtime coupling;
-`edition = "2024"`, `unsafe_code = "forbid"`, all `publish = false`. The
-separate `web/` pnpm package owns TypeScript authoring, tests, and deterministic
-browser builds; Cargo never shells out to it.
+Cargo workspace under `uhura/`; pinned Rust toolchain; `edition = "2024"`,
+`unsafe_code = "forbid"`, all `publish = false`. Language-only commands and
+crates build without Node or frontend output. Browser surfaces require either a
+development `web/dist/` build or packaged web assets and fail clearly when
+neither exists. The separate `web/` pnpm package owns TypeScript authoring,
+tests, and deterministic browser builds; Cargo never shells out to it.
 
 ```
 uhura/crates/
@@ -1190,7 +1226,8 @@ uhura/crates/
   uhura-core       # checked IR (module `ir`), view protocol (module `view`),
                    #   step_u + eval_view; dep closure = {base, port}
   uhura-fixture    # scripted driver (native + wasm)
-  uhura-project    # resolved examples → HTML + embedded CSS → canvas.html
+  uhura-editor-model # browser-neutral, deterministic EditorState from resolved
+                     #   examples; semantic content/provenance/assets, no I/O/DOM
   uhura-wasm       # wasm-bindgen: Session + FixtureDriver, JSON-string ABI
   uhura-cli        # bin `uhura`: check | fmt | editor | play | trace (all I/O here)
   uhura-tests      # goldens, purity tests, acceptance integration test
@@ -1206,6 +1243,13 @@ module of `uhura-check`; `ir` and `view` became modules of `uhura-core`
 allowlist got simpler). `syntax` stays separate so checker edits never
 recompile the parser and the formatter is reusable alone.
 
+The Editor model boundary is also load-bearing: `uhura-editor-model` may
+depend on checking/evaluation data and deterministic serialization, but owns no
+filesystem capture, HTTP, HTML, browser CSS, or Editor chrome. The CLI owns
+coherent capture, saved-file observation, current-candidate diagnostics,
+last-renderable publication, and serving; the browser owns presentation and
+interaction state.
+
 Core purity is a failing test, not a convention: dependency-DAG allowlist
 asserted via `cargo metadata` (`uhura-core` closure == `{base, port}`) plus a
 `cargo tree` check that a core-only build never compiles `toml`; per-crate
@@ -1218,9 +1262,11 @@ Hand-rolled recursive descent for both the store DSL and the markup (exact
 diagnostic codes, trivia-preserving formatter round-trip, recovery trees;
 the closed grammar makes generators overhead). CSS handling is a selector
 tokenizer only — declarations pass through verbatim. The checked IR **is
-serialized** (versioned canonical JSON, hard version check) and is the
-artifact shipped to the browser: `uhura play` checks natively and ships IR +
-compiled stylesheet, so `.uhura`/CSS edits never trigger a wasm rebuild.
+serialized** (versioned canonical JSON, hard version check) as a Play
+artifact: `uhura play` checks natively and serves IR + compiled stylesheet,
+so `.uhura`/CSS edits never trigger a wasm rebuild. The Editor browser does
+not consume canonical IR; it consumes the purpose-built, versioned
+`EditorState` read model.
 
 ### 12.3 Wasm ABI
 
@@ -1237,31 +1283,52 @@ envelope JSON — the seam stays visible. No timers/fetch/DOM inside wasm.
 
 ### 12.4 CLI and diagnostics
 
-`uhura [path] [--port] [--out=<dir>]` (default Editor) · `uhura check
-[--emit-ir]` · `uhura fmt [--check]` · `uhura editor [--port]
-[--out=<dir>]` (explicit default spelling) · `uhura play [--port]`
-(tiny_http + SSE; watch → recheck → **full-restart hot reload on last-good
-IR** + diagnostics overlay — state-preserving reload is an open RFC topic the
-spike must not fake) · `uhura trace --script [--expanded]`. The Editor serves
-its read-only Canvas at `/` and this same Play runtime at `/play`; `uhura
-project` remains build-only and `uhura dev` aliases `play`. Exit codes 0/1/2;
-`--deny-warnings` in CI. One versioned
-diagnostics envelope (`uhura-diagnostics/0`: `code UHnxxx` + `rule` slug,
-span, labels, notes, `fix{title, edits}`).
+`uhura [path] [--port]` (default Editor) · `uhura check [--emit-ir]` ·
+`uhura fmt [--check]` · `uhura editor [--port]` (explicit default spelling) ·
+`uhura play [--port]` · `uhura trace --script [--expanded]`; `uhura dev`
+remains a compatibility alias for Play. Exit codes 0/1/2; `--deny-warnings`
+in CI. `editor` and `play` start the same native host and serve the same web
+application; the selected browser route is `/` or `/play`. Editor state and
+events live under `/api/editor/*`; Play artifacts, media, provider calls, and
+events live under `/api/play/*`.
+
+The host watches saved project files, captures each candidate coherently, and
+atomically publishes current diagnostics plus either its current render or an
+explicitly stale last-renderable render. The Editor fetches complete model
+replacements without remounting the application. Editor publication never
+restarts or migrates a Play session; state-preserving Play source updates
+remain separate deferred work. The native host serves compiled application
+files from the package/development asset location and never synthesizes browser
+markup. One versioned diagnostics envelope (`uhura-diagnostics/0`: `code
+UHnxxx` + `rule` slug, span, labels, notes, `fix{title, edits}`).
 
 ### 12.5 Tests
 
 Unit tests per crate; goldens (`UPDATE_GOLDEN=1` blessing): fmt round-trip,
-diagnostics, whole-app IR, resolved example → V per preview, and the
-canonical trace scripts (§11.4) in `StepTrace` hash form. **The acceptance
-trace is one executable integration test** asserting golden traces plus
-structural invariants: exactly one like command per press; optimistic view
-precedes outcome; **post-refusal, after `notice-dismissed()`, the feed
-subtree hash equals pre-like**; one in-flight load-next; append preserves
-key order; dismiss emits FocusRestore; `uhura project` emits zero commands;
-IR bytes identical with/without examples files. CI adds fmt --check,
-clippy, wasm build, `project` on the example app, canvas.html as a PR
-artifact.
+diagnostics, whole-app IR, resolved example → V per preview, canonical
+`EditorState`, and the trace scripts (§11.4) in `StepTrace` hash form. Model
+contract tests cover deterministic serialization, protocol rejection,
+page/surface/component content, unique identities, and the current/stale/cold
+revision invariants. Shared-renderer conformance tests feed the same semantic
+nodes through both policies and prove that Editor is inert while Play retains
+descriptors and effects. Host state-transition tests cover current → stale →
+recovered publication and cold-invalid recovery. Browser update-session tests
+cover revision ordering, retry, and atomic install; the running watcher/browser
+lifecycle remains an acceptance scenario rather than an automated integration
+test.
+
+**The acceptance trace is one executable integration test** asserting golden
+traces plus structural invariants: exactly one like command per press;
+optimistic view precedes outcome; **post-refusal, after
+`notice-dismissed()`, the feed subtree hash equals pre-like**; one in-flight
+load-next; append preserves key order; dismiss emits FocusRestore; Editor
+model construction introduces no extra commands or transitions; IR bytes are
+identical with/without examples files. CI first runs the frontend typecheck,
+lint, production build, and browser tests, then Rust fmt, clippy, unit/
+integration tests, example fmt/check/trace, and the wasm-target build. No
+generated frontend files or exported Editor document are diff-checked or
+uploaded. Release/package verification runs `scripts/package.sh`, which builds
+and installs the web app, Wasm, and native CLI together.
 
 ### 12.6 Milestones (each ends demoable)
 
@@ -1270,13 +1337,14 @@ artifact.
 | M0 | Workspace skeleton, toolchain pin, purity tests, CI green | the boundary exists before any feature |
 | M1 | Lexer/parser (store DSL + markup + CSS selectors), formatter; `uhura fmt`, parse-only `check` | format the whole example; spanned diagnostic on a planted error |
 | M2 | Full check: routes, types, catalog rules, ports L1–L8, style checks, IR emit | `check` clean on the slice; `on:press` on a `view` fails correctly |
-| M3 | `eval_view` + stylesheet compile + **pinned** examples + `uhura editor` / `uhura project` | **the good-looking canvas** — pan/zoom every pinned preview |
-| M4 | step_u (dispatch, guards, sends, overlays, surfaces), fixture driver, `uhura trace`, **derived-example replay** | headless like→optimistic→refusal→rollback as diffable golden JSON; derived previews join the canvas |
-| M5 | wasm Session + Driver, play shell (reconciler, pump, text-field), `uhura play` | live prototype; edit a file → hot restart |
+| M3 | `eval_view` + stylesheet compile + **pinned** examples + browser-neutral Editor model + Editor route | **the good-looking Editor board** — pan/zoom every pinned preview |
+| M4 | step_u (dispatch, guards, sends, overlays, surfaces), fixture driver, `uhura trace`, **derived-example replay** | headless like→optimistic→refusal→rollback as diffable golden JSON; derived previews join the Editor board |
+| M5 | wasm Session + Driver, shared semantic renderer, unified Editor/Play application and native host | live Play prototype plus saved-file Editor replacement without remounting the app |
 | M6 | Pagination, profile route, focus restore, full acceptance test | the complete walkthrough in CI and on screen |
 
 (Derived examples fold `step_u`, so replay lands in M4, after the machine
-exists; M3's canvas is pinned examples only.)
+exists; M3's Editor board is pinned examples only. The milestone numbering is
+historical; the v3 topology describes the maintained end state.)
 
 ---
 
@@ -1297,10 +1365,14 @@ exists; M3's canvas is pinned examples only.)
    keys in order; exhausted derives from projection truth.
 5. Navigation: feed → profile → back retains feed page state; history
    intents are emitted and traced (and executed as no-ops).
-6. `uhura project` renders every example preview executing zero transitions
-   and zero I/O at projection time (derivation is a checked build step over
-   pure `step-u`); derived examples fail check when the machine no longer
-   reaches them; uncorrelated outcome injection is a check error.
+6. `uhura-editor-model` deterministically publishes every resolved example in
+   one valid `uhura-editor-state/0` render without HTML or I/O and without
+   executing extra transitions (derivation remains a checked build step over
+   pure `step-u`). The browser's Editor policy cannot dispatch runtime events.
+   A broken current revision carries its own diagnostics and an explicitly
+   stale prior render, or `render: null` before any valid revision; derived
+   examples fail check when the machine no longer reaches them, and
+   uncorrelated outcome injection is a check error.
 7. Fixed inputs reproduce byte-identical traces and V hashes across native
    and wasm runs.
 8. The checked IR is byte-identical with and without `*.examples.uhura`.
@@ -1314,8 +1386,8 @@ surface results to opener; match-in-expressions; local enum declarations
 (tab sections use `text` guards); string builtins; floats; division;
 scoped-CSS transformation (rooting-by-convention for the spike). Core:
 command cancellation/timeouts; browser-history reconcile +
-`LocationChanged`; projection-update handlers; checkpoint/hot-reload state
-migration; pending garbage policy. View: patches; visibility observation;
+`LocationChanged`; projection-update handlers; Play-session migration across
+source changes; pending garbage policy. View: patches; visibility observation;
 annotated/rich text; controlled pager exercise; prepend/refresh anchoring;
 capability negotiation; dark theme; aria-live conventions. Ports:
 subset/superset provider satisfaction; contract evolution; subscription
@@ -1379,3 +1451,12 @@ initializer; token-enum values admitted to the type system; post-card
 renders `posted-label`/`comment-count`; threshold restated as integer; the
 TERM-rule and `pad`-on-`text` findings were mooted by the markup/CSS
 reframe.
+
+### v3 — model-driven Editor topology
+
+| # | Challenge | Resolution |
+|---|---|---|
+| 27 | Native code generated the entire Editor document, mixing language truth with browser presentation | Replaced by `uhura-editor-model`, a browser-neutral deterministic read-model builder. Rust publishes semantic preview content, provenance, diagnostics, assets, and structured icons; TypeScript owns all markup and chrome. |
+| 28 | Saved changes replaced the document and therefore required UI-state survival machinery | Replaced by whole-state `EditorState` publication over HTTP/SSE. The application remains mounted and swaps only successfully decoded preview state; current diagnostics and an older render carry distinct revisions and explicit freshness. |
+| 29 | Editor and Play had separate frontend delivery and semantic realization paths | Replaced by one application with `/` and `/play` routes and one semantic renderer. Explicit Editor/Play policies make inertness versus runtime effects a type-level construction choice rather than convention. |
+| 30 | Generated frontend output behaved like authoritative source and constrained native builds around its emitted shape | `web/src/` is authoritative; generated output is ignored. CI builds/tests it before native integration, Vite proxies the native API in development, and release packaging assembles the web app, Wasm, and CLI without making Node a runtime dependency. |

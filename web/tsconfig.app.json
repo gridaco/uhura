@@ -7,7 +7,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "paths": {
-      "/wasm/uhura_wasm.js": ["./src/protocol/wasm.d.ts"]
+      "/api/play/wasm/uhura_wasm.js": ["./src/protocol/wasm.d.ts"]
     },
     "strict": true,
     "noUncheckedIndexedAccess": true,

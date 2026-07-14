@@ -593,15 +593,15 @@ The foundation deliberately leaves these unsettled:
 - reducer, statechart, or hybrid UI machine model;
 - expression language and totality restrictions;
 - async command ordering, concurrency, cancellation, and retries;
-- checkpoint and hot-reload compatibility;
+- checkpoint and state-preserving Play hot-reload compatibility;
 - checked IR and stable ABI representation;
 - widget taxonomy and catalog versioning;
 - message and localization model, including MessageFormat 2;
 - renderer and host capability negotiation;
 - Spock import/export schema and linker ownership packaging;
 - static projection bounds and scenario format;
-- long-term Rust/Wasm and TypeScript host release packaging beyond the
-  checked-in v0 browser artifacts; and
+- long-term Rust/Wasm and TypeScript host release packaging beyond the current
+  packaged browser-asset layout; and
 - public naming, licensing, release, and repository extraction policy.
 
 Each material decision requires focused research, examples, counterexamples,

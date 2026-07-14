@@ -32,7 +32,12 @@ fi
 
 cargo build --locked -p uhura-wasm --target wasm32-unknown-unknown --release
 
-WASM="target/wasm32-unknown-unknown/release/uhura_wasm.wasm"
+TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+case "$TARGET_DIR" in
+  /*) ;;
+  *) TARGET_DIR="$PWD/$TARGET_DIR" ;;
+esac
+WASM="$TARGET_DIR/wasm32-unknown-unknown/release/uhura_wasm.wasm"
 rm -rf crates/uhura-wasm/pkg
 "$WBG" --target web    --out-dir crates/uhura-wasm/pkg/web  "$WASM"
 "$WBG" --target nodejs --out-dir crates/uhura-wasm/pkg/node "$WASM"

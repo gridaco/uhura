@@ -81,7 +81,7 @@ key = "id"
 
 # Initially all other people; search-people replaces this slice with the
 # provider-filtered result. Search remains useful in Play and deterministic
-# in Canvas without leaking a database query primitive into Core.
+# in read-only Editor previews without leaking a database query primitive into Core.
 [projections.search-results]
 type = "search-view"
 

@@ -1,0 +1,1050 @@
+import {
+  decodeEditorRevisionEvent,
+  decodeEditorState,
+  type EditorPreview,
+  type EditorRender,
+  type EditorState,
+  type JsonValue,
+  type PreviewDataField,
+  type PreviewIdentity,
+} from "./editor-state.js";
+import {
+  prepareEditorModel,
+  previewIdForIdentity,
+  reconcilePreparedEditorModel,
+  type PreparedEditorModel,
+} from "./editor-board.js";
+import { EDITOR_STYLES } from "./editor-styles.js";
+import {
+  editorBoardUnchanged,
+  EditorUpdateSession,
+  retainPreviewSelection,
+  type EditorFetchToken,
+} from "./editor-updates.js";
+
+const EDITOR_STATE_PATH = "/api/editor/state";
+const EDITOR_EVENTS_PATH = "/api/editor/events";
+const UI_VISIBLE_KEY = "uhura.editor.ui-visible";
+const MIN_SCALE = 0.02;
+const MAX_SCALE = 3;
+const ZOOM_STEP = 1.2;
+const WHEEL_ZOOM_SENSITIVITY = 0.01;
+
+type Tool = "cursor" | "hand";
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface Rect extends Point {
+  width: number;
+  height: number;
+}
+
+interface PanState {
+  pointerId: number;
+  pointerX: number;
+  pointerY: number;
+  x: number;
+  y: number;
+  moved: boolean;
+}
+
+interface PinchState {
+  distance: number;
+  scale: number;
+  worldX: number;
+  worldY: number;
+}
+
+interface PreparedCanvas {
+  context: CanvasRenderingContext2D;
+  width: number;
+  height: number;
+}
+
+interface EditorShell {
+  shell: HTMLElement;
+  navigatorApplication: HTMLElement;
+  navigatorCount: HTMLElement;
+  navigatorSearch: HTMLInputElement;
+  navigatorResults: HTMLElement;
+  navigatorEmpty: HTMLElement;
+  viewport: HTMLElement;
+  board: HTMLElement;
+  rulerX: HTMLCanvasElement;
+  rulerY: HTMLCanvasElement;
+  tools: HTMLElement;
+  cursorButton: HTMLButtonElement;
+  handButton: HTMLButtonElement;
+  zoomOutButton: HTMLButtonElement;
+  zoomOutput: HTMLButtonElement;
+  zoomInButton: HTMLButtonElement;
+  focusSelectionButton: HTMLButtonElement;
+  inspectorOverview: HTMLElement;
+  inspectorSelection: HTMLElement;
+  overviewApplication: HTMLElement;
+  overviewFreshness: HTMLElement;
+  overviewStats: HTMLElement;
+  overviewCallout: HTMLElement;
+  clearSelectionButton: HTMLButtonElement;
+  selectionKind: HTMLElement;
+  selectionName: HTMLElement;
+  selectionSubject: HTMLElement;
+  selectionExample: HTMLElement;
+  selectionSize: HTMLElement;
+  selectionOrigin: HTMLElement;
+  selectionFromRow: HTMLElement;
+  selectionFrom: HTMLElement;
+  selectionStatus: HTMLElement;
+  selectionData: HTMLElement;
+  selectionNoData: HTMLElement;
+  selectionNoteBlock: HTMLElement;
+  selectionNote: HTMLElement;
+  selectionInteractions: HTMLUListElement;
+  selectionNoInteractions: HTMLElement;
+  selectionAnnouncement: HTMLElement;
+  status: HTMLElement;
+  statusTitle: HTMLElement;
+  statusDetail: HTMLElement;
+  statusDiagnostics: HTMLOListElement;
+  statusDismiss: HTMLButtonElement;
+}
+
+export type EditorDispose = () => void;
+
+const SHELL_HTML = `
+  <nav class="editor-navigator" aria-label="Preview navigator">
+    <div class="panel-heading"><strong data-navigator-application>Uhura</strong><span data-navigator-count>0 groups</span></div>
+    <div class="navigator-results"></div>
+    <p class="navigator-empty" hidden>No matching previews</p>
+    <label class="navigator-search">
+      <svg aria-hidden="true" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.25"></circle><path d="m10.25 10.25 3 3"></path></svg>
+      <input type="search" placeholder="Search previews" autocomplete="off" aria-label="Search previews">
+    </label>
+  </nav>
+  <main class="editor-stage">
+    <div class="ruler-corner" aria-hidden="true"></div>
+    <canvas class="canvas-ruler ruler-x" aria-hidden="true"></canvas>
+    <canvas class="canvas-ruler ruler-y" aria-hidden="true"></canvas>
+    <div class="editor-viewport" role="region" aria-label="Canvas viewport" tabindex="0">
+      <div class="canvas-tools" role="group" aria-label="Canvas tools">
+        <button class="canvas-tool tool-cursor" type="button" aria-label="Cursor tool" aria-keyshortcuts="V" aria-pressed="true" title="Cursor (V)">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.25v11.5l3.05-3.05 2.15 3.72 2.08-1.2-2.13-3.69 4.15-1.12L3 2.25Z"></path></svg>
+        </button>
+        <button class="canvas-tool tool-hand" type="button" aria-label="Hand tool" aria-keyshortcuts="H" aria-pressed="false" title="Hand (H or hold Space)">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.15 7.4V3.75a1 1 0 0 1 2 0V6.5h.35V2.75a1 1 0 0 1 2 0V6.5h.35V3.75a1 1 0 0 1 2 0V7h.35V5.25a1 1 0 0 1 2 0v3.8c0 3.05-1.8 5.2-4.9 5.2H8.2c-1.5 0-2.45-.65-3.35-1.8L2.3 9.2a1.13 1.13 0 0 1 1.75-1.42l1.1 1.2V7.4Z"></path></svg>
+        </button>
+        <span class="tool-divider" aria-hidden="true"></span>
+        <button class="canvas-tool stroke zoom-out" type="button" aria-label="Zoom out" title="Zoom out"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 8h9"></path></svg></button>
+        <button class="canvas-zoom" type="button" aria-label="Reset zoom to 100%" title="Reset zoom to 100%">100%</button>
+        <button class="canvas-tool stroke zoom-in" type="button" aria-label="Zoom in" title="Zoom in"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 8h9M8 3.5v9"></path></svg></button>
+        <span class="tool-divider" aria-hidden="true"></span>
+        <button class="canvas-tool stroke focus-selection" type="button" aria-label="Center selected preview" title="Center selected preview" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"></path></svg></button>
+      </div>
+      <div class="editor-board"><section class="empty-board"><h2>Starting Editor</h2><p>Loading static previews…</p></section></div>
+    </div>
+  </main>
+  <aside class="editor-inspector" aria-label="Preview details">
+    <div class="panel-heading"><a class="play-link" href="/play" aria-label="Open Play"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5 3.25v9.5L12.5 8z"></path></svg>Play</a></div>
+    <section class="inspector-section inspector-overview">
+      <div class="inspector-hero"><span class="inspector-hero-icon" aria-hidden="true">U</span><div><strong data-overview-application>Uhura</strong><span data-overview-freshness>Loading preview model</span></div></div>
+      <dl class="inspector-grid" data-overview-stats></dl>
+      <div class="inspector-callout" data-overview-callout><strong>Read-only projection</strong><p>Save a <code>.uhura</code> file to rebuild these previews automatically.</p></div>
+    </section>
+    <section class="inspector-section inspector-selection" hidden>
+      <div class="selection-heading"><div><span class="selection-kind">Page</span><h2 class="selection-name">Preview</h2></div><button class="icon-button clear-selection" type="button" aria-label="Clear preview selection" title="Clear selection"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"></path></svg></button></div>
+      <dl class="property-list">
+        <div><dt>Subject</dt><dd class="selection-subject"></dd></div>
+        <div><dt>Example</dt><dd class="selection-example"></dd></div>
+        <div><dt>Size</dt><dd class="selection-size"></dd></div>
+        <div><dt>Origin</dt><dd class="selection-origin"></dd></div>
+        <div class="selection-from-row" hidden><dt>From</dt><dd class="selection-from"></dd></div>
+        <div><dt>Status</dt><dd class="selection-status"></dd></div>
+      </dl>
+      <section class="inspector-block" aria-labelledby="selection-data-title">
+        <h3 id="selection-data-title">Example data</h3>
+        <p class="inspector-block-intro">Computed values and where they come from.</p>
+        <div class="selection-data"></div>
+        <p class="inspector-muted selection-no-data">No example data is set directly for this preview.</p>
+      </section>
+      <div class="inspector-block selection-note-block" hidden><h3>Note</h3><p class="selection-note"></p></div>
+      <div class="inspector-block"><h3>Declared interactions</h3><ul class="interaction-list selection-interactions"></ul><p class="inspector-muted selection-no-interactions">No interactions declared in this snapshot.</p></div>
+      <p class="visually-hidden selection-announcement" aria-live="polite"></p>
+    </section>
+  </aside>
+  <section class="editor-status" role="status" aria-live="polite" data-tone="neutral">
+    <div class="status-heading"><div class="status-copy"><strong>Starting Editor</strong><p>Loading the current project state…</p></div><button class="status-dismiss" type="button" aria-label="Dismiss Editor status" title="Dismiss">×</button></div>
+    <ol class="diagnostic-list"></ol>
+  </section>
+`;
+
+const required = <T extends Element>(root: ParentNode, selector: string): T => {
+  const node = root.querySelector(selector);
+  if (!node) throw new Error(`missing Editor shell element ${selector}`);
+  return node as T;
+};
+
+const buildShell = (root: HTMLElement): EditorShell => {
+  const document = root.ownerDocument;
+  const style = document.createElement("style");
+  style.dataset.uhuraEditorStyles = "";
+  style.textContent = EDITOR_STYLES;
+  const shell = document.createElement("div");
+  shell.className = "uhura-editor";
+  shell.innerHTML = SHELL_HTML;
+  root.replaceChildren(style, shell);
+  return {
+    shell,
+    navigatorApplication: required(shell, "[data-navigator-application]"),
+    navigatorCount: required(shell, "[data-navigator-count]"),
+    navigatorSearch: required(shell, ".navigator-search input"),
+    navigatorResults: required(shell, ".navigator-results"),
+    navigatorEmpty: required(shell, ".navigator-empty"),
+    viewport: required(shell, ".editor-viewport"),
+    board: required(shell, ".editor-board"),
+    rulerX: required(shell, ".ruler-x"),
+    rulerY: required(shell, ".ruler-y"),
+    tools: required(shell, ".canvas-tools"),
+    cursorButton: required(shell, ".tool-cursor"),
+    handButton: required(shell, ".tool-hand"),
+    zoomOutButton: required(shell, ".zoom-out"),
+    zoomOutput: required(shell, ".canvas-zoom"),
+    zoomInButton: required(shell, ".zoom-in"),
+    focusSelectionButton: required(shell, ".focus-selection"),
+    inspectorOverview: required(shell, ".inspector-overview"),
+    inspectorSelection: required(shell, ".inspector-selection"),
+    overviewApplication: required(shell, "[data-overview-application]"),
+    overviewFreshness: required(shell, "[data-overview-freshness]"),
+    overviewStats: required(shell, "[data-overview-stats]"),
+    overviewCallout: required(shell, "[data-overview-callout]"),
+    clearSelectionButton: required(shell, ".clear-selection"),
+    selectionKind: required(shell, ".selection-kind"),
+    selectionName: required(shell, ".selection-name"),
+    selectionSubject: required(shell, ".selection-subject"),
+    selectionExample: required(shell, ".selection-example"),
+    selectionSize: required(shell, ".selection-size"),
+    selectionOrigin: required(shell, ".selection-origin"),
+    selectionFromRow: required(shell, ".selection-from-row"),
+    selectionFrom: required(shell, ".selection-from"),
+    selectionStatus: required(shell, ".selection-status"),
+    selectionData: required(shell, ".selection-data"),
+    selectionNoData: required(shell, ".selection-no-data"),
+    selectionNoteBlock: required(shell, ".selection-note-block"),
+    selectionNote: required(shell, ".selection-note"),
+    selectionInteractions: required(shell, ".selection-interactions"),
+    selectionNoInteractions: required(shell, ".selection-no-interactions"),
+    selectionAnnouncement: required(shell, ".selection-announcement"),
+    status: required(shell, ".editor-status"),
+    statusTitle: required(shell, ".status-copy strong"),
+    statusDetail: required(shell, ".status-copy p"),
+    statusDiagnostics: required(shell, ".diagnostic-list"),
+    statusDismiss: required(shell, ".status-dismiss"),
+  };
+};
+
+const closest = <T extends Element>(
+  target: EventTarget | null,
+  selector: string,
+): T | null => target instanceof Element ? target.closest<T>(selector) : null;
+
+const storedUiVisible = (storage: Storage | undefined): boolean => {
+  if (!storage) return true;
+  try {
+    return storage.getItem(UI_VISIBLE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+};
+
+const storeUiVisible = (storage: Storage | undefined, visible: boolean): void => {
+  try {
+    storage?.setItem(UI_VISIBLE_KEY, String(visible));
+  } catch {
+    // UI persistence is a convenience, never a requirement for Editor.
+  }
+};
+
+const diagnostics = (state: EditorState): string[] => {
+  const list = state.diagnostics?.["diagnostics"];
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+    const value = item as Record<string, JsonValue>;
+    const message = value["message"];
+    if (typeof message !== "string") return [];
+    const code = typeof value["code"] === "string" ? value["code"] : "";
+    const file = typeof value["file"] === "string" ? value["file"] : "";
+    return [`${code ? `${code}: ` : ""}${message}${file ? ` — ${file}` : ""}`];
+  });
+};
+
+const formatValue = (value: JsonValue | undefined): string => {
+  if (value === undefined || value === null) return "Not set";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return JSON.stringify(value, null, 2);
+};
+
+const dataGroupTitle = (group: PreviewDataField["group"]): string => ({
+  "page-address": "Page address",
+  properties: "Properties",
+  "provided-data": "Provided data",
+})[group];
+
+const sourceDescription = (field: PreviewDataField): string | null => {
+  const source = field.source;
+  if (!source) return null;
+  const declared = source.declaredIn ? ` · declared in ${source.declaredIn}` : "";
+  const timeline = source.timeline ? " · timeline" : "";
+  if (source.kind === "inline") return `Inline${declared}${timeline}`;
+  const path = source.path.length > 0 ? ` → ${source.path.join(" → ")}` : "";
+  const prefix = source.kind === "automatic-fixture" ? "Automatic fixture" : "Fixture";
+  return `${prefix} ${source.fixture}${path}${declared}${timeline}`;
+};
+
+const shellSize = (preview: EditorPreview): string => {
+  if (preview.identity.kind === "page") return "390 × 844";
+  if (preview.identity.kind === "surface") return "390 × 560";
+  return "390 × content";
+};
+
+const origin = (preview: EditorPreview): string => {
+  if (preview.pinned) return "Pinned example";
+  if (preview.derived) return "Replay-derived";
+  return "Checked example";
+};
+
+const stat = (document: Document, label: string, value: number): HTMLElement => {
+  const group = document.createElement("div");
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const description = document.createElement("dd");
+  description.textContent = String(value);
+  group.append(term, description);
+  return group;
+};
+
+export const mountEditor = (root: HTMLElement): EditorDispose => {
+  const document = root.ownerDocument;
+  const window = document.defaultView;
+  if (!window) throw new Error("Uhura Editor requires a browser window");
+  const shell = buildShell(root);
+  const updates = new EditorUpdateSession();
+  let model = prepareEditorModel(document, null);
+  let state: EditorState | null = null;
+  let selectedIdentity: PreviewIdentity | null = null;
+  let selectedTool: Tool = "cursor";
+  let spaceHeld = false;
+  let pan: PanState | null = null;
+  let pinch: PinchState | null = null;
+  let suppressClickUntil = 0;
+  let x = 0;
+  let y = 0;
+  let scale = 1;
+  let rulerFrame = 0;
+  let destroyed = false;
+  let retryTimer: number | undefined;
+  const touches = new Map<number, Point>();
+  const disposers: Array<() => void> = [];
+
+  const listen = <T extends EventTarget>(
+    target: T,
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: AddEventListenerOptions | boolean,
+  ): void => {
+    target.addEventListener(type, listener, options);
+    disposers.push(() => target.removeEventListener(type, listener, options));
+  };
+
+  const requestRulers = (): void => {
+    if (!rulerFrame) rulerFrame = window.requestAnimationFrame(drawRulers);
+  };
+
+  const applyCamera = (): void => {
+    shell.board.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    shell.board.style.setProperty("--selection-stroke", `${2 / scale}px`);
+    shell.board.style.setProperty("--selection-offset", `${4 / scale}px`);
+    shell.zoomOutput.textContent = `${Math.round(scale * 100)}%`;
+    requestRulers();
+  };
+
+  const clampScale = (value: number): number => Math.min(Math.max(value, MIN_SCALE), MAX_SCALE);
+  const viewportCenter = (): Point => ({
+    x: shell.viewport.clientWidth / 2,
+    y: shell.viewport.clientHeight / 2,
+  });
+  const localPoint = (clientX: number, clientY: number): Point => {
+    const rect = shell.viewport.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  };
+  const zoomAt = (value: number, point: Point): void => {
+    const nextScale = clampScale(value);
+    const ratio = nextScale / scale;
+    x = point.x - (point.x - x) * ratio;
+    y = point.y - (point.y - y) * ratio;
+    scale = nextScale;
+    applyCamera();
+  };
+
+  const chooseRulerStep = (): number => {
+    const desiredWorldUnits = 76 / scale;
+    const magnitude = 10 ** Math.floor(Math.log10(desiredWorldUnits));
+    const normalized = desiredWorldUnits / magnitude;
+    return (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
+  };
+  const prepareCanvas = (canvas: HTMLCanvasElement): PreparedCanvas => {
+    const rect = canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    const pixelWidth = Math.round(width * ratio);
+    const pixelHeight = Math.round(height * ratio);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("2D canvas rendering is unavailable");
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.strokeStyle = "#aeb5be";
+    context.fillStyle = "#68717d";
+    context.lineWidth = 1;
+    context.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+    return { context, width, height };
+  };
+
+  function drawRulers(): void {
+    rulerFrame = 0;
+    const horizontal = prepareCanvas(shell.rulerX);
+    const vertical = prepareCanvas(shell.rulerY);
+    const step = chooseRulerStep();
+    const minor = step / 5;
+    const firstX = Math.floor((-x / scale) / minor) * minor;
+    const lastX = (horizontal.width - x) / scale;
+    horizontal.context.beginPath();
+    for (let worldX = firstX; worldX <= lastX + minor; worldX += minor) {
+      const screen = Math.round(x + worldX * scale) + 0.5;
+      const major = Math.abs(worldX / step - Math.round(worldX / step)) < 0.001;
+      horizontal.context.moveTo(screen, horizontal.height);
+      horizontal.context.lineTo(screen, horizontal.height - (major ? 9 : 4));
+      if (major) horizontal.context.fillText(String(Math.round(worldX)), screen + 3, 9);
+    }
+    horizontal.context.stroke();
+
+    const firstY = Math.floor((-y / scale) / minor) * minor;
+    const lastY = (vertical.height - y) / scale;
+    vertical.context.beginPath();
+    for (let worldY = firstY; worldY <= lastY + minor; worldY += minor) {
+      const screen = Math.round(y + worldY * scale) + 0.5;
+      const major = Math.abs(worldY / step - Math.round(worldY / step)) < 0.001;
+      vertical.context.moveTo(vertical.width, screen);
+      vertical.context.lineTo(vertical.width - (major ? 9 : 4), screen);
+      if (major) {
+        vertical.context.save();
+        vertical.context.translate(9, screen - 3);
+        vertical.context.rotate(-Math.PI / 2);
+        vertical.context.fillText(String(Math.round(worldY)), 0, 0);
+        vertical.context.restore();
+      }
+    }
+    vertical.context.stroke();
+  }
+
+  const effectiveTool = (): Tool => selectedTool === "hand" || spaceHeld || pan ? "hand" : "cursor";
+  const renderTools = (): void => {
+    const tool = effectiveTool();
+    shell.cursorButton.setAttribute("aria-pressed", String(tool === "cursor"));
+    shell.handButton.setAttribute("aria-pressed", String(tool === "hand"));
+    shell.viewport.dataset.tool = tool;
+  };
+  const selectTool = (tool: Tool): void => {
+    selectedTool = tool;
+    renderTools();
+  };
+  const finishPan = (pointerId?: number): void => {
+    if (!pan || (pointerId !== undefined && pan.pointerId !== pointerId)) return;
+    if (pan.moved) suppressClickUntil = performance.now() + 250;
+    pan = null;
+    shell.viewport.classList.remove("panning");
+    renderTools();
+  };
+  const beginPan = (pointerId: number, point: Point): void => {
+    pan = { pointerId, pointerX: point.x, pointerY: point.y, x, y, moved: false };
+    shell.viewport.classList.add("panning");
+    renderTools();
+  };
+  const updatePan = (pointerId: number, point: Point): void => {
+    if (!pan || pan.pointerId !== pointerId) return;
+    const deltaX = point.x - pan.pointerX;
+    const deltaY = point.y - pan.pointerY;
+    if (Math.hypot(deltaX, deltaY) > 3) pan.moved = true;
+    x = pan.x + deltaX;
+    y = pan.y + deltaY;
+    applyCamera();
+  };
+
+  const frameWorldRect = (element: HTMLElement): Rect => {
+    const frameRect = element.getBoundingClientRect();
+    const viewportRect = shell.viewport.getBoundingClientRect();
+    return {
+      x: (frameRect.left - viewportRect.left - x) / scale,
+      y: (frameRect.top - viewportRect.top - y) / scale,
+      width: frameRect.width / scale,
+      height: frameRect.height / scale,
+    };
+  };
+  const revealElement = (element: HTMLElement | null): void => {
+    if (!element) return;
+    const rect = frameWorldRect(element);
+    x = shell.viewport.clientWidth / 2 - (rect.x + rect.width / 2) * scale;
+    y = shell.viewport.clientHeight / 2 - (rect.y + rect.height / 2) * scale;
+    applyCamera();
+  };
+
+  const clearSelectionDom = (): void => {
+    for (const frame of model.frameById.values()) {
+      frame.classList.remove("is-selected");
+      frame.setAttribute("aria-pressed", "false");
+    }
+    shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]").forEach((button) => {
+      button.setAttribute("aria-pressed", "false");
+      button.removeAttribute("aria-current");
+    });
+  };
+
+  const renderData = (preview: EditorPreview): void => {
+    shell.selectionData.replaceChildren();
+    const order: PreviewDataField["group"][] = ["page-address", "properties", "provided-data"];
+    for (const group of order) {
+      const fields = preview.data.filter((field) => field.group === group);
+      if (fields.length === 0) continue;
+      const section = document.createElement("section");
+      section.className = "preview-data-group";
+      const heading = document.createElement("h4");
+      heading.textContent = dataGroupTitle(group);
+      const list = document.createElement("dl");
+      list.className = "preview-data-list";
+      for (const field of fields) {
+        const row = document.createElement("div");
+        row.className = "preview-data-row";
+        const term = document.createElement("dt");
+        term.textContent = field.name;
+        const description = document.createElement("dd");
+        const value = document.createElement("span");
+        value.className = field.status === "ready" ? "preview-data-value" : "preview-data-state";
+        value.textContent = field.status === "ready"
+          ? formatValue(field.value)
+          : field.status === "waiting"
+            ? "Waiting for data"
+            : "Couldn’t load";
+        description.append(value);
+        if (field.reason) {
+          const reason = document.createElement("span");
+          reason.className = "preview-data-reason";
+          reason.textContent = field.reason;
+          description.append(reason);
+        }
+        const source = sourceDescription(field);
+        if (source) {
+          const sourceNode = document.createElement("p");
+          sourceNode.className = "preview-data-source";
+          sourceNode.textContent = `Source: ${source}`;
+          description.append(sourceNode);
+        }
+        row.append(term, description);
+        list.append(row);
+      }
+      section.append(heading, list);
+      shell.selectionData.append(section);
+    }
+    shell.selectionNoData.hidden = preview.data.length > 0;
+  };
+
+  const renderInspector = (preview: EditorPreview): void => {
+    shell.inspectorOverview.hidden = true;
+    shell.inspectorSelection.hidden = false;
+    shell.focusSelectionButton.disabled = false;
+    shell.selectionKind.textContent = preview.identity.kind;
+    shell.selectionName.textContent = `${preview.identity.subject} / ${preview.identity.example}`;
+    shell.selectionSubject.textContent = preview.identity.subject;
+    shell.selectionExample.textContent = preview.identity.example;
+    shell.selectionSize.textContent = shellSize(preview);
+    shell.selectionOrigin.textContent = origin(preview);
+    shell.selectionFromRow.hidden = preview.from === null || preview.from === "";
+    shell.selectionFrom.textContent = preview.from ?? "";
+    const status = preview.default ? ["Default"] : [];
+    status.push(preview.inFlight > 0 ? `${preview.inFlight} in flight` : "Settled");
+    shell.selectionStatus.textContent = status.join(" · ");
+    renderData(preview);
+    shell.selectionNoteBlock.hidden = !preview.note;
+    shell.selectionNote.textContent = preview.note ?? "";
+    shell.selectionInteractions.replaceChildren(...preview.interactions.map((interaction) => {
+      const item = document.createElement("li");
+      item.textContent = `${interaction.element} · ${interaction.event} → ${interaction.emit}`;
+      item.title = JSON.stringify({
+        nodeKey: interaction.nodeKey,
+        kind: interaction.kind,
+        scope: interaction.scope,
+        payload: interaction.payload,
+        carries: interaction.carries,
+      });
+      return item;
+    }));
+    shell.selectionNoInteractions.hidden = preview.interactions.length > 0;
+    shell.selectionAnnouncement.textContent =
+      `${preview.identity.subject} / ${preview.identity.example} selected; details updated.`;
+  };
+
+  const clearSelection = (): void => {
+    clearSelectionDom();
+    selectedIdentity = null;
+    shell.inspectorOverview.hidden = false;
+    shell.inspectorSelection.hidden = true;
+    shell.focusSelectionButton.disabled = true;
+    shell.selectionData.replaceChildren();
+    shell.selectionAnnouncement.textContent = "";
+  };
+
+  const selectPreview = (previewId: string, reveal = false): void => {
+    const preview = model.previewById.get(previewId);
+    const frame = model.frameById.get(previewId);
+    if (!preview || !frame) return;
+    clearSelectionDom();
+    selectedIdentity = preview.identity;
+    frame.classList.add("is-selected");
+    frame.setAttribute("aria-pressed", "true");
+    const navigatorButton = Array.from(
+      shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]"),
+    ).find((button) => button.dataset.previewId === previewId);
+    if (navigatorButton) {
+      navigatorButton.setAttribute("aria-pressed", "true");
+      navigatorButton.setAttribute("aria-current", "true");
+      navigatorButton.scrollIntoView({ block: "nearest" });
+    }
+    renderInspector(preview);
+    if (reveal) revealElement(frame);
+  };
+
+  const applySearch = (): void => {
+    const query = shell.navigatorSearch.value.trim().toLocaleLowerCase();
+    let visibleGroups = 0;
+    shell.navigatorResults.querySelectorAll<HTMLElement>("[data-navigator-group]").forEach((group) => {
+      const groupMatches = group.dataset.search?.includes(query) ?? false;
+      let visibleFrames = 0;
+      group.querySelectorAll<HTMLElement>(".navigator-frame").forEach((button) => {
+        const matches = !query || groupMatches || (button.dataset.search?.includes(query) ?? false);
+        button.hidden = !matches;
+        if (matches) visibleFrames += 1;
+      });
+      const visible = !query || groupMatches || visibleFrames > 0;
+      group.hidden = !visible;
+      if (visible) visibleGroups += 1;
+    });
+    shell.navigatorEmpty.hidden = visibleGroups > 0;
+  };
+
+  const renderOverview = (render: EditorRender | null): void => {
+    const previews = render?.previews ?? [];
+    shell.navigatorApplication.textContent = render?.application.name ?? "Uhura";
+    shell.navigatorCount.textContent = `${render?.groups.length ?? 0} groups`;
+    shell.overviewApplication.textContent = render?.application.name ?? "Uhura";
+    shell.overviewFreshness.textContent = !render
+      ? "No renderable revision yet"
+      : render.freshness === "stale"
+        ? `Stale preview · revision ${render.revision}`
+        : `Current preview · revision ${render.revision}`;
+    shell.overviewStats.replaceChildren(
+      stat(document, "Previews", previews.length),
+      stat(document, "Groups", render?.groups.length ?? 0),
+      stat(document, "Defaults", previews.filter((preview) => preview.default).length),
+      stat(document, "Derived", previews.filter((preview) => preview.derived).length),
+      stat(document, "Pinned", previews.filter((preview) => preview.pinned).length),
+      stat(document, "Assets", Object.keys(render?.assets ?? {}).length),
+    );
+    const callout = shell.overviewCallout.querySelector("p");
+    if (callout) {
+      callout.textContent = render?.freshness === "stale"
+        ? "The current source has errors. These previews come from the last renderable saved revision."
+        : "Save a .uhura file to rebuild these previews automatically.";
+    }
+  };
+
+  const showStatus = (
+    title: string,
+    detail: string,
+    tone: "neutral" | "warning" | "error",
+    messages: string[] = [],
+  ): void => {
+    shell.status.dataset.tone = tone;
+    shell.statusTitle.textContent = title;
+    shell.statusDetail.textContent = detail;
+    shell.statusDiagnostics.replaceChildren(...messages.slice(0, 8).map((message) => {
+      const item = document.createElement("li");
+      item.textContent = message;
+      return item;
+    }));
+    shell.status.hidden = false;
+  };
+
+  const showStateStatus = (nextState: EditorState): void => {
+    const messages = diagnostics(nextState);
+    if (!nextState.render) {
+      showStatus(
+        "No valid preview yet",
+        `Source revision ${nextState.sourceRevision} cannot be rendered. Editor will recover after a valid save.`,
+        "error",
+        messages,
+      );
+    } else if (nextState.render.freshness === "stale") {
+      showStatus(
+        "Previewing the last valid version",
+        `Source revision ${nextState.sourceRevision} has errors; preview revision ${nextState.render.revision} remains visible.`,
+        "warning",
+        messages,
+      );
+    } else if (messages.length > 0) {
+      showStatus(
+        "Preview updated with diagnostics",
+        `Source revision ${nextState.sourceRevision} is current.`,
+        "warning",
+        messages,
+      );
+    } else {
+      shell.status.hidden = true;
+      shell.statusDiagnostics.replaceChildren();
+    }
+  };
+
+  const finishStateInstall = (nextState: EditorState): void => {
+    selectedIdentity = retainPreviewSelection(selectedIdentity, nextState);
+    state = nextState;
+    renderOverview(nextState.render);
+    applySearch();
+    const selectedId = previewIdForIdentity(model, selectedIdentity);
+    if (selectedId) selectPreview(selectedId, false);
+    else clearSelection();
+    showStateStatus(nextState);
+  };
+
+  const installModel = (nextState: EditorState, nextModel: PreparedEditorModel): void => {
+    const previousBoard = shell.board;
+    const focusedPreviewId = closest<HTMLElement>(
+      document.activeElement,
+      ".editor-frame[data-preview-id]",
+    )?.dataset.previewId;
+    nextModel.board.style.transform = previousBoard.style.transform;
+    nextModel.board.style.setProperty("--selection-stroke", `${2 / scale}px`);
+    nextModel.board.style.setProperty("--selection-offset", `${4 / scale}px`);
+    reconcilePreparedEditorModel(model, nextModel);
+    previousBoard.replaceWith(nextModel.board);
+    shell.board = nextModel.board;
+    shell.navigatorResults.replaceChildren(nextModel.navigator);
+    model = nextModel;
+    finishStateInstall(nextState);
+    if (focusedPreviewId) {
+      model.frameById.get(focusedPreviewId)?.focus({ preventScroll: true });
+    }
+    requestRulers();
+  };
+
+  const installStateOnly = (nextState: EditorState): void => {
+    finishStateInstall(nextState);
+  };
+
+  const scheduleRetry = (
+    token: EditorFetchToken,
+    expectedRevision: number | null,
+    delay: number,
+  ): void => {
+    if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    retryTimer = window.setTimeout(() => {
+      retryTimer = undefined;
+      const retry = updates.retry(token, expectedRevision);
+      if (retry) void loadState(retry);
+    }, delay);
+  };
+
+  const loadState = async (token: EditorFetchToken): Promise<void> => {
+    try {
+      const response = await window.fetch(EDITOR_STATE_PATH, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`Editor state request failed (${response.status})`);
+      const nextState = decodeEditorState(await response.json());
+      const decision = updates.consider(token, nextState);
+      if (decision.kind === "ignored") return;
+      if (decision.kind === "behind") {
+        scheduleRetry(token, decision.expectedRevision, 50);
+        return;
+      }
+      if (state && editorBoardUnchanged(state.render, decision.state.render)) {
+        if (!updates.commit(
+          token,
+          decision.state,
+          () => installStateOnly(decision.state),
+        )) return;
+        return;
+      }
+      const nextModel = prepareEditorModel(document, decision.state.render, model);
+      if (!updates.commit(
+        token,
+        decision.state,
+        () => installModel(decision.state, nextModel),
+      )) return;
+    } catch (error) {
+      if (destroyed || !updates.isCurrent(token)) return;
+      showStatus(
+        "Editor state unavailable",
+        error instanceof Error ? error.message : "Could not load the Editor state.",
+        "error",
+      );
+      scheduleRetry(token, token.expectedRevision, 750);
+    }
+  };
+
+  const setUiVisible = (visible: boolean, persist = true): void => {
+    shell.shell.classList.toggle("ui-hidden", !visible);
+    if (persist) storeUiVisible(window.localStorage, visible);
+    requestRulers();
+  };
+  setUiVisible(storedUiVisible(window.localStorage), false);
+
+  listen(shell.cursorButton, "click", () => selectTool("cursor"));
+  listen(shell.handButton, "click", () => selectTool("hand"));
+  listen(shell.zoomOutButton, "click", () => zoomAt(scale / ZOOM_STEP, viewportCenter()));
+  listen(shell.zoomInButton, "click", () => zoomAt(scale * ZOOM_STEP, viewportCenter()));
+  listen(shell.zoomOutput, "click", () => zoomAt(1, viewportCenter()));
+  listen(shell.focusSelectionButton, "click", () => {
+    const selectedId = previewIdForIdentity(model, selectedIdentity);
+    if (selectedId) revealElement(model.frameById.get(selectedId) ?? null);
+  });
+  listen(shell.clearSelectionButton, "click", clearSelection);
+  listen(shell.statusDismiss, "click", () => { shell.status.hidden = true; });
+  listen(shell.tools, "pointerdown", (event) => event.stopPropagation());
+
+  listen(shell.navigatorResults, "click", (event) => {
+    const frameButton = closest<HTMLElement>(event.target, ".navigator-frame[data-preview-id]");
+    if (frameButton?.dataset.previewId) {
+      selectPreview(frameButton.dataset.previewId, true);
+      return;
+    }
+    const groupButton = closest<HTMLElement>(event.target, ".navigator-row[data-group-id]");
+    const groupId = groupButton?.dataset.groupId;
+    if (!groupId) return;
+    const group = state?.render?.groups.find((candidate) => candidate.id === groupId);
+    const first = group?.previews[0];
+    if (first) revealElement(model.frameById.get(first) ?? null);
+  });
+  listen(shell.navigatorSearch, "input", applySearch);
+  listen(shell.navigatorSearch, "keydown", (rawEvent) => {
+    const event = rawEvent as KeyboardEvent;
+    if (event.key !== "Escape" || !shell.navigatorSearch.value) return;
+    shell.navigatorSearch.value = "";
+    applySearch();
+  });
+
+  listen(shell.viewport, "click", (event) => {
+    if (effectiveTool() !== "cursor" || performance.now() < suppressClickUntil) return;
+    const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
+    if (frame?.dataset.previewId) selectPreview(frame.dataset.previewId, false);
+  });
+  listen(shell.viewport, "keydown", (rawEvent) => {
+    const event = rawEvent as KeyboardEvent;
+    const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
+    if (!frame?.dataset.previewId || (event.key !== "Enter" && event.key !== " ")) return;
+    selectPreview(frame.dataset.previewId, false);
+    event.preventDefault();
+  });
+
+  const twoTouches = (): Point[] => Array.from(touches.values()).slice(0, 2);
+  const beginPinch = (): void => {
+    const [a, b] = twoTouches();
+    if (!a || !b) return;
+    finishPan();
+    const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const distance = Math.hypot(b.x - a.x, b.y - a.y);
+    if (distance === 0) return;
+    suppressClickUntil = performance.now() + 250;
+    pinch = {
+      distance,
+      scale,
+      worldX: (midpoint.x - x) / scale,
+      worldY: (midpoint.y - y) / scale,
+    };
+  };
+  const updatePinch = (): void => {
+    const [a, b] = twoTouches();
+    if (!pinch || !a || !b) return;
+    const distance = Math.hypot(b.x - a.x, b.y - a.y);
+    const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const nextScale = clampScale(pinch.scale * distance / pinch.distance);
+    x = midpoint.x - pinch.worldX * nextScale;
+    y = midpoint.y - pinch.worldY * nextScale;
+    scale = nextScale;
+    applyCamera();
+  };
+
+  listen(shell.viewport, "pointerdown", (rawEvent) => {
+    const event = rawEvent as PointerEvent;
+    if (event.pointerType === "touch") {
+      const point = localPoint(event.clientX, event.clientY);
+      touches.set(event.pointerId, point);
+      shell.viewport.setPointerCapture(event.pointerId);
+      if (touches.size === 2) beginPinch();
+      else if (touches.size === 1 && effectiveTool() === "hand") beginPan(event.pointerId, point);
+      return;
+    }
+    const shouldPan = event.button === 1 || (event.button === 0 && effectiveTool() === "hand");
+    if (!shouldPan) return;
+    beginPan(event.pointerId, localPoint(event.clientX, event.clientY));
+    shell.viewport.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  listen(shell.viewport, "pointermove", (rawEvent) => {
+    const event = rawEvent as PointerEvent;
+    if (event.pointerType === "touch" && touches.has(event.pointerId)) {
+      const point = localPoint(event.clientX, event.clientY);
+      touches.set(event.pointerId, point);
+      if (!pinch && touches.size >= 2) beginPinch();
+      if (pinch) updatePinch();
+      else updatePan(event.pointerId, point);
+      return;
+    }
+    updatePan(event.pointerId, localPoint(event.clientX, event.clientY));
+  });
+  const finishPointer = (rawEvent: Event): void => {
+    const event = rawEvent as PointerEvent;
+    finishPan(event.pointerId);
+    if (!touches.delete(event.pointerId)) return;
+    pinch = null;
+    if (touches.size >= 2) beginPinch();
+    else if (touches.size === 1 && effectiveTool() === "hand") {
+      const remaining = touches.entries().next().value;
+      if (remaining) beginPan(remaining[0], remaining[1]);
+    }
+  };
+  listen(shell.viewport, "pointerup", finishPointer);
+  listen(shell.viewport, "pointercancel", finishPointer);
+  listen(shell.viewport, "lostpointercapture", finishPointer);
+  listen(shell.viewport, "wheel", (rawEvent) => {
+    const event = rawEvent as WheelEvent;
+    event.preventDefault();
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? shell.viewport.clientHeight
+        : 1;
+    if (event.ctrlKey || event.metaKey) {
+      const exponent = Math.min(Math.max(
+        -event.deltaY * unit * WHEEL_ZOOM_SENSITIVITY,
+        -0.25,
+      ), 0.25);
+      zoomAt(scale * Math.exp(exponent), localPoint(event.clientX, event.clientY));
+      return;
+    }
+    if (event.shiftKey && event.deltaX === 0) x -= event.deltaY * unit;
+    else {
+      x -= event.deltaX * unit;
+      y -= event.deltaY * unit;
+    }
+    applyCamera();
+  }, { passive: false });
+
+  const ignoresShortcut = (target: EventTarget | null): boolean =>
+    target instanceof Element
+    && Boolean(target.closest("button, a, input, select, textarea, [contenteditable]"));
+  listen(window, "keydown", (rawEvent) => {
+    const event = rawEvent as KeyboardEvent;
+    const togglesUi = (event.metaKey || event.ctrlKey)
+      && !event.altKey
+      && !event.shiftKey
+      && event.code === "Backslash";
+    if (togglesUi) {
+      if (!event.repeat) setUiVisible(shell.shell.classList.contains("ui-hidden"));
+      event.preventDefault();
+      return;
+    }
+    if (ignoresShortcut(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.code === "Space") {
+      spaceHeld = true;
+      renderTools();
+      event.preventDefault();
+    } else if (!event.repeat && event.code === "KeyH") selectTool("hand");
+    else if (!event.repeat && event.code === "KeyV") selectTool("cursor");
+    else if (!event.repeat && (event.key === "+" || event.key === "=")) {
+      zoomAt(scale * ZOOM_STEP, viewportCenter());
+    } else if (!event.repeat && event.key === "-") {
+      zoomAt(scale / ZOOM_STEP, viewportCenter());
+    } else if (!event.repeat && event.key === "Escape") clearSelection();
+  });
+  listen(window, "keyup", (rawEvent) => {
+    const event = rawEvent as KeyboardEvent;
+    if (event.code !== "Space") return;
+    spaceHeld = false;
+    renderTools();
+  });
+  const resetPointers = (): void => {
+    spaceHeld = false;
+    finishPan();
+    touches.clear();
+    pinch = null;
+    renderTools();
+  };
+  listen(window, "blur", resetPointers);
+  listen(document, "visibilitychange", () => {
+    if (document.hidden) resetPointers();
+  });
+
+  let resizeObserver: ResizeObserver | null = null;
+  if (window.ResizeObserver) {
+    resizeObserver = new window.ResizeObserver(requestRulers);
+    resizeObserver.observe(shell.viewport);
+  } else {
+    listen(window, "resize", requestRulers);
+  }
+
+  const events = new window.EventSource(EDITOR_EVENTS_PATH);
+  listen(events, "open", () => {
+    showStatus("Refreshing previews", "Connected to the Editor host…", "neutral");
+    void loadState(updates.opened());
+  });
+  listen(events, "error", () => {
+    showStatus(
+      "Live preview disconnected",
+      "The last loaded state remains visible while Editor reconnects…",
+      "warning",
+    );
+  });
+  listen(events, "message", (rawEvent) => {
+    const event = rawEvent as MessageEvent<string>;
+    try {
+      const revision = decodeEditorRevisionEvent(JSON.parse(event.data));
+      const token = updates.announced(revision);
+      if (token) void loadState(token);
+    } catch (error) {
+      console.warn("ignored invalid Uhura Editor event", error);
+    }
+  });
+
+  // Initial load does not wait for the SSE handshake. The mandatory `open`
+  // fetch supersedes this request if the connection establishes first.
+  void loadState(updates.opened());
+  renderTools();
+  applyCamera();
+
+  return (): void => {
+    if (destroyed) return;
+    destroyed = true;
+    events.close();
+    resizeObserver?.disconnect();
+    if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    if (rulerFrame) window.cancelAnimationFrame(rulerFrame);
+    for (const dispose of disposers.splice(0)) dispose();
+    root.replaceChildren();
+  };
+};

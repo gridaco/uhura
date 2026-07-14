@@ -5,8 +5,8 @@ import type { VNode, VValue } from "../../protocol/types.js";
 import {
   applyProps,
   tagFor,
-  type AssetAppliers,
-} from "../appliers.js";
+} from "../../renderer/appliers.js";
+import type { AssetAppliers } from "../../renderer/assets.js";
 
 class FakeVideo {
   readonly attributes = new Map<string, string>();
@@ -46,11 +46,23 @@ const asVideo = (video: FakeVideo): HTMLVideoElement =>
 
 function context(assets: AssetAppliers): Parameters<typeof applyProps>[2] {
   return {
-    glyphs: {},
+    document: {} as Document,
+    icons: {},
     assets,
-    textFields: {
-      wire: () => {},
-      applyValue: () => {},
+    policy: {
+      kind: "play",
+      emit: () => {},
+      textFields: {
+        wire: () => {},
+        applyValue: () => {},
+      },
+      scrolls: {
+        sync: () => {},
+        disposeSubtree: () => {},
+        savePositions: () => {},
+        restorePositions: () => {},
+      },
+      disposeSubtree: () => {},
     },
     holderOf: () => ({ path: "", on: {} }),
   };
@@ -59,7 +71,7 @@ function context(assets: AssetAppliers): Parameters<typeof applyProps>[2] {
 test("video uses a native tag and applies assets, label, and playback flags", () => {
   const calls: ["poster" | "source", HTMLVideoElement, string | undefined][] = [];
   const assets: AssetAppliers = {
-    apply: () => {},
+    applyImage: () => {},
     applyVideoPoster(el, ref) {
       calls.push(["poster", el, ref]);
     },
@@ -107,7 +119,7 @@ test("video uses a native tag and applies assets, label, and playback flags", ()
 test("absent video flags are false and remove prior DOM state", () => {
   const calls: ["poster" | "source", string | undefined][] = [];
   const assets: AssetAppliers = {
-    apply: () => {},
+    applyImage: () => {},
     applyVideoPoster(_el, ref) {
       calls.push(["poster", ref]);
     },

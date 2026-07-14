@@ -3,11 +3,28 @@
 
 import type { ProviderHost } from "../protocol/types.js";
 
-export function createProviderHost(): ProviderHost {
+export interface DisposableProviderHost extends ProviderHost {
+  dispose(): void;
+}
+
+export function createProviderHost(signal: AbortSignal): DisposableProviderHost {
   let cancelActivePicker: (() => void) | null = null;
+  let disposed = signal.aborted;
+
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    signal.removeEventListener("abort", dispose);
+    cancelActivePicker?.();
+    cancelActivePicker = null;
+  }
+
+  if (!disposed) signal.addEventListener("abort", dispose, { once: true });
 
   return {
+    signal,
     pickFile({ accept } = {}) {
+      if (disposed) return Promise.resolve(null);
       // A provider should normally serialize commands, but do not strand an
       // earlier picker if it starts another one before the first settles.
       cancelActivePicker?.();
@@ -121,5 +138,7 @@ export function createProviderHost(): ProviderHost {
         }
       });
     },
+
+    dispose,
   };
 }

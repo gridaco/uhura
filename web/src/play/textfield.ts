@@ -10,6 +10,10 @@
 // freshly minted page serials, so they never made a stable key.
 
 import type { Descriptor } from "../protocol/types.js";
+import type {
+  TextFieldController,
+  TextFieldHolder,
+} from "../renderer/contracts.js";
 
 interface FieldState {
   /** Change emissions not yet stepped. */
@@ -19,21 +23,12 @@ interface FieldState {
   composing: boolean;
 }
 
-export interface TextFieldHolder {
-  on: Record<string, Descriptor>;
-}
-
 interface TextFieldWiring {
   emit(
     descriptor: Descriptor,
     data?: Record<string, unknown>,
     onApplied?: () => void,
   ): void;
-}
-
-export interface TextFieldController {
-  wire(input: HTMLInputElement, holder: TextFieldHolder): void;
-  applyValue(input: HTMLInputElement, value: string): void;
 }
 
 export function createTextFields({ emit }: TextFieldWiring): TextFieldController {
@@ -109,3 +104,5 @@ export function createTextFields({ emit }: TextFieldWiring): TextFieldController
 
   return { wire, applyValue };
 }
+
+export type { TextFieldController, TextFieldHolder } from "../renderer/contracts.js";

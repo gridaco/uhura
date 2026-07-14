@@ -45,8 +45,9 @@ pub struct Session {
 
 #[wasm_bindgen]
 impl Session {
-    /// `ir_json` is the canonical `uhura-ir/0` artifact (`/ir.json` from
-    /// `uhura dev`); anything else is refused before deserialization.
+    /// `ir_json` is the canonical `uhura-ir/0` artifact
+    /// (`/api/play/ir.json` from `uhura play`); anything else is refused before
+    /// deserialization.
     #[wasm_bindgen(constructor)]
     pub fn new(ir_json: &str) -> Result<Session, String> {
         let program = load_program(ir_json)?;
@@ -165,8 +166,9 @@ pub struct FixtureDriverJs {
 
 #[wasm_bindgen(js_class = FixtureDriver)]
 impl FixtureDriverJs {
-    /// `fixture_json`: the resolved slice tree (`/fixture.json`);
-    /// `script_json`: the closed script grammar as JSON (`/script.json`).
+    /// `fixture_json`: the resolved slice tree (`/api/play/fixture.json`);
+    /// `script_json`: the closed script grammar as JSON
+    /// (`/api/play/script.json`).
     #[wasm_bindgen(constructor)]
     pub fn new(fixture_json: &str, script_json: &str) -> Result<FixtureDriverJs, String> {
         uhura_fixture::FixtureDriver::new(fixture_json, script_json)

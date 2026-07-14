@@ -1,5 +1,5 @@
-# Uhura spike CI. Steps grow with milestones (design §12.5); M0 ships
-# fmt/clippy/test.
+# Uhura builds browser products from authoritative source; generated web and
+# wasm-bindgen output are never repository inputs.
 name: ci
 
 on:
@@ -7,11 +7,16 @@ on:
     branches: ["main"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   uhura:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10.11.0
@@ -20,29 +25,174 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm -C web install --frozen-lockfile
-      - run: pnpm -C web check
-      - name: guard — compiled web artifacts are current
-        run: |
-          git diff --exit-code -- web/dist examples/instagram-uhura/providers/dist
-          test -z "$(git status --porcelain --untracked-files=all -- web/dist examples/instagram-uhura/providers/dist)"
-      # rustup honors rust-toolchain.toml automatically.
+      - name: Install frontend dependencies
+        run: pnpm -C web install --frozen-lockfile
+      - name: Check, build, and test the web application
+        run: pnpm -C web check
+
+      # rustup honors rust-toolchain.toml, including its pinned wasm target.
       - uses: Swatinem/rust-cache@v2
-      # --locked everywhere: the committed Cargo.lock IS the pin.
-      - run: cargo fmt --all --check
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo test --locked --workspace
-      - run: cargo run --locked -p uhura-cli -- fmt --check examples/instagram-uhura
-      - run: cargo run --locked -p uhura-cli -- check examples/instagram-uhura --deny-warnings
-      # M4: the headless demo walkthrough runs end to end (goldens live in
-      # uhura-tests; this is the CLI-level smoke).
-      - run: cargo run --locked -p uhura-cli -- trace examples/instagram-uhura --script=demo > /dev/null
-      - run: cargo run --locked -p uhura-cli -- project examples/instagram-uhura --out=renders
-      - uses: actions/upload-artifact@v4
         with:
-          name: uhura-canvas
-          path: renders/canvas.html
-      # M5: the wasm crate compiles for its real target (bindgen + parity
-      # land with M6's full battery).
-      - run: cargo build --locked -p uhura-wasm --target wasm32-unknown-unknown
-      # M6: ./scripts/build-wasm.sh && node scripts/parity.mjs && acceptance
+          cache-directories: target/tools
+      - name: Rust formatting
+        run: cargo fmt --all --check
+      - name: Rust lints
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --locked --workspace --all-targets
+      - name: CLI project gates
+        run: |
+          cargo run --locked -p uhura-cli -- fmt --check examples/instagram-uhura
+          cargo run --locked -p uhura-cli -- check examples/instagram-uhura --deny-warnings
+          cargo run --locked -p uhura-cli -- trace examples/instagram-uhura --script=demo > /dev/null
+
+      - name: Install the lockfile-exact wasm-bindgen CLI
+        shell: bash
+        run: |
+          version="$(sed -n '/name = "wasm-bindgen"/{n;s/version = "\([^"]*\)"/\1/p;q;}' Cargo.lock)"
+          test -n "$version"
+          installed=""
+          if [[ -x target/tools/bin/wasm-bindgen ]]; then
+            installed="$(target/tools/bin/wasm-bindgen --version | awk '{print $2}')"
+          fi
+          if [[ "$installed" != "$version" ]]; then
+            cargo install wasm-bindgen-cli \
+              --version "$version" \
+              --locked \
+              --force \
+              --root target/tools
+          fi
+          test "$(target/tools/bin/wasm-bindgen --version | awk '{print $2}')" = "$version"
+
+      - name: Assemble the directory package
+        shell: bash
+        run: |
+          package="$RUNNER_TEMP/uhura-package"
+          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/package" \
+            bash scripts/package.sh "$package"
+          test -x "$package/bin/uhura"
+          test -f "$package/share/uhura/web/index.html"
+          test -f "$package/share/uhura/wasm/uhura_wasm.js"
+          test -f "$package/share/uhura/wasm/uhura_wasm_bg.wasm"
+          echo "UHURA_PACKAGE=$package" >> "$GITHUB_ENV"
+
+      - name: Smoke the packaged native host without Node
+        shell: bash
+        run: |
+          port=18787
+          runtime="$RUNNER_TEMP/uhura-native-runtime"
+          log="$RUNNER_TEMP/uhura-package.log"
+          editor_html="$RUNNER_TEMP/editor.html"
+          play_html="$RUNNER_TEMP/play.html"
+          web_assets="$RUNNER_TEMP/web-assets.txt"
+          state_json="$RUNNER_TEMP/editor-state.json"
+          mkdir -p "$runtime"
+
+          # Run outside the checkout with no command-search path. This proves
+          # that the native process locates packaged assets and does not invoke
+          # Node, pnpm, Vite, or another external runtime helper.
+          (
+            cd "$runtime"
+            exec env -i HOME="$runtime" PATH=/uhura-no-runtime-tools \
+              "$UHURA_PACKAGE/bin/uhura" editor \
+              "$GITHUB_WORKSPACE/examples/instagram-uhura" \
+              --port "$port"
+          ) >"$log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            if kill -0 "$server_pid" 2>/dev/null; then
+              kill "$server_pid"
+              wait "$server_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          ready=false
+          for _ in $(seq 1 120); do
+            if curl --fail --silent \
+              "http://127.0.0.1:$port/" --output "$editor_html"; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.25
+          done
+          if [[ "$ready" != true ]]; then
+            cat "$log"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:$port/play" --output "$play_html"
+          cmp "$editor_html" "$play_html"
+
+          python3 - "$editor_html" > "$web_assets" <<'PY'
+          from html.parser import HTMLParser
+          import pathlib
+          import sys
+          from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
+
+          class References(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.values = []
+
+              def handle_starttag(self, _tag, attributes):
+                  for name, value in attributes:
+                      if name in {"src", "href"} and value:
+                          self.values.append(value)
+
+          references = References()
+          references.feed(pathlib.Path(sys.argv[1]).read_text())
+          origin = "http://uhura.invalid/"
+          local_assets = set()
+          for reference in references.values:
+              parsed = urlsplit(reference)
+              if parsed.scheme or parsed.netloc:
+                  continue
+              if not parsed.path.lower().endswith((".js", ".mjs", ".css")):
+                  continue
+              decoded = unquote(parsed.path)
+              if "\\" in decoded or "\0" in decoded or any(
+                  segment in {".", ".."} for segment in decoded.split("/")
+              ):
+                  raise AssertionError(f"unsafe local web asset reference: {reference!r}")
+              resolved = urlsplit(urljoin(origin, reference))
+              assert resolved.scheme == "http" and resolved.netloc == "uhura.invalid"
+              local_assets.add(urlunsplit(("", "", resolved.path, resolved.query, "")))
+
+          assert local_assets, "index.html references no local JavaScript or CSS assets"
+          print(*sorted(local_assets), sep="\n")
+          PY
+          while IFS= read -r asset; do
+            curl --fail --silent --show-error \
+              "http://127.0.0.1:$port$asset" --output /dev/null
+          done < "$web_assets"
+
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:$port/api/editor/state" --output "$state_json"
+          python3 - "$state_json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          state = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert state["protocol"] == "uhura-editor-state/0"
+          assert isinstance(state["sourceRevision"], int)
+          assert state["sourceRevision"] >= 1
+          render = state["render"]
+          assert isinstance(render, dict)
+          assert render["revision"] == state["sourceRevision"]
+          assert render["freshness"] == "current"
+          assert isinstance(render["groups"], list)
+          assert render["groups"]
+          PY
+
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:$port/api/play/wasm/uhura_wasm.js" \
+            --output /dev/null
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:$port/api/play/wasm/uhura_wasm_bg.wasm" \
+            --output /dev/null
