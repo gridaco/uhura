@@ -22,6 +22,31 @@ pub struct ProjectionSnapshot {
     pub value: Value,
 }
 
+impl Projections {
+    /// Tooling-facing canonical JSON for the complete external projection
+    /// store. Composite `(projection, key)` identities are encoded as ordered
+    /// entries instead of object keys so keyed instances remain lossless.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "snapshots": self.snapshots.iter().map(|((projection, key), snapshot)| {
+                serde_json::json!({
+                    "projection": projection.to_string(),
+                    "key": key.as_ref().map(Value::to_json),
+                    "revision": snapshot.revision,
+                    "value": snapshot.value.to_json(),
+                })
+            }).collect::<Vec<_>>(),
+            "failed": self.failed.iter().map(|((projection, key), reason)| {
+                serde_json::json!({
+                    "projection": projection.to_string(),
+                    "key": key.as_ref().map(Value::to_json),
+                    "reason": reason,
+                })
+            }).collect::<Vec<_>>(),
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiState {
     /// `+1` every step, always.
@@ -111,9 +136,10 @@ impl UiState {
         }
     }
 
-    /// Canonical JSON of the whole machine state — the `u-hash` input
-    /// (§7.5). Pending keys render as their minted tag form.
-    pub fn to_json(&self) -> serde_json::Value {
+    /// Canonical JSON of the logical machine configuration, excluding only
+    /// the per-step revision. This is tooling identity, not a replacement for
+    /// `u-hash`: counters and pending correlations remain semantically visible.
+    pub fn configuration_json(&self) -> serde_json::Value {
         let fields = |map: &BTreeMap<Ident, Value>| -> serde_json::Value {
             map.iter()
                 .map(|(k, v)| (k.to_string(), v.to_json()))
@@ -121,7 +147,6 @@ impl UiState {
                 .into()
         };
         serde_json::json!({
-            "rev": self.rev,
             "nav": self.nav.iter().map(|entry| serde_json::json!({
                 "serial": entry.serial,
                 "route": entry.route.to_string(),
@@ -155,6 +180,19 @@ impl UiState {
                 "surface-serial": self.counters.surface_serial,
             },
         })
+    }
+
+    /// Canonical JSON of the whole machine state — the `u-hash` input
+    /// (§7.5). Pending keys render as their minted tag form.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut state = self.configuration_json();
+        state["rev"] = self.rev.into();
+        state
+    }
+
+    /// Revision-independent identity for inspection and visualization tools.
+    pub fn configuration_hash(&self) -> String {
+        uhura_base::hash_json(&self.configuration_json())
     }
 
     /// SHA-256 of the canonical machine state (§7.5).

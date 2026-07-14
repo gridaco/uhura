@@ -217,6 +217,7 @@ struct PlayState {
 
 struct GoodBuild {
     ir: String,
+    inspect_json: String,
     stylesheet: String,
     fixture_json: String,
     script_json: String,
@@ -489,8 +490,13 @@ fn recheck_play(
         ),
     };
 
+    let mut inspection = uhura_core::inspect::program_graph(program);
+    inspection["spans"] =
+        serde_json::to_value(&lowered.spans).expect("IR spans are always serializable");
+
     Ok(GoodBuild {
         ir: program.to_canonical_string(),
+        inspect_json: to_canonical_json(&inspection),
         stylesheet: output.stylesheet.clone(),
         fixture_json,
         script_json: script_canonical,
@@ -916,6 +922,7 @@ fn tool_root() -> PathBuf {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PlayArtifact {
     Ir,
+    Inspect,
     Stylesheet,
     Fixture,
     Script,
@@ -942,6 +949,7 @@ fn api_route(path: &str) -> Option<ApiRoute<'_>> {
         "/api/editor/events" => ApiRoute::EditorEvents,
         "/api/play/events" => ApiRoute::PlayEvents,
         "/api/play/ir.json" => ApiRoute::PlayArtifact(PlayArtifact::Ir),
+        "/api/play/inspect.json" => ApiRoute::PlayArtifact(PlayArtifact::Inspect),
         "/api/play/stylesheet.css" => ApiRoute::PlayArtifact(PlayArtifact::Stylesheet),
         "/api/play/fixture.json" => ApiRoute::PlayArtifact(PlayArtifact::Fixture),
         "/api/play/script.json" => ApiRoute::PlayArtifact(PlayArtifact::Script),
@@ -1096,6 +1104,7 @@ fn play_artifact(state: &RwLock<DevState>, artifact_kind: PlayArtifact) -> Serve
     };
     let (extension, bytes) = match artifact_kind {
         PlayArtifact::Ir => ("json", good.ir.as_bytes()),
+        PlayArtifact::Inspect => ("json", good.inspect_json.as_bytes()),
         PlayArtifact::Stylesheet => ("css", good.stylesheet.as_bytes()),
         PlayArtifact::Fixture => ("json", good.fixture_json.as_bytes()),
         PlayArtifact::Script => ("json", good.script_json.as_bytes()),
@@ -1295,14 +1304,15 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use uhura_base::to_canonical_json;
     use uhura_editor_model::{Application, AuthoringMetadata, EditorRender, RenderFreshness};
 
     use crate::cmd::editor_model::EditorModelArtifact;
 
     use super::{
         ApiRoute, EditorHostState, PlayArtifact, WebApp, api_route, app_document, application_path,
-        content_type, decode_play_asset_path, editor_sse_payload, load_web_app_from,
-        serve_play_asset, split_request_url,
+        content_type, decode_play_asset_path, editor_sse_payload, load_web_app_from, recheck_play,
+        serve_play_asset, split_request_url, tool_root,
     };
 
     fn render(revision: u64, name: &str) -> EditorRender {
@@ -1442,6 +1452,10 @@ mod tests {
             Some(ApiRoute::PlayArtifact(PlayArtifact::Ir))
         );
         assert_eq!(
+            api_route("/api/play/inspect.json"),
+            Some(ApiRoute::PlayArtifact(PlayArtifact::Inspect))
+        );
+        assert_eq!(
             api_route("/api/play/assets/avatar.jpg"),
             Some(ApiRoute::PlayAsset("avatar.jpg"))
         );
@@ -1452,6 +1466,31 @@ mod tests {
         assert_eq!(api_route("/ir.json"), None);
         assert_eq!(api_route("/events"), None);
         assert_eq!(api_route("/api/nope"), Some(ApiRoute::Unknown));
+    }
+
+    #[test]
+    fn play_inspection_artifact_is_coherent_with_checked_ir_and_spans() {
+        let root = tool_root().join("examples/instagram-uhura");
+        let snapshot = super::super::editor_model::capture_project_snapshot(&root);
+        let good = recheck_play(&snapshot.files).expect("canonical example checks");
+        let inspection: serde_json::Value =
+            serde_json::from_str(&good.inspect_json).expect("inspection JSON");
+        let program = uhura_core::ir::load_program(&good.ir).expect("served IR loads");
+
+        assert_eq!(good.inspect_json, to_canonical_json(&inspection));
+        assert_eq!(inspection["protocol"], "uhura-inspect/0");
+        assert_eq!(inspection["kind"], "program");
+        assert_eq!(inspection["span-offset-encoding"], "utf-8-bytes");
+        assert_eq!(inspection["ir"]["hash"], program.hash());
+        assert!(
+            inspection["nodes"]
+                .as_array()
+                .expect("graph nodes")
+                .iter()
+                .any(|node| node["id"] == "pages.feed/handler/0"),
+            "handler ids align with trace selection ids",
+        );
+        assert!(inspection["spans"]["pages.feed/handler/0"].is_object());
     }
 
     #[test]

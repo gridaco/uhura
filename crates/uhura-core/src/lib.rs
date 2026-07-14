@@ -8,6 +8,7 @@
 pub mod decode;
 pub mod eval;
 pub mod event;
+pub mod inspect;
 pub mod ir;
 pub mod state;
 pub mod step;

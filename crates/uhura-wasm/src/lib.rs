@@ -11,18 +11,20 @@ use wasm_bindgen::prelude::*;
 
 use uhura_base::to_canonical_json;
 use uhura_core::event::{ApplyNote, Event, apply_failure, apply_updates};
+use uhura_core::inspect::{INSPECT_PROTOCOL, snapshot_json};
 use uhura_core::ir::{IR_PROTOCOL, ProgramIr, load_program};
 use uhura_core::state::{Projections, UiState};
 use uhura_core::step::step_u;
 use uhura_core::view::{Snapshot, VIEW_PROTOCOL};
 use uhura_port::envelope::{PROVIDER_PROTOCOL, ProjectionUpdate};
 
-/// The three protocol versions this build speaks, as one JSON object —
+/// The protocol versions this build speaks, as one JSON object —
 /// the shell hard-asserts all of them at boot (§12.3).
 #[wasm_bindgen]
 pub fn protocols() -> String {
     to_canonical_json(&serde_json::json!({
         "ir": IR_PROTOCOL,
+        "inspect": INSPECT_PROTOCOL,
         "view": VIEW_PROTOCOL,
         "provider": PROVIDER_PROTOCOL,
     }))
@@ -142,6 +144,19 @@ impl Session {
             Some(v) => Ok(v.to_canonical_string()),
             None => Err("no view before the first dispatch (§9.2)".to_string()),
         }
+    }
+
+    /// Complete read-only `uhura-inspect/0` snapshot for developer tooling.
+    /// This intentionally lives outside the frozen step-result/trace ABI and
+    /// has no effect on runtime state.
+    pub fn inspect(&self) -> String {
+        to_canonical_json(&snapshot_json(
+            &self.program,
+            &self.u,
+            &self.x,
+            self.v.as_ref(),
+            &self.pending_applies,
+        ))
     }
 
     /// The machine revision (`U.rev` — `+1` every step). Lossless as a JS

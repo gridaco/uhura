@@ -7,7 +7,7 @@
 /** Loads and instantiates the wasm binary (fetches uhura_wasm_bg.wasm). */
 export default function init(module_or_path?: unknown): Promise<unknown>;
 
-/** `{"ir":"uhura-ir/0","provider":"uhura-provider/0","view":"uhura-view/0"}` */
+/** Protocol capability set, including `uhura-inspect/0`. */
 export function protocols(): string;
 
 export class Session {
@@ -19,6 +19,8 @@ export class Session {
   dispatch(event_json: string): string;
   /** Current `uhura-view/0` snapshot, canonical JSON. */
   view(): string;
+  /** Complete read-only `uhura-inspect/0` snapshot, canonical JSON. */
+  inspect(): string;
   /** `U.rev` — `+1` every step. */
   revision(): number;
   /** `"uhura-ir/0"` */

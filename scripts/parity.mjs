@@ -36,7 +36,12 @@ if (!dir) {
 const read = (name) => readFileSync(join(dir, name), "utf8");
 
 const spoken = JSON.parse(protocols());
-if (spoken.ir !== "uhura-ir/0" || spoken.view !== "uhura-view/0" || spoken.provider !== "uhura-provider/0") {
+if (
+  spoken.inspect !== "uhura-inspect/0" ||
+  spoken.ir !== "uhura-ir/0" ||
+  spoken.view !== "uhura-view/0" ||
+  spoken.provider !== "uhura-provider/0"
+) {
   console.error(`protocol mismatch: ${JSON.stringify(spoken)}`);
   process.exit(1);
 }
