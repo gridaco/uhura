@@ -1,0 +1,4 @@
+interface:
+  display_name: "Uhura Language"
+  short_description: "Build and verify deterministic Uhura experiences"
+  default_prompt: "Use $uhura-lang to create and verify a deterministic Uhura experience for these requirements."
