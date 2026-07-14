@@ -25,6 +25,7 @@ import {
   validateAnnotationRealizations,
 } from "./annotation-overlay.js";
 import { EDITOR_STYLES } from "./editor-styles.js";
+import { surfaceHierarchy } from "./surface-hierarchy.js";
 import {
   enterPreviewFocus,
   exitPreviewFocus,
@@ -127,6 +128,8 @@ interface EditorShell {
   selectionFrom: HTMLElement;
   selectionReplayRow: HTMLElement;
   selectionReplay: HTMLElement;
+  selectionHierarchyBlock: HTMLElement;
+  selectionHierarchy: HTMLUListElement;
   selectionWorkflowBlock: HTMLElement;
   selectionWorkflow: HTMLOListElement;
   selectionStatus: HTMLElement;
@@ -210,6 +213,11 @@ const SHELL_HTML = `
         <div class="selection-replay-row" hidden><dt>Replay</dt><dd class="selection-replay"></dd></div>
         <div><dt>Status</dt><dd class="selection-status"></dd></div>
       </dl>
+      <section class="inspector-block selection-hierarchy-block" aria-labelledby="selection-hierarchy-title" hidden>
+        <h3 id="selection-hierarchy-title">Surface hierarchy</h3>
+        <p class="inspector-block-intro">Mounted children in back-to-front stack order.</p>
+        <ul class="surface-hierarchy selection-hierarchy"></ul>
+      </section>
       <section class="inspector-block selection-workflow-block" aria-labelledby="selection-workflow-title" hidden>
         <h3 id="selection-workflow-title">Workflow trace</h3>
         <p class="inspector-block-intro">Checked event payload, handler selection, guards, and committed effects.</p>
@@ -296,6 +304,8 @@ const buildShell = (root: HTMLElement): EditorShell => {
     selectionFrom: required(shell, ".selection-from"),
     selectionReplayRow: required(shell, ".selection-replay-row"),
     selectionReplay: required(shell, ".selection-replay"),
+    selectionHierarchyBlock: required(shell, ".selection-hierarchy-block"),
+    selectionHierarchy: required(shell, ".selection-hierarchy"),
     selectionWorkflowBlock: required(shell, ".selection-workflow-block"),
     selectionWorkflow: required(shell, ".selection-workflow"),
     selectionStatus: required(shell, ".selection-status"),
@@ -983,6 +993,34 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionWorkflowBlock.hidden = preview.replay.length === 0;
   };
 
+  const renderSurfaceHierarchy = (preview: EditorPreview): void => {
+    const hierarchy = surfaceHierarchy(preview);
+    if (!hierarchy || hierarchy.surfaces.length === 0) {
+      shell.selectionHierarchy.replaceChildren();
+      shell.selectionHierarchyBlock.hidden = true;
+      return;
+    }
+    const root = document.createElement("li");
+    root.className = "surface-hierarchy-root";
+    root.textContent = `page ${hierarchy.page}`;
+    const children = document.createElement("ul");
+    for (const surface of hierarchy.surfaces) {
+      const child = document.createElement("li");
+      child.className = "surface-hierarchy-child";
+      const label = document.createElement("strong");
+      label.textContent = `${surface.modality} ${surface.definition}`;
+      const relation = document.createElement("span");
+      relation.textContent = surface.openedByDirectReplay
+        ? "opened by this replay"
+        : "inherited mounted child";
+      child.append(label, relation);
+      children.append(child);
+    }
+    root.append(children);
+    shell.selectionHierarchy.replaceChildren(root);
+    shell.selectionHierarchyBlock.hidden = false;
+  };
+
   const renderInspector = (preview: EditorPreview): void => {
     const focused = focusedPreviewId() === preview.id;
     shell.inspectorOverview.hidden = true;
@@ -1009,6 +1047,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionFrom.textContent = preview.from ?? "";
     shell.selectionReplayRow.hidden = preview.replaySteps.length === 0;
     shell.selectionReplay.textContent = preview.replaySteps.join(" → ");
+    renderSurfaceHierarchy(preview);
     renderWorkflow(preview);
     const status = preview.default ? ["Default"] : [];
     status.push(preview.inFlight > 0 ? `${preview.inFlight} in flight` : "Settled");
@@ -1060,6 +1099,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionDocumentation.replaceChildren();
     shell.selectionDocumentation.hidden = true;
     shell.selectionDocumentationBlock.hidden = true;
+    shell.selectionHierarchy.replaceChildren();
+    shell.selectionHierarchyBlock.hidden = true;
     shell.selectionWorkflow.replaceChildren();
     shell.selectionWorkflowBlock.hidden = true;
     shell.selectionAnnouncement.textContent = "";

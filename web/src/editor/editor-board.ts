@@ -12,6 +12,7 @@ import {
   type RealizationOwner,
 } from "./editor-realization.js";
 import { preparePreviewStylesheet } from "./editor-styles.js";
+import { surfaceHierarchy } from "./surface-hierarchy.js";
 import {
   reusablePreviewFrameIds,
   reusablePreviewIds,
@@ -75,6 +76,12 @@ const prepareWorkflowConnector = (
   group.dataset.sourcePreviewId = connector.sourceId;
   group.dataset.targetPreviewId = connector.targetId;
   group.dataset.lane = String(connector.lane);
+  if (connector.openedSurfaces.length > 0) {
+    group.classList.add("opens-surface");
+    group.dataset.openedSurfaces = connector.openedSurfaces
+      .map((surface) => surface.definition)
+      .join(" ");
+  }
 
   const title = svgElement(document, "title");
   title.textContent = `Checked replay provenance via ${workflowConnectorDescription(connector)}`;
@@ -83,7 +90,7 @@ const prepareWorkflowConnector = (
   const origin = svgElement(document, "circle", "workflow-connector-origin");
   origin.setAttribute("r", "3");
   const label = svgElement(document, "text", "workflow-connector-label");
-  label.textContent = workflowConnectorLabel(connector.steps);
+  label.textContent = workflowConnectorLabel(connector.steps, connector.openedSurfaces);
   group.append(title, path, arrow, origin, label);
   return { ...connector, element: group };
 };
@@ -125,8 +132,12 @@ const realizePreview = (
       parentIsList: false,
       observe: (realization) => resources.register(realization),
     });
-    for (const surface of preview.content.surfaces) {
+    for (const [index, surface] of preview.content.surfaces.entries()) {
       const overlay = element(document, "div", "uh-surface-overlay");
+      overlay.dataset.surfaceDefinition = surface.definition;
+      overlay.dataset.surfaceModality = surface.modality;
+      overlay.dataset.surfaceStackIndex = String(index);
+      overlay.style.zIndex = String(index + 1);
       const scrim = element(document, "div", "uh-scrim");
       const surfaceHost = element(
         document,
@@ -135,6 +146,7 @@ const realizePreview = (
       );
       surfaceHost.setAttribute("role", "dialog");
       surfaceHost.setAttribute("aria-modal", "true");
+      surfaceHost.dataset.surfaceDefinition = surface.definition;
       renderer.realizeRoot(surfaceHost, surface.root, {
         root: { kind: "surface", key: surface.key },
         scope: `${preview.id}:surface:${surface.key}`,
@@ -206,6 +218,22 @@ const frame = (
   if (preview.pinned) caption.append(badge(document, "badge-pinned", "pinned"));
   if (preview.inFlight > 0) {
     caption.append(badge(document, "badge-in-flight", `${preview.inFlight} in flight`));
+  }
+  const hierarchy = surfaceHierarchy(preview);
+  if (hierarchy && hierarchy.surfaces.length > 0) {
+    figure.dataset.surfaceCount = String(hierarchy.surfaces.length);
+    for (const surface of hierarchy.surfaces) {
+      const surfaceBadge = badge(
+        document,
+        "badge-surface",
+        `${surface.modality} ${surface.definition}`,
+      );
+      surfaceBadge.title = surface.openedByDirectReplay
+        ? "Child surface opened by this replay edge"
+        : "Child surface inherited from replay ancestry";
+      if (surface.openedByDirectReplay) surfaceBadge.dataset.direct = "true";
+      caption.append(surfaceBadge);
+    }
   }
   caption.append(element(document, "span", "caption-prov", provenance(preview)));
   if (preview.note) caption.append(element(document, "p", "caption-note", preview.note));

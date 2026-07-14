@@ -292,6 +292,7 @@ export const EDITOR_STYLES = `
     pointer-events: none;
   }
   .workflow-connector { transition: opacity .12s ease; }
+  .workflow-connector.opens-surface { color: #6d4fc2; }
   .workflow-connectors.has-selection .workflow-connector { opacity: .16; }
   .workflow-connectors.has-selection .workflow-connector.is-active { opacity: 1; }
   .workflow-connector-path {
@@ -374,6 +375,8 @@ export const EDITOR_STYLES = `
   .badge-default { color: #075f9d; background: var(--accent-soft); }
   .badge-pinned { color: #715d13; background: #fff7d6; }
   .badge-in-flight { color: #73510d; background: #fff0cc; }
+  .badge-surface { color: #5b3fa7; background: #eee9ff; }
+  .badge-surface[data-direct="true"]::before { content: "↳ "; }
 
   .inspector-section { padding: 16px 14px 24px; }
   .inspector-hero { display: flex; align-items: center; gap: 10px; padding-block-end: 16px; border-block-end: 1px solid var(--border); }
@@ -435,6 +438,13 @@ export const EDITOR_STYLES = `
   .workflow-detail summary { cursor: pointer; color: #596a79; font-size: 9px; font-weight: 650; }
   .workflow-detail pre { max-block-size: 180px; margin: 6px 0 0; padding: 7px; overflow: auto; border-radius: 5px; color: #2e3a47; background: #eef3f6; font: 8px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
   .workflow-no-effects { margin: 7px 0 0 !important; color: #84909b !important; font-size: 9px !important; }
+  .surface-hierarchy, .surface-hierarchy ul { margin: 0; padding: 0; list-style: none; }
+  .surface-hierarchy-root { position: relative; padding: 7px 8px; border: 1px solid #dbe1e7; border-radius: 7px; color: #34404c; background: #fafbfc; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .surface-hierarchy-root > ul { display: grid; gap: 5px; margin-block-start: 7px; padding-inline-start: 17px; }
+  .surface-hierarchy-child { position: relative; display: flex; flex-direction: column; gap: 1px; padding: 6px 7px; border: 1px solid #ddd5f7; border-radius: 6px; color: #4c378c; background: #f7f4ff; }
+  .surface-hierarchy-child::before { content: ""; position: absolute; inset: 50% 100% auto auto; inline-size: 13px; border-block-start: 1px solid #9a86d2; }
+  .surface-hierarchy-child strong { font-size: 9px; }
+  .surface-hierarchy-child span { color: #7866aa; font-size: 8px; }
   .interaction-list { display: grid; gap: 6px; padding: 0; list-style: none; }
   .interaction-list li { padding: 8px 9px; border: 1px solid #d9e8f4; border-radius: 7px; color: #315a75; background: #f4faff; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
   .inspector-muted { color: var(--faint) !important; font-style: italic; }
@@ -526,6 +536,7 @@ export const PREVIEW_BASE_STYLES = `
   :host, #uh-app { display: block; inline-size: 100%; block-size: 100%; color: #16181c; }
   *, *::before, *::after { box-sizing: border-box; }
   .screen-root, .fragment-root { position: relative; inline-size: 100%; block-size: 100%; overflow: hidden; }
+  .screen-root { isolation: isolate; }
   .screen-root > * { block-size: 100%; }
   .fragment-root > * { min-inline-size: 0; }
   .uh-view { display: block; min-inline-size: 0; }
@@ -547,9 +558,9 @@ export const PREVIEW_BASE_STYLES = `
   .uh-dots { position: absolute; inset-block-end: 10px; inset-inline: 0; display: flex; justify-content: center; gap: 5px; }
   .uh-dot { inline-size: 6px; block-size: 6px; border-radius: 999px; background: rgb(255 255 255 / 55%); }
   .uh-dot.on { background: #fff; }
-  .uh-surface-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; }
-  .uh-scrim { position: absolute; inset: 0; background: rgb(0 0 0 / 40%); }
-  .uh-surface { position: relative; block-size: 72%; max-block-size: 72%; border-radius: 16px 16px 0 0; background: #fff; box-shadow: 0 -8px 32px rgb(0 0 0 / 35%); }
+  .uh-surface-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; isolation: isolate; }
+  .uh-scrim { position: absolute; inset: 0; z-index: 0; background: rgb(0 0 0 / 40%); }
+  .uh-surface { position: relative; z-index: 1; block-size: 72%; max-block-size: 72%; overflow: hidden; border-radius: 16px 16px 0 0; background: #fff; box-shadow: 0 -8px 32px rgb(0 0 0 / 35%); }
 `;
 
 /**
