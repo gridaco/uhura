@@ -1096,49 +1096,23 @@ fn detect_case_insensitive_filesystem(root: &Path) -> bool {
         if alias_is_distinct_entry {
             return false;
         }
-        let actual = match std::fs::metadata(&actual) {
-            Ok(metadata) => metadata,
+        match std::fs::metadata(&actual) {
+            Ok(_) => {}
             Err(_) => continue,
-        };
-        let alias = match std::fs::metadata(&alias) {
-            Ok(metadata) => metadata,
+        }
+        match std::fs::metadata(&alias) {
+            Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return false,
             Err(_) => continue,
-        };
-        return same_file_identity(&actual, &alias);
+        }
+        // Keep both identities live while comparing them. This is portable
+        // to stable Windows, where std's by-handle metadata IDs are unstable.
+        match same_file::is_same_file(&actual, &alias) {
+            Ok(same_file) => return same_file,
+            Err(_) => continue,
+        }
     }
     false
-}
-
-#[cfg(unix)]
-fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    left.dev() == right.dev() && left.ino() == right.ino()
-}
-
-#[cfg(windows)]
-fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    match (
-        left.volume_serial_number(),
-        left.file_index(),
-        right.volume_serial_number(),
-        right.file_index(),
-    ) {
-        (Some(left_volume), Some(left_index), Some(right_volume), Some(right_index)) => {
-            left_volume == right_volume && left_index == right_index
-        }
-        _ => false,
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
-    left.len() == right.len()
-        && left.modified().ok() == right.modified().ok()
-        && left.created().ok() == right.created().ok()
 }
 
 fn toggle_ascii_case(name: &std::ffi::OsStr) -> Option<OsString> {
