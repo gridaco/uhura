@@ -42,6 +42,10 @@ struct PlayState {
 }
 
 struct GoodBuild {
+    /// Diagnostics belonging to this otherwise usable Play build. This is
+    /// `null` when the checker reported nothing and a complete
+    /// `uhura-diagnostics/0` envelope when it reported warnings.
+    diagnostics: serde_json::Value,
     ir: String,
     inspect_json: String,
     stylesheet: String,
@@ -60,6 +64,7 @@ type EditorBuildOutcome = Result<source::EditorModelArtifact, serde_json::Value>
 /// Hosts may inspect its summary, then atomically publish it into [`Host`].
 pub struct ClientCandidate {
     revision: u64,
+    source_fingerprint: ProjectSourceFingerprint,
     editor: EditorBuildOutcome,
     play: Result<GoodBuild, serde_json::Value>,
 }
@@ -74,6 +79,20 @@ pub struct CandidateSummary {
     pub play_ok: bool,
 }
 
+/// Structured diagnostics produced while building one client candidate.
+///
+/// Each component is either JSON `null` or a complete
+/// `uhura-diagnostics/0` envelope. Accepted Editor and Play outcomes may still
+/// carry warnings; rejected outcomes carry their error envelope. Use
+/// [`ClientCandidate::summary`] to distinguish acceptance from rejection.
+/// This view borrows the off-path candidate and does not construct a [`Host`]
+/// or load [`WebAssets`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CandidateDiagnostics<'a> {
+    pub editor: &'a serde_json::Value,
+    pub play: &'a serde_json::Value,
+}
+
 impl ClientCandidate {
     pub fn summary(&self) -> CandidateSummary {
         let editor = self.editor.as_ref().ok();
@@ -84,6 +103,43 @@ impl ClientCandidate {
             replay_derived_count: editor.map(|artifact| artifact.replay_derived_count),
             play_ok: self.play.is_ok(),
         }
+    }
+
+    /// Inspect the exact Editor and Play diagnostics produced for this
+    /// candidate without publishing it.
+    #[must_use]
+    pub fn diagnostics(&self) -> CandidateDiagnostics<'_> {
+        let editor = match &self.editor {
+            Ok(artifact) => &artifact.diagnostics,
+            Err(diagnostics) => diagnostics,
+        };
+        let play = match &self.play {
+            Ok(artifact) => &artifact.diagnostics,
+            Err(diagnostics) => diagnostics,
+        };
+        CandidateDiagnostics { editor, play }
+    }
+
+    /// Content identity of the exact coherent source snapshot consumed by
+    /// this candidate build.
+    ///
+    /// This source identity, rather than an artifact-output hash, is the v1
+    /// candidate identity. Editor artifacts embed the publication revision,
+    /// while all Editor and Play artifact encodings remain private,
+    /// toolchain-derived implementation details. Hashing those outputs would
+    /// either make an unchanged source acquire a new identity at every
+    /// publication or promise cross-toolchain stability the host does not
+    /// provide. Within one Uhura binary the artifacts are deterministic
+    /// functions of this captured source and the requested revision.
+    #[must_use]
+    pub fn source_fingerprint(&self) -> &ProjectSourceFingerprint {
+        &self.source_fingerprint
+    }
+
+    /// Deterministic digest form of [`Self::source_fingerprint`].
+    #[must_use]
+    pub fn source_id(&self) -> String {
+        self.source_fingerprint.stable_id()
     }
 }
 
@@ -192,6 +248,7 @@ pub fn build_candidate(snapshot: &ProjectSourceSnapshot, revision: u64) -> Clien
     let play = recheck_play(&snapshot.files);
     ClientCandidate {
         revision,
+        source_fingerprint: snapshot.fingerprint.clone(),
         editor,
         play,
     }
@@ -240,6 +297,7 @@ fn recheck_play(files: &source::ProjectSourceFiles) -> Result<GoodBuild, serde_j
     let Some(lowered) = &output.lowered else {
         return Err(fail("the check produced no program".to_string()));
     };
+    let diagnostics = uhura_editor_model::diagnostics_json(&output);
     let program = &lowered.program;
 
     let manifest = &input.manifest;
@@ -303,6 +361,7 @@ fn recheck_play(files: &source::ProjectSourceFiles) -> Result<GoodBuild, serde_j
         serde_json::to_value(&lowered.spans).expect("IR spans are always serializable");
 
     Ok(GoodBuild {
+        diagnostics,
         ir: program.to_canonical_string(),
         inspect_json: to_canonical_json(&inspection),
         stylesheet: output.stylesheet.clone(),
@@ -1648,6 +1707,61 @@ mod tests {
         let mut body = String::new();
         response.body.read_to_string(&mut body).unwrap();
         assert!(!body.is_empty());
+    }
+
+    #[test]
+    fn candidate_exposes_listenerless_diagnostics_and_source_identity() {
+        let root = tool_root().join("examples/instagram-uhura");
+        let snapshot = crate::source::capture_project_snapshot(&root);
+        let first = super::build_candidate(&snapshot, 1);
+        let second = super::build_candidate(&snapshot, 9);
+
+        assert!(first.summary().editor_current);
+        assert!(first.summary().play_ok);
+        assert_eq!(
+            first.source_fingerprint(),
+            snapshot.fingerprint(),
+            "the candidate retains the identity of the bytes it consumed",
+        );
+        assert_eq!(first.source_id(), snapshot.fingerprint().stable_id());
+        assert_eq!(
+            first.source_id(),
+            second.source_id(),
+            "publication revision is deliberately outside source identity",
+        );
+
+        let diagnostics = first.diagnostics();
+        assert_eq!(diagnostics.editor, &serde_json::Value::Null);
+        assert_eq!(diagnostics.play, &serde_json::Value::Null);
+    }
+
+    #[test]
+    fn rejected_candidate_exposes_both_standard_diagnostics_envelopes() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "uhura-candidate-diagnostics-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let snapshot = crate::source::capture_project_snapshot(&root);
+        let candidate = super::build_candidate(&snapshot, 1);
+        let summary = candidate.summary();
+        let diagnostics = candidate.diagnostics();
+
+        assert!(!summary.editor_current);
+        assert!(!summary.play_ok);
+        for envelope in [diagnostics.editor, diagnostics.play] {
+            assert_eq!(envelope["format"], "uhura-diagnostics");
+            assert_eq!(envelope["version"], 0);
+            assert!(envelope["summary"]["errors"].as_u64().unwrap() > 0);
+            assert!(!envelope["diagnostics"].as_array().unwrap().is_empty());
+        }
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
