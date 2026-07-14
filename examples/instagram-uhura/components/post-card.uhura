@@ -1,8 +1,11 @@
+//! Shared post presentation for the Instagram example.
+/// Presents one post and its primary interactions.
 component post-card
 
 use port feed { type post-summary }
 
 props {
+  /// The post projection rendered by this card.
   post: post-summary
   liked: bool
   like-pending: bool
@@ -19,6 +22,7 @@ emits {
   post-tapped(post: id)
 }
 
+<!-- @doc The complete post-card canvas occurrence. -->
 <view class="post-card">
   <region label="View profile" on:activate={emit author-tapped(user: post.author.id)}>
     <view class="author-row">

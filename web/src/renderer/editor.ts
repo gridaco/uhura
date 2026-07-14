@@ -1,6 +1,12 @@
 import { createEditorAssets } from "./assets.js";
 import type { EditorAssetTable } from "./assets.js";
-import type { EditorNode, RendererNode } from "./contracts.js";
+import type {
+  EditorNode,
+  EditorNodeRealization,
+  EditorRealizationObserver,
+  EditorRenderRoot,
+  RendererNode,
+} from "./contracts.js";
 import type { IconTable } from "./icons.js";
 import { createSemanticRenderer } from "./reconciler.js";
 
@@ -15,6 +21,11 @@ export interface EditorRealizeOptions {
   parentIsList?: boolean;
 }
 
+export interface EditorRealizeRootOptions extends EditorRealizeOptions {
+  root: EditorRenderRoot;
+  observe?: EditorRealizationObserver;
+}
+
 export interface EditorRenderer {
   /** Replaces the host with a fresh, inert realization of semantic nodes. */
   realize(
@@ -22,6 +33,16 @@ export interface EditorRenderer {
     nodes: EditorNode[],
     options?: EditorRealizeOptions,
   ): void;
+  /**
+   * Replaces the host with one semantic root and reports every realized node.
+   * Results and callbacks are pre-order and are published only after the full
+   * tree has been mounted. The renderer retains no element references.
+   */
+  realizeRoot(
+    host: HTMLElement,
+    node: EditorNode,
+    options: EditorRealizeRootOptions,
+  ): readonly EditorNodeRealization[];
 }
 
 function browserDocument(injected: Document | undefined): Document {
@@ -58,6 +79,28 @@ export function createEditorRenderer(options: EditorRendererOptions): EditorRend
         realizeOptions.parentIsList ?? false,
       );
     },
+    realizeRoot(host, node, realizeOptions) {
+      // Collect while building, but do not publish partially applied or
+      // detached elements to Editor registry owners.
+      const pending: { path: readonly number[]; element: HTMLElement }[] = [];
+      host.replaceChildren();
+      host.inert = true;
+      renderer.realizeRoot(
+        host,
+        node as RendererNode,
+        realizeOptions.scope ?? "editor",
+        realizeOptions.parentIsList ?? false,
+        (realization) => pending.push(realization),
+      );
+
+      const realizations = pending.map<EditorNodeRealization>(({ path, element }) => ({
+        root: realizeOptions.root,
+        path,
+        element,
+      }));
+      for (const realization of realizations) realizeOptions.observe?.(realization);
+      return realizations;
+    },
   };
 }
 
@@ -68,4 +111,11 @@ export type {
   IconCommand,
   IconPaint,
 } from "./icons.js";
-export type { EditorNode } from "./contracts.js";
+export type {
+  EditorNode,
+  EditorNodeRealization,
+  EditorRealizationObserver,
+  EditorRenderNodeRef,
+  EditorRenderRoot,
+  SemanticNodePath,
+} from "./contracts.js";

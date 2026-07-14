@@ -37,7 +37,7 @@ fn sync_to(s: &mut DslStream, targets: &[&str]) {
 
 // ── header declarations ─────────────────────────────────────────────────────
 
-pub fn parse_use(s: &mut DslStream) -> Option<Use> {
+pub fn parse_use(s: &mut DslStream, file_preamble: bool) -> Option<Use> {
     let leading = s.take_leading();
     let start = s.peek_span();
     if !s.eat_ident("use") {
@@ -48,7 +48,7 @@ pub fn parse_use(s: &mut DslStream) -> Option<Use> {
         sync_to(s, &["use", "props", "emits", "param", "store", "example"]);
         return None;
     };
-    match kind.as_str() {
+    let parsed = match kind.as_str() {
         "component" => {
             let (name, nspan) = s.expect_ident("as the component name")?;
             Some(Use::Component {
@@ -136,31 +136,53 @@ pub fn parse_use(s: &mut DslStream) -> Option<Use> {
             sync_to(s, &["use", "props", "emits", "param", "store"]);
             None
         }
+    };
+    if let Some(use_decl) = &parsed {
+        let (span, leading) = match use_decl {
+            Use::Component { span, leading, .. }
+            | Use::Surface { span, leading, .. }
+            | Use::Port { span, leading, .. }
+            | Use::Fixture { span, leading, .. } => (*span, leading),
+        };
+        if file_preamble {
+            s.accept_file_docs_only(leading, span);
+        } else {
+            s.reject_docs(leading, span);
+        }
     }
+    parsed
 }
 
 /// `props { name: type, … }` — brace block of typed names.
-pub fn parse_props_block(s: &mut DslStream) -> Vec<PropDecl> {
-    parse_typed_block(s, "props")
-        .into_iter()
-        .map(|(name, ty, span, leading)| PropDecl {
-            name,
-            ty,
-            span,
-            leading,
-        })
-        .collect()
+pub fn parse_props_block(s: &mut DslStream) -> (Vec<PropDecl>, DslTrivia) {
+    let (items, trailing) = parse_typed_block(s, "props");
+    (
+        items
+            .into_iter()
+            .map(|(name, ty, span, leading)| PropDecl {
+                name,
+                ty,
+                span,
+                leading,
+            })
+            .collect(),
+        trailing,
+    )
 }
 
 fn parse_typed_block(
     s: &mut DslStream,
     what: &str,
-) -> Vec<(String, TypeExpr, Span, Vec<crate::token::Comment>)> {
+) -> (Vec<(String, TypeExpr, Span, DslTrivia)>, DslTrivia) {
     let mut out = Vec::new();
+    let mut trailing = DslTrivia::default();
     s.expect(&T::LBrace, &format!("to open the `{what}` block"));
     loop {
         match s.peek() {
             T::RBrace => {
+                trailing = s.take_leading();
+                let boundary = s.peek_span();
+                s.reject_boundary_docs(&trailing, boundary);
                 s.bump();
                 break;
             }
@@ -178,20 +200,25 @@ fn parse_typed_block(
                 s.expect(&T::Colon, "before the type");
                 let ty = parse_type(s);
                 let span = start.to(ty.span);
+                s.accept_outer_docs(&leading, span);
                 out.push((name, ty, span, leading));
             }
         }
     }
-    out
+    (out, trailing)
 }
 
 /// `emits { name(field: type, …), … }`
-pub fn parse_emits_block(s: &mut DslStream) -> Vec<EmitDecl> {
+pub fn parse_emits_block(s: &mut DslStream) -> (Vec<EmitDecl>, DslTrivia) {
     let mut out = Vec::new();
+    let mut trailing = DslTrivia::default();
     s.expect(&T::LBrace, "to open the `emits` block");
     loop {
         match s.peek() {
             T::RBrace => {
+                trailing = s.take_leading();
+                let boundary = s.peek_span();
+                s.reject_boundary_docs(&trailing, boundary);
                 s.bump();
                 break;
             }
@@ -207,34 +234,58 @@ pub fn parse_emits_block(s: &mut DslStream) -> Vec<EmitDecl> {
                     break;
                 };
                 let mut params = Vec::new();
+                let mut params_trailing = DslTrivia::default();
                 if *s.peek() == T::LParen {
                     s.bump();
                     if *s.peek() != T::RParen {
                         loop {
+                            let param_leading = s.take_leading();
+                            if *s.peek() == T::RParen {
+                                params_trailing = param_leading;
+                                let boundary = s.peek_span();
+                                s.reject_boundary_docs(&params_trailing, boundary);
+                                break;
+                            }
+                            let pstart = s.peek_span();
                             let Some((pname, _)) = s.expect_ident("as a payload field name") else {
                                 break;
                             };
                             s.expect(&T::Colon, "before the field type");
                             let ty = parse_type(s);
-                            params.push((pname, ty));
+                            let pspan = pstart.to(ty.span);
+                            s.accept_outer_docs(&param_leading, pspan);
+                            params.push(EmitParam {
+                                name: pname,
+                                ty,
+                                span: pspan,
+                                leading: param_leading,
+                            });
                             if !s.eat(&T::Comma) {
                                 break;
                             }
                         }
                     }
+                    if params_trailing.is_empty() {
+                        params_trailing = s.take_leading();
+                        let boundary = s.peek_span();
+                        s.reject_boundary_docs(&params_trailing, boundary);
+                    }
                     end = s.peek_span();
                     s.expect(&T::RParen, "to close the emit payload");
                 }
+                let span = start.to(end);
+                s.accept_outer_docs(&leading, span);
                 out.push(EmitDecl {
                     name,
                     params,
-                    span: start.to(end),
+                    params_trailing,
+                    span,
                     leading,
                 });
             }
         }
     }
-    out
+    (out, trailing)
 }
 
 /// `param user: id`
@@ -248,6 +299,7 @@ pub fn parse_param(s: &mut DslStream) -> Option<ParamDecl> {
     s.expect(&T::Colon, "before the parameter type");
     let ty = parse_type(s);
     let span = start.to(ty.span);
+    s.accept_outer_docs(&leading, span);
     Some(ParamDecl {
         name,
         ty,
@@ -264,11 +316,19 @@ pub fn parse_store(s: &mut DslStream) -> Store {
     s.eat_ident("store");
     s.expect(&T::LBrace, "to open the store block");
     let mut state = Vec::new();
+    let mut state_present = false;
     let mut handlers = Vec::new();
+    let mut state_leading = DslTrivia::default();
+    let mut state_trailing = DslTrivia::default();
+    let mut trailing = DslTrivia::default();
+    let mut end = start;
     loop {
         match s.peek().clone() {
             T::RBrace => {
-                s.bump();
+                trailing = s.take_leading();
+                let boundary = s.peek_span();
+                s.reject_boundary_docs(&trailing, boundary);
+                end = s.bump().span;
                 break;
             }
             T::Eof => {
@@ -278,8 +338,12 @@ pub fn parse_store(s: &mut DslStream) -> Store {
                 break;
             }
             T::Ident(k) if k == "state" => {
+                state_present = true;
+                state_leading = s.take_leading();
+                let target = s.peek_span();
+                s.reject_docs(&state_leading, target);
                 s.bump();
-                parse_state_block(s, &mut state);
+                state_trailing = parse_state_block(s, &mut state);
             }
             T::Ident(k) if k == "on" => {
                 if let Some(h) = parse_handler(s) {
@@ -298,20 +362,29 @@ pub fn parse_store(s: &mut DslStream) -> Store {
             }
         }
     }
-    let span = start.to(s.peek_span());
+    let span = start.to(end);
+    s.accept_outer_docs(&leading, span);
     Store {
+        state_present,
         state,
         handlers,
+        state_leading,
+        state_trailing,
+        trailing,
         span,
         leading,
     }
 }
 
-fn parse_state_block(s: &mut DslStream, out: &mut Vec<StateField>) {
+fn parse_state_block(s: &mut DslStream, out: &mut Vec<StateField>) -> DslTrivia {
+    let mut trailing = DslTrivia::default();
     s.expect(&T::LBrace, "to open the state block");
     loop {
         match s.peek() {
             T::RBrace => {
+                trailing = s.take_leading();
+                let boundary = s.peek_span();
+                s.reject_boundary_docs(&trailing, boundary);
                 s.bump();
                 break;
             }
@@ -333,16 +406,19 @@ fn parse_state_block(s: &mut DslStream, out: &mut Vec<StateField>) {
                     "before the initial value (state initializers are literals)",
                 );
                 let (init, end) = parse_literal(s);
+                let span = start.to(end);
+                s.accept_outer_docs(&leading, span);
                 out.push(StateField {
                     name,
                     ty,
                     init,
-                    span: start.to(end),
+                    span,
                     leading,
                 });
             }
         }
     }
+    trailing
 }
 
 fn parse_literal(s: &mut DslStream) -> (Literal, Span) {
@@ -458,10 +534,18 @@ fn parse_handler(s: &mut DslStream) -> Option<Handler> {
     // Parameter list: UI events declare `name: type`; outcome handlers are
     // name-only.
     let mut params = Vec::new();
+    let mut params_trailing = DslTrivia::default();
     if *s.peek() == T::LParen {
         s.bump();
         if *s.peek() != T::RParen {
             loop {
+                let param_leading = s.take_leading();
+                if *s.peek() == T::RParen {
+                    params_trailing = param_leading;
+                    let boundary = s.peek_span();
+                    s.reject_boundary_docs(&params_trailing, boundary);
+                    break;
+                }
                 let pstart = s.peek_span();
                 let Some((pname, pspan)) = s.expect_ident("as a handler parameter") else {
                     break;
@@ -472,15 +556,22 @@ fn parse_handler(s: &mut DslStream) -> Option<Handler> {
                     None
                 };
                 let span = ty.as_ref().map_or(pspan, |t| pstart.to(t.span));
+                s.accept_outer_docs(&param_leading, span);
                 params.push(HandlerParam {
                     name: pname,
                     ty,
                     span,
+                    leading: param_leading,
                 });
                 if !s.eat(&T::Comma) {
                     break;
                 }
             }
+        }
+        if params_trailing.is_empty() {
+            params_trailing = s.take_leading();
+            let boundary = s.peek_span();
+            s.reject_boundary_docs(&params_trailing, boundary);
         }
         s.expect(&T::RParen, "to close the handler parameters");
     }
@@ -493,10 +584,15 @@ fn parse_handler(s: &mut DslStream) -> Option<Handler> {
 
     s.expect(&T::LBrace, "to open the handler body");
     let mut body = Vec::new();
+    let mut body_trailing = DslTrivia::default();
+    let mut end = start;
     loop {
         match s.peek().clone() {
             T::RBrace => {
-                s.bump();
+                body_trailing = s.take_leading();
+                let boundary = s.peek_span();
+                s.reject_boundary_docs(&body_trailing, boundary);
+                end = s.bump().span;
                 break;
             }
             T::Eof => {
@@ -523,12 +619,15 @@ fn parse_handler(s: &mut DslStream) -> Option<Handler> {
             },
         }
     }
-    let span = start.to(s.peek_span());
+    let span = start.to(end);
+    s.accept_outer_docs(&leading, span);
     Some(Handler {
         event,
         params,
+        params_trailing,
         guard,
         body,
+        body_trailing,
         span,
         leading,
     })
@@ -547,7 +646,7 @@ fn parse_stmt(s: &mut DslStream) -> Option<Stmt> {
         );
         return None;
     };
-    match kw.as_str() {
+    let parsed = match kw.as_str() {
         "set" => {
             s.bump();
             let (field, fspan) = s.expect_ident("as the state field")?;
@@ -615,37 +714,38 @@ fn parse_stmt(s: &mut DslStream) -> Option<Stmt> {
             let (mut target_name, tspan) =
                 s.expect_ident("as a route name, `replace`, or `back`")?;
             if target_name == "back" {
-                return Some(Stmt::Navigate {
+                Some(Stmt::Navigate {
                     target: NavTarget::Back,
                     span: start.to(tspan),
                     leading,
-                });
-            }
-            let replace = target_name == "replace";
-            if replace {
-                (target_name, _) = s.expect_ident("as the route name after `replace`")?;
-            }
-            let args = if *s.peek() == T::LParen {
-                parse_args(s)
+                })
             } else {
-                Vec::new()
-            };
-            let span = start.to(s.peek_span());
-            Some(Stmt::Navigate {
-                target: if replace {
-                    NavTarget::Replace {
-                        name: target_name,
-                        args,
-                    }
+                let replace = target_name == "replace";
+                if replace {
+                    (target_name, _) = s.expect_ident("as the route name after `replace`")?;
+                }
+                let args = if *s.peek() == T::LParen {
+                    parse_args(s)
                 } else {
-                    NavTarget::Route {
-                        name: target_name,
-                        args,
-                    }
-                },
-                span,
-                leading,
-            })
+                    Vec::new()
+                };
+                let span = start.to(s.peek_span());
+                Some(Stmt::Navigate {
+                    target: if replace {
+                        NavTarget::Replace {
+                            name: target_name,
+                            args,
+                        }
+                    } else {
+                        NavTarget::Route {
+                            name: target_name,
+                            args,
+                        }
+                    },
+                    span,
+                    leading,
+                })
+            }
         }
         other => {
             s.cur.error(
@@ -658,5 +758,27 @@ fn parse_stmt(s: &mut DslStream) -> Option<Stmt> {
             );
             None
         }
+    };
+    if let Some(stmt) = &parsed {
+        let span = match stmt {
+            Stmt::Set { span, .. }
+            | Stmt::Send { span, .. }
+            | Stmt::OpenSurface { span, .. }
+            | Stmt::Dismiss { span, .. }
+            | Stmt::Navigate { span, .. }
+            | Stmt::Error { span } => *span,
+        };
+        let leading = match stmt {
+            Stmt::Set { leading, .. }
+            | Stmt::Send { leading, .. }
+            | Stmt::OpenSurface { leading, .. }
+            | Stmt::Dismiss { leading, .. }
+            | Stmt::Navigate { leading, .. } => Some(leading),
+            Stmt::Error { .. } => None,
+        };
+        if let Some(leading) = leading {
+            s.reject_docs(leading, span);
+        }
     }
+    parsed
 }

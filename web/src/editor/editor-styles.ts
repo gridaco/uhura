@@ -158,6 +158,75 @@ export const EDITOR_STYLES = `
   .editor-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .editor-board { position: absolute; transform-origin: 0 0; padding: 46px 40px 120px; }
 
+  .annotation-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .annotation-leaders, .annotation-controls { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; pointer-events: none; }
+  .annotation-leaders { overflow: visible; }
+  .annotation-leaders line { stroke: rgb(77 61 145 / 65%); stroke-width: 1.25; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+  .annotation-leaders line.is-active { stroke: #4c3cb3; stroke-width: 1.75; }
+  .annotation-highlight { fill: rgb(101 84 192 / 10%); stroke: #6554c0; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .annotation-highlight.is-preview-active { fill: rgb(101 84 192 / 15%); stroke-width: 2; }
+  .annotation-highlight.is-active { fill: rgb(76 60 179 / 20%); stroke: #4c3cb3; stroke-width: 2.5; }
+  .annotation-marker, .annotation-card { position: absolute; inset: 0 auto auto 0; }
+  .annotation-marker {
+    inline-size: 22px;
+    block-size: 22px;
+    margin: -11px 0 0 -11px;
+    padding: 0;
+    border: 2px solid #fff;
+    border-radius: 999px;
+    color: #fff;
+    background: #6554c0;
+    box-shadow: 0 2px 8px rgb(30 27 75 / 32%);
+    font-size: 10px;
+    font-weight: 750;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .annotation-marker:focus-visible { outline: 2px solid #312e81; outline-offset: 2px; }
+  .annotation-marker.is-preview-active { box-shadow: 0 0 0 3px rgb(101 84 192 / 28%), 0 2px 8px rgb(30 27 75 / 38%); }
+  .annotation-marker.is-active { background: #4c3cb3; box-shadow: 0 0 0 4px rgb(101 84 192 / 38%), 0 3px 10px rgb(30 27 75 / 44%); }
+  .annotation-card {
+    inline-size: 260px;
+    max-block-size: min(320px, calc(100% - 24px));
+    overflow: auto;
+    padding: 11px;
+    border: 1px solid #d8d2f2;
+    border-radius: 9px;
+    color: #312e46;
+    background: rgb(255 255 255 / 98%);
+    box-shadow: 0 10px 28px rgb(30 27 75 / 18%);
+    pointer-events: none;
+    user-select: none;
+  }
+  .annotation-card button { pointer-events: auto; }
+  .annotation-card.is-gutter { border-color: #bbb2e7; }
+  .annotation-card.is-revealed { border-color: #a99ee0; }
+  .annotation-card-heading, .source-entry-heading, .source-drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .annotation-card-heading strong { flex: 1; min-inline-size: 0; color: #706985; font-size: 9px; font-weight: 650; overflow-wrap: anywhere; }
+  .annotation-card-heading .source-location { flex: 0 1 150px; max-inline-size: 150px; }
+  .annotation-entry-list { display: grid; gap: 8px; margin: 9px 0 0; padding: 0; list-style: none; }
+  .annotation-entry { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 7px; }
+  .annotation-kind { padding: 2px 5px; border-radius: 999px; color: #5543a5; background: #eeebff; font: 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .annotation-text { margin: 0 !important; color: inherit !important; font-size: 13px !important; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .source-entry-heading { display: grid; justify-content: stretch; }
+  .source-entry-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 5px; min-inline-size: 0; inline-size: 100%; }
+  .source-entry-actions .source-location { flex: 1 1 180px; }
+  .source-target-select, .source-location { padding: 3px 6px; border: 1px solid #ddd9ee; border-radius: 5px; color: #5543a5; background: #fff; font-size: 8px; cursor: pointer; }
+  .source-target-select { font-weight: 700; }
+  .source-location { position: relative; max-inline-size: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: copy; }
+  .source-location::after { content: "Copy"; position: absolute; inset: 0; display: grid; place-items: center; border-radius: inherit; color: #fff; background: #6554c0; opacity: 0; transition: opacity .12s ease; }
+  .source-location:not(:disabled):is(:hover, :focus-visible)::after { opacity: 1; }
+  .source-location:disabled { color: #9a93a8; background: #f4f2f6; cursor: not-allowed; }
+  .source-target-select:disabled { color: #9a93a8; background: #f4f2f6; cursor: not-allowed; }
+  .annotation-overlay.is-stale .annotation-marker { background: #756c82; }
+  .annotation-overlay.is-stale .annotation-card { border-style: dashed; filter: saturate(.65); }
+
   .canvas-tools {
     position: absolute;
     inset: auto auto 18px 50%;
@@ -239,6 +308,13 @@ export const EDITOR_STYLES = `
   .inspector-block { margin-block-start: 18px; }
   .inspector-block h3 { margin: 0 0 8px; color: #59616c; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
   .inspector-block p { color: #626c78; font-size: 11px; overflow-wrap: anywhere; }
+  .selection-documentation:has(> .selection-documentation-content[hidden]) { display: none; }
+  .selection-documentation-content { display: grid; gap: 10px; }
+  .source-entry { padding: 10px; border: 1px solid #e6e3ef; border-radius: 8px; background: #fcfbff; }
+  .source-entry + .source-entry { margin-block-start: 9px; }
+  .source-entry h3, .source-entry h4 { margin: 0; color: #6b6576; font-size: 9px; font-weight: 650; overflow-wrap: anywhere; }
+  .source-doc-text { margin: 7px 0 0 !important; color: #37323f !important; font-size: 13px !important; line-height: 1.55; white-space: pre-wrap; }
+  .source-render-status { margin: 8px 0 0 !important; color: #81798d !important; font-size: 8px !important; }
   .inspector-block-intro { margin: -3px 0 10px; color: #68717d; }
   .preview-data-group + .preview-data-group { margin-block-start: 14px; }
   .preview-data-group h4 { margin: 0 0 4px; color: #68717d; font-size: 11px; font-weight: 650; }
@@ -254,6 +330,31 @@ export const EDITOR_STYLES = `
   .interaction-list li { padding: 8px 9px; border: 1px solid #d9e8f4; border-radius: 7px; color: #315a75; background: #f4faff; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
   .inspector-muted { color: var(--faint) !important; font-style: italic; }
   .visually-hidden { position: absolute !important; inline-size: 1px !important; block-size: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; border: 0 !important; }
+
+  .editor-source-drawer {
+    position: absolute;
+    inset: 12px 12px 12px auto;
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    inline-size: min(360px, calc(100% - 24px));
+    min-block-size: 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgb(255 255 255 / 98%);
+    box-shadow: 0 16px 44px rgb(31 41 55 / 24%);
+    backdrop-filter: blur(14px);
+  }
+  .source-drawer-heading { flex: none; padding: 12px 12px 10px; border-block-end: 1px solid var(--border); }
+  .source-drawer-heading > div { display: flex; flex-direction: column; }
+  .source-drawer-heading strong { font-size: 13px; }
+  .source-drawer-heading span { color: var(--faint); font-size: 10px; }
+  .source-panel { min-block-size: 0; overflow-y: auto; padding: 12px; user-select: text; }
+  .source-owner-group + .source-owner-group { margin-block-start: 18px; }
+  .source-owner-heading { margin-block-end: 8px; padding-block-end: 7px; border-block-end: 1px solid var(--border); }
+  .source-owner-heading h2 { margin: 2px 0 0; color: #514b59; font-size: 11px; overflow-wrap: anywhere; }
+  .source-owner-kind { color: #786ea0; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .source-panel.is-stale::before { content: "Stale render — source actions are unavailable"; display: block; margin-block-end: 10px; padding: 7px 8px; border-radius: 6px; color: #6e5a2d; background: #fff7df; font-size: 10px; }
 
   .editor-status {
     position: absolute;
@@ -288,7 +389,9 @@ export const EDITOR_STYLES = `
 
   .uhura-editor.ui-hidden .editor-navigator,
   .uhura-editor.ui-hidden .editor-inspector,
+  .uhura-editor.ui-hidden .editor-source-drawer,
   .uhura-editor.ui-hidden .canvas-tools,
+  .uhura-editor.ui-hidden .annotation-overlay,
   .uhura-editor.ui-hidden .ruler-corner,
   .uhura-editor.ui-hidden .canvas-ruler { display: none; }
   .uhura-editor.ui-hidden .editor-stage { inset-inline: 0; }

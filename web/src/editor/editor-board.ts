@@ -6,17 +6,30 @@ import {
   type PreviewIdentity,
   semanticPreviewKey,
 } from "./editor-state.js";
+import { prepareAuthoring, type PreparedAuthoring } from "./editor-authoring.js";
+import {
+  RealizationResources,
+  type RealizationOwner,
+} from "./editor-realization.js";
 import { preparePreviewStylesheet } from "./editor-styles.js";
-import { reusablePreviewIds } from "./editor-updates.js";
+import {
+  reusablePreviewFrameIds,
+  reusablePreviewIds,
+} from "./editor-updates.js";
 
 export interface PreparedEditorModel {
   board: HTMLElement;
   navigator: DocumentFragment;
   frameById: Map<string, HTMLElement>;
+  shadowHostById: Map<string, HTMLElement>;
+  resourcesByPreviewId: Map<string, RealizationResources>;
+  resourceOwner: RealizationOwner;
   previewById: Map<string, EditorPreview>;
   previewIdByIdentity: Map<string, string>;
+  authoring: PreparedAuthoring;
   render: EditorRender | null;
   stylesheet: CSSStyleSheet | null;
+  reusableRealizationIds: ReadonlySet<string>;
   reusableFrameIds: ReadonlySet<string>;
 }
 
@@ -47,6 +60,7 @@ const realizePreview = (
   render: EditorRender,
   stylesheet: CSSStyleSheet,
   host: HTMLElement,
+  resources: RealizationResources,
 ): void => {
   const shadow = host.attachShadow({ mode: "open" });
   shadow.adoptedStyleSheets = [stylesheet];
@@ -62,11 +76,13 @@ const realizePreview = (
     assets: render.assets,
   });
   if (isSnapshot(preview.content)) {
-    renderer.realize(wrapper, [preview.content.page.root], {
+    renderer.realizeRoot(wrapper, preview.content.page.root, {
+      root: { kind: "page" },
       scope: `${preview.id}:page`,
       parentIsList: false,
+      observe: (realization) => resources.register(realization),
     });
-    for (const [index, surface] of preview.content.surfaces.entries()) {
+    for (const surface of preview.content.surfaces) {
       const overlay = element(document, "div", "uh-surface-overlay");
       const scrim = element(document, "div", "uh-scrim");
       const surfaceHost = element(
@@ -76,17 +92,21 @@ const realizePreview = (
       );
       surfaceHost.setAttribute("role", "dialog");
       surfaceHost.setAttribute("aria-modal", "true");
-      renderer.realize(surfaceHost, [surface.root], {
-        scope: `${preview.id}:surface:${index}`,
+      renderer.realizeRoot(surfaceHost, surface.root, {
+        root: { kind: "surface", key: surface.key },
+        scope: `${preview.id}:surface:${surface.key}`,
         parentIsList: false,
+        observe: (realization) => resources.register(realization),
       });
       overlay.append(scrim, surfaceHost);
       wrapper.append(overlay);
     }
   } else {
-    renderer.realize(wrapper, [preview.content], {
+    renderer.realizeRoot(wrapper, preview.content, {
+      root: { kind: "fragment" },
       scope: `${preview.id}:fragment`,
       parentIsList: false,
+      observe: (realization) => resources.register(realization),
     });
   }
   application.append(wrapper);
@@ -99,12 +119,19 @@ const badge = (
   text: string,
 ): HTMLSpanElement => element(document, "span", `badge ${className}`, text);
 
+interface PreparedFrame {
+  frame: HTMLElement;
+  shadowHost: HTMLElement;
+}
+
 const frame = (
   document: Document,
   preview: EditorPreview,
   render: EditorRender,
   stylesheet: CSSStyleSheet,
-): HTMLElement => {
+  resources: RealizationResources,
+  realize: boolean,
+): PreparedFrame => {
   const figure = element(document, "figure", "editor-frame");
   figure.dataset.previewId = preview.id;
   figure.tabIndex = 0;
@@ -119,7 +146,7 @@ const frame = (
   const shell = element(document, "div", `preview-shell ${shellClass}`);
   const shadowHost = element(document, "div", "preview-shadow-host");
   shell.append(shadowHost);
-  realizePreview(document, preview, render, stylesheet, shadowHost);
+  if (realize) realizePreview(document, preview, render, stylesheet, shadowHost, resources);
 
   const caption = element(document, "figcaption");
   const captionId = `caption-${preview.id}`;
@@ -139,13 +166,7 @@ const frame = (
   caption.append(element(document, "span", "caption-prov", provenance(preview)));
   if (preview.note) caption.append(element(document, "p", "caption-note", preview.note));
   figure.append(shell, caption);
-  return figure;
-};
-
-const framePlaceholder = (document: Document, preview: EditorPreview): HTMLElement => {
-  const placeholder = element(document, "figure", "editor-frame-placeholder");
-  placeholder.dataset.previewId = preview.id;
-  return placeholder;
+  return { frame: figure, shadowHost };
 };
 
 const navigatorGroup = (
@@ -205,8 +226,12 @@ export const prepareEditorModel = (
   const board = element(document, "div", "editor-board");
   const navigator = document.createDocumentFragment();
   const frameById = new Map<string, HTMLElement>();
+  const shadowHostById = new Map<string, HTMLElement>();
+  const resourcesByPreviewId = new Map<string, RealizationResources>();
+  const resourceOwner = {};
   const previewById = new Map<string, EditorPreview>();
   const previewIdByIdentity = new Map<string, string>();
+  const authoring = prepareAuthoring(render);
 
   if (!render) {
     const empty = element(document, "section", "empty-board");
@@ -219,10 +244,15 @@ export const prepareEditorModel = (
       board,
       navigator,
       frameById,
+      shadowHostById,
+      resourcesByPreviewId,
+      resourceOwner,
       previewById,
       previewIdByIdentity,
+      authoring,
       render,
       stylesheet: null,
+      reusableRealizationIds: new Set(),
       reusableFrameIds: new Set(),
     };
   }
@@ -230,8 +260,12 @@ export const prepareEditorModel = (
   const stylesheet = previous?.render?.stylesheet === render.stylesheet
     ? previous.stylesheet ?? preparePreviewStylesheet(document, render.stylesheet)
     : preparePreviewStylesheet(document, render.stylesheet);
-  const reusableFrameIds = new Set(
+  const reusableRealizationIds = new Set(
     [...reusablePreviewIds(previous?.render ?? null, render)].filter((id) =>
+      previous?.frameById.has(id) ?? false),
+  );
+  const reusableFrameIds = new Set(
+    [...reusablePreviewFrameIds(previous?.render ?? null, render)].filter((id) =>
       previous?.frameById.has(id) ?? false),
   );
 
@@ -239,55 +273,81 @@ export const prepareEditorModel = (
     previewById.set(preview.id, preview);
     previewIdByIdentity.set(semanticPreviewKey(preview.identity), preview.id);
   }
-  for (const group of render.groups) {
-    const previews = group.previews.map((id) => previewById.get(id));
-    if (previews.some((preview) => preview === undefined)) {
-      // The decoder already enforces this. Keep the preparation boundary
-      // independently total in case a typed caller bypasses JSON decoding.
-      throw new Error(`Editor group ${group.id} refers to an unknown preview`);
+  try {
+    for (const group of render.groups) {
+      const previews = group.previews.map((id) => previewById.get(id));
+      if (previews.some((preview) => preview === undefined)) {
+        // The decoder already enforces this. Keep the preparation boundary
+        // independently total in case a typed caller bypasses JSON decoding.
+        throw new Error(`Editor group ${group.id} refers to an unknown preview`);
+      }
+      const typedPreviews = previews as EditorPreview[];
+      const row = element(document, "section", "preview-row");
+      row.dataset.groupId = group.id;
+      row.append(element(
+        document,
+        "h2",
+        "row-title",
+        `${group.kind} ${group.subject}`,
+      ));
+      const frames = element(document, "div", "row-frames");
+      for (const preview of typedPreviews) {
+        const resources = new RealizationResources();
+        resources.claim(resourceOwner);
+        resourcesByPreviewId.set(preview.id, resources);
+        const prepared = frame(
+          document,
+          preview,
+          render,
+          stylesheet,
+          resources,
+          !reusableRealizationIds.has(preview.id),
+        );
+        frameById.set(preview.id, prepared.frame);
+        shadowHostById.set(preview.id, prepared.shadowHost);
+        frames.append(prepared.frame);
+      }
+      row.append(frames);
+      board.append(row);
+      navigator.append(navigatorGroup(document, group, typedPreviews));
     }
-    const typedPreviews = previews as EditorPreview[];
-    const row = element(document, "section", "preview-row");
-    row.dataset.groupId = group.id;
-    row.append(element(
-      document,
-      "h2",
-      "row-title",
-      `${group.kind} ${group.subject}`,
-    ));
-    const frames = element(document, "div", "row-frames");
-    for (const preview of typedPreviews) {
-      const previewFrame = reusableFrameIds.has(preview.id)
-        ? framePlaceholder(document, preview)
-        : frame(document, preview, render, stylesheet);
-      frameById.set(preview.id, previewFrame);
-      frames.append(previewFrame);
-    }
-    row.append(frames);
-    board.append(row);
-    navigator.append(navigatorGroup(document, group, typedPreviews));
+  } catch (error) {
+    for (const resources of resourcesByPreviewId.values()) resources.release(resourceOwner);
+    throw error;
   }
 
   return {
     board,
     navigator,
     frameById,
+    shadowHostById,
+    resourcesByPreviewId,
+    resourceOwner,
     previewById,
     previewIdByIdentity,
+    authoring,
     render,
     stylesheet,
+    reusableRealizationIds,
     reusableFrameIds,
   };
 };
 
 interface FrameReplacement {
   id: string;
-  previous: HTMLElement;
-  candidate: HTMLElement;
+  previousFrame: HTMLElement;
+  candidateFrame: HTMLElement;
+  previousHost: HTMLElement;
+  candidateHost: HTMLElement;
   shadow: ShadowRoot;
-  parent: ParentNode;
+  moveWholeFrame: boolean;
+  previousNode: HTMLElement;
+  candidateNode: HTMLElement;
+  previousParent: ParentNode;
   nextSibling: ChildNode | null;
   stylesheets: CSSStyleSheet[];
+  previousResources: RealizationResources;
+  candidateResources: RealizationResources;
 }
 
 /**
@@ -299,31 +359,56 @@ export const reconcilePreparedEditorModel = (
   previous: PreparedEditorModel,
   next: PreparedEditorModel,
 ): void => {
-  if (next.reusableFrameIds.size === 0) return;
+  if (next.reusableRealizationIds.size === 0) return;
   if (!next.stylesheet) {
     throw new Error("A renderable Editor model must have a preview stylesheet");
   }
 
   // Validate the entire transplant before moving the first connected frame.
   const replacements: FrameReplacement[] = [];
-  for (const id of next.reusableFrameIds) {
+  for (const id of next.reusableRealizationIds) {
     const previousFrame = previous.frameById.get(id);
-    const candidate = next.frameById.get(id);
-    const shadow = previousFrame
-      ?.querySelector<HTMLElement>(".preview-shadow-host")
-      ?.shadowRoot;
-    const parent = previousFrame?.parentNode;
-    if (!previousFrame || !candidate || !shadow || !parent || !candidate.parentNode) {
+    const candidateFrame = next.frameById.get(id);
+    const previousHost = previous.shadowHostById.get(id);
+    const candidateHost = next.shadowHostById.get(id);
+    const shadow = previousHost?.shadowRoot;
+    const moveWholeFrame = next.reusableFrameIds.has(id);
+    const previousNode = moveWholeFrame ? previousFrame : previousHost;
+    const candidateNode = moveWholeFrame ? candidateFrame : candidateHost;
+    const previousParent = previousNode?.parentNode;
+    const previousResources = previous.resourcesByPreviewId.get(id);
+    const candidateResources = next.resourcesByPreviewId.get(id);
+    if (
+      !previousFrame
+      || !candidateFrame
+      || !previousHost
+      || !candidateHost
+      || !previousNode
+      || !candidateNode
+      || !shadow
+      || !previousParent
+      || !candidateNode.parentNode
+      || !previousResources
+      || !candidateResources
+      || !previousResources.canTransfer(previous.resourceOwner)
+    ) {
       throw new Error(`Reusable Editor preview ${id} has no realized frame`);
     }
     replacements.push({
       id,
-      previous: previousFrame,
-      candidate,
+      previousFrame,
+      candidateFrame,
+      previousHost,
+      candidateHost,
       shadow,
-      parent,
-      nextSibling: previousFrame.nextSibling,
+      moveWholeFrame,
+      previousNode,
+      candidateNode,
+      previousParent,
+      nextSibling: previousNode.nextSibling,
       stylesheets: [...shadow.adoptedStyleSheets],
+      previousResources,
+      candidateResources,
     });
   }
 
@@ -331,26 +416,59 @@ export const reconcilePreparedEditorModel = (
   try {
     for (const replacement of replacements) {
       moved.push(replacement);
-      replacement.candidate.replaceWith(replacement.previous);
+      replacement.candidateNode.replaceWith(replacement.previousNode);
       if (
         replacement.shadow.adoptedStyleSheets.length !== 1
         || replacement.shadow.adoptedStyleSheets[0] !== next.stylesheet
       ) {
         replacement.shadow.adoptedStyleSheets = [next.stylesheet];
       }
-      next.frameById.set(replacement.id, replacement.previous);
+      if (replacement.moveWholeFrame) {
+        next.frameById.set(replacement.id, replacement.previousFrame);
+      }
+      next.shadowHostById.set(replacement.id, replacement.previousHost);
     }
   } catch (error) {
     for (const replacement of moved.reverse()) {
-      replacement.previous.replaceWith(replacement.candidate);
-      const anchor = replacement.nextSibling?.parentNode === replacement.parent
+      replacement.previousNode.replaceWith(replacement.candidateNode);
+      const anchor = replacement.nextSibling?.parentNode === replacement.previousParent
         ? replacement.nextSibling
         : null;
-      replacement.parent.insertBefore(replacement.previous, anchor);
+      replacement.previousParent.insertBefore(replacement.previousNode, anchor);
       replacement.shadow.adoptedStyleSheets = replacement.stylesheets;
-      next.frameById.set(replacement.id, replacement.candidate);
+      if (replacement.moveWholeFrame) {
+        next.frameById.set(replacement.id, replacement.candidateFrame);
+      }
+      next.shadowHostById.set(replacement.id, replacement.candidateHost);
     }
     throw error;
+  }
+
+  // Resource transfer is infallible after the validation above and happens
+  // only after every DOM move succeeds, so rollback never revives a disposed
+  // candidate registry.
+  for (const replacement of replacements) {
+    replacement.previousResources.transfer(previous.resourceOwner, next.resourceOwner);
+    replacement.candidateResources.release(next.resourceOwner);
+    next.resourcesByPreviewId.set(replacement.id, replacement.previousResources);
+  }
+};
+
+export const watchPreparedEditorModel = (
+  model: PreparedEditorModel,
+  window: Window,
+  invalidate: () => void,
+): void => {
+  for (const [previewId, resources] of model.resourcesByPreviewId) {
+    const frame = model.frameById.get(previewId);
+    if (!frame) throw new Error(`Realized preview ${previewId} has no frame`);
+    resources.watch(model.resourceOwner, frame, window, invalidate);
+  }
+};
+
+export const disposePreparedEditorModel = (model: PreparedEditorModel): void => {
+  for (const resources of model.resourcesByPreviewId.values()) {
+    resources.release(model.resourceOwner);
   }
 };
 

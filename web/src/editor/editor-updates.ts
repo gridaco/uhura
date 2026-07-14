@@ -59,21 +59,43 @@ export const reusablePreviewIds = (
   const previousById = new Map(previous.previews.map((preview) => [preview.id, preview]));
   return new Set(next.previews.flatMap((preview) => {
     const candidate = previousById.get(preview.id);
-    return candidate && structurallyEqual(candidate, preview) ? [preview.id] : [];
+    return candidate && structurallyEqual(candidate.content, preview.content) ? [preview.id] : [];
   }));
 };
 
-/** True when a new state changes diagnostics/chrome but not the canvas model. */
-export const editorBoardUnchanged = (
+const framePresentation = (preview: EditorRender["previews"][number]): unknown => ({
+  id: preview.id,
+  identity: preview.identity,
+  default: preview.default,
+  pinned: preview.pinned,
+  derived: preview.derived,
+  inFlight: preview.inFlight,
+  note: preview.note,
+});
+
+/**
+ * Returns semantic previews whose complete Canvas frame can move unchanged.
+ *
+ * Documentation, provenance, data, interactions, and origin details are
+ * Inspector/overlay inputs. They deliberately do not invalidate a frame.
+ * Caption inputs do: when one changes, the ShadowRoot can still move through
+ * `reusablePreviewIds`, but the newly prepared frame supplies fresh chrome.
+ */
+export const reusablePreviewFrameIds = (
   previous: EditorRender | null,
   next: EditorRender | null,
-): boolean => {
-  if (!previous || !next) return previous === next;
-  return previous.stylesheet === next.stylesheet
-    && structurallyEqual(previous.groups, next.groups)
-    && structurallyEqual(previous.previews, next.previews)
-    && structurallyEqual(previous.icons, next.icons)
-    && structurallyEqual(previous.assets, next.assets);
+): ReadonlySet<string> => {
+  if (!previous || !next) return new Set();
+  const reusableRealizations = reusablePreviewIds(previous, next);
+  const previousById = new Map(previous.previews.map((preview) => [preview.id, preview]));
+  return new Set(next.previews.flatMap((preview) => {
+    const candidate = previousById.get(preview.id);
+    return candidate
+      && reusableRealizations.has(preview.id)
+      && structurallyEqual(framePresentation(candidate), framePresentation(preview))
+      ? [preview.id]
+      : [];
+  }));
 };
 
 /**

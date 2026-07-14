@@ -6,7 +6,7 @@ import type {
   VValue,
 } from "../protocol/types.js";
 
-export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/0" as const;
+export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/1" as const;
 export const EDITOR_EVENT_PROTOCOL = "uhura-editor-event/0" as const;
 
 export type PreviewKind = "page" | "surface" | "component";
@@ -67,6 +67,102 @@ export interface PreviewInteraction {
   carries: Record<string, string>;
 }
 
+export interface EditorSourcePosition {
+  line: number;
+  col: number;
+}
+
+export interface EditorSourceSpan {
+  offset: number;
+  len: number;
+  start: EditorSourcePosition;
+  end: EditorSourcePosition;
+}
+
+export type SourceTargetClass =
+  | "source-module"
+  | "component-declaration"
+  | "page-declaration"
+  | "surface-declaration"
+  | "prop-declaration"
+  | "emitted-event-declaration"
+  | "emitted-event-parameter"
+  | "route-parameter"
+  | "store-scope"
+  | "state-field"
+  | "event-handler"
+  | "outcome-handler"
+  | "handler-parameter"
+  | "example-declaration"
+  | "catalog-element"
+  | "component-invocation"
+  | "if-block"
+  | "each-block"
+  | "match-block";
+
+export type SourceTargetOwnerKind =
+  | "module"
+  | "examples"
+  | "component"
+  | "page"
+  | "surface";
+
+export interface SourceTargetOwner {
+  kind: SourceTargetOwnerKind;
+  name: string;
+}
+
+export interface SourceTarget {
+  id: string;
+  class: SourceTargetClass;
+  file: string;
+  span: EditorSourceSpan;
+  label: string;
+  owner: SourceTargetOwner;
+}
+
+export type SourceMetadataClass = "doc" | "annotation";
+
+export interface SourceMetadataEntry {
+  id: string;
+  class: SourceMetadataClass;
+  kind: string;
+  text: string;
+  span: EditorSourceSpan;
+  targetId: string;
+  order: number;
+}
+
+export interface AuthoringMetadata {
+  targets: SourceTarget[];
+  entries: SourceMetadataEntry[];
+}
+
+export interface PreviewDocumentation {
+  declarationDocId: string | null;
+  exampleDocId: string | null;
+}
+
+export type RenderRoot =
+  | { kind: "page" }
+  | { kind: "fragment" }
+  | { kind: "surface"; key: string };
+
+export interface RenderNodeRef {
+  root: RenderRoot;
+  path: number[];
+}
+
+export interface TargetOccurrence {
+  id: string;
+  targetId: string;
+  anchors: RenderNodeRef[];
+}
+
+export interface PreviewProvenance {
+  occurrences: TargetOccurrence[];
+}
+
 export interface EditorPreview {
   id: string;
   identity: PreviewIdentity;
@@ -78,6 +174,8 @@ export interface EditorPreview {
   note: string | null;
   data: PreviewDataField[];
   interactions: PreviewInteraction[];
+  documentation: PreviewDocumentation;
+  provenance: PreviewProvenance;
   content: Snapshot | VNode;
 }
 
@@ -118,6 +216,7 @@ export interface EditorRender {
   revision: number;
   freshness: PreviewFreshness;
   application: { name: string };
+  authoring: AuthoringMetadata;
   groups: PreviewGroup[];
   previews: EditorPreview[];
   stylesheet: string;
@@ -198,6 +297,13 @@ const positiveRevision = (value: unknown, path: string): number => {
   return value;
 };
 
+const positiveInteger = (value: unknown, path: string): number => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new EditorContractError(path, "a positive integer");
+  }
+  return value;
+};
+
 const nonNegativeInteger = (value: unknown, path: string): number => {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new EditorContractError(path, "a non-negative integer");
@@ -237,6 +343,178 @@ const jsonRecord = (value: unknown, path: string): Record<string, JsonValue> => 
 
 const previewKind = (value: unknown, path: string): PreviewKind =>
   oneOf(value, path, ["page", "surface", "component"]);
+
+const sourceTargetClasses = [
+  "source-module",
+  "component-declaration",
+  "page-declaration",
+  "surface-declaration",
+  "prop-declaration",
+  "emitted-event-declaration",
+  "emitted-event-parameter",
+  "route-parameter",
+  "store-scope",
+  "state-field",
+  "event-handler",
+  "outcome-handler",
+  "handler-parameter",
+  "example-declaration",
+  "catalog-element",
+  "component-invocation",
+  "if-block",
+  "each-block",
+  "match-block",
+] as const satisfies readonly SourceTargetClass[];
+
+const annotatableTargetClasses = new Set<SourceTargetClass>([
+  "catalog-element",
+  "component-invocation",
+  "if-block",
+  "each-block",
+  "match-block",
+]);
+
+const sourcePosition = (value: unknown, path: string): EditorSourcePosition => {
+  const object = record(value, path);
+  exact(object, path, ["line", "col"]);
+  return {
+    line: positiveInteger(object["line"], `${path}.line`),
+    col: positiveInteger(object["col"], `${path}.col`),
+  };
+};
+
+const sourceSpan = (value: unknown, path: string): EditorSourceSpan => {
+  const object = record(value, path);
+  exact(object, path, ["offset", "len", "start", "end"]);
+  const offset = nonNegativeInteger(object["offset"], `${path}.offset`);
+  const len = nonNegativeInteger(object["len"], `${path}.len`);
+  if (!Number.isSafeInteger(offset + len)) {
+    throw new EditorContractError(path, "a byte range within safe integer bounds");
+  }
+  const start = sourcePosition(object["start"], `${path}.start`);
+  const end = sourcePosition(object["end"], `${path}.end`);
+  const endBeforeStart = end.line < start.line
+    || (end.line === start.line && end.col < start.col);
+  const samePosition = start.line === end.line && start.col === end.col;
+  if (endBeforeStart || ((len === 0) !== samePosition)) {
+    throw new EditorContractError(path, "a consistent half-open source range");
+  }
+  return { offset, len, start, end };
+};
+
+const canonicalSourcePath = (value: unknown, path: string): string => {
+  const sourcePath = string(value, path);
+  if (
+    sourcePath.startsWith("/")
+    || sourcePath.includes("\\")
+    || sourcePath.split("/").some((part) => part === "" || part === "." || part === "..")
+  ) {
+    throw new EditorContractError(path, "a canonical project-relative source path");
+  }
+  return sourcePath;
+};
+
+const sourceTarget = (value: unknown, path: string): SourceTarget => {
+  const object = record(value, path);
+  exact(object, path, ["id", "class", "file", "span", "label", "owner"]);
+  const file = canonicalSourcePath(object["file"], `${path}.file`);
+  const owner = record(object["owner"], `${path}.owner`);
+  exact(owner, `${path}.owner`, ["kind", "name"]);
+  const ownerKind = oneOf(
+    owner["kind"],
+    `${path}.owner.kind`,
+    ["module", "examples", "component", "page", "surface"],
+  );
+  const ownerName = string(owner["name"], `${path}.owner.name`);
+  if ((ownerKind === "module" || ownerKind === "examples") && ownerName !== file) {
+    throw new EditorContractError(`${path}.owner.name`, `the source file ${JSON.stringify(file)}`);
+  }
+  return {
+    id: string(object["id"], `${path}.id`),
+    class: oneOf(object["class"], `${path}.class`, sourceTargetClasses),
+    file,
+    span: sourceSpan(object["span"], `${path}.span`),
+    label: string(object["label"], `${path}.label`),
+    owner: { kind: ownerKind, name: ownerName },
+  };
+};
+
+const sourceMetadataEntry = (value: unknown, path: string): SourceMetadataEntry => {
+  const object = record(value, path);
+  exact(object, path, ["id", "class", "kind", "text", "span", "targetId", "order"]);
+  const span = sourceSpan(object["span"], `${path}.span`);
+  if (span.len === 0) throw new EditorContractError(`${path}.span`, "a non-empty source range");
+  return {
+    id: string(object["id"], `${path}.id`),
+    class: oneOf(object["class"], `${path}.class`, ["doc", "annotation"]),
+    kind: string(object["kind"], `${path}.kind`),
+    text: string(object["text"], `${path}.text`),
+    span,
+    targetId: string(object["targetId"], `${path}.targetId`),
+    order: nonNegativeInteger(object["order"], `${path}.order`),
+  };
+};
+
+const authoringMetadata = (value: unknown, path: string): AuthoringMetadata => {
+  const object = record(value, path);
+  exact(object, path, ["targets", "entries"]);
+  return {
+    targets: array(object["targets"], `${path}.targets`).map((item, index) =>
+      sourceTarget(item, `${path}.targets[${index}]`)),
+    entries: array(object["entries"], `${path}.entries`).map((item, index) =>
+      sourceMetadataEntry(item, `${path}.entries[${index}]`)),
+  };
+};
+
+const previewDocumentation = (value: unknown, path: string): PreviewDocumentation => {
+  const object = record(value, path);
+  exact(object, path, ["declarationDocId", "exampleDocId"]);
+  return {
+    declarationDocId: nullableString(object["declarationDocId"], `${path}.declarationDocId`),
+    exampleDocId: nullableString(object["exampleDocId"], `${path}.exampleDocId`),
+  };
+};
+
+const renderRoot = (value: unknown, path: string): RenderRoot => {
+  const object = record(value, path);
+  const kind = oneOf(object["kind"], `${path}.kind`, ["page", "fragment", "surface"]);
+  if (kind === "surface") {
+    exact(object, path, ["kind", "key"]);
+    return { kind, key: string(object["key"], `${path}.key`) };
+  }
+  exact(object, path, ["kind"]);
+  return { kind };
+};
+
+const renderNodeRef = (value: unknown, path: string): RenderNodeRef => {
+  const object = record(value, path);
+  exact(object, path, ["root", "path"]);
+  return {
+    root: renderRoot(object["root"], `${path}.root`),
+    path: array(object["path"], `${path}.path`).map((item, index) =>
+      nonNegativeInteger(item, `${path}.path[${index}]`)),
+  };
+};
+
+const targetOccurrence = (value: unknown, path: string): TargetOccurrence => {
+  const object = record(value, path);
+  exact(object, path, ["id", "targetId", "anchors"]);
+  return {
+    id: string(object["id"], `${path}.id`),
+    targetId: string(object["targetId"], `${path}.targetId`),
+    anchors: array(object["anchors"], `${path}.anchors`).map((item, index) =>
+      renderNodeRef(item, `${path}.anchors[${index}]`)),
+  };
+};
+
+const previewProvenance = (value: unknown, path: string): PreviewProvenance => {
+  const object = record(value, path);
+  exact(object, path, ["occurrences"]);
+  return {
+    occurrences: array(object["occurrences"], `${path}.occurrences`).map((item, index) =>
+      targetOccurrence(item, `${path}.occurrences[${index}]`)),
+  };
+};
 
 const descriptor = (value: unknown, path: string): Descriptor => {
   const object = record(value, path);
@@ -432,7 +710,7 @@ const preview = (value: unknown, path: string): EditorPreview => {
   const object = record(value, path);
   exact(object, path, [
     "id", "identity", "default", "pinned", "derived", "inFlight", "from", "note",
-    "data", "interactions", "content",
+    "data", "interactions", "documentation", "provenance", "content",
   ]);
   const previewIdentity = identity(object["identity"], `${path}.identity`);
   const previewContent = content(object["content"], `${path}.content`);
@@ -455,6 +733,8 @@ const preview = (value: unknown, path: string): EditorPreview => {
       dataField(item, `${path}.data[${index}]`)),
     interactions: array(object["interactions"], `${path}.interactions`).map((item, index) =>
       interaction(item, `${path}.interactions[${index}]`)),
+    documentation: previewDocumentation(object["documentation"], `${path}.documentation`),
+    provenance: previewProvenance(object["provenance"], `${path}.provenance`),
     content: previewContent,
   };
 };
@@ -563,6 +843,156 @@ const unique = (values: string[], path: string): void => {
   }
 };
 
+const validateAuthoring = (
+  authoring: AuthoringMetadata,
+  previews: EditorPreview[],
+): void => {
+  unique(authoring.targets.map((target) => target.id), "$.render.authoring.targets[].id");
+  unique(authoring.entries.map((entry) => entry.id), "$.render.authoring.entries[].id");
+  const targets = new Map(authoring.targets.map((target) => [target.id, target]));
+  const entries = new Map(authoring.entries.map((entry) => [entry.id, entry]));
+  const orders = new Map<string, number[]>();
+  const annotationTargets = new Set<string>();
+
+  for (const [index, entry] of authoring.entries.entries()) {
+    const entryPath = `$.render.authoring.entries[${index}]`;
+    const target = targets.get(entry.targetId);
+    if (!target) {
+      throw new EditorContractError(`${entryPath}.targetId`, "an existing source target id");
+    }
+    const annotatable = annotatableTargetClasses.has(target.class);
+    if (entry.class === "doc") {
+      if (entry.kind !== "doc" || entry.order !== 0 || annotatable) {
+        throw new EditorContractError(entryPath, "doc metadata on a documentable target");
+      }
+    } else {
+      if (
+        !annotatable
+        || entry.kind.length > 64
+        || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(entry.kind)
+      ) {
+        throw new EditorContractError(entryPath, "annotation metadata on an annotatable target");
+      }
+      annotationTargets.add(entry.targetId);
+    }
+    const targetOrders = orders.get(entry.targetId) ?? [];
+    targetOrders.push(entry.order);
+    orders.set(entry.targetId, targetOrders);
+  }
+  for (const [targetId, values] of orders) {
+    values.sort((left, right) => left - right);
+    values.forEach((value, index) => {
+      if (value !== index) {
+        throw new EditorContractError(
+          "$.render.authoring.entries[].order",
+          `contiguous target-local order for ${JSON.stringify(targetId)}`,
+        );
+      }
+    });
+  }
+  const unusedTarget = authoring.targets.find((target) => !orders.has(target.id));
+  if (unusedTarget) {
+    throw new EditorContractError(
+      "$.render.authoring.targets",
+      `only metadata-referenced targets (unused ${JSON.stringify(unusedTarget.id)})`,
+    );
+  }
+
+  const validateDocumentation = (
+    preview: EditorPreview,
+    entryId: string | null,
+    expectedClass: SourceTargetClass,
+    path: string,
+  ): void => {
+    if (entryId === null) return;
+    const entry = entries.get(entryId);
+    const target = entry ? targets.get(entry.targetId) : undefined;
+    const contextMatches = expectedClass === "example-declaration"
+      ? target?.label === preview.identity.example
+      : target?.owner.kind === preview.identity.kind
+        && target.owner.name === preview.identity.subject;
+    if (
+      !entry
+      || entry.class !== "doc"
+      || target?.class !== expectedClass
+      || !contextMatches
+    ) {
+      throw new EditorContractError(path, `a doc entry for ${expectedClass}`);
+    }
+  };
+
+  for (const [previewIndex, preview] of previews.entries()) {
+    const previewPath = `$.render.previews[${previewIndex}]`;
+    const declarationClass: SourceTargetClass = preview.identity.kind === "page"
+      ? "page-declaration"
+      : preview.identity.kind === "surface"
+      ? "surface-declaration"
+      : "component-declaration";
+    validateDocumentation(
+      preview,
+      preview.documentation.declarationDocId,
+      declarationClass,
+      `${previewPath}.documentation.declarationDocId`,
+    );
+    validateDocumentation(
+      preview,
+      preview.documentation.exampleDocId,
+      "example-declaration",
+      `${previewPath}.documentation.exampleDocId`,
+    );
+    unique(
+      preview.provenance.occurrences.map((occurrence) => occurrence.id),
+      `${previewPath}.provenance.occurrences[].id`,
+    );
+    for (const [occurrenceIndex, occurrence] of preview.provenance.occurrences.entries()) {
+      const occurrencePath = `${previewPath}.provenance.occurrences[${occurrenceIndex}]`;
+      const target = targets.get(occurrence.targetId);
+      if (
+        !target
+        || !annotatableTargetClasses.has(target.class)
+        || !annotationTargets.has(occurrence.targetId)
+      ) {
+        throw new EditorContractError(
+          `${occurrencePath}.targetId`,
+          "an annotation-bearing annotatable source target id",
+        );
+      }
+      unique(
+        occurrence.anchors.map((anchor) => JSON.stringify(anchor)),
+        `${occurrencePath}.anchors`,
+      );
+      for (const [anchorIndex, anchor] of occurrence.anchors.entries()) {
+        if (!anchorResolves(preview.content, anchor)) {
+          throw new EditorContractError(
+            `${occurrencePath}.anchors[${anchorIndex}]`,
+            "a semantic node path in this preview",
+          );
+        }
+      }
+    }
+  }
+};
+
+const anchorResolves = (contentValue: Snapshot | VNode, anchor: RenderNodeRef): boolean => {
+  let node: VNode | undefined;
+  if (isSnapshotContent(contentValue)) {
+    if (anchor.root.kind === "page") node = contentValue.page.root;
+    else if (anchor.root.kind === "surface") {
+      const key = anchor.root.key;
+      const matching = contentValue.surfaces.filter((surfaceValue) => surfaceValue.key === key);
+      if (matching.length === 1) node = matching[0]?.root;
+    }
+  } else if (anchor.root.kind === "fragment") {
+    node = contentValue;
+  }
+  if (!node) return false;
+  for (const index of anchor.path) {
+    node = node.children?.[index];
+    if (!node) return false;
+  }
+  return true;
+};
+
 const validateReferences = (groups: PreviewGroup[], previews: EditorPreview[]): void => {
   unique(groups.map((item) => item.id), "$.render.groups[].id");
   unique(previews.map((item) => item.id), "$.render.previews[].id");
@@ -612,7 +1042,8 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
   if (value === null) return null;
   const object = record(value, path);
   exact(object, path, [
-    "revision", "freshness", "application", "groups", "previews", "stylesheet", "icons", "assets",
+    "revision", "freshness", "application", "authoring", "groups", "previews", "stylesheet",
+    "icons", "assets",
   ]);
   const revision = positiveRevision(object["revision"], `${path}.revision`);
   const freshness = oneOf(object["freshness"], `${path}.freshness`, ["current", "stale"]);
@@ -629,6 +1060,8 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
   const previews = array(object["previews"], `${path}.previews`).map((item, index) =>
     preview(item, `${path}.previews[${index}]`));
   validateReferences(groups, previews);
+  const authoring = authoringMetadata(object["authoring"], `${path}.authoring`);
+  validateAuthoring(authoring, previews);
   const icons = Object.fromEntries(Object.entries(record(object["icons"], `${path}.icons`)).map(
     ([key, item]) => [key, icon(item, `${path}.icons.${key}`)],
   ));
@@ -639,6 +1072,7 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
     revision,
     freshness,
     application: { name: string(application["name"], `${path}.application.name`) },
+    authoring,
     groups,
     previews,
     stylesheet: string(object["stylesheet"], `${path}.stylesheet`, true),

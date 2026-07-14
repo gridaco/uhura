@@ -25,6 +25,13 @@ interface SemanticRendererContext {
   policy: RenderPolicy;
 }
 
+interface PendingRealization {
+  path: readonly number[];
+  element: HTMLElement;
+}
+
+type RealizationCollector = (realization: PendingRealization) => void;
+
 export interface SemanticRenderer {
   reconcileChildren(
     host: HTMLElement,
@@ -37,6 +44,13 @@ export interface SemanticRenderer {
     nodes: RendererNode[],
     parentPath: string,
     parentIsList: boolean,
+  ): void;
+  realizeRoot(
+    host: HTMLElement,
+    node: RendererNode,
+    parentPath: string,
+    listItem: boolean,
+    collect?: RealizationCollector,
   ): void;
   applyNode(
     el: HTMLElement,
@@ -124,6 +138,8 @@ export function createSemanticRenderer(ctx: SemanticRendererContext): SemanticRe
     node: RendererNode,
     parentPath: string,
     listItem: boolean,
+    semanticPath?: readonly number[],
+    collect?: RealizationCollector,
   ): void {
     const holder = holderOf(el);
     holder.path = `${parentPath}/${node.key}`;
@@ -167,7 +183,14 @@ export function createSemanticRenderer(ctx: SemanticRendererContext): SemanticRe
       if (ctx.policy.kind === "play") {
         reconcileChildren(host, node.children ?? [], holder.path, isList);
       } else {
-        realizeChildren(host, node.children ?? [], holder.path, isList);
+        realizeChildrenAtPath(
+          host,
+          node.children ?? [],
+          holder.path,
+          isList,
+          semanticPath,
+          collect,
+        );
       }
     }
     if (ctx.policy.kind === "play" && node.element === "scroll") {
@@ -230,6 +253,17 @@ export function createSemanticRenderer(ctx: SemanticRendererContext): SemanticRe
     parentPath: string,
     parentIsList: boolean,
   ): void {
+    realizeChildrenAtPath(host, nodes, parentPath, parentIsList);
+  }
+
+  function realizeChildrenAtPath(
+    host: HTMLElement,
+    nodes: RendererNode[],
+    parentPath: string,
+    parentIsList: boolean,
+    semanticParentPath?: readonly number[],
+    collect?: RealizationCollector,
+  ): void {
     // Remove only semantic children. A prop applier may already have created
     // mechanic children (text-field input, pager track/dots).
     for (const child of [...host.children]) {
@@ -238,12 +272,43 @@ export function createSemanticRenderer(ctx: SemanticRendererContext): SemanticRe
         child.remove();
       }
     }
-    for (const node of nodes) {
+    for (const [index, node] of nodes.entries()) {
       const element = createElement(node);
-      applyNode(element, node, parentPath, parentIsList);
+      const semanticPath = semanticParentPath
+        ? [...semanticParentPath, index]
+        : undefined;
+      if (semanticPath && collect) collect({ path: semanticPath, element });
+      applyNode(
+        element,
+        node,
+        parentPath,
+        parentIsList,
+        semanticPath,
+        collect,
+      );
       host.append(element);
     }
   }
 
-  return { reconcileChildren, realizeChildren, applyNode, disposeSubtree };
+  function realizeRoot(
+    host: HTMLElement,
+    node: RendererNode,
+    parentPath: string,
+    listItem: boolean,
+    collect?: RealizationCollector,
+  ): void {
+    const element = createElement(node);
+    const path: readonly number[] = [];
+    if (collect) collect({ path, element });
+    applyNode(element, node, parentPath, listItem, path, collect);
+    host.append(element);
+  }
+
+  return {
+    reconcileChildren,
+    realizeChildren,
+    realizeRoot,
+    applyNode,
+    disposeSubtree,
+  };
 }

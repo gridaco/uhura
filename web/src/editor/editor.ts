@@ -9,14 +9,22 @@ import {
   type PreviewIdentity,
 } from "./editor-state.js";
 import {
+  disposePreparedEditorModel,
   prepareEditorModel,
   previewIdForIdentity,
   reconcilePreparedEditorModel,
+  watchPreparedEditorModel,
   type PreparedEditorModel,
 } from "./editor-board.js";
-import { EDITOR_STYLES } from "./editor-styles.js";
 import {
-  editorBoardUnchanged,
+  AnnotationOverlay,
+  renderPreviewDocumentation,
+  renderSourcePanel,
+  validateAnnotationRealizations,
+} from "./annotation-overlay.js";
+import { EDITOR_STYLES } from "./editor-styles.js";
+import { commentShortcutAction } from "./editor-shortcuts.js";
+import {
   EditorUpdateSession,
   retainPreviewSelection,
   type EditorFetchToken,
@@ -73,6 +81,7 @@ interface EditorShell {
   navigatorEmpty: HTMLElement;
   viewport: HTMLElement;
   board: HTMLElement;
+  annotationOverlay: HTMLElement;
   rulerX: HTMLCanvasElement;
   rulerY: HTMLCanvasElement;
   tools: HTMLElement;
@@ -82,6 +91,7 @@ interface EditorShell {
   zoomOutput: HTMLButtonElement;
   zoomInButton: HTMLButtonElement;
   focusSelectionButton: HTMLButtonElement;
+  sourceDrawerButton: HTMLButtonElement;
   inspectorOverview: HTMLElement;
   inspectorSelection: HTMLElement;
   overviewApplication: HTMLElement;
@@ -104,7 +114,12 @@ interface EditorShell {
   selectionNote: HTMLElement;
   selectionInteractions: HTMLUListElement;
   selectionNoInteractions: HTMLElement;
+  selectionDocumentationBlock: HTMLElement;
+  selectionDocumentation: HTMLElement;
   selectionAnnouncement: HTMLElement;
+  sourceDrawer: HTMLElement;
+  sourceDrawerClose: HTMLButtonElement;
+  sourcePanel: HTMLElement;
   status: HTMLElement;
   statusTitle: HTMLElement;
   statusDetail: HTMLElement;
@@ -142,8 +157,10 @@ const SHELL_HTML = `
         <button class="canvas-tool stroke zoom-in" type="button" aria-label="Zoom in" title="Zoom in"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 8h9M8 3.5v9"></path></svg></button>
         <span class="tool-divider" aria-hidden="true"></span>
         <button class="canvas-tool stroke focus-selection" type="button" aria-label="Center selected preview" title="Center selected preview" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"></path></svg></button>
+        <button class="canvas-tool stroke source-drawer-toggle" type="button" aria-label="Open Source documentation" aria-controls="editor-source-drawer" aria-expanded="false" aria-keyshortcuts="Y" title="Source documentation (Y)"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.5h7.5L13 5v8.5H3zM10.5 2.5V5H13M5.5 8h5M5.5 10.5h5"></path></svg></button>
       </div>
       <div class="editor-board"><section class="empty-board"><h2>Starting Editor</h2><p>Loading static previews…</p></section></div>
+      <div class="annotation-overlay" aria-label="Canvas annotations"></div>
     </div>
   </main>
   <aside class="editor-inspector" aria-label="Preview details">
@@ -170,9 +187,14 @@ const SHELL_HTML = `
         <p class="inspector-muted selection-no-data">No example data is set directly for this preview.</p>
       </section>
       <div class="inspector-block selection-note-block" hidden><h3>Note</h3><p class="selection-note"></p></div>
+      <section class="inspector-block selection-documentation" hidden><h3>Documentation & annotations</h3><div class="selection-documentation-content"></div></section>
       <div class="inspector-block"><h3>Declared interactions</h3><ul class="interaction-list selection-interactions"></ul><p class="inspector-muted selection-no-interactions">No interactions declared in this snapshot.</p></div>
       <p class="visually-hidden selection-announcement" aria-live="polite"></p>
     </section>
+  </aside>
+  <aside class="editor-source-drawer" id="editor-source-drawer" aria-label="Source documentation" hidden>
+    <div class="source-drawer-heading"><div><strong>Source</strong><span>Documentation and annotations</span></div><button class="icon-button source-drawer-close" type="button" aria-label="Close Source documentation"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"></path></svg></button></div>
+    <div class="source-panel"></div>
   </aside>
   <section class="editor-status" role="status" aria-live="polite" data-tone="neutral">
     <div class="status-heading"><div class="status-copy"><strong>Starting Editor</strong><p>Loading the current project state…</p></div><button class="status-dismiss" type="button" aria-label="Dismiss Editor status" title="Dismiss">×</button></div>
@@ -204,6 +226,7 @@ const buildShell = (root: HTMLElement): EditorShell => {
     navigatorEmpty: required(shell, ".navigator-empty"),
     viewport: required(shell, ".editor-viewport"),
     board: required(shell, ".editor-board"),
+    annotationOverlay: required(shell, ".annotation-overlay"),
     rulerX: required(shell, ".ruler-x"),
     rulerY: required(shell, ".ruler-y"),
     tools: required(shell, ".canvas-tools"),
@@ -213,6 +236,7 @@ const buildShell = (root: HTMLElement): EditorShell => {
     zoomOutput: required(shell, ".canvas-zoom"),
     zoomInButton: required(shell, ".zoom-in"),
     focusSelectionButton: required(shell, ".focus-selection"),
+    sourceDrawerButton: required(shell, ".source-drawer-toggle"),
     inspectorOverview: required(shell, ".inspector-overview"),
     inspectorSelection: required(shell, ".inspector-selection"),
     overviewApplication: required(shell, "[data-overview-application]"),
@@ -235,7 +259,12 @@ const buildShell = (root: HTMLElement): EditorShell => {
     selectionNote: required(shell, ".selection-note"),
     selectionInteractions: required(shell, ".selection-interactions"),
     selectionNoInteractions: required(shell, ".selection-no-interactions"),
+    selectionDocumentationBlock: required(shell, ".selection-documentation"),
+    selectionDocumentation: required(shell, ".selection-documentation-content"),
     selectionAnnouncement: required(shell, ".selection-announcement"),
+    sourceDrawer: required(shell, ".editor-source-drawer"),
+    sourceDrawerClose: required(shell, ".source-drawer-close"),
+    sourcePanel: required(shell, ".source-panel"),
     status: required(shell, ".editor-status"),
     statusTitle: required(shell, ".status-copy strong"),
     statusDetail: required(shell, ".status-copy p"),
@@ -348,6 +377,24 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let retryTimer: number | undefined;
   const touches = new Map<number, Point>();
   const disposers: Array<() => void> = [];
+  const annotationOverlay = new AnnotationOverlay({
+    viewport: shell.viewport,
+    root: shell.annotationOverlay,
+    chrome: [shell.tools, shell.sourceDrawer, shell.status],
+    focusPreview: (previewId, anchors) => {
+      selectPreview(previewId, true);
+      const anchor = anchors?.find(anchorVisibleInViewport) ?? anchors?.[0] ?? null;
+      if (anchor) scrollAnchorWithinPreview(anchor, model.frameById.get(previewId) ?? null);
+      revealElement(anchor);
+    },
+    focusSourceTarget: (targetId) => {
+      setSourceDrawer(true, false);
+      const target = Array.from(
+        shell.sourcePanel.querySelectorAll<HTMLElement>("[data-source-target-id]"),
+      ).find((candidate) => candidate.dataset.sourceTargetId === targetId);
+      target?.scrollIntoView({ block: "nearest" });
+    },
+  });
 
   const listen = <T extends EventTarget>(
     target: T,
@@ -369,6 +416,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.board.style.setProperty("--selection-offset", `${4 / scale}px`);
     shell.zoomOutput.textContent = `${Math.round(scale * 100)}%`;
     requestRulers();
+    annotationOverlay.invalidate();
   };
 
   const clampScale = (value: number): number => Math.min(Math.max(value, MIN_SCALE), MAX_SCALE);
@@ -497,6 +545,62 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       height: frameRect.height / scale,
     };
   };
+  const composedElementParent = (element: HTMLElement): HTMLElement | null => {
+    if (element.parentElement) return element.parentElement;
+    const root = element.getRootNode();
+    return root instanceof ShadowRoot && root.host instanceof HTMLElement ? root.host : null;
+  };
+  const intersectRects = (left: DOMRect, right: DOMRect): Rect | null => {
+    const x = Math.max(left.left, right.left);
+    const y = Math.max(left.top, right.top);
+    const farX = Math.min(left.right, right.right);
+    const farY = Math.min(left.bottom, right.bottom);
+    return farX > x && farY > y
+      ? { x, y, width: farX - x, height: farY - y }
+      : null;
+  };
+  const clipsContent = (element: HTMLElement): boolean => {
+    const style = window.getComputedStyle(element);
+    return /(?:auto|scroll|hidden|clip)/.test(
+      `${style.overflow} ${style.overflowX} ${style.overflowY}`,
+    );
+  };
+  const anchorVisibleInViewport = (anchor: HTMLElement): boolean => {
+    const anchorRect = anchor.getBoundingClientRect();
+    if (!intersectRects(anchorRect, shell.viewport.getBoundingClientRect())) return false;
+    let ancestor = composedElementParent(anchor);
+    while (ancestor && ancestor !== shell.viewport) {
+      if (clipsContent(ancestor) && !intersectRects(anchorRect, ancestor.getBoundingClientRect())) {
+        return false;
+      }
+      ancestor = composedElementParent(ancestor);
+    }
+    return true;
+  };
+  const scrollAnchorWithinPreview = (
+    anchor: HTMLElement,
+    frame: HTMLElement | null,
+  ): void => {
+    let ancestor = composedElementParent(anchor);
+    while (ancestor && ancestor !== frame && ancestor !== shell.viewport) {
+      const style = window.getComputedStyle(ancestor);
+      const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
+      const scrolls = /(?:auto|scroll)/.test(overflow);
+      if (scrolls) {
+        const target = anchor.getBoundingClientRect();
+        const viewport = ancestor.getBoundingClientRect();
+        if (ancestor.scrollHeight > ancestor.clientHeight) {
+          ancestor.scrollTop += target.top + target.height / 2
+            - (viewport.top + viewport.height / 2);
+        }
+        if (ancestor.scrollWidth > ancestor.clientWidth) {
+          ancestor.scrollLeft += target.left + target.width / 2
+            - (viewport.left + viewport.width / 2);
+        }
+      }
+      ancestor = composedElementParent(ancestor);
+    }
+  };
   const revealElement = (element: HTMLElement | null): void => {
     if (!element) return;
     const rect = frameWorldRect(element);
@@ -582,6 +686,13 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     renderData(preview);
     shell.selectionNoteBlock.hidden = !preview.note;
     shell.selectionNote.textContent = preview.note ?? "";
+    renderPreviewDocumentation(
+      shell.selectionDocumentation,
+      model.authoring,
+      preview,
+      model.render?.freshness === "stale",
+    );
+    shell.selectionDocumentationBlock.hidden = shell.selectionDocumentation.hidden;
     shell.selectionInteractions.replaceChildren(...preview.interactions.map((interaction) => {
       const item = document.createElement("li");
       item.textContent = `${interaction.element} · ${interaction.event} → ${interaction.emit}`;
@@ -602,10 +713,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   const clearSelection = (): void => {
     clearSelectionDom();
     selectedIdentity = null;
+    annotationOverlay.activatePreviewOccurrences(null);
     shell.inspectorOverview.hidden = false;
     shell.inspectorSelection.hidden = true;
     shell.focusSelectionButton.disabled = true;
     shell.selectionData.replaceChildren();
+    shell.selectionDocumentation.replaceChildren();
+    shell.selectionDocumentation.hidden = true;
+    shell.selectionDocumentationBlock.hidden = true;
     shell.selectionAnnouncement.textContent = "";
   };
 
@@ -615,6 +730,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (!preview || !frame) return;
     clearSelectionDom();
     selectedIdentity = preview.identity;
+    annotationOverlay.activatePreviewOccurrences(previewId);
     frame.classList.add("is-selected");
     frame.setAttribute("aria-pressed", "true");
     const navigatorButton = Array.from(
@@ -688,6 +804,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       return item;
     }));
     shell.status.hidden = false;
+    annotationOverlay.invalidate();
   };
 
   const showStateStatus = (nextState: EditorState): void => {
@@ -716,6 +833,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     } else {
       shell.status.hidden = true;
       shell.statusDiagnostics.replaceChildren();
+      annotationOverlay.invalidate();
     }
   };
 
@@ -723,6 +841,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     selectedIdentity = retainPreviewSelection(selectedIdentity, nextState);
     state = nextState;
     renderOverview(nextState.render);
+    renderSourcePanel(
+      shell.sourcePanel,
+      model.authoring,
+      nextState.render?.freshness === "stale",
+      (targetId) => {
+        annotationOverlay.selectSourceTarget(targetId);
+      },
+    );
     applySearch();
     const selectedId = previewIdForIdentity(model, selectedIdentity);
     if (selectedId) selectPreview(selectedId, false);
@@ -731,6 +857,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   const installModel = (nextState: EditorState, nextModel: PreparedEditorModel): void => {
+    const previousModel = model;
     const previousBoard = shell.board;
     const focusedPreviewId = closest<HTMLElement>(
       document.activeElement,
@@ -739,20 +866,37 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     nextModel.board.style.transform = previousBoard.style.transform;
     nextModel.board.style.setProperty("--selection-stroke", `${2 / scale}px`);
     nextModel.board.style.setProperty("--selection-offset", `${4 / scale}px`);
-    reconcilePreparedEditorModel(model, nextModel);
+    const prospectiveResources = new Map(nextModel.resourcesByPreviewId);
+    for (const id of nextModel.reusableRealizationIds) {
+      const previousResources = previousModel.resourcesByPreviewId.get(id);
+      if (previousResources) prospectiveResources.set(id, previousResources);
+    }
+    validateAnnotationRealizations({
+      render: nextModel.render,
+      authoring: nextModel.authoring,
+      resourcesByPreviewId: prospectiveResources,
+    });
+    reconcilePreparedEditorModel(previousModel, nextModel);
     previousBoard.replaceWith(nextModel.board);
     shell.board = nextModel.board;
     shell.navigatorResults.replaceChildren(nextModel.navigator);
     model = nextModel;
+    disposePreparedEditorModel(previousModel);
+    annotationOverlay.install({
+      render: nextModel.render,
+      authoring: nextModel.authoring,
+      resourcesByPreviewId: nextModel.resourcesByPreviewId,
+    });
+    watchPreparedEditorModel(nextModel, window, annotationOverlay.invalidate);
+    void document.fonts?.ready.then(() => {
+      if (model === nextModel) annotationOverlay.invalidate();
+    });
     finishStateInstall(nextState);
     if (focusedPreviewId) {
       model.frameById.get(focusedPreviewId)?.focus({ preventScroll: true });
     }
     requestRulers();
-  };
-
-  const installStateOnly = (nextState: EditorState): void => {
-    finishStateInstall(nextState);
+    annotationOverlay.invalidate();
   };
 
   const scheduleRetry = (
@@ -769,6 +913,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   const loadState = async (token: EditorFetchToken): Promise<void> => {
+    let prepared: PreparedEditorModel | null = null;
     try {
       const response = await window.fetch(EDITOR_STATE_PATH, {
         headers: { Accept: "application/json" },
@@ -782,21 +927,19 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         scheduleRetry(token, decision.expectedRevision, 50);
         return;
       }
-      if (state && editorBoardUnchanged(state.render, decision.state.render)) {
-        if (!updates.commit(
-          token,
-          decision.state,
-          () => installStateOnly(decision.state),
-        )) return;
-        return;
-      }
       const nextModel = prepareEditorModel(document, decision.state.render, model);
-      if (!updates.commit(
+      prepared = nextModel;
+      const committed = updates.commit(
         token,
         decision.state,
         () => installModel(decision.state, nextModel),
-      )) return;
+      );
+      if (!committed) {
+        disposePreparedEditorModel(nextModel);
+        prepared = null;
+      }
     } catch (error) {
+      if (prepared && model !== prepared) disposePreparedEditorModel(prepared);
       if (destroyed || !updates.isCurrent(token)) return;
       showStatus(
         "Editor state unavailable",
@@ -811,6 +954,13 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.shell.classList.toggle("ui-hidden", !visible);
     if (persist) storeUiVisible(window.localStorage, visible);
     requestRulers();
+    annotationOverlay.invalidate();
+  };
+  const setSourceDrawer = (open: boolean, focusClose = false): void => {
+    shell.sourceDrawer.hidden = !open;
+    shell.sourceDrawerButton.setAttribute("aria-expanded", String(open));
+    if (open && focusClose) shell.sourceDrawerClose.focus({ preventScroll: true });
+    annotationOverlay.invalidate();
   };
   setUiVisible(storedUiVisible(window.localStorage), false);
 
@@ -823,8 +973,18 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const selectedId = previewIdForIdentity(model, selectedIdentity);
     if (selectedId) revealElement(model.frameById.get(selectedId) ?? null);
   });
+  listen(shell.sourceDrawerButton, "click", () => {
+    setSourceDrawer(shell.sourceDrawer.hasAttribute("hidden"), true);
+  });
+  listen(shell.sourceDrawerClose, "click", () => {
+    setSourceDrawer(false);
+    shell.sourceDrawerButton.focus({ preventScroll: true });
+  });
   listen(shell.clearSelectionButton, "click", clearSelection);
-  listen(shell.statusDismiss, "click", () => { shell.status.hidden = true; });
+  listen(shell.statusDismiss, "click", () => {
+    shell.status.hidden = true;
+    annotationOverlay.invalidate();
+  });
   listen(shell.tools, "pointerdown", (event) => event.stopPropagation());
 
   listen(shell.navigatorResults, "click", (event) => {
@@ -891,6 +1051,17 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
   listen(shell.viewport, "pointerdown", (rawEvent) => {
     const event = rawEvent as PointerEvent;
+    const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
+    const commentControl = closest<HTMLElement>(
+      event.target,
+      ".annotation-marker, .annotation-card",
+    );
+    const canvasTool = closest<HTMLElement>(event.target, ".canvas-tools");
+    if (event.button === 0 && !frame && !commentControl && !canvasTool) {
+      clearSelection();
+      annotationOverlay.dismissCards();
+      setSourceDrawer(false);
+    }
     if (event.pointerType === "touch") {
       const point = localPoint(event.clientX, event.clientY);
       touches.set(event.pointerId, point);
@@ -955,9 +1126,17 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     applyCamera();
   }, { passive: false });
 
-  const ignoresShortcut = (target: EventTarget | null): boolean =>
-    target instanceof Element
-    && Boolean(target.closest("button, a, input, select, textarea, [contenteditable]"));
+  const keyboardTarget = (event: KeyboardEvent): EventTarget | null =>
+    event.composedPath().find((target) => target instanceof Element) ?? event.target;
+  const isTextEntry = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+    if (target.closest("input, select, textarea")) return true;
+    const editable = target.closest("[contenteditable]");
+    return editable !== null
+      && editable.getAttribute("contenteditable")?.toLocaleLowerCase() !== "false";
+  };
+  const isInteractiveControl = (target: EventTarget | null): boolean =>
+    target instanceof Element && Boolean(target.closest("button, a"));
   listen(window, "keydown", (rawEvent) => {
     const event = rawEvent as KeyboardEvent;
     const togglesUi = (event.metaKey || event.ctrlKey)
@@ -969,7 +1148,25 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       event.preventDefault();
       return;
     }
-    if (ignoresShortcut(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = keyboardTarget(event);
+    const commentAction = commentShortcutAction(event, isTextEntry(target));
+    if (commentAction === "open-source") {
+      setSourceDrawer(true);
+      event.preventDefault();
+      return;
+    }
+    if (commentAction === "toggle-canvas-comments") {
+      annotationOverlay.toggleCanvasVisibility();
+      event.preventDefault();
+      return;
+    }
+    if (
+      isTextEntry(target)
+      || event.metaKey
+      || event.ctrlKey
+      || event.altKey
+      || (event.code === "Space" && isInteractiveControl(target))
+    ) return;
     if (event.code === "Space") {
       spaceHeld = true;
       renderTools();
@@ -980,7 +1177,10 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       zoomAt(scale * ZOOM_STEP, viewportCenter());
     } else if (!event.repeat && event.key === "-") {
       zoomAt(scale / ZOOM_STEP, viewportCenter());
-    } else if (!event.repeat && event.key === "Escape") clearSelection();
+    } else if (!event.repeat && event.key === "Escape") {
+      if (!shell.sourceDrawer.hidden) setSourceDrawer(false);
+      else clearSelection();
+    }
   });
   listen(window, "keyup", (rawEvent) => {
     const event = rawEvent as KeyboardEvent;
@@ -1002,10 +1202,16 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
   let resizeObserver: ResizeObserver | null = null;
   if (window.ResizeObserver) {
-    resizeObserver = new window.ResizeObserver(requestRulers);
+    resizeObserver = new window.ResizeObserver(() => {
+      requestRulers();
+      annotationOverlay.invalidate();
+    });
     resizeObserver.observe(shell.viewport);
   } else {
-    listen(window, "resize", requestRulers);
+    listen(window, "resize", () => {
+      requestRulers();
+      annotationOverlay.invalidate();
+    });
   }
 
   const events = new window.EventSource(EDITOR_EVENTS_PATH);
@@ -1041,6 +1247,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (destroyed) return;
     destroyed = true;
     events.close();
+    annotationOverlay.dispose();
+    disposePreparedEditorModel(model);
     resizeObserver?.disconnect();
     if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     if (rulerFrame) window.cancelAnimationFrame(rulerFrame);

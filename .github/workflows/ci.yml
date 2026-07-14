@@ -179,15 +179,23 @@ jobs:
           import sys
 
           state = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          assert state["protocol"] == "uhura-editor-state/0"
+          assert state["protocol"] == "uhura-editor-state/1"
           assert isinstance(state["sourceRevision"], int)
           assert state["sourceRevision"] >= 1
           render = state["render"]
           assert isinstance(render, dict)
           assert render["revision"] == state["sourceRevision"]
           assert render["freshness"] == "current"
+          assert isinstance(render["authoring"]["targets"], list)
+          assert render["authoring"]["targets"]
+          assert isinstance(render["authoring"]["entries"], list)
+          assert render["authoring"]["entries"]
           assert isinstance(render["groups"], list)
           assert render["groups"]
+          assert all(isinstance(preview["documentation"], dict) for preview in render["previews"])
+          assert all(isinstance(preview["provenance"]["occurrences"], list) for preview in render["previews"])
+          assert any(preview["documentation"]["declarationDocId"] for preview in render["previews"])
+          assert any(preview["provenance"]["occurrences"] for preview in render["previews"])
           PY
 
           curl --fail --silent --show-error \

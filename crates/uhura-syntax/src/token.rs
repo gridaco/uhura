@@ -4,13 +4,35 @@
 
 use uhura_base::Span;
 
-/// A `//` line comment. Comments are trivia: collected by the lexer and
-/// attached by parsers to the *following* AST item (formatter contract).
+/// The lexical class of one DSL line comment.
+///
+/// The distinction is made by the lexer in every DSL region. Placement and
+/// attachment are parser concerns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommentKind {
+    Ordinary,
+    /// Exactly `///` (not a run of four or more slashes).
+    OuterDoc,
+    /// `//!`.
+    InnerDoc,
+}
+
+/// A DSL line comment, excluding its line terminator.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     pub span: Span,
-    /// Text after `//`, untrimmed.
+    pub kind: CommentKind,
+    /// Text after the complete sigil (`//`, `///`, or `//!`), untrimmed.
     pub text: String,
+}
+
+impl Comment {
+    /// The canonical text of one documentation line.
+    pub fn normalized_doc_line(&self) -> String {
+        debug_assert!(self.kind != CommentKind::Ordinary);
+        let text = self.text.strip_prefix(' ').unwrap_or(&self.text);
+        text.trim_end_matches([' ', '\t']).to_string()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

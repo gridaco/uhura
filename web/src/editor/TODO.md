@@ -19,7 +19,10 @@ language, stylesheet syntax, model protocol, or runtime semantics.
       preview ShadowRoot.
 - [ ] Automate the live-update browser regression for one changed preview,
       unchanged sibling identity, stale-save retention, and stylesheet-only
-      updates. The current Vitest suite covers the pure reuse plan only.
+      updates. The current Vitest suite exercises detached preparation and the
+      current -> metadata-only -> stale -> cold-invalid -> recovered transplant
+      lifecycle with a dependency-free DOM model; computed layout and actual
+      constructed-stylesheet behavior still require a real browser.
 
 The current root adaptation is a compatibility shim for Editor previews, not a
 general CSS emulation layer. Do not expand it into a home-grown CSS parser.

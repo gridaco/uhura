@@ -9,6 +9,11 @@ use uhura_base::{Ident, Value};
 
 use crate::ir::{self, ProgramIr};
 use crate::state::{Projections, UiState, map_key_string};
+use crate::template::{
+    DefinitionAddress, DefinitionKind, EvaluationContext, EvaluationContextSegment,
+    EvaluationOccurrence, EvaluationTrace, RenderNodeRef, RenderRoot, TemplateAddress,
+    TemplateSegment,
+};
 use crate::view::{Descriptor, DescriptorKind, Node, PageView, Snapshot, SurfaceView, VValue};
 
 /// An internal invariant break — checked programs cannot produce these; if
@@ -25,6 +30,26 @@ impl std::fmt::Display for EvalError {
 /// The full snapshot (§8.1): the top nav entry's page plus the surface
 /// stack, bottom → top.
 pub fn eval_view(p: &ProgramIr, u: &UiState, x: &Projections) -> Result<Snapshot, EvalError> {
+    eval_view_impl(p, u, x, false).map(|(snapshot, _)| snapshot)
+}
+
+/// Evaluates a full snapshot and reports which structural template
+/// operations realized each semantic node. The snapshot and errors are
+/// produced by the same evaluator as [`eval_view`].
+pub fn eval_view_with_trace(
+    p: &ProgramIr,
+    u: &UiState,
+    x: &Projections,
+) -> Result<(Snapshot, EvaluationTrace), EvalError> {
+    eval_view_impl(p, u, x, true)
+}
+
+fn eval_view_impl(
+    p: &ProgramIr,
+    u: &UiState,
+    x: &Projections,
+    tracing: bool,
+) -> Result<(Snapshot, EvaluationTrace), EvalError> {
     let entry = u
         .nav
         .last()
@@ -43,7 +68,21 @@ pub fn eval_view(p: &ProgramIr, u: &UiState, x: &Projections) -> Result<Snapshot
         bindings: Vec::new(),
         emits: EmitEnv::Machine,
     };
-    let root = single_root(page_frame.eval_node_ir(&def.root, None)?)?;
+    let page_definition = DefinitionAddress::new(DefinitionKind::Page, entry.route.clone());
+    let page_address = TemplateAddress::root(page_definition);
+    let (root, page_occurrences) = finish_root(
+        page_frame.eval_node_ir(
+            &def.root,
+            &page_address,
+            &EvaluationContext::default(),
+            tracing,
+            None,
+        )?,
+        RenderRoot::Page,
+    )?;
+    let mut trace = EvaluationTrace {
+        occurrences: page_occurrences,
+    };
 
     let mut surfaces = Vec::new();
     for s in &u.surfaces {
@@ -62,9 +101,24 @@ pub fn eval_view(p: &ProgramIr, u: &UiState, x: &Projections) -> Result<Snapshot
             bindings: Vec::new(),
             emits: EmitEnv::Machine,
         };
-        let root = single_root(frame.eval_node_ir(&def.root, None)?)?;
+        let definition = DefinitionAddress::new(DefinitionKind::Surface, s.definition.clone());
+        let address = TemplateAddress::root(definition);
+        let surface_key = format!("{}:{}", s.definition, s.serial);
+        let (root, occurrences) = finish_root(
+            frame.eval_node_ir(
+                &def.root,
+                &address,
+                &EvaluationContext::default(),
+                tracing,
+                None,
+            )?,
+            RenderRoot::Surface {
+                key: surface_key.clone(),
+            },
+        )?;
+        trace.occurrences.extend(occurrences);
         surfaces.push(SurfaceView {
-            key: format!("{}:{}", s.definition, s.serial),
+            key: surface_key,
             definition: s.definition.to_string(),
             modality: def.modality.clone().unwrap_or_else(|| "sheet".into()),
             restore_focus: s.restore_focus.clone(),
@@ -73,14 +127,17 @@ pub fn eval_view(p: &ProgramIr, u: &UiState, x: &Projections) -> Result<Snapshot
         });
     }
 
-    Ok(Snapshot {
-        revision: u.rev,
-        page: PageView {
-            route: entry.route.to_string(),
-            root,
+    Ok((
+        Snapshot {
+            revision: u.rev,
+            page: PageView {
+                route: entry.route.to_string(),
+                root,
+            },
+            surfaces,
         },
-        surfaces,
-    })
+        trace,
+    ))
 }
 
 /// A standalone definition preview (§6.2 `PreviewPayload::Fragment`) —
@@ -92,6 +149,38 @@ pub fn eval_fragment(
     state: &BTreeMap<Ident, Value>,
     x: &Projections,
 ) -> Result<Node, EvalError> {
+    let definition = DefinitionAddress::new(
+        DefinitionKind::Component,
+        Ident::new("fragment").expect("kebab"),
+    );
+    eval_fragment_impl(p, &definition, def, props, state, x, false).map(|(node, _)| node)
+}
+
+/// Evaluates a standalone definition and returns its realization trace.
+///
+/// Unlike [`eval_fragment`], the definition identity is explicit because a
+/// borrowed `DefIr` does not identify which program definition table entry
+/// supplied it.
+pub fn eval_fragment_with_trace(
+    p: &ProgramIr,
+    definition: &DefinitionAddress,
+    def: &ir::DefIr,
+    props: &BTreeMap<Ident, Value>,
+    state: &BTreeMap<Ident, Value>,
+    x: &Projections,
+) -> Result<(Node, EvaluationTrace), EvalError> {
+    eval_fragment_impl(p, definition, def, props, state, x, true)
+}
+
+fn eval_fragment_impl(
+    p: &ProgramIr,
+    definition: &DefinitionAddress,
+    def: &ir::DefIr,
+    props: &BTreeMap<Ident, Value>,
+    state: &BTreeMap<Ident, Value>,
+    x: &Projections,
+    tracing: bool,
+) -> Result<(Node, EvaluationTrace), EvalError> {
     let frame = Frame {
         program: p,
         x,
@@ -102,7 +191,18 @@ pub fn eval_fragment(
         bindings: Vec::new(),
         emits: EmitEnv::Machine,
     };
-    single_root(frame.eval_node_ir(&def.root, None)?)
+    let address = TemplateAddress::root(definition.clone());
+    let (node, occurrences) = finish_root(
+        frame.eval_node_ir(
+            &def.root,
+            &address,
+            &EvaluationContext::default(),
+            tracing,
+            None,
+        )?,
+        RenderRoot::Fragment,
+    )?;
+    Ok((node, EvaluationTrace { occurrences }))
 }
 
 /// The first-class surface dismiss descriptor (§8.1): Escape/scrim emit the
@@ -119,14 +219,113 @@ fn dismiss_descriptor(scope: &str) -> Descriptor {
     }
 }
 
-fn single_root(nodes: Vec<Node>) -> Result<Node, EvalError> {
-    let mut nodes = nodes;
+fn require_single_root(nodes: &[Node]) -> Result<(), EvalError> {
     match nodes.len() {
-        1 => Ok(nodes.remove(0)),
+        1 => Ok(()),
         n => Err(EvalError(format!(
             "a definition renders exactly one root, got {n}"
         ))),
     }
+}
+
+/// Evaluation uses forests internally because structural blocks flatten into
+/// their surrounding semantic child list. Relative anchor paths always begin
+/// with a forest-root index; `finish_root` removes the sole definition-root
+/// index to produce public semantic child paths.
+struct EvaluatedNodes {
+    nodes: Vec<Node>,
+    occurrences: Vec<RelativeOccurrence>,
+}
+
+struct RelativeOccurrence {
+    template: TemplateAddress,
+    context: EvaluationContext,
+    anchors: Vec<Vec<usize>>,
+}
+
+impl EvaluatedNodes {
+    fn empty() -> Self {
+        Self {
+            nodes: Vec::new(),
+            occurrences: Vec::new(),
+        }
+    }
+
+    fn prepend_occurrence(
+        &mut self,
+        template: &TemplateAddress,
+        context: &EvaluationContext,
+        tracing: bool,
+    ) {
+        if !tracing {
+            return;
+        }
+        let anchors = (0..self.nodes.len()).map(|index| vec![index]).collect();
+        self.occurrences.insert(
+            0,
+            RelativeOccurrence {
+                template: template.clone(),
+                context: context.clone(),
+                anchors,
+            },
+        );
+    }
+
+    /// Appends a flattened forest and shifts its top-level semantic indexes.
+    fn append(&mut self, mut other: Self) {
+        let offset = self.nodes.len();
+        if offset != 0 {
+            for occurrence in &mut other.occurrences {
+                for anchor in &mut occurrence.anchors {
+                    if let Some(index) = anchor.first_mut() {
+                        *index += offset;
+                    }
+                }
+            }
+        }
+        self.nodes.append(&mut other.nodes);
+        self.occurrences.append(&mut other.occurrences);
+    }
+
+    /// Wraps a child forest in one semantic element root.
+    fn wrap_children(mut self, node: Node) -> Self {
+        for occurrence in &mut self.occurrences {
+            for anchor in &mut occurrence.anchors {
+                anchor.insert(0, 0);
+            }
+        }
+        self.nodes = vec![node];
+        self
+    }
+}
+
+fn finish_root(
+    mut evaluated: EvaluatedNodes,
+    root: RenderRoot,
+) -> Result<(Node, Vec<EvaluationOccurrence>), EvalError> {
+    require_single_root(&evaluated.nodes)?;
+    let node = evaluated.nodes.remove(0);
+    let occurrences = evaluated
+        .occurrences
+        .into_iter()
+        .map(|occurrence| EvaluationOccurrence {
+            template: occurrence.template,
+            root: root.clone(),
+            context: occurrence.context,
+            anchors: occurrence
+                .anchors
+                .into_iter()
+                .map(|path| {
+                    debug_assert_eq!(path.first(), Some(&0));
+                    RenderNodeRef {
+                        root: root.clone(),
+                        path: path.into_iter().skip(1).collect(),
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    Ok((node, occurrences))
 }
 
 /// Where an emit resolves once it reaches machine scope (built at component
@@ -349,36 +548,65 @@ impl Frame<'_> {
     fn eval_node_ir(
         &self,
         node: &ir::NodeIr,
+        address: &TemplateAddress,
+        context: &EvaluationContext,
+        tracing: bool,
         key_override: Option<&str>,
-    ) -> Result<Vec<Node>, EvalError> {
-        match node {
+    ) -> Result<EvaluatedNodes, EvalError> {
+        let mut evaluated = match node {
             ir::NodeIr::If { cond, then, els } => {
                 let cond = self.value(cond)?;
-                let branch = match cond {
-                    Value::Bool(true) => then,
-                    Value::Bool(false) => els,
-                    other => {
-                        return Err(EvalError(format!("if condition was {other:?}")));
-                    }
-                };
-                self.eval_nodes(branch)
+                match cond {
+                    Value::Bool(true) => self.eval_nodes(
+                        then,
+                        |index| address.child(TemplateSegment::IfThen { index }),
+                        context,
+                        tracing,
+                    ),
+                    Value::Bool(false) => self.eval_nodes(
+                        els,
+                        |index| address.child(TemplateSegment::IfElse { index }),
+                        context,
+                        tracing,
+                    ),
+                    other => Err(EvalError(format!("if condition was {other:?}"))),
+                }?
             }
-            ir::NodeIr::Each(each) => self.eval_each(each),
-            ir::NodeIr::Match(m) => self.eval_match(m, key_override),
-            ir::NodeIr::Element(el) => Ok(vec![self.eval_element(el, key_override)?]),
-            ir::NodeIr::Component(call) => Ok(vec![self.eval_component(call, key_override)?]),
-        }
+            ir::NodeIr::Each(each) => self.eval_each(each, address, context, tracing)?,
+            ir::NodeIr::Match(m) => self.eval_match(m, address, context, tracing, key_override)?,
+            ir::NodeIr::Element(el) => {
+                self.eval_element(el, address, context, tracing, key_override)?
+            }
+            ir::NodeIr::Component(call) => {
+                return self.eval_component(call, address, context, tracing, key_override);
+            }
+        };
+        evaluated.prepend_occurrence(address, context, tracing);
+        Ok(evaluated)
     }
 
-    fn eval_nodes(&self, nodes: &[ir::NodeIr]) -> Result<Vec<Node>, EvalError> {
-        let mut out = Vec::new();
-        for node in nodes {
-            out.extend(self.eval_node_ir(node, None)?);
+    fn eval_nodes(
+        &self,
+        nodes: &[ir::NodeIr],
+        mut address_at: impl FnMut(usize) -> TemplateAddress,
+        context: &EvaluationContext,
+        tracing: bool,
+    ) -> Result<EvaluatedNodes, EvalError> {
+        let mut out = EvaluatedNodes::empty();
+        for (index, node) in nodes.iter().enumerate() {
+            let address = address_at(index);
+            out.append(self.eval_node_ir(node, &address, context, tracing, None)?);
         }
         Ok(out)
     }
 
-    fn eval_each(&self, each: &ir::EachIr) -> Result<Vec<Node>, EvalError> {
+    fn eval_each(
+        &self,
+        each: &ir::EachIr,
+        address: &TemplateAddress,
+        context: &EvaluationContext,
+        tracing: bool,
+    ) -> Result<EvaluatedNodes, EvalError> {
         let seq = self.value(&each.seq)?;
         let items: Vec<Value> = match (&each.over, seq) {
             (ir::OverIr::List, Value::List(items)) => items,
@@ -399,7 +627,7 @@ impl Frame<'_> {
             }
         };
 
-        let mut out = Vec::new();
+        let mut out = EvaluatedNodes::empty();
         let mut seen = std::collections::BTreeSet::new();
         for item in items {
             let mut frame = self.child_frame();
@@ -418,19 +646,30 @@ impl Frame<'_> {
                 )));
             }
             let item_key = format!("{}.{}", each.ord, key_str);
+            let item_context = context.child(EvaluationContextSegment::EachItem {
+                each: address.clone(),
+                key: key_str,
+            });
             let rendered = {
-                let mut nodes = Vec::new();
+                let mut nodes = EvaluatedNodes::empty();
                 for (j, node) in each.body.iter().enumerate() {
                     let node_key = if each.body.len() == 1 {
                         item_key.clone()
                     } else {
                         format!("{item_key}.{j}")
                     };
-                    nodes.extend(frame.eval_node_ir(node, Some(&node_key))?);
+                    let node_address = address.child(TemplateSegment::EachBody { index: j });
+                    nodes.append(frame.eval_node_ir(
+                        node,
+                        &node_address,
+                        &item_context,
+                        tracing,
+                        Some(&node_key),
+                    )?);
                 }
                 nodes
             };
-            out.extend(rendered);
+            out.append(rendered);
         }
         Ok(out)
     }
@@ -438,8 +677,11 @@ impl Frame<'_> {
     fn eval_match(
         &self,
         m: &ir::MatchIr,
+        address: &TemplateAddress,
+        context: &EvaluationContext,
+        tracing: bool,
         key_override: Option<&str>,
-    ) -> Result<Vec<Node>, EvalError> {
+    ) -> Result<EvaluatedNodes, EvalError> {
         let (variant, binding_value): (String, Option<Value>) = match &m.source {
             ir::MatchSourceIr::Availability { projection, key } => {
                 let key = match key {
@@ -470,12 +712,18 @@ impl Frame<'_> {
             }
         };
 
-        let arm = m
+        let selected = m
             .arms
             .iter()
-            .find(|arm| arm.variant.as_ref().is_some_and(|v| v.as_str() == variant))
-            .or_else(|| m.arms.iter().find(|arm| arm.variant.is_none()));
-        let Some(arm) = arm else {
+            .enumerate()
+            .find(|(_, arm)| arm.variant.as_ref().is_some_and(|v| v.as_str() == variant))
+            .or_else(|| {
+                m.arms
+                    .iter()
+                    .enumerate()
+                    .find(|(_, arm)| arm.variant.is_none())
+            });
+        let Some((arm_index, arm)) = selected else {
             return Err(EvalError(format!("no arm for `{variant}`")));
         };
 
@@ -484,9 +732,13 @@ impl Frame<'_> {
             frame.bindings.push((binding.clone(), value));
         }
         // A match root keeps the call-site key across arms (§4.4).
-        let mut out = Vec::new();
-        for node in &arm.body {
-            out.extend(frame.eval_node_ir(node, key_override)?);
+        let mut out = EvaluatedNodes::empty();
+        for (child, node) in arm.body.iter().enumerate() {
+            let node_address = address.child(TemplateSegment::MatchArm {
+                arm: arm_index,
+                child,
+            });
+            out.append(frame.eval_node_ir(node, &node_address, context, tracing, key_override)?);
         }
         Ok(out)
     }
@@ -494,8 +746,11 @@ impl Frame<'_> {
     fn eval_element(
         &self,
         el: &ir::ElementIr,
+        address: &TemplateAddress,
+        context: &EvaluationContext,
+        tracing: bool,
         key_override: Option<&str>,
-    ) -> Result<Node, EvalError> {
+    ) -> Result<EvaluatedNodes, EvalError> {
         let key = key_override
             .map(ToString::to_string)
             .unwrap_or_else(|| el.ord.to_string());
@@ -593,23 +848,32 @@ impl Frame<'_> {
             });
         }
 
-        let children = self.eval_nodes(&el.children)?;
+        let mut children = self.eval_nodes(
+            &el.children,
+            |index| address.child(TemplateSegment::ElementChild { index }),
+            context,
+            tracing,
+        )?;
 
-        Ok(Node {
+        let node = Node {
             key,
             element: el.element.clone(),
             class,
             props,
-            children,
+            children: std::mem::take(&mut children.nodes),
             on,
-        })
+        };
+        Ok(children.wrap_children(node))
     }
 
     fn eval_component(
         &self,
         call: &ir::ComponentCallIr,
+        address: &TemplateAddress,
+        context: &EvaluationContext,
+        tracing: bool,
         key_override: Option<&str>,
-    ) -> Result<Node, EvalError> {
+    ) -> Result<EvaluatedNodes, EvalError> {
         let def = self
             .program
             .components
@@ -659,8 +923,21 @@ impl Frame<'_> {
         let call_key = key_override
             .map(ToString::to_string)
             .unwrap_or_else(|| call.ord.to_string());
-        let nodes = frame.eval_node_ir(&def.root, Some(&call_key))?;
-        single_root(nodes)
+        let definition = DefinitionAddress::new(DefinitionKind::Component, call.component.clone());
+        let root_address = TemplateAddress::root(definition);
+        let component_context = context.child(EvaluationContextSegment::ComponentCall {
+            call: address.clone(),
+        });
+        let mut evaluated = frame.eval_node_ir(
+            &def.root,
+            &root_address,
+            &component_context,
+            tracing,
+            Some(&call_key),
+        )?;
+        require_single_root(&evaluated.nodes)?;
+        evaluated.prepend_occurrence(address, context, tracing);
+        Ok(evaluated)
     }
 
     // ── helpers ────────────────────────────────────────────────────────

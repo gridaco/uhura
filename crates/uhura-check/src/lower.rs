@@ -10,11 +10,14 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use uhura_base::{Ident, Span};
 use uhura_core::ir;
+use uhura_core::template::{DefinitionAddress, DefinitionKind, TemplateAddress, walk_template};
 use uhura_syntax::{Parsed, ast};
 
 use crate::catalog::{Catalog, EventKind, PropType};
 use crate::infer::Typer;
 use crate::manifest::Manifest;
+use crate::markup::{ElementResolution, resolve_element};
+use crate::metadata::SourceTargetId;
 use crate::resolve::{DefEnv, ParsedSource, Resolved, RouteSeg};
 use crate::types::{MapKey, Ty};
 
@@ -30,6 +33,64 @@ pub struct SpanEntry {
 pub struct Lowered {
     pub program: ir::ProgramIr,
     pub spans: BTreeMap<String, SpanEntry>,
+    /// Tooling-only source origins for every structural template operation.
+    /// This map is never serialized into `uhura-ir/0`.
+    pub template_origins: BTreeMap<TemplateAddress, SourceTargetId>,
+}
+
+impl Lowered {
+    /// Installs the compiler-built provenance sidecar and refuses to produce a
+    /// lowered artifact unless every template operation has exactly one key.
+    /// Consuming `self` keeps a failed attachment from escaping partially
+    /// initialized.
+    pub fn with_template_origins(
+        mut self,
+        origins: BTreeMap<TemplateAddress, SourceTargetId>,
+    ) -> Result<Self, String> {
+        if !self.template_origins.is_empty() {
+            return Err("template origins were already installed on the lowered artifact".into());
+        }
+        self.template_origins = origins;
+        self.validate_template_origin_coverage()?;
+        Ok(self)
+    }
+
+    pub fn validate_template_origin_coverage(&self) -> Result<(), String> {
+        let mut expected = std::collections::BTreeSet::new();
+        for (kind, definitions) in [
+            (DefinitionKind::Page, &self.program.pages),
+            (DefinitionKind::Component, &self.program.components),
+            (DefinitionKind::Surface, &self.program.surfaces),
+        ] {
+            for (name, definition) in definitions {
+                let address = DefinitionAddress::new(kind, name.clone());
+                walk_template(&address, &definition.root, |template, _| {
+                    expected.insert(template.clone());
+                });
+            }
+        }
+        let actual = self
+            .template_origins
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        if expected == actual {
+            return Ok(());
+        }
+        let missing = expected.difference(&actual).count();
+        let extra = actual.difference(&expected).count();
+        let first_missing = expected.difference(&actual).next();
+        let first_extra = actual.difference(&expected).next();
+        let mut message =
+            format!("template origin coverage mismatch ({missing} missing, {extra} extra)");
+        if let Some(address) = first_missing {
+            message.push_str(&format!("; first missing address: {address:?}"));
+        }
+        if let Some(address) = first_extra {
+            message.push_str(&format!("; first extra address: {address:?}"));
+        }
+        Err(message)
+    }
 }
 
 pub fn lower(
@@ -159,7 +220,7 @@ pub fn lower(
                         return None;
                     };
                     let path = format!("{prefix}.{name}");
-                    let def = lower_def(env, ast, resolved, src, &path, spans);
+                    let def = lower_def(env, ast, resolved, catalog, src, &path, spans);
                     Some((name.clone(), def))
                 })
                 .collect::<BTreeMap<Ident, ir::DefIr>>()
@@ -187,7 +248,11 @@ pub fn lower(
         components,
         surfaces,
     };
-    Lowered { program, spans }
+    Lowered {
+        program,
+        spans,
+        template_origins: BTreeMap::new(),
+    }
 }
 
 /// Check-land `Ty` → the IR's runtime decode grammar. Nominal id/cursor
@@ -252,6 +317,7 @@ fn lower_def(
     env: &DefEnv,
     ast: &ast::File,
     resolved: &Resolved,
+    catalog: &Catalog,
     src: &ParsedSource,
     path: &str,
     spans: &mut BTreeMap<String, SpanEntry>,
@@ -297,7 +363,7 @@ fn lower_def(
                 &src.rel_path,
                 handler.span,
             );
-            if let Some(h) = lower_handler(env, resolved, handler) {
+            if let Some(h) = lower_handler(env, resolved, catalog, handler) {
                 handlers.push(h);
             }
         }
@@ -306,6 +372,7 @@ fn lower_def(
     let mut ctx = LowerCtx {
         env,
         resolved,
+        catalog,
         locals: Vec::new(),
         next_ord: 0,
     };
@@ -377,6 +444,7 @@ fn lower_init(lit: &ast::Literal) -> ir::InitValue {
 fn lower_handler(
     env: &DefEnv,
     resolved: &Resolved,
+    catalog: &Catalog,
     handler: &ast::Handler,
 ) -> Option<ir::HandlerIr> {
     let on = match &handler.event {
@@ -431,6 +499,7 @@ fn lower_handler(
     let mut ctx = LowerCtx {
         env,
         resolved,
+        catalog,
         locals,
         next_ord: 0,
     };
@@ -452,6 +521,7 @@ fn lower_handler(
 struct LowerCtx<'a> {
     env: &'a DefEnv,
     resolved: &'a Resolved,
+    catalog: &'a Catalog,
     /// Names bound locally (handler params, `as` tags, each items, match
     /// bindings) — they lower to `BindingRef`. Types ride along so
     /// re-inference (each-over classification, union arms) stays exact.
@@ -615,7 +685,7 @@ impl LowerCtx<'_> {
         }
     }
 
-    fn lower_nodes(&mut self, nodes: &[ast::Node]) -> Vec<ir::NodeIr> {
+    fn lower_nodes(&mut self, nodes: &ast::MarkupList) -> Vec<ir::NodeIr> {
         nodes.iter().filter_map(|n| self.lower_node(n)).collect()
     }
 
@@ -724,12 +794,19 @@ impl LowerCtx<'_> {
             }
             ast::Node::Element(el) => {
                 let name = Ident::new(&el.name).ok()?;
-                if self.resolved.components.contains_key(&name)
-                    && self.env.component_imports.contains_key(&name)
-                {
-                    Some(self.lower_component_call(el, name))
-                } else {
-                    Some(self.lower_element(el, name))
+                match resolve_element(
+                    &name,
+                    self.env.component_imports.contains_key(&name),
+                    self.resolved,
+                    Some(self.catalog),
+                ) {
+                    ElementResolution::CatalogElement => Some(self.lower_element(el, name)),
+                    ElementResolution::ImportedComponent => {
+                        Some(self.lower_component_call(el, name))
+                    }
+                    ElementResolution::UnimportedComponent
+                    | ElementResolution::Ambiguous
+                    | ElementResolution::Unknown => None,
                 }
             }
         }

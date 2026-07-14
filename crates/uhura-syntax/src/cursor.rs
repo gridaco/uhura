@@ -5,7 +5,7 @@
 
 use uhura_base::{Diagnostic, FileId, Span, codes};
 
-use crate::token::{Comment, Token, TokenKind};
+use crate::token::{Comment, CommentKind, Token, TokenKind};
 
 pub struct Cursor<'src> {
     pub file: FileId,
@@ -102,15 +102,32 @@ impl<'src> Cursor<'src> {
                     let start = self.pos;
                     self.bump();
                     self.bump();
+                    let kind = if self.peek() == Some('!') {
+                        self.bump();
+                        CommentKind::InnerDoc
+                    } else if self.peek() == Some('/') {
+                        self.bump();
+                        if self.peek() == Some('/') {
+                            // Four or more slashes are ordinary. Put the
+                            // third slash back into the body logically.
+                            self.pos -= 1;
+                            CommentKind::Ordinary
+                        } else {
+                            CommentKind::OuterDoc
+                        }
+                    } else {
+                        CommentKind::Ordinary
+                    };
                     let text_start = self.pos as usize;
                     while let Some(c) = self.peek() {
-                        if c == '\n' {
+                        if c == '\n' || c == '\r' {
                             break;
                         }
                         self.bump();
                     }
                     comments.push(Comment {
                         span: self.span_from(start),
+                        kind,
                         text: self.text[text_start..self.pos as usize].to_string(),
                     });
                 }
@@ -124,9 +141,26 @@ impl<'src> Cursor<'src> {
 
     /// Lexes one DSL token (header / store / expression surfaces).
     pub fn dsl_token(&mut self) -> Token {
+        self.dsl_token_mode(false)
+    }
+
+    /// Module-level DSL lexing stops before an XML-shaped markup comment so
+    /// the file driver can perform the DSL-to-markup transition first.
+    pub(crate) fn module_dsl_token(&mut self) -> Token {
+        self.dsl_token_mode(true)
+    }
+
+    fn dsl_token_mode(&mut self, allow_markup_transition: bool) -> Token {
         let leading = self.skip_trivia();
         let start = self.pos;
-        let kind = self.dsl_token_kind(start);
+        let kind = if allow_markup_transition && self.rest().starts_with("<!--") {
+            // Consume only for lexer progress. DslStream::finish rewinds to
+            // this token's start before the markup parser takes ownership.
+            self.bump();
+            TokenKind::Lt
+        } else {
+            self.dsl_token_kind(start)
+        };
         Token {
             kind,
             span: self.span_from(start),
@@ -135,6 +169,9 @@ impl<'src> Cursor<'src> {
     }
 
     fn dsl_token_kind(&mut self, start: u32) -> TokenKind {
+        if self.rest().starts_with("<!--") {
+            return self.lex_disallowed_markup_comment(start);
+        }
         let Some(c) = self.bump() else {
             return TokenKind::Eof;
         };
@@ -268,6 +305,44 @@ impl<'src> Cursor<'src> {
         }
     }
 
+    /// XML-shaped comments are recognized as one recovery token even in DSL
+    /// mode so a well-formed carrier gets UH0001 while malformed XML/markers
+    /// retain UH0016 precedence.
+    fn lex_disallowed_markup_comment(&mut self, start: u32) -> TokenKind {
+        self.eat_str("<!--");
+        let body_start = self.pos;
+        let Some(close) = self.rest().find("-->") else {
+            let recovery = self.rest().find('}').unwrap_or(self.rest().len());
+            self.set_pos(body_start + recovery as u32);
+            self.error(
+                codes::MALFORMED_MARKUP_COMMENT,
+                "unterminated markup comment",
+                self.span_from(start),
+            );
+            return TokenKind::Error;
+        };
+        let body = self.rest()[..close].to_string();
+        self.set_pos(body_start + close as u32);
+        self.eat_str("-->");
+        let normalized = body.replace("\r\n", "\n").replace('\r', "\n");
+        let malformed_xml = body.contains("--") || body.ends_with('-');
+        let malformed_marker = malformed_annotation_marker(&normalized);
+        if malformed_xml || malformed_marker {
+            self.error(
+                codes::MALFORMED_MARKUP_COMMENT,
+                "malformed XML-shaped comment or annotation marker",
+                self.span_from(start),
+            );
+        } else {
+            self.error(
+                codes::UNEXPECTED_TOKEN,
+                "XML-shaped comments are only legal at markup sibling positions",
+                self.span_from(start),
+            );
+        }
+        TokenKind::Error
+    }
+
     fn lex_string(&mut self, start: u32) -> TokenKind {
         let mut out = String::new();
         loop {
@@ -336,6 +411,46 @@ impl<'src> Cursor<'src> {
             }
         }
     }
+}
+
+fn malformed_annotation_marker(body: &str) -> bool {
+    let body = body.trim_start_matches([' ', '\t', '\n']);
+    let Some(marker) = body.strip_prefix('@') else {
+        return false;
+    };
+    let Some((kind_end, separator)) = marker
+        .char_indices()
+        .find(|(_, ch)| matches!(ch, ' ' | '\t' | '\n'))
+    else {
+        return true;
+    };
+    let kind = &marker[..kind_end];
+    let payload = &marker[kind_end + separator.len_utf8()..];
+    !valid_annotation_kind(kind) || payload.trim_matches([' ', '\t', '\n']).is_empty()
+}
+
+fn valid_annotation_kind(kind: &str) -> bool {
+    if kind.is_empty() || kind.len() > 64 || !kind.is_ascii() {
+        return false;
+    }
+    let bytes = kind.as_bytes();
+    if !bytes[0].is_ascii_lowercase() || bytes.last() == Some(&b'-') {
+        return false;
+    }
+    let mut previous_dash = false;
+    for byte in bytes {
+        if *byte == b'-' {
+            if previous_dash {
+                return false;
+            }
+            previous_dash = true;
+        } else if byte.is_ascii_lowercase() || byte.is_ascii_digit() {
+            previous_dash = false;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]

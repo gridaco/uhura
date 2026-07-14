@@ -6,6 +6,10 @@ import type {
 } from "../../editor/editor-state.js";
 import type { Descriptor, VNode } from "../../protocol/types.js";
 import { createEditorRenderer } from "../editor.js";
+import type {
+  EditorNodeRealization,
+  EditorRenderRoot,
+} from "../editor.js";
 import type { IconDefinition } from "../icons.js";
 import { createPlayAssets, createPlayRenderer, findScope } from "../play.js";
 
@@ -423,6 +427,121 @@ test("Editor realization is fresh, local-only, and video is poster-only", () => 
 
   renderer.realize(asElement(host), fixture);
   assert.notEqual(host.firstChild, firstRoot, "one-shot realization remounts semantic DOM");
+});
+
+test("Editor root realization reports semantic paths and direct element handles", () => {
+  const document = new FakeDocument();
+  const host = document.createElement("main");
+  const renderer = createEditorRenderer({
+    document: asDocument(document),
+    icons: {},
+    assets: {},
+  });
+  const observed: EditorNodeRealization[] = [];
+
+  const realized = renderer.realizeRoot(asElement(host), fixture[0]!, {
+    root: { kind: "page" },
+    scope: "preview:page",
+    observe(realization) {
+      assert.equal(
+        host.contains(realization.element as unknown as FakeElement),
+        true,
+        "observers run only after the complete root is mounted",
+      );
+      observed.push(realization);
+    },
+  });
+
+  const expected = [
+    ["root", []],
+    ["title", [0]],
+    ["button", [1]],
+    ["button-label", [1, 0]],
+    ["image", [2]],
+    ["video", [3]],
+    ["icon", [4]],
+    ["pager", [5]],
+    ["slide-1", [5, 0]],
+    ["slide-2", [5, 1]],
+    ["field", [6]],
+    ["feed", [7]],
+  ] as const;
+
+  assert.equal(host.inert, true);
+  assert.deepEqual(observed, realized);
+  assert.deepEqual(
+    realized.map(({ path, element }) => [element.getAttribute("data-key"), path]),
+    expected,
+  );
+  for (const [key] of expected) {
+    assert.equal(
+      realized.find(({ element }) => element.getAttribute("data-key") === key)?.element,
+      asElement(keyed(host, key)),
+      `${key} reports the renderer-created element itself`,
+    );
+  }
+
+  const pager = keyed(host, "pager");
+  const track = pager.querySelector(":scope > .uh-track");
+  const input = keyed(host, "field").querySelector(":scope > input");
+  assert.equal(track?.contains(keyed(host, "slide-1")), true);
+  assert.equal(
+    realized.some(({ element }) => element === asElement(track as FakeElement)),
+    false,
+    "pager track is mechanic DOM, not a semantic path segment",
+  );
+  assert.equal(
+    realized.some(({ element }) => element === asElement(input as FakeElement)),
+    false,
+    "text-field input is mechanic DOM, not a semantic realization",
+  );
+  assert.equal(keyed(host, "button").listeners.size, 0);
+});
+
+test("Editor root identities are explicit and one-shot realizations retain nothing", () => {
+  const document = new FakeDocument();
+  const host = document.createElement("main");
+  const renderer = createEditorRenderer({
+    document: asDocument(document),
+    icons: {},
+    assets: {},
+  });
+  const roots: EditorRenderRoot[] = [
+    { kind: "page" },
+    { kind: "fragment" },
+    { kind: "surface", key: "sheet" },
+  ];
+  let prior: readonly EditorNodeRealization[] | undefined;
+  let firstObserverCalls = 0;
+
+  for (const [index, root] of roots.entries()) {
+    const current = renderer.realizeRoot(asElement(host), fixture[0]!, {
+      root,
+      observe:
+        index === 0
+          ? () => {
+              firstObserverCalls += 1;
+            }
+          : undefined,
+    });
+    assert.deepEqual(current[0]?.root, root);
+    assert.deepEqual(current[0]?.path, []);
+    if (prior) {
+      assert.equal(
+        firstObserverCalls,
+        prior.length,
+        "a later realization never reuses an earlier observer",
+      );
+      for (const { element } of prior) {
+        assert.equal(
+          host.contains(element as unknown as FakeElement),
+          false,
+          "a replacement does not retain prior realization elements",
+        );
+      }
+    }
+    prior = current;
+  }
 });
 
 test("Play disposes replaced and removed subtrees before detaching them", () => {

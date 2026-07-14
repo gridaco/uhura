@@ -4,7 +4,7 @@
 //! before their item. CSS declarations pass through verbatim (§4.5).
 
 use crate::ast::*;
-use crate::token::Comment;
+use crate::token::CommentKind;
 
 const INDENT: &str = "  ";
 
@@ -12,6 +12,7 @@ pub fn format_module(f: &File) -> String {
     let mut out = String::new();
 
     // ── header ──────────────────────────────────────────────────────────
+    fmt_comments(&f.preamble, 0, &mut out);
     match &f.kind {
         DefKind::Component { name, .. } => out.push_str(&format!("component {name}\n")),
         DefKind::Page { .. } => out.push_str("page\n"),
@@ -29,29 +30,51 @@ pub fn format_module(f: &File) -> String {
         }
     }
 
-    if !f.props.is_empty() {
+    if f.props_present {
         out.push('\n');
+        fmt_comments(&f.props_leading, 0, &mut out);
         out.push_str("props {\n");
         for p in &f.props {
             fmt_comments(&p.leading, 1, &mut out);
             out.push_str(&format!("{INDENT}{}: {}\n", p.name, type_str(&p.ty)));
         }
+        fmt_comments(&f.props_trailing, 1, &mut out);
         out.push_str("}\n");
     }
 
-    if !f.emits.is_empty() {
+    if f.emits_present {
         out.push('\n');
+        fmt_comments(&f.emits_leading, 0, &mut out);
         out.push_str("emits {\n");
         for e in &f.emits {
             fmt_comments(&e.leading, 1, &mut out);
-            let params = e
-                .params
-                .iter()
-                .map(|(n, t)| format!("{n}: {}", type_str(t)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!("{INDENT}{}({params})\n", e.name));
+            if params_are_multiline(
+                e.params.iter().map(|param| &param.leading),
+                &e.params_trailing,
+            ) {
+                out.push_str(&format!("{INDENT}{}(\n", e.name));
+                for (index, param) in e.params.iter().enumerate() {
+                    fmt_comments(&param.leading, 2, &mut out);
+                    let comma = if index + 1 < e.params.len() { "," } else { "" };
+                    out.push_str(&format!(
+                        "{INDENT}{INDENT}{}: {}{comma}\n",
+                        param.name,
+                        type_str(&param.ty)
+                    ));
+                }
+                fmt_comments(&e.params_trailing, 2, &mut out);
+                out.push_str(&format!("{INDENT})\n"));
+            } else {
+                let params = e
+                    .params
+                    .iter()
+                    .map(|param| format!("{}: {}", param.name, type_str(&param.ty)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("{INDENT}{}({params})\n", e.name));
+            }
         }
+        fmt_comments(&f.emits_trailing, 1, &mut out);
         out.push_str("}\n");
     }
 
@@ -65,7 +88,8 @@ pub fn format_module(f: &File) -> String {
         out.push('\n');
         fmt_comments(&store.leading, 0, &mut out);
         out.push_str("store {\n");
-        if !store.state.is_empty() {
+        if store.state_present {
+            fmt_comments(&store.state_leading, 1, &mut out);
             out.push_str(&format!("{INDENT}state {{\n"));
             for sf in &store.state {
                 fmt_comments(&sf.leading, 2, &mut out);
@@ -76,24 +100,31 @@ pub fn format_module(f: &File) -> String {
                     literal_str(&sf.init)
                 ));
             }
+            fmt_comments(&store.state_trailing, 2, &mut out);
             out.push_str(&format!("{INDENT}}}\n"));
         }
         for h in &store.handlers {
             out.push('\n');
             fmt_handler(h, &mut out);
         }
+        fmt_comments(&store.trailing, 1, &mut out);
         out.push_str("}\n");
     }
 
-    if !f.markup.is_empty() {
+    if f.trailing_dsl.has_formattable_content()
+        || !f.markup.is_empty()
+        || !f.markup.comments.is_empty()
+        || f.style.is_some()
+    {
         out.push('\n');
-        for n in &f.markup {
-            fmt_node(n, 0, &mut out);
-        }
+        fmt_comments(&f.trailing_dsl, 0, &mut out);
+        fmt_markup_list(&f.markup, 0, &mut out);
     }
 
     if let Some(style) = &f.style {
-        out.push('\n');
+        if !f.markup.is_empty() {
+            out.push('\n');
+        }
         out.push_str("<style>\n");
         let trimmed = style.raw.trim_matches('\n');
         if !trimmed.is_empty() {
@@ -116,21 +147,87 @@ pub fn format_examples(f: &ExamplesFile) -> String {
         fmt_comments(&e.leading, 0, &mut out);
         let default = if e.is_default { " default" } else { "" };
         out.push_str(&format!("example {}{default} {{\n", e.name));
-        for c in &e.clauses {
+        for (index, c) in e.clauses.iter().enumerate() {
+            if let Some(trivia) = e.clause_leading.get(index) {
+                fmt_comments(trivia, 1, &mut out);
+            }
             fmt_example_clause(c, &mut out);
         }
+        fmt_comments(&e.trailing, 1, &mut out);
         out.push_str("}\n");
     }
+    fmt_comments(&f.trailing, 0, &mut out);
     out
 }
 
 // ── pieces ──────────────────────────────────────────────────────────────────
 
-fn fmt_comments(comments: &[Comment], depth: usize, out: &mut String) {
-    for c in comments {
-        out.push_str(&INDENT.repeat(depth));
-        out.push_str(&format!("//{}\n", c.text));
+fn fmt_comments(trivia: &DslTrivia, depth: usize, out: &mut String) {
+    let mut rendered_docs: Vec<Option<String>> = vec![None; trivia.pieces.len()];
+    let mut cursor = 0;
+    while cursor < trivia.pieces.len() {
+        let form = match trivia.pieces[cursor].kind {
+            CommentKind::Ordinary => {
+                cursor += 1;
+                continue;
+            }
+            CommentKind::OuterDoc => CommentKind::OuterDoc,
+            CommentKind::InnerDoc => CommentKind::InnerDoc,
+        };
+        let mut end = cursor;
+        let mut doc_indices = Vec::new();
+        let mut lines = Vec::new();
+        while end < trivia.pieces.len() {
+            let kind = trivia.pieces[end].kind;
+            if kind != CommentKind::Ordinary && kind != form {
+                break;
+            }
+            if kind == form {
+                doc_indices.push(end);
+                lines.push(trivia.pieces[end].normalized_doc_line());
+            }
+            end += 1;
+        }
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+            doc_indices.pop();
+        }
+        for (index, line) in doc_indices.into_iter().zip(lines) {
+            rendered_docs[index] = Some(line);
+        }
+        cursor = end;
     }
+
+    for (index, c) in trivia.pieces.iter().enumerate() {
+        let line = match c.kind {
+            CommentKind::Ordinary => Some(format!("//{}", c.text.trim_end_matches([' ', '\t']))),
+            CommentKind::OuterDoc => rendered_docs[index]
+                .as_ref()
+                .map(|text| format!("///{}", doc_body(text))),
+            CommentKind::InnerDoc => rendered_docs[index]
+                .as_ref()
+                .map(|text| format!("//!{}", doc_body(text))),
+        };
+        let Some(line) = line else { continue };
+        out.push_str(&INDENT.repeat(depth));
+        out.push_str(&line);
+        out.push('\n');
+    }
+}
+
+fn doc_body(text: &str) -> String {
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!(" {text}")
+    }
+}
+
+fn params_are_multiline<'a>(
+    mut leading: impl Iterator<Item = &'a DslTrivia>,
+    trailing: &DslTrivia,
+) -> bool {
+    trailing.has_formattable_content() || leading.any(DslTrivia::has_formattable_content)
 }
 
 fn fmt_use(u: &Use, out: &mut String) {
@@ -193,23 +290,42 @@ fn fmt_handler(h: &Handler, out: &mut String) {
             }
         ),
     };
-    let params = h
-        .params
-        .iter()
-        .map(|p| match &p.ty {
-            Some(t) => format!("{}: {}", p.name, type_str(t)),
-            None => p.name.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
     let guard = match &h.guard {
         Some(g) => format!(" when {}", expr_str(g)),
         None => String::new(),
     };
-    out.push_str(&format!("{INDENT}on {event}({params}){guard} {{\n"));
+    if params_are_multiline(
+        h.params.iter().map(|param| &param.leading),
+        &h.params_trailing,
+    ) {
+        out.push_str(&format!("{INDENT}on {event}(\n"));
+        for (index, param) in h.params.iter().enumerate() {
+            fmt_comments(&param.leading, 2, out);
+            let rendered = match &param.ty {
+                Some(ty) => format!("{}: {}", param.name, type_str(ty)),
+                None => param.name.clone(),
+            };
+            let comma = if index + 1 < h.params.len() { "," } else { "" };
+            out.push_str(&format!("{INDENT}{INDENT}{rendered}{comma}\n"));
+        }
+        fmt_comments(&h.params_trailing, 2, out);
+        out.push_str(&format!("{INDENT}){guard} {{\n"));
+    } else {
+        let params = h
+            .params
+            .iter()
+            .map(|p| match &p.ty {
+                Some(t) => format!("{}: {}", p.name, type_str(t)),
+                None => p.name.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!("{INDENT}on {event}({params}){guard} {{\n"));
+    }
     for st in &h.body {
         fmt_stmt(st, out);
     }
+    fmt_comments(&h.body_trailing, 2, out);
     out.push_str(&format!("{INDENT}}}\n"));
 }
 
@@ -313,7 +429,7 @@ fn fmt_node(n: &Node, depth: usize, out: &mut String) {
                     )),
                 }
             }
-            if e.self_closing || e.children.is_empty() {
+            if e.self_closing || (e.children.is_empty() && e.children.comments.is_empty()) {
                 out.push_str(&format!("{pad}{head} />\n"));
             } else if is_inline_text_only(e) {
                 // `<text …>{expr} literal</text>` stays on one line.
@@ -325,9 +441,7 @@ fn fmt_node(n: &Node, depth: usize, out: &mut String) {
                 out.push_str(&line);
             } else {
                 out.push_str(&format!("{pad}{head}>\n"));
-                for c in &e.children {
-                    fmt_node(c, depth + 1, out);
-                }
+                fmt_markup_list(&e.children, depth + 1, out);
                 out.push_str(&format!("{pad}</{}>\n", e.name));
             }
         }
@@ -338,14 +452,10 @@ fn fmt_node(n: &Node, depth: usize, out: &mut String) {
             cond, then, els, ..
         } => {
             out.push_str(&format!("{pad}{{#if {}}}\n", expr_str(cond)));
-            for c in then {
-                fmt_node(c, depth + 1, out);
-            }
+            fmt_markup_list(then, depth + 1, out);
             if let Some(els) = els {
                 out.push_str(&format!("{pad}{{:else}}\n"));
-                for c in els {
-                    fmt_node(c, depth + 1, out);
-                }
+                fmt_markup_list(els, depth + 1, out);
             }
             out.push_str(&format!("{pad}{{/if}}\n"));
         }
@@ -361,15 +471,17 @@ fn fmt_node(n: &Node, depth: usize, out: &mut String) {
                 expr_str(seq),
                 expr_str(key)
             ));
-            for c in body {
-                fmt_node(c, depth + 1, out);
-            }
+            fmt_markup_list(body, depth + 1, out);
             out.push_str(&format!("{pad}{{/each}}\n"));
         }
         Node::Match {
-            scrutinee, arms, ..
+            scrutinee,
+            before_arms,
+            arms,
+            ..
         } => {
             out.push_str(&format!("{pad}{{#match {}}}\n", expr_str(scrutinee)));
+            fmt_markup_list(before_arms, depth + 1, out);
             for a in arms {
                 match &a.pattern {
                     MatchPattern::Variant(v) => match &a.binding {
@@ -378,9 +490,7 @@ fn fmt_node(n: &Node, depth: usize, out: &mut String) {
                     },
                     MatchPattern::Else => out.push_str(&format!("{pad}{INDENT}{{:else}}\n")),
                 }
-                for c in &a.body {
-                    fmt_node(c, depth + 2, out);
-                }
+                fmt_markup_list(&a.body, depth + 2, out);
             }
             out.push_str(&format!("{pad}{{/match}}\n"));
         }
@@ -389,7 +499,84 @@ fn fmt_node(n: &Node, depth: usize, out: &mut String) {
 }
 
 fn is_inline_text_only(e: &Element) -> bool {
-    e.children.len() == 1 && matches!(&e.children[0], Node::Text { .. })
+    e.children.comments.is_empty()
+        && e.children.len() == 1
+        && matches!(&e.children[0], Node::Text { .. })
+}
+
+fn fmt_markup_list(list: &MarkupList, depth: usize, out: &mut String) {
+    let mut comments = list.comments.iter().peekable();
+    for index in 0..=list.nodes.len() {
+        while comments.peek().is_some_and(|placed| placed.before == index) {
+            let placed = comments.next().expect("peeked comment");
+            fmt_markup_comment(&placed.comment, depth, out);
+        }
+        if let Some(node) = list.nodes.get(index) {
+            fmt_node(node, depth, out);
+        }
+    }
+}
+
+fn fmt_markup_comment(comment: &MarkupComment, depth: usize, out: &mut String) {
+    let pad = INDENT.repeat(depth);
+    match &comment.kind {
+        MarkupCommentKind::Malformed { terminated } => {
+            // Error formatting must preserve the lexical failure. In
+            // particular, adding canonical padding around a trailing `-`, or
+            // inventing a missing close, can turn recovery text into valid
+            // metadata on the next parse.
+            out.push_str(&pad);
+            out.push_str("<!--");
+            out.push_str(&comment.text);
+            if *terminated {
+                out.push_str("-->");
+            }
+            out.push('\n');
+            return;
+        }
+        MarkupCommentKind::RejectedAnnotation { kind } => {
+            // `:` is outside annotation-kind, yielding a stable UH0016
+            // carrier while keeping the author's visible kind and prose.
+            out.push_str(&format!("{pad}<!--@{kind}:"));
+            if !comment.text.is_empty() {
+                if comment.text.contains('\n') {
+                    out.push('\n');
+                } else {
+                    out.push(' ');
+                }
+                out.push_str(&comment.text);
+            }
+            out.push_str("-->\n");
+            return;
+        }
+        MarkupCommentKind::Ordinary | MarkupCommentKind::Annotation { .. } => {}
+    }
+    let marker = match &comment.kind {
+        MarkupCommentKind::Ordinary => None,
+        MarkupCommentKind::Annotation { kind } => Some(kind.as_str()),
+        MarkupCommentKind::Malformed { .. } | MarkupCommentKind::RejectedAnnotation { .. } => {
+            unreachable!("recovery comments return above")
+        }
+    };
+    if !comment.text.contains('\n') {
+        match marker {
+            Some(kind) => out.push_str(&format!("{pad}<!-- @{kind} {} -->\n", comment.text)),
+            None if comment.text.is_empty() => out.push_str(&format!("{pad}<!-- -->\n")),
+            None => out.push_str(&format!("{pad}<!-- {} -->\n", comment.text)),
+        }
+        return;
+    }
+
+    match marker {
+        Some(kind) => out.push_str(&format!("{pad}<!-- @{kind}\n")),
+        None => out.push_str(&format!("{pad}<!--\n")),
+    }
+    for line in comment.text.split('\n') {
+        out.push_str(&pad);
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&format!("{pad}-->\n"));
 }
 
 fn text_runs_str(runs: &[TextRun]) -> String {

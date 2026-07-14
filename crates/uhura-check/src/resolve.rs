@@ -712,11 +712,11 @@ fn build_env(
             continue;
         };
         let mut sig = Vec::new();
-        for (param_name, ty) in &emit.params {
-            let Ok(param_name) = Ident::new(param_name) else {
+        for param in &emit.params {
+            let Ok(param_name) = Ident::new(&param.name) else {
                 continue;
             };
-            sig.push((param_name, source_type(ty, &env, diags)));
+            sig.push((param_name, source_type(&param.ty, &env, diags)));
         }
         if env.emits.insert(name.clone(), sig).is_some() {
             diags.push(Diagnostic::error(

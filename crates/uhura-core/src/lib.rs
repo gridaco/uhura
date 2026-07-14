@@ -11,5 +11,6 @@ pub mod event;
 pub mod ir;
 pub mod state;
 pub mod step;
+pub mod template;
 pub mod trace;
 pub mod view;

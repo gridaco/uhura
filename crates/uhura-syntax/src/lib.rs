@@ -12,4 +12,4 @@ mod token;
 pub use cursor::Cursor;
 pub use format::{expr_str, format_examples, format_module, type_str};
 pub use parser::{ParseOutput, Parsed, SourceKind, parse};
-pub use token::{Comment, Token, TokenKind};
+pub use token::{Comment, CommentKind, Token, TokenKind};

@@ -14,6 +14,37 @@ use crate::infer::Typer;
 use crate::resolve::{DefEnv, Resolved, SubjectKind, did_you_mean};
 use crate::types::{MapKey, Ty};
 
+/// The single checker-wide classification for a markup element name.
+///
+/// An explicit component import normally selects the component. If that name
+/// is also owned by the catalog, the reference is ambiguous and checking must
+/// reject it instead of letting later passes choose different meanings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ElementResolution {
+    CatalogElement,
+    ImportedComponent,
+    UnimportedComponent,
+    Ambiguous,
+    Unknown,
+}
+
+pub(crate) fn resolve_element(
+    name: &Ident,
+    component_imported: bool,
+    resolved: &Resolved,
+    catalog: Option<&Catalog>,
+) -> ElementResolution {
+    let is_component = resolved.components.contains_key(name);
+    let is_catalog = catalog.is_some_and(|catalog| catalog.elements.contains_key(name));
+    match (is_component, component_imported, is_catalog) {
+        (true, true, true) => ElementResolution::Ambiguous,
+        (true, true, false) => ElementResolution::ImportedComponent,
+        (_, _, true) => ElementResolution::CatalogElement,
+        (true, false, false) => ElementResolution::UnimportedComponent,
+        (false, _, false) => ElementResolution::Unknown,
+    }
+}
+
 /// Documented patterns for things that are deliberately not elements (§10);
 /// surfaced as notes on `unknown-element`.
 const PATTERN_NOTES: &[(&str, &str)] = &[
@@ -73,7 +104,7 @@ pub fn check_markup(
     resolved: &Resolved,
     catalog: &Catalog,
     interactive_memo: &BTreeMap<Ident, bool>,
-    markup: &[ast::Node],
+    markup: &ast::MarkupList,
     file_span: Span,
     diags: &mut Vec<Diagnostic>,
 ) -> MarkupFacts {
@@ -166,7 +197,7 @@ impl MarkupChecker<'_> {
             .push(Diagnostic::error(code.0, code.1, message, span));
     }
 
-    fn walk_nodes(&mut self, nodes: &[ast::Node], in_interactive: bool) {
+    fn walk_nodes(&mut self, nodes: &ast::MarkupList, in_interactive: bool) {
         for node in nodes {
             self.walk_node(node, in_interactive);
         }
@@ -198,38 +229,63 @@ impl MarkupChecker<'_> {
                 let Ok(name) = Ident::new(&el.name) else {
                     return;
                 };
-                if self.catalog.elements.contains_key(&name) {
-                    self.walk_element(el, &name, in_interactive);
-                } else if self.typer.resolved.components.contains_key(&name) {
-                    self.walk_component_call(el, &name, in_interactive);
-                } else {
-                    let mut d = Diagnostic::error(
-                        codes::UNKNOWN_ELEMENT.0,
-                        codes::UNKNOWN_ELEMENT.1,
-                        format!(
-                            "`<{name}>` is neither a catalog element nor an imported component"
+                match resolve_element(
+                    &name,
+                    self.typer.env.component_imports.contains_key(&name),
+                    self.typer.resolved,
+                    Some(self.catalog),
+                ) {
+                    ElementResolution::CatalogElement => {
+                        self.walk_element(el, &name, in_interactive);
+                    }
+                    ElementResolution::ImportedComponent
+                    | ElementResolution::UnimportedComponent => {
+                        self.walk_component_call(el, &name, in_interactive);
+                    }
+                    ElementResolution::Ambiguous => self.typer.diags.push(
+                        Diagnostic::error(
+                            codes::SHADOWED_NAME.0,
+                            codes::SHADOWED_NAME.1,
+                            format!(
+                                "`<{name}>` is ambiguous: an imported component shadows a catalog element with the same name"
+                            ),
+                            el.span,
+                        )
+                        .with_label(
+                            self.typer.env.component_imports[&name],
+                            "component imported here",
                         ),
-                        el.span,
-                    );
-                    if let Some((_, note)) = PATTERN_NOTES.iter().find(|(p, _)| *p == name.as_str())
-                    {
-                        d = d.with_note((*note).to_string());
-                    } else if let Some(s) = did_you_mean(
-                        &name,
-                        self.catalog
-                            .elements
-                            .keys()
-                            .chain(self.typer.resolved.components.keys()),
-                    ) {
-                        d = d.with_note(format!("did you mean `<{s}>`?"));
+                    ),
+                    ElementResolution::Unknown => {
+                        let mut d = Diagnostic::error(
+                            codes::UNKNOWN_ELEMENT.0,
+                            codes::UNKNOWN_ELEMENT.1,
+                            format!(
+                                "`<{name}>` is neither a catalog element nor an imported component"
+                            ),
+                            el.span,
+                        );
+                        if let Some((_, note)) =
+                            PATTERN_NOTES.iter().find(|(p, _)| *p == name.as_str())
+                        {
+                            d = d.with_note((*note).to_string());
+                        } else if let Some(s) = did_you_mean(
+                            &name,
+                            self.catalog
+                                .elements
+                                .keys()
+                                .chain(self.typer.resolved.components.keys()),
+                        ) {
+                            d = d.with_note(format!("did you mean `<{s}>`?"));
+                        }
+                        if self.typer.resolved.surfaces.contains_key(&name) {
+                            d = d.with_note(format!(
+                                "`{name}` is a surface — surfaces mount via `open-surface`, \
+                                 not markup"
+                            ));
+                        }
+                        self.typer.diags.push(d);
                     }
-                    if self.typer.resolved.surfaces.contains_key(&name) {
-                        d = d.with_note(format!(
-                            "`{name}` is a surface — surfaces mount via `open-surface`, \
-                             not markup"
-                        ));
-                    }
-                    self.typer.diags.push(d);
                 }
             }
         }
@@ -244,6 +300,7 @@ impl MarkupChecker<'_> {
             key,
             body,
             span,
+            ..
         } = node
         else {
             return;
@@ -292,6 +349,7 @@ impl MarkupChecker<'_> {
             scrutinee,
             arms,
             span,
+            ..
         } = node
         else {
             return;
@@ -1177,7 +1235,8 @@ pub fn interactive_content_memo(
     catalog: &Catalog,
 ) -> BTreeMap<Ident, bool> {
     fn nodes_interactive(
-        nodes: &[ast::Node],
+        nodes: &ast::MarkupList,
+        env: &DefEnv,
         catalog: &Catalog,
         resolved: &Resolved,
         sources: &[crate::resolve::ParsedSource],
@@ -1188,25 +1247,45 @@ pub fn interactive_content_memo(
                 let Ok(name) = Ident::new(&el.name) else {
                     return false;
                 };
-                if let Some(decl) = catalog.elements.get(&name) {
-                    decl.class == ElementClass::Interactive
-                        || nodes_interactive(&el.children, catalog, resolved, sources, memo)
-                } else {
-                    component_interactive(&name, catalog, resolved, sources, memo)
+                match resolve_element(
+                    &name,
+                    env.component_imports.contains_key(&name),
+                    resolved,
+                    Some(catalog),
+                ) {
+                    ElementResolution::CatalogElement => {
+                        catalog.elements[&name].class == ElementClass::Interactive
+                            || nodes_interactive(
+                                &el.children,
+                                env,
+                                catalog,
+                                resolved,
+                                sources,
+                                memo,
+                            )
+                    }
+                    ElementResolution::ImportedComponent => {
+                        component_interactive(&name, catalog, resolved, sources, memo)
+                    }
+                    ElementResolution::Ambiguous => {
+                        catalog.elements[&name].class == ElementClass::Interactive
+                            || component_interactive(&name, catalog, resolved, sources, memo)
+                    }
+                    ElementResolution::UnimportedComponent | ElementResolution::Unknown => false,
                 }
             }
             ast::Node::If { then, els, .. } => {
-                nodes_interactive(then, catalog, resolved, sources, memo)
-                    || els
-                        .as_ref()
-                        .is_some_and(|e| nodes_interactive(e, catalog, resolved, sources, memo))
+                nodes_interactive(then, env, catalog, resolved, sources, memo)
+                    || els.as_ref().is_some_and(|e| {
+                        nodes_interactive(e, env, catalog, resolved, sources, memo)
+                    })
             }
             ast::Node::Each { body, .. } => {
-                nodes_interactive(body, catalog, resolved, sources, memo)
+                nodes_interactive(body, env, catalog, resolved, sources, memo)
             }
             ast::Node::Match { arms, .. } => arms
                 .iter()
-                .any(|arm| nodes_interactive(&arm.body, catalog, resolved, sources, memo)),
+                .any(|arm| nodes_interactive(&arm.body, env, catalog, resolved, sources, memo)),
             _ => false,
         })
     }
@@ -1228,7 +1307,7 @@ pub fn interactive_content_memo(
                 .get(name)
                 .is_some_and(|env| match &sources[env.source].parsed {
                     uhura_syntax::Parsed::Module(ast) => {
-                        nodes_interactive(&ast.markup, catalog, resolved, sources, memo)
+                        nodes_interactive(&ast.markup, env, catalog, resolved, sources, memo)
                     }
                     uhura_syntax::Parsed::Examples(_) => false,
                 });
