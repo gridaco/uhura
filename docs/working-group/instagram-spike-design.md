@@ -151,9 +151,12 @@ bundle (checked-IR bytes are identical with and without them).
 A `.uhura` file has up to four parts, in order: **header** (kind + `use` +
 `props`/`emits`/`param` declarations), **`store { }`** (pages/surfaces only:
 state + handlers — "the model + controller"), **markup** (the view), and an
-optional **`<style>`** block of real CSS. Kebab-case names, UTF-8, `//`
-comments outside markup. One canonical formatter, zero options. Bounds:
-file ≤ 256 KiB, nesting ≤ 32, ≤ 512 nodes/view, ≤ 128 handlers/page.
+optional **`<style>`** block of real CSS. Kebab-case names and UTF-8 apply;
+comments, declaration docs, and markup annotations follow accepted
+[RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md) and the
+[living specification](../spec/README.md#13-source-comments-documentation-and-markup-annotations).
+One canonical formatter, zero options. Bounds: file ≤ 256 KiB, nesting ≤ 32,
+≤ 512 nodes/view, ≤ 128 handlers/page.
 
 ### 4.1 Header
 

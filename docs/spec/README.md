@@ -4,11 +4,15 @@
 - **Target:** Unversioned
 - **Owner:** [Uhura Working Group](../working-group/README.md)
 - **Foundational RFC:** [RFC 0001](../rfcs/0001-project-foundation.md)
+- **Accepted source-language RFC:**
+  [RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md)
 - **Prior art:** XAML, Svelte, QML, Elm
 
 This is the living master document for **Uhura**, a declarative UI language,
 checker/compiler, and deterministic headless experience runtime. Its canonical
-source suffix is `.uhura`; the grammar and serialization are not yet accepted.
+source suffix is `.uhura`. The complete grammar and serialization are not yet
+accepted; the comment, declaration-doc, and markup-annotation subsystem in
+§13 is accepted independently.
 
 Uhura owns the semantics of non-authoritative UI-session state. It consumes
 typed external projections, receives semantic events and command outcomes,
@@ -19,9 +23,10 @@ Uhura does not own authoritative domain state, authorization, transactions,
 backend effects, or concrete rendering.
 
 > **Maturity warning:** this document fixes a project boundary and a model for
-> research. It does not define usable source syntax or a conforming runtime.
-> Terms and examples below are conceptual until accepted by an RFC and backed
-> by executable tests.
+> research. It does not yet define a complete usable source syntax or a
+> conforming runtime. Section 13 is an accepted source-language decision with
+> implementation pending; other terms and examples remain conceptual until
+> accepted by an RFC and backed by executable tests.
 
 ## 1. Normative language
 
@@ -29,8 +34,10 @@ The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** are interpreted as described by
 [BCP 14](https://www.rfc-editor.org/info/bcp14) only when capitalized.
 
-Before Uhura 1.0, capitalized requirements are proposals. Stable semantics
-require an accepted RFC, a versioned specification, and conformance tests.
+Before Uhura 1.0, capitalized requirements are proposals unless their section
+incorporates an accepted RFC. Acceptance locks the design decision; claiming a
+conforming implementation additionally requires a versioned specification and
+executable conformance tests.
 
 ## 2. Product model
 
@@ -302,11 +309,286 @@ The source format must be selected on these properties, not on novelty. The
 XML interchange serialization, it should use an explicit compound suffix such
 as `.uhura.xml` rather than make XML the hidden meaning of `.uhura`.
 
-## 13. Open decisions
+## 13. Source comments, documentation, and markup annotations
+
+This section incorporates accepted
+[RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md). It applies
+to `.uhura` and `.examples.uhura` source. Its implementation is pending.
+
+### 13.1 Three source tiers
+
+Uhura distinguishes:
+
+| Tier | Purpose | Checked authoring metadata |
+|---|---|---|
+| Ordinary comment | Formatter-preserved source trivia | No |
+| Doc comment | Singular documentation of a declaration or declared member | Yes |
+| Markup annotation | Ordered, kinded note on one precise markup occurrence | Yes |
+
+The lexical forms are:
+
+| Source region | Ordinary | Doc | Annotation |
+|---|---|---|---|
+| DSL regions | `// …` and `////…` at comment-bearing boundaries | `/// …`; `//! …` in the file preamble | None |
+| Markup | `<!-- … -->` | None | `<!-- @kind … -->` |
+| `<style>` body | CSS syntax, outside this subsystem | None | None |
+
+Ordinary comments and metadata are structural trivia: they do not count as
+markup nodes, children, roots, statements, handlers, expressions, or
+toward any bounded construct count.
+
+Exactly `///` is an outer doc only when a fourth slash does not follow. These
+lexical classes apply in every DSL stream, including braced interpolation,
+braced attribute values, event bindings, arguments, and block heads. A
+non-empty `///` run in such an expression remains doc metadata and is
+incompatible because the expression is not documentable. `//!` documents the
+source module and every non-empty run MUST occur before the first non-comment
+syntactic item. Entirely empty doc runs emit no metadata or placement
+diagnostic. `// @kind …` remains ordinary in DSL mode.
+
+The ordinary-comment boundaries are closed:
+
+| Context | Legal immediately before |
+|---|---|
+| Module | header; complete top-level `use`; `props`/`emits` head; route `param`; `store`; first markup node or `<style>`; EOF |
+| `props`/`emits`/`state` body | respectively a prop, emitted event, or state field; `}` |
+| Event/handler parameter list | first parameter; later parameter after the preceding comma; `)` |
+| `store` body | `state` head; handler; `}` |
+| Handler body | complete statement; `}` |
+| Examples module | complete top-level `use`; named example; EOF |
+| Example body | complete example clause; `}` |
+
+Inner port-import items, arguments, example-clause sub-lists, types,
+expressions, guards, event bindings, and tokens within one complete item are not
+comment-bearing. A comment MUST NOT occur between a parameter and its comma.
+Invalid placement is `UH0001 syntax/unexpected-token`. A comment before the
+first markup node or `<style>` is trailing module DSL trivia and remains before
+that transition after formatting.
+
+### 13.2 Annotation kinds
+
+An annotation kind contains 1–64 ASCII bytes and MUST match:
+
+```text
+lower (lower | digit)* ("-" (lower | digit)+)*
+```
+
+Kinds are case-sensitive lowercase ASCII. Every valid kind is accepted and
+preserved exactly. `annotation` is the conventional general-purpose kind, but
+`doc`, `rationale`, `review-note`, and other kinds have the same language
+behavior and gain no Uhura Core or runtime semantics.
+
+Therefore a localized markup note is written as:
+
+```uhura
+<!-- @annotation The primary action. -->
+<button />
+```
+
+This is also valid:
+
+```uhura
+<!-- @doc The primary action. -->
+<button />
+```
+
+A markup `@doc` remains annotation-class metadata whose literal kind is `doc`;
+it does not turn the element occurrence into a documented declaration. A
+comment whose first non-whitespace content does not begin with `@` is ordinary.
+If it begins with `@` but has an invalid kind or an empty payload, it MUST be
+diagnosed rather than silently treated as ordinary.
+
+XML-shaped comments are legal only in markup sibling positions, including a
+trailing ordinary comment before a parent or arm close. They are not legal
+inside a start/close tag, attribute list, braced expression, or block head. A
+well-formed comment in such a position receives `UH0001`; malformed bodies or
+annotation markers receive `UH0016`.
+
+Annotation payloads are opaque UTF-8 text. They contain no interpolation,
+attributes, Markdown, or directive mini-language. XML-shaped comments MUST
+terminate with `-->`, MUST NOT contain `--` in their body, and MUST NOT end
+their body with `-`.
+
+### 13.3 Normalization
+
+Horizontal whitespace means ASCII space or tab, a blank line contains only
+horizontal whitespace, and CRLF or bare CR normalizes to LF before body
+classification. Marker whitespace means horizontal whitespace or LF; other
+Unicode whitespace remains payload.
+
+For each `//!` or `///` line, remove the sigil, remove at most one immediately
+following ASCII space, remove trailing horizontal whitespace, normalize the
+line ending to LF, and join the run in source order. Trailing empty lines are
+removed; interior empty lines remain. An empty normalized doc run emits no
+metadata but still separates runs of the opposite doc form. The empty run
+itself receives no dangling, misplaced-inner-doc, or incompatible-target
+diagnostic; surviving non-empty runs are checked independently. Canonical
+formatting omits the empty run's doc-sigil lines while retaining any
+interleaved ordinary comments at their legal boundary.
+
+An ordinary one-line markup comment removes leading and trailing horizontal
+whitespace from its body. An ordinary multiline markup comment removes all
+blank boundary lines, trailing horizontal whitespace on each line, and the
+common ASCII-space indentation of non-empty lines. Interior line breaks and
+blank lines remain.
+
+A markup annotation first removes whitespace before its marker. Its kind MUST
+be followed by at least one ASCII space, tab, or LF; the marker and first such
+separator are removed. Its remaining body uses ordinary markup-comment
+normalization and MUST be non-empty.
+
+A doc run contains one doc form and may span only whitespace and ordinary
+comments. The opposite doc form splits the run. Independent doc runs resolving
+to one target are incompatible rather than merged. A doc metadata span is the
+half-open envelope from its first sigil through the final doc token; it excludes
+the final line ending and may contain transparent whitespace or ordinary
+comments.
+
+### 13.4 Attachment and targets
+
+Docs and annotations attach forward to the next compatible target in the same
+syntactic item or markup sibling list. Whitespace and ordinary comments are
+transparent. Metadata MUST NOT skip an incompatible construct and MUST NOT
+cross a `}`, parameter-list open or close, DSL-to-markup transition, markup
+parent, block arm, markup-to-style transition, or end-of-file boundary.
+Reaching a close, arm, transition, or EOF with no construct to target is
+dangling; encountering an incompatible construct is incompatible. An opening
+delimiter after an ineligible construct has begun belongs to that construct,
+not the dangling case. Closing delimiters, arm labels, and region-transition
+markers such as `<style>` are boundaries, not incompatible constructs. A
+parameter doc MUST be inside its parameter list immediately before the
+parameter. Thus a doc between an event/handler name and `(` is incompatible,
+while one after `(` and immediately before `)` is dangling.
+
+Documentation targets are closed:
+
+- the source module via preamble `//!`;
+- the `component`, `page`, or `surface` declaration;
+- a prop, emitted-event, emitted-event payload parameter, or route-parameter
+  declaration;
+- a `store` scope or state field;
+- an event or outcome handler or its parameter; and
+- a named example declaration.
+
+Imports, grouping sections, statements, expressions, example clauses, markup
+occurrences, style blocks, and CSS are not documentable. A signature with any
+documented parameter or ordinary parameter-list comment MUST use the RFC 0003
+multiline parameter form.
+
+```uhura
+emits {
+  submitted(
+    /// The submitted record.
+    record: id
+  )
+}
+```
+
+Markup annotation targets are closed: catalog elements, component invocations,
+and complete `if`, `each`, and `match` blocks. All kinds, including `@doc`, use
+this same table.
+
+Attributes, event bindings, arguments, expressions, text/interpolation runs,
+match arms, `<style>`, CSS constructs, and parser recovery nodes are not
+annotatable.
+
+An annotation after an opening element attaches to the next child, not the
+containing element. Annotations are repeatable and retain target-local source
+order; a documentable target has at most one normalized doc.
+
+### 13.5 Formatting and checked metadata
+
+The canonical formatter emits an ordinary DSL comment on its own line at the
+following item's indentation. It emits trailing list trivia at member
+indentation inside the closing delimiter and trailing file trivia at top-level
+indentation; module transition trivia remains immediately before the first
+markup node or `<style>`. A trailing source comment therefore moves to a
+boundary line before the next item, close, or transition. The formatter emits
+docs and annotations immediately before their target, preserves metadata
+order, and is idempotent.
+
+It preserves the body after an ordinary DSL comment's first `//`, except for
+trailing horizontal whitespace and line-ending normalization; leading body
+spacing and `////` slash dividers remain unchanged.
+
+Markup layout is chosen from normalized text. Text without LF uses
+`<!-- text -->` or `<!-- @kind text -->`; empty ordinary text uses `<!-- -->`.
+Text containing LF uses separate opening/marker, normalized-body, and closing
+lines at the target's indentation.
+
+Checking MUST produce a separate authoring-metadata projection. Each entry
+contains its class (`doc` or `annotation`), kind, normalized text, metadata
+span, canonical project-relative file, target class and span, and target-local
+order. The metadata span of a markup annotation is its full
+`<!-- … -->` span. Ordinary comments do not enter this projection.
+
+For `//!`/`///`, class and kind are both `doc`. For every tagged markup
+comment, class is `annotation` and kind is the exact marker—even when that kind
+is `doc`. Consumers MUST distinguish class from kind. `order` is the zero-based
+ordinal among entries on one target; a doc has ordinal `0`. The source-module
+target span is the full file span. Target class uses this closed vocabulary:
+
+```text
+source-module
+component-declaration | page-declaration | surface-declaration
+prop-declaration | emitted-event-declaration | emitted-event-parameter
+route-parameter | store-scope | state-field
+event-handler | outcome-handler | handler-parameter
+example-declaration
+catalog-element | component-invocation
+if-block | each-block | match-block
+```
+
+Target spans are half-open byte spans and, except for the source module,
+exclude leading metadata/trivia, trailing trivia, and line endings:
+
+| Class | Span |
+|---|---|
+| Source module | byte `0` through file length, including preamble metadata |
+| Header declaration | kind keyword through final header token |
+| Prop | name through final type token |
+| Emitted event | event name through `)` |
+| Emitted-event/handler parameter | name through final type token when written, otherwise name; excludes comma |
+| Route parameter | `param` through final type token |
+| Store/handler/example | its keyword through body `}` |
+| State field | name through final initializer token |
+| Element/component invocation | opening `<` through self-close or matching closing tag, including children |
+| `if`/`each`/`match` block | opening block `{` through matching close `}`, including arms |
+
+The authoring projection is not canonical runtime `ProgramIr` or semantic
+`V`. Editing valid comments, docs, or annotations MUST NOT change runtime IR,
+view hashes, `step-u`, commands, intents, traces, or runtime diagnostic codes,
+messages, and semantic outcomes. Source locations may shift with surrounding
+text. Wire encoding, durable target identity, visibility, rendering, and
+collaborative lifecycle are separate decisions.
+
+### 13.6 Diagnostics
+
+The subsystem reserves:
+
+| Code | Rule |
+|---|---|
+| `UH0016` | `syntax/malformed-markup-comment` |
+| `UH0017` | `syntax/dangling-metadata` |
+| `UH0018` | `syntax/misplaced-inner-doc` |
+| `UH0019` | `syntax/incompatible-metadata-target` |
+
+Malformed markup comments or annotations MUST NOT silently degrade to an
+ordinary comment or text node. Non-boundary ordinary DSL comments use the
+existing `UH0001` diagnostic, as do well-formed XML-shaped comments outside a
+markup sibling position.
+
+Precedence is malformed markup (`UH0016`), non-empty inner doc after the
+preamble (`UH0018`), incompatible construct (`UH0019`), then close/end boundary
+without a target (`UH0017`). Empty doc runs receive none of these metadata
+diagnostics.
+
+## 14. Open decisions
 
 The foundation deliberately leaves these unsettled:
 
-- exact source syntax and serialization;
+- complete source syntax and serialization beyond the accepted comment,
+  declaration-doc, and markup-annotation subsystem in §13;
 - component versus pure-template semantics;
 - reducer, statechart, or hybrid UI machine model;
 - expression language and totality restrictions;
@@ -325,7 +607,7 @@ The foundation deliberately leaves these unsettled:
 Each material decision requires focused research, examples, counterexamples,
 and executable conformance cases before it enters a versioned specification.
 
-## 14. Historical research evidence
+## 15. Historical research evidence
 
 The [application-scale stress-test requirements](../working-group/application-scale-stress-test.md)
 record which findings from an earlier application-scale stress study remain

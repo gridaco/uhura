@@ -3,6 +3,7 @@
 - **Status:** Incubating
 - **Master specification:** [Uhura specification](spec/README.md)
 - **Foundational proposal:** [RFC 0001](rfcs/0001-project-foundation.md)
+- **Decision records and proposals:** [Uhura RFC index](rfcs/README.md)
 - **Research and stewardship:** [Uhura Working Group](working-group/README.md)
 - **Historical requirements input:** [Application-scale stress-test requirements](working-group/application-scale-stress-test.md)
 
@@ -31,9 +32,11 @@ conformance fixtures.
 
 ## Planned document families
 
-Only the foundation is present today. Future RFCs may establish:
+The foundation, focused proposals, and the first accepted source-language
+decision are present today. Future RFCs may establish:
 
-- source grammar, module rules, and canonical formatting for `.uhura` source;
+- the remaining source grammar, module rules, and canonical formatting for
+  `.uhura` source;
 - the checked intermediate representation and extraction model;
 - UI machine semantics and event processing;
 - the headless core runtime ABI and snapshot format;

@@ -13,8 +13,10 @@ The project is an incubating spike: a Rust workspace under `crates/`
 implements the checker, core machine, fixture driver, static canvas, wasm
 session, TypeScript Play host (`web/src/play/`), and `uhura` CLI, exercised end to end by the
 Instagram slice at `examples/instagram-uhura/`. The design doc
-(`docs/working-group/instagram-spike-design.md`) is authoritative; there is no
-accepted grammar freeze, package, or compatibility promise yet.
+(`docs/working-group/instagram-spike-design.md`) describes the implemented
+spike. Accepted RFCs and the living specification override it where they make
+a focused decision; the complete grammar still has no freeze, package, or
+compatibility promise.
 
 Quick tour (run from the repo root): `cargo run -p uhura-cli --
 examples/instagram-uhura` opens the default read-only Editor at
@@ -171,5 +173,5 @@ management:
 
 - [Documentation index and authority](docs/README.md)
 - [Living master specification](docs/spec/README.md)
-- [RFC 0001: project foundation](docs/rfcs/0001-project-foundation.md)
+- [RFC index and decision records](docs/rfcs/README.md)
 - [Working group](docs/working-group/README.md)
