@@ -13,6 +13,7 @@ pub mod infer;
 pub mod lower;
 pub mod manifest;
 pub mod markup;
+pub mod metadata;
 pub mod pipeline;
 pub mod preview;
 pub mod replay;

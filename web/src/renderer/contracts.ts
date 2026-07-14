@@ -13,6 +13,32 @@ export interface EditorNode {
   children?: EditorNode[];
 }
 
+/** The independently rendered semantic tree within one Editor preview. */
+export type EditorRenderRoot =
+  | { readonly kind: "page" }
+  | { readonly kind: "fragment" }
+  | { readonly kind: "surface"; readonly key: string };
+
+/**
+ * Child indexes in the semantic node tree. The root node has the empty path.
+ * Renderer-created mechanic DOM (for example a pager track) is never counted.
+ */
+export type SemanticNodePath = readonly number[];
+
+export interface EditorRenderNodeRef {
+  readonly root: EditorRenderRoot;
+  readonly path: SemanticNodePath;
+}
+
+/** A semantic node and the exact DOM element created to realize it. */
+export interface EditorNodeRealization extends EditorRenderNodeRef {
+  readonly element: HTMLElement;
+}
+
+export type EditorRealizationObserver = (
+  realization: EditorNodeRealization,
+) => void;
+
 /** Internal superset used by the shared engine when Play enables effects. */
 export interface RendererNode extends EditorNode {
   children?: RendererNode[];

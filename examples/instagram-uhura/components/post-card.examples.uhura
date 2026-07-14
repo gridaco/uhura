@@ -1,5 +1,7 @@
+//! Design examples for the post-card component.
 use fixture standard
 
+/// The canonical image-post example.
 example image-post default {
   props {
     post = fixture.posts.lena-glaze

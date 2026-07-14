@@ -15,6 +15,7 @@ use crate::infer::check_store;
 use crate::lower::{Lowered, lower};
 use crate::manifest::Manifest;
 use crate::markup::{check_markup, interactive_content_memo};
+use crate::metadata::{AuthoringProjection, collect_authoring};
 use crate::resolve::{ParsedSource, resolve};
 use crate::style::{check_class_existence, check_style_block, compile_stylesheet, theme_classes};
 use crate::types::PortTypes;
@@ -62,6 +63,9 @@ pub struct CheckOutput {
     /// The canonical lock content for this input.
     pub lock_computed: String,
     pub lock_status: LockStatus,
+    /// Checked docs/annotations and their source targets. Available even when
+    /// unrelated diagnostics gate runtime artifacts.
+    pub authoring: AuthoringProjection,
 }
 
 pub fn check(input: &CheckInput) -> CheckOutput {
@@ -303,9 +307,34 @@ pub fn check(input: &CheckInput) -> CheckOutput {
         );
     }
 
+    // ── checked authoring metadata (separate from runtime IR) ─────────
+    let authoring = collect_authoring(&sources, &resolved, catalog.as_ref(), &sm, &mut diags);
+    if let Some(message) = authoring.template_origin_error() {
+        diags.push(Diagnostic::error(
+            codes::TEMPLATE_ORIGIN_COVERAGE.0,
+            codes::TEMPLATE_ORIGIN_COVERAGE.1,
+            message,
+            Span::new(manifest_file, 0, 0),
+        ));
+    }
+
     // ── lower (zero-error gated) ───────────────────────────────────────
     let lowered = match (&catalog, has_errors(&diags)) {
-        (Some(catalog), false) => Some(lower(&input.manifest, &resolved, catalog, &sources)),
+        (Some(catalog), false) => {
+            let lowered = lower(&input.manifest, &resolved, catalog, &sources);
+            match lowered.with_template_origins(authoring.template_origins.clone()) {
+                Ok(lowered) => Some(lowered),
+                Err(message) => {
+                    diags.push(Diagnostic::error(
+                        codes::TEMPLATE_ORIGIN_COVERAGE.0,
+                        codes::TEMPLATE_ORIGIN_COVERAGE.1,
+                        message,
+                        Span::new(manifest_file, 0, 0),
+                    ));
+                    None
+                }
+            }
+        }
         _ => None,
     };
 
@@ -349,6 +378,7 @@ pub fn check(input: &CheckInput) -> CheckOutput {
                 &resolved,
                 &sources,
                 &fixtures,
+                &authoring,
                 &mut diags,
             );
         }
@@ -369,6 +399,7 @@ pub fn check(input: &CheckInput) -> CheckOutput {
         stylesheet,
         lock_computed,
         lock_status,
+        authoring: authoring.projection,
     }
 }
 

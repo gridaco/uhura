@@ -10,20 +10,41 @@ use super::expr::{parse_args, parse_expr};
 use super::stream::DslStream;
 
 pub fn parse_examples(s: &mut DslStream) -> ExamplesFile {
+    let mut preamble = DslTrivia::default();
     let mut uses = Vec::new();
     let mut examples = Vec::new();
+    let trailing;
+    let mut first_item = true;
     loop {
         match s.peek().clone() {
-            T::Eof => break,
+            T::Eof => {
+                trailing = s.take_leading();
+                let eof = s.peek_span();
+                if first_item {
+                    s.accept_file_docs_at_eof(&trailing, eof);
+                    preamble = trailing.clone();
+                } else {
+                    s.reject_boundary_docs(&trailing, eof);
+                }
+                break;
+            }
             T::Ident(k) if k == "use" => {
-                if let Some(u) = super::dsl::parse_use(s) {
+                if let Some(u) = super::dsl::parse_use(s, first_item) {
+                    if first_item {
+                        preamble = use_leading(&u).clone();
+                    }
                     uses.push(u);
                 }
+                first_item = false;
             }
             T::Ident(k) if k == "example" => {
-                if let Some(e) = parse_example(s) {
+                if let Some(e) = parse_example(s, first_item) {
+                    if first_item {
+                        preamble = e.leading.clone();
+                    }
                     examples.push(e);
                 }
+                first_item = false;
             }
             other => {
                 let desc = other.describe();
@@ -37,10 +58,24 @@ pub fn parse_examples(s: &mut DslStream) -> ExamplesFile {
             }
         }
     }
-    ExamplesFile { uses, examples }
+    ExamplesFile {
+        preamble,
+        uses,
+        examples,
+        trailing,
+    }
 }
 
-fn parse_example(s: &mut DslStream) -> Option<ExampleDecl> {
+fn use_leading(use_decl: &Use) -> &DslTrivia {
+    match use_decl {
+        Use::Component { leading, .. }
+        | Use::Surface { leading, .. }
+        | Use::Port { leading, .. }
+        | Use::Fixture { leading, .. } => leading,
+    }
+}
+
+fn parse_example(s: &mut DslStream, file_preamble: bool) -> Option<ExampleDecl> {
     let leading = s.take_leading();
     let start = s.peek_span();
     s.eat_ident("example");
@@ -49,10 +84,16 @@ fn parse_example(s: &mut DslStream) -> Option<ExampleDecl> {
     s.expect(&T::LBrace, "to open the example body");
 
     let mut clauses = Vec::new();
+    let mut clause_leading = Vec::new();
+    let mut trailing = DslTrivia::default();
+    let mut end = start;
     loop {
         match s.peek().clone() {
             T::RBrace => {
-                s.bump();
+                trailing = s.take_leading();
+                let boundary = s.peek_span();
+                s.reject_boundary_docs(&trailing, boundary);
+                end = s.bump().span;
                 break;
             }
             T::Eof => {
@@ -62,15 +103,22 @@ fn parse_example(s: &mut DslStream) -> Option<ExampleDecl> {
                 break;
             }
             T::Ident(k) => {
+                let clause_trivia = s.take_leading();
                 let cstart = s.peek_span();
                 match k.as_str() {
                     "from" => {
                         s.bump();
                         if let Some((from, fspan)) = s.expect_ident("as the parent example") {
-                            clauses.push(ExampleClause::From {
-                                name: from,
-                                span: cstart.to(fspan),
-                            });
+                            push_clause(
+                                s,
+                                &mut clauses,
+                                &mut clause_leading,
+                                clause_trivia,
+                                ExampleClause::From {
+                                    name: from,
+                                    span: cstart.to(fspan),
+                                },
+                            );
                         }
                     }
                     "note" => {
@@ -78,10 +126,16 @@ fn parse_example(s: &mut DslStream) -> Option<ExampleDecl> {
                         if let T::Str(text) = s.peek().clone() {
                             let tspan = s.peek_span();
                             s.bump();
-                            clauses.push(ExampleClause::Note {
-                                text,
-                                span: cstart.to(tspan),
-                            });
+                            push_clause(
+                                s,
+                                &mut clauses,
+                                &mut clause_leading,
+                                clause_trivia,
+                                ExampleClause::Note {
+                                    text,
+                                    span: cstart.to(tspan),
+                                },
+                            );
                         } else {
                             let span = s.peek_span();
                             s.cur.error(
@@ -95,23 +149,36 @@ fn parse_example(s: &mut DslStream) -> Option<ExampleDecl> {
                         s.bump();
                         let entries = parse_assign_block(s, &k);
                         let span = cstart.to(s.peek_span());
-                        clauses.push(match k.as_str() {
+                        let clause = match k.as_str() {
                             "params" => ExampleClause::Params { entries, span },
                             "props" => ExampleClause::Props { entries, span },
                             _ => ExampleClause::State { entries, span },
-                        });
+                        };
+                        push_clause(s, &mut clauses, &mut clause_leading, clause_trivia, clause);
                     }
                     "projection" => {
                         s.bump();
                         if let Some(pin) = parse_projection_pin(s) {
-                            clauses.push(ExampleClause::Projection(pin));
+                            push_clause(
+                                s,
+                                &mut clauses,
+                                &mut clause_leading,
+                                clause_trivia,
+                                ExampleClause::Projection(pin),
+                            );
                         }
                     }
                     "events" => {
                         s.bump();
                         let entries = parse_events_list(s);
                         let span = cstart.to(s.peek_span());
-                        clauses.push(ExampleClause::Events { entries, span });
+                        push_clause(
+                            s,
+                            &mut clauses,
+                            &mut clause_leading,
+                            clause_trivia,
+                            ExampleClause::Events { entries, span },
+                        );
                     }
                     other => {
                         s.cur.error(
@@ -122,6 +189,7 @@ fn parse_example(s: &mut DslStream) -> Option<ExampleDecl> {
                             ),
                             cstart,
                         );
+                        s.reject_docs(&clause_trivia, cstart);
                         s.bump();
                     }
                 }
@@ -138,14 +206,47 @@ fn parse_example(s: &mut DslStream) -> Option<ExampleDecl> {
             }
         }
     }
-    let span = start.to(s.peek_span());
+    let span = start.to(end);
+    if file_preamble {
+        s.accept_preamble_docs(&leading, span);
+    } else {
+        s.accept_outer_docs(&leading, span);
+    }
     Some(ExampleDecl {
         name,
         is_default,
         clauses,
+        clause_leading,
+        trailing,
         span,
         leading,
     })
+}
+
+fn push_clause(
+    s: &mut DslStream,
+    clauses: &mut Vec<ExampleClause>,
+    leading: &mut Vec<DslTrivia>,
+    trivia: DslTrivia,
+    clause: ExampleClause,
+) {
+    let span = clause_span(&clause);
+    s.reject_docs(&trivia, span);
+    leading.push(trivia);
+    clauses.push(clause);
+}
+
+fn clause_span(clause: &ExampleClause) -> uhura_base::Span {
+    match clause {
+        ExampleClause::From { span, .. }
+        | ExampleClause::Note { span, .. }
+        | ExampleClause::Params { span, .. }
+        | ExampleClause::Props { span, .. }
+        | ExampleClause::State { span, .. }
+        | ExampleClause::Events { span, .. }
+        | ExampleClause::Error { span } => *span,
+        ExampleClause::Projection(pin) => pin.span,
+    }
 }
 
 /// `{ name = expr, … }` for params / props / state clauses.

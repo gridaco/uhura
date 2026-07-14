@@ -9,14 +9,14 @@ import type {
   EditorState,
 } from "../editor-state.js";
 import {
-  editorBoardUnchanged,
   EditorUpdateSession,
   retainPreviewSelection,
+  reusablePreviewFrameIds,
   reusablePreviewIds,
 } from "../editor-updates.js";
 
 const state = (sourceRevision: number): EditorState => ({
-  protocol: "uhura-editor-state/0",
+  protocol: "uhura-editor-state/1",
   sourceRevision,
   diagnostics: null,
   render: null,
@@ -38,6 +38,8 @@ const preview = (id: string, content = id): EditorPreview => ({
   note: null,
   data: [],
   interactions: [],
+  documentation: { declarationDocId: null, exampleDocId: null },
+  provenance: { occurrences: [] },
   content: {
     key: "root",
     element: "text",
@@ -52,6 +54,7 @@ const render = (
   revision,
   freshness: "current",
   application: { name: "Example" },
+  authoring: { targets: [], entries: [] },
   groups: [{
     id: "component/examples",
     kind: "component",
@@ -148,6 +151,7 @@ test("semantic selection survives replacement and disappears with its preview", 
       revision: 3,
       freshness: "current",
       application: { name: "Example" },
+      authoring: { targets: [], entries: [] },
       groups: [],
       previews: [{
         id: "new-dom-independent-id",
@@ -160,6 +164,8 @@ test("semantic selection survives replacement and disappears with its preview", 
         note: null,
         data: [],
         interactions: [],
+        documentation: { declarationDocId: null, exampleDocId: null },
+        provenance: { occurrences: [] },
         content: { key: "root", element: "view", props: {} },
       }],
       stylesheet: "",
@@ -182,12 +188,46 @@ test("reuses only structurally unchanged previews with compatible resources", ()
   assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha"]);
 });
 
-test("stylesheet changes retain frames but require a board update", () => {
+test("stylesheet changes retain semantic frames", () => {
   const previous = render(3);
   const next = { ...render(4), stylesheet: "body { color: rebeccapurple; }" };
 
   assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
-  assert.equal(editorBoardUnchanged(previous, next), false);
+});
+
+test("authoring-only changes reuse semantic DOM", () => {
+  const previous = render(3);
+  const next = structuredClone(render(4));
+  next.authoring.targets.push({
+    id: "target",
+    class: "catalog-element",
+    file: "card.uhura",
+    span: {
+      offset: 10,
+      len: 6,
+      start: { line: 2, col: 3 },
+      end: { line: 2, col: 9 },
+    },
+    label: "button",
+    owner: { kind: "component", name: "card" },
+  });
+  next.previews[0]!.provenance.occurrences.push({
+    id: "occurrence",
+    targetId: "target",
+    anchors: [{ root: { kind: "fragment" }, path: [] }],
+  });
+
+  assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
+  assert.deepEqual([...reusablePreviewFrameIds(previous, next)], ["alpha", "beta"]);
+});
+
+test("caption changes replace frame chrome but retain semantic realization", () => {
+  const previous = render(3);
+  const next = structuredClone(render(4));
+  next.previews[0]!.note = "Updated caption";
+
+  assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
+  assert.deepEqual([...reusablePreviewFrameIds(previous, next)], ["beta"]);
 });
 
 test("icon and asset changes conservatively invalidate every realized frame", () => {
@@ -201,26 +241,24 @@ test("icon and asset changes conservatively invalidate every realized frame", ()
   assert.deepEqual([...reusablePreviewIds(previous, changedAssets)], []);
 });
 
-test("diagnostic-only and stale transitions leave the entire board untouched", () => {
+test("stale transitions retain semantic frames", () => {
   const previous = render(3);
   const next = { ...structuredClone(previous), freshness: "stale" as const };
 
-  assert.equal(editorBoardUnchanged(previous, next), true);
+  assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
 });
 
 test("equal revisions never hide changed preview content", () => {
   const previous = render(1);
   const restartedHost = render(1, [preview("alpha", "different"), preview("beta")]);
 
-  assert.equal(editorBoardUnchanged(previous, restartedHost), false);
   assert.deepEqual([...reusablePreviewIds(previous, restartedHost)], ["beta"]);
 });
 
-test("group order changes update the board while retaining frame identities", () => {
+test("group order changes retain semantic frame identities", () => {
   const previous = render(3);
   const next = structuredClone(render(4));
   next.groups[0]!.previews.reverse();
 
-  assert.equal(editorBoardUnchanged(previous, next), false);
   assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
 });

@@ -78,29 +78,47 @@ pub fn parse(file: FileId, text: &str, kind: SourceKind) -> ParseOutput {
 
 fn parse_module(cur: &mut Cursor) -> File {
     // ── header ──────────────────────────────────────────────────────────
-    let mut s = DslStream::new(cur);
+    let mut s = DslStream::new_module(cur);
+    let preamble = s.take_leading();
     let kind = parse_def_kind(&mut s);
+    let header_span = def_kind_span(&kind);
+    s.accept_preamble_docs(&preamble, header_span);
 
     let mut uses = Vec::new();
+    let mut props_present = false;
+    let mut props_leading = DslTrivia::default();
     let mut props = Vec::new();
+    let mut props_trailing = DslTrivia::default();
+    let mut emits_present = false;
+    let mut emits_leading = DslTrivia::default();
     let mut emits = Vec::new();
+    let mut emits_trailing = DslTrivia::default();
     let mut params = Vec::new();
     let mut store = None;
+    let trailing_dsl;
 
     loop {
         match s.peek().clone() {
             T::Ident(k) if k == "use" => {
-                if let Some(u) = dsl::parse_use(&mut s) {
+                if let Some(u) = dsl::parse_use(&mut s, false) {
                     uses.push(u);
                 }
             }
             T::Ident(k) if k == "props" => {
+                props_present = true;
+                props_leading = s.take_leading();
+                let target = s.peek_span();
+                s.reject_docs(&props_leading, target);
                 s.bump();
-                props = dsl::parse_props_block(&mut s);
+                (props, props_trailing) = dsl::parse_props_block(&mut s);
             }
             T::Ident(k) if k == "emits" => {
+                emits_present = true;
+                emits_leading = s.take_leading();
+                let target = s.peek_span();
+                s.reject_docs(&emits_leading, target);
                 s.bump();
-                emits = dsl::parse_emits_block(&mut s);
+                (emits, emits_trailing) = dsl::parse_emits_block(&mut s);
             }
             T::Ident(k) if k == "param" => {
                 if let Some(p) = dsl::parse_param(&mut s) {
@@ -110,7 +128,12 @@ fn parse_module(cur: &mut Cursor) -> File {
             T::Ident(k) if k == "store" => {
                 store = Some(dsl::parse_store(&mut s));
             }
-            T::Lt | T::Eof => break,
+            T::Lt | T::Eof => {
+                trailing_dsl = s.take_leading();
+                let boundary = s.peek_span();
+                s.reject_boundary_docs(&trailing_dsl, boundary);
+                break;
+            }
             other => {
                 let desc = other.describe();
                 let span = s.peek_span();
@@ -148,14 +171,31 @@ fn parse_module(cur: &mut Cursor) -> File {
     }
 
     File {
+        preamble,
         kind,
         uses,
+        props_present,
+        props_leading,
         props,
+        props_trailing,
+        emits_present,
+        emits_leading,
         emits,
+        emits_trailing,
         params,
         store,
+        trailing_dsl,
         markup,
         style,
+    }
+}
+
+fn def_kind_span(kind: &DefKind) -> Span {
+    match kind {
+        DefKind::Component { span, .. }
+        | DefKind::Page { span }
+        | DefKind::Surface { span, .. }
+        | DefKind::Error { span } => *span,
     }
 }
 
@@ -223,6 +263,7 @@ fn parse_def_kind(s: &mut DslStream) -> DefKind {
 
 fn parse_style_section(cur: &mut Cursor) -> Option<StyleBlock> {
     let start = cur.pos();
+    debug_assert!(markup::starts_style_section(cur.rest()));
     if !cur.eat_str("<style") {
         return None;
     }

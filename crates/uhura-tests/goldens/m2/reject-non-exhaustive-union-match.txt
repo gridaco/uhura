@@ -1,10 +1,10 @@
 error[UH5016 markup/bad-union-arms]: duplicate `{:when carousel}` arm
-  --> components/post-card.uhura:42:5
+  --> components/post-card.uhura:46:5
 error[UH3003 types/unresolved-name]: nothing named `v` is in scope
-  --> components/post-card.uhura:43:33
+  --> components/post-card.uhura:47:33
 error[UH3003 types/unresolved-name]: nothing named `v` is in scope
-  --> components/post-card.uhura:43:48
+  --> components/post-card.uhura:47:48
 error[UH3003 types/unresolved-name]: nothing named `v` is in scope
-  --> components/post-card.uhura:43:69
+  --> components/post-card.uhura:47:69
 error[UH5016 markup/bad-union-arms]: non-exhaustive match: `video` is unhandled (add the arm or `{:else}`)
-  --> components/post-card.uhura:29:3
+  --> components/post-card.uhura:33:3

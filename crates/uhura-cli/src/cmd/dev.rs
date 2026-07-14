@@ -1295,7 +1295,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use uhura_editor_model::{Application, EditorRender, RenderFreshness};
+    use uhura_editor_model::{Application, AuthoringMetadata, EditorRender, RenderFreshness};
 
     use crate::cmd::editor_model::EditorModelArtifact;
 
@@ -1312,6 +1312,7 @@ mod tests {
             application: Application {
                 name: name.to_string(),
             },
+            authoring: AuthoringMetadata::default(),
             groups: Vec::new(),
             previews: Vec::new(),
             stylesheet: String::new(),

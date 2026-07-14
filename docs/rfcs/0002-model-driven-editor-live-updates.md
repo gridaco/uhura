@@ -7,6 +7,7 @@
 - **Supersedes:** The experimental static Canvas export and document-reload
   lifecycle
 - **Related work:** [RFC 0001](0001-project-foundation.md),
+  [RFC 0003](0003-source-comments-docs-and-annotations.md),
   [Uhura specification](../spec/README.md), and
   [read-only preview provenance](../working-group/referential-example-data-and-read-only-provenance.md)
 
@@ -23,7 +24,7 @@ Editor and Play are routes of one web application:
 ```text
 Uhura source
   -> native capture, check, and evaluation
-  -> uhura-editor-state/0
+  -> uhura-editor-state/1
   -> HTTP state + SSE revision notification
   -> shared semantic browser renderer
   -> Editor at / or Play at /play
@@ -101,8 +102,11 @@ than relying on consumers to remember not to call it.
 
 ## 4. `EditorState` contract
 
-The initial browser-facing protocol is `uhura-editor-state/0`. It is an Editor
-read model, not canonical language IR.
+The initial browser-facing protocol was `uhura-editor-state/0`. The RFC 0003
+implementation advances the current contract to `uhura-editor-state/1`, adding
+render-owned authoring metadata, explicit preview documentation references,
+and source-target occurrences while leaving canonical language and view IR
+unchanged. It remains an Editor read model, not canonical language IR.
 
 ```text
 EditorState

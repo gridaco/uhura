@@ -10,17 +10,26 @@ pub mod icons;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use uhura_base::{Value, has_errors, to_canonical_json, to_envelope};
+use uhura_base::{SourceMap, Span, Value, has_errors, hash_json, to_canonical_json, to_envelope};
 use uhura_check::CheckOutput;
+use uhura_check::metadata::{
+    AuthoringProjection as CheckedAuthoringProjection, MetadataClass as CheckedMetadataClass,
+    SourceOwnerKind as CheckedOwnerKind, SourceTargetClass as CheckedTargetClass,
+};
 use uhura_check::preview::{
     PreviewDataKind, PreviewDataValue, PreviewOrigin, PreviewPayload,
     PreviewSource as CheckedPreviewSource, ResolvedPreview,
 };
 use uhura_check::resolve::SubjectKind;
-use uhura_core::eval::{eval_fragment, eval_view};
+use uhura_core::eval::{eval_fragment_with_trace, eval_view_with_trace};
+use uhura_core::template::{
+    DefinitionAddress, DefinitionKind, EvaluationContext, EvaluationContextSegment,
+    EvaluationTrace, TemplateAddress, TemplateSegment,
+};
+pub use uhura_core::template::{RenderNodeRef, RenderRoot};
 use uhura_core::view::{Descriptor, DescriptorKind, Node, Snapshot};
 
-pub const EDITOR_STATE_PROTOCOL: &str = "uhura-editor-state/0";
+pub const EDITOR_STATE_PROTOCOL: &str = "uhura-editor-state/1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorState {
@@ -37,6 +46,7 @@ pub struct EditorRender {
     pub revision: u64,
     pub freshness: RenderFreshness,
     pub application: Application,
+    pub authoring: AuthoringMetadata,
     pub groups: Vec<PreviewGroup>,
     pub previews: Vec<Preview>,
     pub stylesheet: String,
@@ -75,7 +85,134 @@ pub struct Preview {
     pub note: Option<String>,
     pub data: Vec<PreviewField>,
     pub interactions: Vec<Interaction>,
+    pub documentation: PreviewDocumentation,
+    pub provenance: PreviewProvenance,
     pub content: PreviewContent,
+}
+
+/// A 1-based source location, matching `uhura-diagnostics/0`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EditorSourcePosition {
+    pub line: u32,
+    pub col: u32,
+}
+
+/// A diagnostics-shaped half-open byte span within a separately named file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EditorSourceSpan {
+    pub offset: u32,
+    pub len: u32,
+    pub start: EditorSourcePosition,
+    pub end: EditorSourcePosition,
+}
+
+impl EditorSourceSpan {
+    /// Converts a compiler span without leaking `FileId` onto the wire.
+    pub fn from_span(source_map: &SourceMap, span: Span) -> Self {
+        let start = source_map.line_col(span.file, span.start);
+        let end = source_map.line_col(span.file, span.end);
+        Self {
+            offset: span.start,
+            len: span.len(),
+            start: EditorSourcePosition {
+                line: start.line,
+                col: start.col,
+            },
+            end: EditorSourcePosition {
+                line: end.line,
+                col: end.col,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SourceTargetClass {
+    SourceModule,
+    ComponentDeclaration,
+    PageDeclaration,
+    SurfaceDeclaration,
+    PropDeclaration,
+    EmittedEventDeclaration,
+    EmittedEventParameter,
+    RouteParameter,
+    StoreScope,
+    StateField,
+    EventHandler,
+    OutcomeHandler,
+    HandlerParameter,
+    ExampleDeclaration,
+    CatalogElement,
+    ComponentInvocation,
+    IfBlock,
+    EachBlock,
+    MatchBlock,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceTargetOwnerKind {
+    Module,
+    Examples,
+    Component,
+    Page,
+    Surface,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceTargetOwner {
+    pub kind: SourceTargetOwnerKind,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceTarget {
+    pub id: String,
+    pub class: SourceTargetClass,
+    pub file: String,
+    pub span: EditorSourceSpan,
+    pub label: String,
+    pub owner: SourceTargetOwner,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceMetadataClass {
+    Doc,
+    Annotation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceMetadataEntry {
+    pub id: String,
+    pub class: SourceMetadataClass,
+    pub kind: String,
+    pub text: String,
+    pub span: EditorSourceSpan,
+    pub target_id: String,
+    pub order: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AuthoringMetadata {
+    pub targets: Vec<SourceTarget>,
+    pub entries: Vec<SourceMetadataEntry>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PreviewDocumentation {
+    pub declaration_doc_id: Option<String>,
+    pub example_doc_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetOccurrence {
+    pub id: String,
+    pub target_id: String,
+    pub anchors: Vec<RenderNodeRef>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PreviewProvenance {
+    pub occurrences: Vec<TargetOccurrence>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -166,8 +303,19 @@ pub struct Asset {
 pub enum BuildError {
     DirtyCheck,
     MissingProgram,
-    MissingDefinition { preview: String, definition: String },
-    Evaluation { preview: String, message: String },
+    MissingDefinition {
+        preview: String,
+        definition: String,
+    },
+    MissingTemplateOrigin {
+        preview: String,
+        template: TemplateAddress,
+    },
+    Evaluation {
+        preview: String,
+        message: String,
+    },
+    InvalidAuthoring(String),
     InvalidState(ValidationError),
 }
 
@@ -183,8 +331,16 @@ impl std::fmt::Display for BuildError {
                 f,
                 "preview `{preview}` refers to missing definition `{definition}`"
             ),
+            BuildError::MissingTemplateOrigin { preview, template } => write!(
+                f,
+                "could not build preview `{preview}` provenance: no source origin for template {}",
+                to_canonical_json(&template_address_json(template))
+            ),
             BuildError::Evaluation { preview, message } => {
                 write!(f, "could not evaluate preview `{preview}`: {message}")
+            }
+            BuildError::InvalidAuthoring(message) => {
+                write!(f, "could not build Editor authoring metadata: {message}")
             }
             BuildError::InvalidState(error) => error.fmt(f),
         }
@@ -197,18 +353,84 @@ impl std::error::Error for BuildError {}
 pub enum ValidationError {
     UnsupportedProtocol(String),
     InvalidDiagnosticsEnvelope,
-    RevisionMustBePositive { field: &'static str },
-    CurrentRevisionMismatch { source: u64, render: u64 },
-    StaleRevisionNotOlder { source: u64, render: u64 },
+    RevisionMustBePositive {
+        field: &'static str,
+    },
+    CurrentRevisionMismatch {
+        source: u64,
+        render: u64,
+    },
+    StaleRevisionNotOlder {
+        source: u64,
+        render: u64,
+    },
     DuplicatePreviewId(String),
     DuplicatePreviewIdentity(PreviewIdentity),
-    InvalidPreviewId { expected: String, actual: String },
+    InvalidPreviewId {
+        expected: String,
+        actual: String,
+    },
     DuplicateGroupId(String),
-    UnknownGroupedPreview { group: String, preview: String },
+    UnknownGroupedPreview {
+        group: String,
+        preview: String,
+    },
     PreviewGroupedMoreThanOnce(String),
     UngroupedPreview(String),
-    GroupIdentityMismatch { group: String, preview: String },
+    GroupIdentityMismatch {
+        group: String,
+        preview: String,
+    },
     ContentKindMismatch(String),
+    DuplicateSourceTargetId(String),
+    DuplicateMetadataEntryId(String),
+    InvalidAuthoringField {
+        owner: String,
+        field: &'static str,
+    },
+    UnknownMetadataTarget {
+        entry: String,
+        target: String,
+    },
+    IncompatibleMetadataTarget {
+        entry: String,
+        target: String,
+    },
+    InvalidMetadataOrder {
+        target: String,
+        expected: usize,
+        actual: usize,
+    },
+    UnknownDocumentationEntry {
+        preview: String,
+        entry: String,
+    },
+    IncompatibleDocumentationEntry {
+        preview: String,
+        entry: String,
+    },
+    DuplicateOccurrenceId {
+        preview: String,
+        occurrence: String,
+    },
+    UnknownOccurrenceTarget {
+        preview: String,
+        occurrence: String,
+        target: String,
+    },
+    IncompatibleOccurrenceTarget {
+        preview: String,
+        occurrence: String,
+        target: String,
+    },
+    DuplicateOccurrenceAnchor {
+        preview: String,
+        occurrence: String,
+    },
+    InvalidOccurrenceAnchor {
+        preview: String,
+        occurrence: String,
+    },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -270,6 +492,76 @@ impl std::fmt::Display for ValidationError {
                 f,
                 "preview `{preview}` has content inconsistent with its identity kind"
             ),
+            ValidationError::DuplicateSourceTargetId(id) => {
+                write!(f, "source target id `{id}` occurs more than once")
+            }
+            ValidationError::DuplicateMetadataEntryId(id) => {
+                write!(f, "source metadata entry id `{id}` occurs more than once")
+            }
+            ValidationError::InvalidAuthoringField { owner, field } => {
+                write!(f, "authoring item `{owner}` has invalid `{field}`")
+            }
+            ValidationError::UnknownMetadataTarget { entry, target } => write!(
+                f,
+                "source metadata entry `{entry}` refers to unknown target `{target}`"
+            ),
+            ValidationError::IncompatibleMetadataTarget { entry, target } => write!(
+                f,
+                "source metadata entry `{entry}` is incompatible with target `{target}`"
+            ),
+            ValidationError::InvalidMetadataOrder {
+                target,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "target `{target}` metadata order must be contiguous (expected {expected}, got {actual})"
+            ),
+            ValidationError::UnknownDocumentationEntry { preview, entry } => write!(
+                f,
+                "preview `{preview}` refers to unknown documentation entry `{entry}`"
+            ),
+            ValidationError::IncompatibleDocumentationEntry { preview, entry } => write!(
+                f,
+                "preview `{preview}` refers to incompatible documentation entry `{entry}`"
+            ),
+            ValidationError::DuplicateOccurrenceId {
+                preview,
+                occurrence,
+            } => write!(
+                f,
+                "preview `{preview}` occurrence id `{occurrence}` occurs more than once"
+            ),
+            ValidationError::UnknownOccurrenceTarget {
+                preview,
+                occurrence,
+                target,
+            } => write!(
+                f,
+                "preview `{preview}` occurrence `{occurrence}` refers to unknown target `{target}`"
+            ),
+            ValidationError::IncompatibleOccurrenceTarget {
+                preview,
+                occurrence,
+                target,
+            } => write!(
+                f,
+                "preview `{preview}` occurrence `{occurrence}` is incompatible with target `{target}`"
+            ),
+            ValidationError::DuplicateOccurrenceAnchor {
+                preview,
+                occurrence,
+            } => write!(
+                f,
+                "preview `{preview}` occurrence `{occurrence}` repeats an anchor"
+            ),
+            ValidationError::InvalidOccurrenceAnchor {
+                preview,
+                occurrence,
+            } => write!(
+                f,
+                "preview `{preview}` occurrence `{occurrence}` has an invalid semantic anchor"
+            ),
         }
     }
 }
@@ -317,10 +609,17 @@ pub fn build_render(
     }
     let lowered = output.lowered.as_ref().ok_or(BuildError::MissingProgram)?;
     let program = &lowered.program;
+    let (authoring, annotation_targets) =
+        build_authoring_metadata(&output.authoring, &output.source_map)?;
 
     let mut previews = Vec::with_capacity(output.previews.len());
     for checked in &output.previews {
-        previews.push(build_preview(program, checked)?);
+        previews.push(build_preview(
+            program,
+            &lowered.template_origins,
+            &annotation_targets,
+            checked,
+        )?);
     }
 
     let mut groups = Vec::<PreviewGroup>::new();
@@ -350,6 +649,7 @@ pub fn build_render(
         application: Application {
             name: program.app.to_string(),
         },
+        authoring,
         groups,
         previews,
         stylesheet: output.stylesheet.clone(),
@@ -536,8 +836,345 @@ fn valid_diagnostics_envelope(value: &serde_json::Value) -> bool {
     errors == expected_errors && warnings == expected_warnings
 }
 
+struct AuthoringIndex<'a> {
+    targets: BTreeMap<&'a str, &'a SourceTarget>,
+    entries: BTreeMap<&'a str, &'a SourceMetadataEntry>,
+    annotation_targets: BTreeSet<&'a str>,
+}
+
+impl AuthoringMetadata {
+    fn validate(&self) -> Result<AuthoringIndex<'_>, ValidationError> {
+        let mut targets = BTreeMap::new();
+        for target in &self.targets {
+            if target.id.is_empty() {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: "source target".to_string(),
+                    field: "id",
+                });
+            }
+            if targets.insert(target.id.as_str(), target).is_some() {
+                return Err(ValidationError::DuplicateSourceTargetId(target.id.clone()));
+            }
+            if !canonical_source_path(&target.file) {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: target.id.clone(),
+                    field: "file",
+                });
+            }
+            if !valid_source_span(target.span) {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: target.id.clone(),
+                    field: "span",
+                });
+            }
+            if target.label.is_empty() {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: target.id.clone(),
+                    field: "label",
+                });
+            }
+            if target.owner.name.is_empty()
+                || matches!(
+                    target.owner.kind,
+                    SourceTargetOwnerKind::Module | SourceTargetOwnerKind::Examples
+                ) && target.owner.name != target.file
+            {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: target.id.clone(),
+                    field: "owner",
+                });
+            }
+        }
+
+        let mut entries = BTreeMap::new();
+        let mut orders = BTreeMap::<&str, Vec<usize>>::new();
+        let mut annotation_targets = BTreeSet::new();
+        for entry in &self.entries {
+            if entry.id.is_empty() {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: "source metadata entry".to_string(),
+                    field: "id",
+                });
+            }
+            if entries.insert(entry.id.as_str(), entry).is_some() {
+                return Err(ValidationError::DuplicateMetadataEntryId(entry.id.clone()));
+            }
+            if entry.text.is_empty()
+                || entry.target_id.is_empty()
+                || !valid_source_span(entry.span)
+                || entry.span.len == 0
+            {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: entry.id.clone(),
+                    field: if entry.text.is_empty() {
+                        "text"
+                    } else if entry.target_id.is_empty() {
+                        "targetId"
+                    } else {
+                        "span"
+                    },
+                });
+            }
+            let target = targets.get(entry.target_id.as_str()).ok_or_else(|| {
+                ValidationError::UnknownMetadataTarget {
+                    entry: entry.id.clone(),
+                    target: entry.target_id.clone(),
+                }
+            })?;
+            let compatible = match entry.class {
+                SourceMetadataClass::Doc => {
+                    entry.kind == "doc" && entry.order == 0 && target.class.documentable()
+                }
+                SourceMetadataClass::Annotation => {
+                    valid_annotation_kind(&entry.kind) && target.class.annotatable()
+                }
+            };
+            if !compatible {
+                return Err(ValidationError::IncompatibleMetadataTarget {
+                    entry: entry.id.clone(),
+                    target: entry.target_id.clone(),
+                });
+            }
+            if entry.class == SourceMetadataClass::Annotation {
+                annotation_targets.insert(entry.target_id.as_str());
+            }
+            orders
+                .entry(entry.target_id.as_str())
+                .or_default()
+                .push(entry.order);
+        }
+        for (target, values) in &mut orders {
+            values.sort_unstable();
+            for (expected, actual) in values.iter().copied().enumerate() {
+                if actual != expected {
+                    return Err(ValidationError::InvalidMetadataOrder {
+                        target: (*target).to_string(),
+                        expected,
+                        actual,
+                    });
+                }
+            }
+        }
+        if let Some(target) = targets.keys().find(|target| !orders.contains_key(**target)) {
+            return Err(ValidationError::InvalidAuthoringField {
+                owner: (*target).to_string(),
+                field: "entries",
+            });
+        }
+        Ok(AuthoringIndex {
+            targets,
+            entries,
+            annotation_targets,
+        })
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "targets": self.targets.iter().map(SourceTarget::to_json).collect::<Vec<_>>(),
+            "entries": self.entries.iter().map(SourceMetadataEntry::to_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+impl Preview {
+    fn validate_authoring(&self, authoring: &AuthoringIndex<'_>) -> Result<(), ValidationError> {
+        self.validate_documentation_entry(
+            authoring,
+            self.documentation.declaration_doc_id.as_deref(),
+            match self.identity.kind {
+                PreviewKind::Page => SourceTargetClass::PageDeclaration,
+                PreviewKind::Surface => SourceTargetClass::SurfaceDeclaration,
+                PreviewKind::Component => SourceTargetClass::ComponentDeclaration,
+            },
+        )?;
+        self.validate_documentation_entry(
+            authoring,
+            self.documentation.example_doc_id.as_deref(),
+            SourceTargetClass::ExampleDeclaration,
+        )?;
+
+        let mut occurrence_ids = BTreeSet::new();
+        for occurrence in &self.provenance.occurrences {
+            if occurrence.id.is_empty() || occurrence.target_id.is_empty() {
+                return Err(ValidationError::InvalidAuthoringField {
+                    owner: format!("preview {} occurrence", self.id),
+                    field: if occurrence.id.is_empty() {
+                        "id"
+                    } else {
+                        "targetId"
+                    },
+                });
+            }
+            if !occurrence_ids.insert(occurrence.id.as_str()) {
+                return Err(ValidationError::DuplicateOccurrenceId {
+                    preview: self.id.clone(),
+                    occurrence: occurrence.id.clone(),
+                });
+            }
+            let target = authoring
+                .targets
+                .get(occurrence.target_id.as_str())
+                .ok_or_else(|| ValidationError::UnknownOccurrenceTarget {
+                    preview: self.id.clone(),
+                    occurrence: occurrence.id.clone(),
+                    target: occurrence.target_id.clone(),
+                })?;
+            if !target.class.annotatable()
+                || !authoring
+                    .annotation_targets
+                    .contains(occurrence.target_id.as_str())
+            {
+                return Err(ValidationError::IncompatibleOccurrenceTarget {
+                    preview: self.id.clone(),
+                    occurrence: occurrence.id.clone(),
+                    target: occurrence.target_id.clone(),
+                });
+            }
+            let mut anchors = BTreeSet::new();
+            for anchor in &occurrence.anchors {
+                if !anchors.insert(anchor) {
+                    return Err(ValidationError::DuplicateOccurrenceAnchor {
+                        preview: self.id.clone(),
+                        occurrence: occurrence.id.clone(),
+                    });
+                }
+                if !self.anchor_resolves(anchor) {
+                    return Err(ValidationError::InvalidOccurrenceAnchor {
+                        preview: self.id.clone(),
+                        occurrence: occurrence.id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_documentation_entry(
+        &self,
+        authoring: &AuthoringIndex<'_>,
+        id: Option<&str>,
+        expected_target: SourceTargetClass,
+    ) -> Result<(), ValidationError> {
+        let Some(id) = id else {
+            return Ok(());
+        };
+        let entry = authoring.entries.get(id).ok_or_else(|| {
+            ValidationError::UnknownDocumentationEntry {
+                preview: self.id.clone(),
+                entry: id.to_string(),
+            }
+        })?;
+        let target = authoring.targets.get(entry.target_id.as_str()).copied();
+        let context_matches = target.is_some_and(|target| match expected_target {
+            SourceTargetClass::ExampleDeclaration => target.label == self.identity.example,
+            SourceTargetClass::PageDeclaration => {
+                target.owner.kind == SourceTargetOwnerKind::Page
+                    && target.owner.name == self.identity.subject
+            }
+            SourceTargetClass::SurfaceDeclaration => {
+                target.owner.kind == SourceTargetOwnerKind::Surface
+                    && target.owner.name == self.identity.subject
+            }
+            SourceTargetClass::ComponentDeclaration => {
+                target.owner.kind == SourceTargetOwnerKind::Component
+                    && target.owner.name == self.identity.subject
+            }
+            _ => false,
+        });
+        if entry.class != SourceMetadataClass::Doc
+            || target.map(|item| item.class) != Some(expected_target)
+            || !context_matches
+        {
+            return Err(ValidationError::IncompatibleDocumentationEntry {
+                preview: self.id.clone(),
+                entry: id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn anchor_resolves(&self, anchor: &RenderNodeRef) -> bool {
+        let root = match (&self.content, &anchor.root) {
+            (PreviewContent::Page(snapshot), RenderRoot::Page) => Some(&snapshot.page.root),
+            (PreviewContent::Page(snapshot), RenderRoot::Surface { key }) if !key.is_empty() => {
+                let mut matches = snapshot
+                    .surfaces
+                    .iter()
+                    .filter(|surface| surface.key == *key);
+                let root = matches.next().map(|surface| &surface.root);
+                if matches.next().is_some() { None } else { root }
+            }
+            (PreviewContent::Fragment(node), RenderRoot::Fragment) => Some(node),
+            (
+                PreviewContent::Page(_) | PreviewContent::Fragment(_),
+                RenderRoot::Page | RenderRoot::Fragment | RenderRoot::Surface { .. },
+            ) => None,
+        };
+        let Some(mut node) = root else {
+            return false;
+        };
+        for index in &anchor.path {
+            let Some(child) = node.children.get(*index) else {
+                return false;
+            };
+            node = child;
+        }
+        true
+    }
+}
+
+fn canonical_source_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+fn valid_source_span(span: EditorSourceSpan) -> bool {
+    span.offset.checked_add(span.len).is_some()
+        && span.start.line > 0
+        && span.start.col > 0
+        && span.end.line > 0
+        && span.end.col > 0
+        && span.start <= span.end
+        && ((span.len == 0) == (span.start == span.end))
+}
+
+fn valid_annotation_kind(kind: &str) -> bool {
+    if kind.is_empty() || kind.len() > 64 || !kind.is_ascii() {
+        return false;
+    }
+    let bytes = kind.as_bytes();
+    bytes[0].is_ascii_lowercase()
+        && bytes[bytes.len() - 1] != b'-'
+        && bytes.windows(2).all(|pair| pair != b"--")
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
+}
+
+impl SourceTargetClass {
+    fn documentable(self) -> bool {
+        !self.annotatable()
+    }
+
+    fn annotatable(self) -> bool {
+        matches!(
+            self,
+            Self::CatalogElement
+                | Self::ComponentInvocation
+                | Self::IfBlock
+                | Self::EachBlock
+                | Self::MatchBlock
+        )
+    }
+}
+
 impl EditorRender {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        let authoring = self.authoring.validate()?;
         let mut preview_ids = BTreeSet::new();
         let mut identities = BTreeSet::new();
         let mut by_id = BTreeMap::new();
@@ -568,6 +1205,7 @@ impl EditorRender {
             if !content_matches {
                 return Err(ValidationError::ContentKindMismatch(preview.id.clone()));
             }
+            preview.validate_authoring(&authoring)?;
             by_id.insert(preview.id.clone(), preview);
         }
 
@@ -608,6 +1246,7 @@ impl EditorRender {
             "revision": self.revision,
             "freshness": self.freshness.as_str(),
             "application": { "name": self.application.name },
+            "authoring": self.authoring.to_json(),
             "groups": self.groups.iter().map(PreviewGroup::to_json).collect::<Vec<_>>(),
             "previews": self.previews.iter().map(Preview::to_json).collect::<Vec<_>>(),
             "stylesheet": self.stylesheet,
@@ -619,6 +1258,95 @@ impl EditorRender {
             }).collect::<serde_json::Map<_, _>>(),
         })
     }
+}
+
+impl SourceTarget {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "class": self.class.as_str(),
+            "file": self.file,
+            "span": self.span.to_json(),
+            "label": self.label,
+            "owner": self.owner.to_json(),
+        })
+    }
+}
+
+impl SourceMetadataEntry {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "class": self.class.as_str(),
+            "kind": self.kind,
+            "text": self.text,
+            "span": self.span.to_json(),
+            "targetId": self.target_id,
+            "order": self.order,
+        })
+    }
+}
+
+impl EditorSourceSpan {
+    fn to_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "offset": self.offset,
+            "len": self.len,
+            "start": { "line": self.start.line, "col": self.start.col },
+            "end": { "line": self.end.line, "col": self.end.col },
+        })
+    }
+}
+
+impl SourceTargetOwner {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kind": self.kind.as_str(),
+            "name": self.name,
+        })
+    }
+}
+
+impl PreviewDocumentation {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "declarationDocId": self.declaration_doc_id,
+            "exampleDocId": self.example_doc_id,
+        })
+    }
+}
+
+impl PreviewProvenance {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "occurrences": self.occurrences.iter().map(TargetOccurrence::to_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+impl TargetOccurrence {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "targetId": self.target_id,
+            "anchors": self.anchors.iter().map(render_node_ref_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+fn render_node_ref_json(anchor: &RenderNodeRef) -> serde_json::Value {
+    let root = match &anchor.root {
+        RenderRoot::Page => serde_json::json!({ "kind": "page" }),
+        RenderRoot::Fragment => serde_json::json!({ "kind": "fragment" }),
+        RenderRoot::Surface { key } => serde_json::json!({
+            "kind": "surface",
+            "key": key,
+        }),
+    };
+    serde_json::json!({
+        "root": root,
+        "path": anchor.path,
+    })
 }
 
 impl PreviewGroup {
@@ -645,6 +1373,8 @@ impl Preview {
             "note": self.note,
             "data": self.data.iter().map(PreviewField::to_json).collect::<Vec<_>>(),
             "interactions": self.interactions.iter().map(Interaction::to_json).collect::<Vec<_>>(),
+            "documentation": self.documentation.to_json(),
+            "provenance": self.provenance.to_json(),
             // Snapshot and fragment node remain the existing semantic wire
             // forms; no wrapper introduces a second view protocol.
             "content": self.content.to_json(),
@@ -743,6 +1473,53 @@ impl RenderFreshness {
     }
 }
 
+impl SourceTargetClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceModule => "source-module",
+            Self::ComponentDeclaration => "component-declaration",
+            Self::PageDeclaration => "page-declaration",
+            Self::SurfaceDeclaration => "surface-declaration",
+            Self::PropDeclaration => "prop-declaration",
+            Self::EmittedEventDeclaration => "emitted-event-declaration",
+            Self::EmittedEventParameter => "emitted-event-parameter",
+            Self::RouteParameter => "route-parameter",
+            Self::StoreScope => "store-scope",
+            Self::StateField => "state-field",
+            Self::EventHandler => "event-handler",
+            Self::OutcomeHandler => "outcome-handler",
+            Self::HandlerParameter => "handler-parameter",
+            Self::ExampleDeclaration => "example-declaration",
+            Self::CatalogElement => "catalog-element",
+            Self::ComponentInvocation => "component-invocation",
+            Self::IfBlock => "if-block",
+            Self::EachBlock => "each-block",
+            Self::MatchBlock => "match-block",
+        }
+    }
+}
+
+impl SourceTargetOwnerKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Module => "module",
+            Self::Examples => "examples",
+            Self::Component => "component",
+            Self::Page => "page",
+            Self::Surface => "surface",
+        }
+    }
+}
+
+impl SourceMetadataClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Doc => "doc",
+            Self::Annotation => "annotation",
+        }
+    }
+}
+
 impl PreviewKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -792,6 +1569,252 @@ impl InteractionKind {
     }
 }
 
+fn build_authoring_metadata(
+    projection: &CheckedAuthoringProjection,
+    source_map: &SourceMap,
+) -> Result<(AuthoringMetadata, BTreeSet<String>), BuildError> {
+    projection
+        .validate()
+        .map_err(BuildError::InvalidAuthoring)?;
+    let checked_targets = projection
+        .targets
+        .iter()
+        .map(|target| (target.id.as_str(), target))
+        .collect::<BTreeMap<_, _>>();
+    for target in &projection.targets {
+        if source_map.path(target.span.file) != target.file {
+            return Err(BuildError::InvalidAuthoring(format!(
+                "target `{}` file does not match its source span",
+                target.id
+            )));
+        }
+    }
+    for entry in &projection.entries {
+        let target = checked_targets[entry.target_id.as_str()];
+        if entry.metadata_span.file != target.span.file {
+            return Err(BuildError::InvalidAuthoring(format!(
+                "metadata entry `{}` is not in its target's source file",
+                entry.id
+            )));
+        }
+    }
+    let referenced_targets = projection
+        .entries
+        .iter()
+        .map(|entry| entry.target_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let annotation_targets = projection
+        .entries
+        .iter()
+        .filter(|entry| entry.class == CheckedMetadataClass::Annotation)
+        .map(|entry| entry.target_id.as_str().to_string())
+        .collect::<BTreeSet<_>>();
+    let target_files = projection
+        .targets
+        .iter()
+        .map(|target| (target.id.as_str(), target.file.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut targets = projection
+        .targets
+        .iter()
+        .filter(|target| referenced_targets.contains(target.id.as_str()))
+        .map(|target| SourceTarget {
+            id: target.id.as_str().to_string(),
+            class: source_target_class(target.class),
+            file: target.file.clone(),
+            span: EditorSourceSpan::from_span(source_map, target.span),
+            label: target.label.clone(),
+            owner: SourceTargetOwner {
+                kind: source_owner_kind(target.owner.kind),
+                name: target.owner.name.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+    targets.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then_with(|| left.span.offset.cmp(&right.span.offset))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let mut entries = projection
+        .entries
+        .iter()
+        .map(|entry| SourceMetadataEntry {
+            id: entry.id.as_str().to_string(),
+            class: match entry.class {
+                CheckedMetadataClass::Doc => SourceMetadataClass::Doc,
+                CheckedMetadataClass::Annotation => SourceMetadataClass::Annotation,
+            },
+            kind: entry.kind.clone(),
+            text: entry.text.clone(),
+            span: EditorSourceSpan::from_span(source_map, entry.metadata_span),
+            target_id: entry.target_id.as_str().to_string(),
+            order: entry.order as usize,
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        target_files
+            .get(left.target_id.as_str())
+            .cmp(&target_files.get(right.target_id.as_str()))
+            .then_with(|| left.span.offset.cmp(&right.span.offset))
+            .then_with(|| left.order.cmp(&right.order))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok((AuthoringMetadata { targets, entries }, annotation_targets))
+}
+
+fn source_target_class(class: CheckedTargetClass) -> SourceTargetClass {
+    match class {
+        CheckedTargetClass::SourceModule => SourceTargetClass::SourceModule,
+        CheckedTargetClass::ComponentDeclaration => SourceTargetClass::ComponentDeclaration,
+        CheckedTargetClass::PageDeclaration => SourceTargetClass::PageDeclaration,
+        CheckedTargetClass::SurfaceDeclaration => SourceTargetClass::SurfaceDeclaration,
+        CheckedTargetClass::PropDeclaration => SourceTargetClass::PropDeclaration,
+        CheckedTargetClass::EmittedEventDeclaration => SourceTargetClass::EmittedEventDeclaration,
+        CheckedTargetClass::EmittedEventParameter => SourceTargetClass::EmittedEventParameter,
+        CheckedTargetClass::RouteParameter => SourceTargetClass::RouteParameter,
+        CheckedTargetClass::StoreScope => SourceTargetClass::StoreScope,
+        CheckedTargetClass::StateField => SourceTargetClass::StateField,
+        CheckedTargetClass::EventHandler => SourceTargetClass::EventHandler,
+        CheckedTargetClass::OutcomeHandler => SourceTargetClass::OutcomeHandler,
+        CheckedTargetClass::HandlerParameter => SourceTargetClass::HandlerParameter,
+        CheckedTargetClass::ExampleDeclaration => SourceTargetClass::ExampleDeclaration,
+        CheckedTargetClass::CatalogElement => SourceTargetClass::CatalogElement,
+        CheckedTargetClass::ComponentInvocation => SourceTargetClass::ComponentInvocation,
+        CheckedTargetClass::IfBlock => SourceTargetClass::IfBlock,
+        CheckedTargetClass::EachBlock => SourceTargetClass::EachBlock,
+        CheckedTargetClass::MatchBlock => SourceTargetClass::MatchBlock,
+    }
+}
+
+fn source_owner_kind(kind: CheckedOwnerKind) -> SourceTargetOwnerKind {
+    match kind {
+        CheckedOwnerKind::Module => SourceTargetOwnerKind::Module,
+        CheckedOwnerKind::Examples => SourceTargetOwnerKind::Examples,
+        CheckedOwnerKind::Component => SourceTargetOwnerKind::Component,
+        CheckedOwnerKind::Page => SourceTargetOwnerKind::Page,
+        CheckedOwnerKind::Surface => SourceTargetOwnerKind::Surface,
+    }
+}
+
+fn build_preview_provenance(
+    preview_id: &str,
+    trace: EvaluationTrace,
+    template_origins: &BTreeMap<TemplateAddress, uhura_check::metadata::SourceTargetId>,
+    annotation_targets: &BTreeSet<String>,
+) -> Result<PreviewProvenance, BuildError> {
+    let mut root_ordinals = BTreeMap::<RenderRoot, usize>::new();
+    for occurrence in &trace.occurrences {
+        let next = root_ordinals.len();
+        root_ordinals.entry(occurrence.root.clone()).or_insert(next);
+    }
+    let mut traced = trace.occurrences;
+    traced.sort_by(|left, right| {
+        root_ordinals[&left.root]
+            .cmp(&root_ordinals[&right.root])
+            .then_with(|| left.template.cmp(&right.template))
+            .then_with(|| left.context.cmp(&right.context))
+    });
+    let mut occurrences = Vec::new();
+    for occurrence in traced {
+        let target = template_origins.get(&occurrence.template).ok_or_else(|| {
+            BuildError::MissingTemplateOrigin {
+                preview: preview_id.to_string(),
+                template: occurrence.template.clone(),
+            }
+        })?;
+        if !annotation_targets.contains(target.as_str()) {
+            continue;
+        }
+        let target_id = target.as_str().to_string();
+        occurrences.push(TargetOccurrence {
+            id: stable_occurrence_id(
+                preview_id,
+                &target_id,
+                &occurrence.root,
+                &occurrence.context,
+            ),
+            target_id,
+            anchors: occurrence.anchors,
+        });
+    }
+    Ok(PreviewProvenance { occurrences })
+}
+
+fn stable_occurrence_id(
+    preview_id: &str,
+    target_id: &str,
+    root: &RenderRoot,
+    context: &EvaluationContext,
+) -> String {
+    hash_json(&serde_json::json!({
+        "preview": preview_id,
+        "target": target_id,
+        "root": render_root_identity_json(root),
+        "context": evaluation_context_json(context),
+    }))
+}
+
+fn render_root_identity_json(root: &RenderRoot) -> serde_json::Value {
+    match root {
+        RenderRoot::Page => serde_json::json!({ "kind": "page" }),
+        RenderRoot::Fragment => serde_json::json!({ "kind": "fragment" }),
+        RenderRoot::Surface { key } => {
+            serde_json::json!({ "kind": "surface", "key": key })
+        }
+    }
+}
+
+fn evaluation_context_json(context: &EvaluationContext) -> serde_json::Value {
+    serde_json::Value::Array(
+        context
+            .segments
+            .iter()
+            .map(|segment| match segment {
+                EvaluationContextSegment::ComponentCall { call } => serde_json::json!({
+                    "kind": "component-call",
+                    "call": template_address_json(call),
+                }),
+                EvaluationContextSegment::EachItem { each, key } => serde_json::json!({
+                    "kind": "each-item",
+                    "each": template_address_json(each),
+                    "key": key,
+                }),
+            })
+            .collect(),
+    )
+}
+
+fn template_address_json(address: &TemplateAddress) -> serde_json::Value {
+    serde_json::json!({
+        "definition": {
+            "kind": match address.definition.kind {
+                DefinitionKind::Page => "page",
+                DefinitionKind::Component => "component",
+                DefinitionKind::Surface => "surface",
+            },
+            "name": address.definition.name.to_string(),
+        },
+        "path": address.path.iter().map(|segment| match segment {
+            TemplateSegment::ElementChild { index } => {
+                serde_json::json!({ "kind": "element-child", "index": index })
+            }
+            TemplateSegment::IfThen { index } => {
+                serde_json::json!({ "kind": "if-then", "index": index })
+            }
+            TemplateSegment::IfElse { index } => {
+                serde_json::json!({ "kind": "if-else", "index": index })
+            }
+            TemplateSegment::EachBody { index } => {
+                serde_json::json!({ "kind": "each-body", "index": index })
+            }
+            TemplateSegment::MatchArm { arm, child } => {
+                serde_json::json!({ "kind": "match-arm", "arm": arm, "child": child })
+            }
+        }).collect::<Vec<_>>(),
+    })
+}
+
 pub fn stable_preview_id(identity: &PreviewIdentity) -> String {
     format!(
         "{}/{}/{}",
@@ -807,6 +1830,8 @@ pub fn stable_group_id(kind: PreviewKind, subject: &str) -> String {
 
 fn build_preview(
     program: &uhura_core::ir::ProgramIr,
+    template_origins: &BTreeMap<TemplateAddress, uhura_check::metadata::SourceTargetId>,
+    annotation_targets: &BTreeSet<String>,
     checked: &ResolvedPreview,
 ) -> Result<Preview, BuildError> {
     let (kind, subject) = match &checked.subject {
@@ -820,9 +1845,9 @@ fn build_preview(
         example: checked.example.clone(),
     };
     let id = stable_preview_id(&identity);
-    let content = match &checked.payload {
-        PreviewPayload::Page { u, x, .. } => eval_view(program, u, x)
-            .map(PreviewContent::Page)
+    let (content, trace) = match &checked.payload {
+        PreviewPayload::Page { u, x, .. } => eval_view_with_trace(program, u, x)
+            .map(|(snapshot, trace)| (PreviewContent::Page(snapshot), trace))
             .map_err(|error| BuildError::Evaluation {
                 preview: id.clone(),
                 message: error.to_string(),
@@ -843,8 +1868,16 @@ fn build_preview(
                 preview: id.clone(),
                 definition: name.to_string(),
             })?;
-            eval_fragment(program, definition, props, state, x)
-                .map(PreviewContent::Fragment)
+            let definition_address = DefinitionAddress::new(
+                if *surface {
+                    DefinitionKind::Surface
+                } else {
+                    DefinitionKind::Component
+                },
+                name.clone(),
+            );
+            eval_fragment_with_trace(program, &definition_address, definition, props, state, x)
+                .map(|(node, trace)| (PreviewContent::Fragment(node), trace))
                 .map_err(|error| BuildError::Evaluation {
                     preview: id.clone(),
                     message: error.to_string(),
@@ -853,6 +1886,7 @@ fn build_preview(
     };
     let mut interactions = Vec::new();
     collect_content_interactions(&content, &mut interactions);
+    let provenance = build_preview_provenance(&id, trace, template_origins, annotation_targets)?;
     Ok(Preview {
         id,
         identity,
@@ -864,6 +1898,17 @@ fn build_preview(
         note: checked.note.clone(),
         data: checked.data.iter().map(build_field).collect(),
         interactions,
+        documentation: PreviewDocumentation {
+            declaration_doc_id: checked
+                .declaration_doc_id
+                .as_ref()
+                .map(|value| value.as_str().to_string()),
+            example_doc_id: checked
+                .example_doc_id
+                .as_ref()
+                .map(|value| value.as_str().to_string()),
+        },
+        provenance,
         content,
     })
 }
@@ -959,6 +2004,13 @@ mod tests {
     use uhura_base::{Ident, SourceMap};
     use uhura_check::LockStatus;
     use uhura_check::lower::Lowered;
+    use uhura_check::metadata::{
+        AuthoringProjection as CheckedProjection, MetadataClass as CheckedClass,
+        SourceMetadataEntry as CheckedEntry, SourceOwner as CheckedOwner,
+        SourceOwnerKind as CheckedOwnerKind, SourceSyntaxAddress, SourceSyntaxSegment,
+        SourceTarget as CheckedTarget, SourceTargetClass as CheckedClassTarget,
+        SourceTargetId as CheckedTargetId,
+    };
     use uhura_check::preview::{PreviewData, PreviewSource};
     use uhura_core::ir::{
         CatalogPin, DefIr, ElementEventBindingIr, ElementEventIr, ElementIr, EventKindIr, NodeIr,
@@ -1041,6 +2093,43 @@ mod tests {
             components: BTreeMap::from([(card.clone(), definition("button"))]),
             surfaces: BTreeMap::from([(sheet.clone(), definition("button"))]),
         };
+        let root_address = SourceSyntaxAddress(vec![
+            SourceSyntaxSegment::Definition,
+            SourceSyntaxSegment::Markup,
+            SourceSyntaxSegment::Item(0),
+        ]);
+        let template_origins = BTreeMap::from([
+            (
+                TemplateAddress::root(DefinitionAddress::new(DefinitionKind::Page, home.clone())),
+                CheckedTargetId::from_parts(
+                    "pages/home.uhura",
+                    CheckedClassTarget::CatalogElement,
+                    &root_address,
+                ),
+            ),
+            (
+                TemplateAddress::root(DefinitionAddress::new(
+                    DefinitionKind::Component,
+                    card.clone(),
+                )),
+                CheckedTargetId::from_parts(
+                    "components/post-card.uhura",
+                    CheckedClassTarget::CatalogElement,
+                    &root_address,
+                ),
+            ),
+            (
+                TemplateAddress::root(DefinitionAddress::new(
+                    DefinitionKind::Surface,
+                    sheet.clone(),
+                )),
+                CheckedTargetId::from_parts(
+                    "surfaces/comments-sheet.uhura",
+                    CheckedClassTarget::CatalogElement,
+                    &root_address,
+                ),
+            ),
+        ]);
         let fields = vec![
             PreviewData {
                 kind: PreviewDataKind::Property,
@@ -1110,6 +2199,8 @@ mod tests {
                 from: None,
                 note: Some("Entry page".to_string()),
                 data: fields,
+                declaration_doc_id: None,
+                example_doc_id: None,
                 payload: PreviewPayload::Page {
                     route: home,
                     u: page_state,
@@ -1129,6 +2220,8 @@ mod tests {
                 from: None,
                 note: None,
                 data: Vec::new(),
+                declaration_doc_id: None,
+                example_doc_id: None,
                 payload: PreviewPayload::Fragment {
                     surface: true,
                     name: sheet,
@@ -1147,6 +2240,8 @@ mod tests {
                 from: Some("default".to_string()),
                 note: None,
                 data: Vec::new(),
+                declaration_doc_id: None,
+                example_doc_id: None,
                 payload: PreviewPayload::Fragment {
                     surface: false,
                     name: card,
@@ -1159,15 +2254,112 @@ mod tests {
         CheckOutput {
             diagnostics: Vec::new(),
             source_map: SourceMap::new(),
+            authoring: CheckedAuthoringProjection::default(),
             lowered: Some(Lowered {
                 program,
                 spans: BTreeMap::new(),
+                template_origins,
             }),
             previews,
             stylesheet: ".app { color: black; }".to_string(),
             lock_computed: String::new(),
             lock_status: LockStatus::Match,
         }
+    }
+
+    fn authored_output() -> CheckOutput {
+        let mut output = clean_output();
+        let file = output
+            .source_map
+            .add("pages/home.uhura", "abcdefghijklmnop");
+        let examples_file = output
+            .source_map
+            .add("pages/home.examples.uhura", "abcdefghijkl");
+        let owner = CheckedOwner {
+            kind: CheckedOwnerKind::Page,
+            name: "home".to_string(),
+        };
+        let declaration = CheckedTarget::new(
+            CheckedClassTarget::PageDeclaration,
+            "pages/home.uhura".to_string(),
+            Span::new(file, 4, 8),
+            SourceSyntaxAddress(vec![SourceSyntaxSegment::Definition]),
+            owner.clone(),
+            "page home".to_string(),
+        );
+        let element = CheckedTarget::new(
+            CheckedClassTarget::CatalogElement,
+            "pages/home.uhura".to_string(),
+            Span::new(file, 12, 16),
+            SourceSyntaxAddress(vec![
+                SourceSyntaxSegment::Definition,
+                SourceSyntaxSegment::Markup,
+                SourceSyntaxSegment::Item(0),
+            ]),
+            owner.clone(),
+            "button".to_string(),
+        );
+        let undocumented_prop = CheckedTarget::new(
+            CheckedClassTarget::PropDeclaration,
+            "pages/home.uhura".to_string(),
+            Span::new(file, 2, 3),
+            SourceSyntaxAddress(vec![
+                SourceSyntaxSegment::Definition,
+                SourceSyntaxSegment::Props,
+                SourceSyntaxSegment::Item(0),
+            ]),
+            owner,
+            "title".to_string(),
+        );
+        let doc = CheckedEntry::new(
+            CheckedClass::Doc,
+            "doc".to_string(),
+            "The home page.".to_string(),
+            Span::new(file, 0, 4),
+            declaration.id.clone(),
+            0,
+        );
+        let annotation = CheckedEntry::new(
+            CheckedClass::Annotation,
+            "review-note".to_string(),
+            "The primary action.".to_string(),
+            Span::new(file, 8, 12),
+            element.id.clone(),
+            0,
+        );
+        let example = CheckedTarget::new(
+            CheckedClassTarget::ExampleDeclaration,
+            "pages/home.examples.uhura".to_string(),
+            Span::new(examples_file, 4, 8),
+            SourceSyntaxAddress(vec![
+                SourceSyntaxSegment::Examples,
+                SourceSyntaxSegment::Item(0),
+            ]),
+            CheckedOwner {
+                kind: CheckedOwnerKind::Examples,
+                name: "pages/home.examples.uhura".to_string(),
+            },
+            "default".to_string(),
+        );
+        let example_doc = CheckedEntry::new(
+            CheckedClass::Doc,
+            "doc".to_string(),
+            "The default example.".to_string(),
+            Span::new(examples_file, 0, 4),
+            example.id.clone(),
+            0,
+        );
+        output.previews[0].declaration_doc_id = Some(doc.id.clone());
+        output.previews[0].example_doc_id = Some(example_doc.id.clone());
+        output.authoring = CheckedProjection {
+            targets: vec![undocumented_prop, element.clone(), example, declaration],
+            entries: vec![annotation, doc, example_doc],
+        };
+        output.lowered.as_mut().unwrap().template_origins.insert(
+            TemplateAddress::root(DefinitionAddress::new(DefinitionKind::Page, ident("home"))),
+            element.id,
+        );
+        output
     }
 
     #[test]
@@ -1179,8 +2371,8 @@ mod tests {
                 alt: "Avatar".to_string(),
             },
         )]);
-        let first = build_current_state(9, &clean_output(), assets.clone()).unwrap();
-        let second = build_current_state(9, &clean_output(), assets).unwrap();
+        let first = build_current_state(9, &authored_output(), assets.clone()).unwrap();
+        let second = build_current_state(9, &authored_output(), assets).unwrap();
         let first_json = first.to_canonical_string().unwrap();
         assert_eq!(first_json, second.to_canonical_string().unwrap());
         assert_eq!(first.to_json()["protocol"], EDITOR_STATE_PROTOCOL);
@@ -1253,6 +2445,205 @@ mod tests {
                 .all(|preview| !preview.interactions.is_empty())
         );
         assert_eq!(render.previews[0].interactions[0].emit, "activated");
+    }
+
+    #[test]
+    fn builder_reports_missing_template_origin_with_preview_context() {
+        let mut output = clean_output();
+        let template =
+            TemplateAddress::root(DefinitionAddress::new(DefinitionKind::Page, ident("home")));
+        output
+            .lowered
+            .as_mut()
+            .unwrap()
+            .template_origins
+            .remove(&template);
+
+        let error = build_current_state(5, &output, BTreeMap::new()).unwrap_err();
+        assert_eq!(
+            error,
+            BuildError::MissingTemplateOrigin {
+                preview: "page/home/default".to_string(),
+                template,
+            }
+        );
+        assert!(error.to_string().contains("page/home/default"));
+        assert!(error.to_string().contains("no source origin"));
+    }
+
+    #[test]
+    fn builder_joins_checked_metadata_docs_and_traced_occurrences() {
+        let output = authored_output();
+        assert_eq!(output.authoring.targets.len(), 4);
+        let state = build_current_state(5, &output, BTreeMap::new()).unwrap();
+        let render = state.render.as_ref().unwrap();
+        assert_eq!(
+            render.authoring.targets.len(),
+            3,
+            "the wire omits checker targets without metadata"
+        );
+        assert_eq!(render.authoring.entries.len(), 3);
+        let declaration_doc = render
+            .authoring
+            .entries
+            .iter()
+            .find(|entry| {
+                render.authoring.targets.iter().any(|target| {
+                    target.id == entry.target_id
+                        && target.class == SourceTargetClass::PageDeclaration
+                })
+            })
+            .unwrap();
+        let example_doc = render
+            .authoring
+            .entries
+            .iter()
+            .find(|entry| {
+                render.authoring.targets.iter().any(|target| {
+                    target.id == entry.target_id
+                        && target.class == SourceTargetClass::ExampleDeclaration
+                })
+            })
+            .unwrap();
+        assert_eq!(
+            render.previews[0].documentation.declaration_doc_id,
+            Some(declaration_doc.id.clone())
+        );
+        assert_eq!(
+            render.previews[0].documentation.example_doc_id,
+            Some(example_doc.id.clone())
+        );
+        let occurrence = &render.previews[0].provenance.occurrences[0];
+        assert_eq!(
+            render
+                .authoring
+                .targets
+                .iter()
+                .find(|target| target.id == occurrence.target_id)
+                .map(|target| target.class),
+            Some(SourceTargetClass::CatalogElement)
+        );
+        assert_eq!(
+            occurrence.anchors,
+            vec![RenderNodeRef {
+                root: RenderRoot::Page,
+                path: Vec::new(),
+            }]
+        );
+
+        let second = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
+        assert_eq!(
+            occurrence.id,
+            second.render.unwrap().previews[0].provenance.occurrences[0].id,
+            "occurrence identity is deterministic and excludes DOM/runtime keys"
+        );
+
+        let stale = EditorState::stale(6, diagnostics("rejected"), render.clone()).unwrap();
+        assert_eq!(stale.render.unwrap().authoring, render.authoring);
+    }
+
+    #[test]
+    fn validation_rejects_cross_preview_docs_and_invalid_semantic_anchors() {
+        let mut state = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
+        state
+            .render
+            .as_mut()
+            .unwrap()
+            .authoring
+            .targets
+            .iter_mut()
+            .find(|target| target.class == SourceTargetClass::PageDeclaration)
+            .unwrap()
+            .owner
+            .name = "another-page".to_string();
+        assert!(matches!(
+            state.validate(),
+            Err(ValidationError::IncompatibleDocumentationEntry { .. })
+        ));
+
+        let mut state = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
+        state
+            .render
+            .as_mut()
+            .unwrap()
+            .authoring
+            .targets
+            .iter_mut()
+            .find(|target| target.class == SourceTargetClass::ExampleDeclaration)
+            .unwrap()
+            .label = "another-example".to_string();
+        assert!(matches!(
+            state.validate(),
+            Err(ValidationError::IncompatibleDocumentationEntry { .. })
+        ));
+
+        let mut state = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
+        state.render.as_mut().unwrap().previews[0]
+            .provenance
+            .occurrences[0]
+            .anchors[0]
+            .path
+            .push(9);
+        assert!(matches!(
+            state.validate(),
+            Err(ValidationError::InvalidOccurrenceAnchor { .. })
+        ));
+
+        let mut state = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
+        state.render.as_mut().unwrap().previews[0]
+            .provenance
+            .occurrences[0]
+            .anchors
+            .clear();
+        assert!(
+            state.validate().is_ok(),
+            "evaluated empty occurrences remain valid"
+        );
+
+        let mut state = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
+        state
+            .render
+            .as_mut()
+            .unwrap()
+            .authoring
+            .entries
+            .retain(|entry| entry.class != SourceMetadataClass::Annotation);
+        assert!(matches!(
+            state.validate(),
+            Err(ValidationError::InvalidAuthoringField {
+                field: "entries",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn annotation_kind_validation_matches_the_rfc_lower_kebab_grammar() {
+        for kind in [
+            "a".to_string(),
+            "a0".to_string(),
+            "a-0".to_string(),
+            "review-note".to_string(),
+            "a".repeat(64),
+        ] {
+            assert!(valid_annotation_kind(&kind), "expected valid kind `{kind}`");
+        }
+        for kind in [
+            String::new(),
+            "0note".to_string(),
+            "Review".to_string(),
+            "review_note".to_string(),
+            "-note".to_string(),
+            "note-".to_string(),
+            "note--later".to_string(),
+            "nöté".to_string(),
+            "a".repeat(65),
+        ] {
+            assert!(
+                !valid_annotation_kind(&kind),
+                "expected invalid kind `{kind}`"
+            );
+        }
     }
 
     #[test]

@@ -33,6 +33,10 @@ pub const TOO_MANY_NODES: Code = ("UH0012", "bounds/too-many-view-nodes");
 pub const TOO_MANY_HANDLERS: Code = ("UH0013", "bounds/too-many-handlers");
 pub const MISPLACED_SECTION: Code = ("UH0014", "syntax/misplaced-section");
 pub const INVALID_STYLE_BLOCK: Code = ("UH0015", "syntax/invalid-style-block");
+pub const MALFORMED_MARKUP_COMMENT: Code = ("UH0016", "syntax/malformed-markup-comment");
+pub const DANGLING_METADATA: Code = ("UH0017", "syntax/dangling-metadata");
+pub const MISPLACED_INNER_DOC: Code = ("UH0018", "syntax/misplaced-inner-doc");
+pub const INCOMPATIBLE_METADATA_TARGET: Code = ("UH0019", "syntax/incompatible-metadata-target");
 
 // ── UH1xxx: routes / resolution / imports ──────────────────────────────────
 pub const BAD_PAGE_PATH: Code = ("UH1001", "routes/bad-page-path");
@@ -126,3 +130,6 @@ pub const REPLAY_BLOCKED: Code = ("UH7013", "examples/blocked-by-ancestor");
 // ── UH8xxx: runtime (minted by core, appear in `G`/traces) ─────────────────
 pub const DUPLICATE_IN_FLIGHT: Code = ("UH8001", "runtime/duplicate-in-flight-send");
 pub const INVALID_FIXTURE: Code = ("UH2009", "contract/invalid-fixture");
+
+// ── UH9xxx: internal invariants ────────────────────────────────────────────────
+pub const TEMPLATE_ORIGIN_COVERAGE: Code = ("UH9001", "internal/template-origin-coverage");

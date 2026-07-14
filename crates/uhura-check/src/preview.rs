@@ -21,6 +21,7 @@ use uhura_core::state::{
 use uhura_syntax::{Parsed, ast};
 
 use crate::fixture::{FixtureData, decode_against_ty};
+use crate::metadata::{AuthoringCollection, SourceMetadataId};
 use crate::replay;
 use crate::resolve::{DefEnv, ParsedSource, Resolved, SubjectKind};
 use crate::types::Ty;
@@ -44,6 +45,10 @@ pub struct ResolvedPreview {
     /// deliberately excluded from ProgramIr: examples never affect runtime
     /// semantics or the checked bundle.
     pub data: Vec<PreviewData>,
+    /// Declaration/example docs selected by RFC 0003 attachment. These IDs
+    /// reference the check output's separate authoring projection.
+    pub declaration_doc_id: Option<SourceMetadataId>,
+    pub example_doc_id: Option<SourceMetadataId>,
     pub payload: PreviewPayload,
 }
 
@@ -137,6 +142,7 @@ pub fn resolve_previews(
     resolved: &Resolved,
     sources: &[ParsedSource],
     fixtures: &BTreeMap<Ident, FixtureData>,
+    authoring: &AuthoringCollection,
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<ResolvedPreview> {
     let mut previews = Vec::new();
@@ -167,6 +173,7 @@ pub fn resolve_previews(
             src,
             file,
             fixtures,
+            authoring,
             diags,
             &mut previews,
         );
@@ -182,6 +189,7 @@ fn resolve_file(
     src: &ParsedSource,
     file: &ast::ExamplesFile,
     fixtures: &BTreeMap<Ident, FixtureData>,
+    authoring: &AuthoringCollection,
     diags: &mut Vec<Diagnostic>,
     previews: &mut Vec<ResolvedPreview>,
 ) {
@@ -381,6 +389,15 @@ fn resolve_file(
             }
         };
         data.extend(projection_data(env, &payload, &projection_origins));
+        let definition = definition_address(&env.kind);
+        let declaration_doc_id = authoring
+            .definition_targets
+            .get(&definition)
+            .and_then(|target| authoring.doc_for_target(target));
+        let example_doc_id = authoring
+            .example_targets
+            .get(&(src.rel_path.clone(), example.name.clone()))
+            .and_then(|target| authoring.doc_for_target(target));
         previews.push(ResolvedPreview {
             subject: env.kind.clone(),
             example: example.name.clone(),
@@ -391,8 +408,24 @@ fn resolve_file(
             from,
             note,
             data,
+            declaration_doc_id,
+            example_doc_id,
             payload,
         });
+    }
+}
+
+fn definition_address(subject: &SubjectKind) -> uhura_core::template::DefinitionAddress {
+    use uhura_core::template::{DefinitionAddress, DefinitionKind};
+
+    match subject {
+        SubjectKind::Page { route } => DefinitionAddress::new(DefinitionKind::Page, route.clone()),
+        SubjectKind::Component { name } => {
+            DefinitionAddress::new(DefinitionKind::Component, name.clone())
+        }
+        SubjectKind::Surface { name, .. } => {
+            DefinitionAddress::new(DefinitionKind::Surface, name.clone())
+        }
     }
 }
 

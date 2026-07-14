@@ -819,7 +819,7 @@ viewport (`scroll`), windowing (renderer license), pagination observation
 
 The native side captures one coherent saved-file revision, checks it, resolves
 examples, evaluates semantic page snapshots/component fragments, and asks
-`uhura-editor-model` to serialize one immutable `uhura-editor-state/0`
+`uhura-editor-model` to serialize one immutable `uhura-editor-state/1`
 document. The document contains source and render revisions, current
 diagnostics, application metadata, stable preview groups and identities,
 semantic content, example values and provenance, interaction summaries, the
@@ -1366,7 +1366,7 @@ historical; the v3 topology describes the maintained end state.)
 5. Navigation: feed → profile → back retains feed page state; history
    intents are emitted and traced (and executed as no-ops).
 6. `uhura-editor-model` deterministically publishes every resolved example in
-   one valid `uhura-editor-state/0` render without HTML or I/O and without
+   one valid `uhura-editor-state/1` render without HTML or I/O and without
    executing extra transitions (derivation remains a checked build step over
    pure `step-u`). The browser's Editor policy cannot dispatch runtime events.
    A broken current revision carries its own diagnostics and an explicitly

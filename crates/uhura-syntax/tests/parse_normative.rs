@@ -116,13 +116,13 @@ fn feed_page_parses_clean() {
                     if e.name == name {
                         return Some(e);
                     }
-                    &e.children
+                    &e.children.nodes
                 }
-                Node::If { then, .. } => then,
-                Node::Each { body, .. } => body,
+                Node::If { then, .. } => &then.nodes,
+                Node::Each { body, .. } => &body.nodes,
                 Node::Match { arms, .. } => {
                     for a in arms {
-                        if let Some(e) = find_element(&a.body, name) {
+                        if let Some(e) = find_element(&a.body.nodes, name) {
                             return Some(e);
                         }
                     }
@@ -136,7 +136,7 @@ fn feed_page_parses_clean() {
         }
         None
     }
-    let card = find_element(&root.children, "post-card").expect("post-card call");
+    let card = find_element(&root.children.nodes, "post-card").expect("post-card call");
     assert_eq!(card.events.len(), 3);
     assert!(
         card.events
