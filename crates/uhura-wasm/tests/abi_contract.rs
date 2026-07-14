@@ -3,7 +3,7 @@
 //! Two layers:
 //! 1. **Shape goldens** — the hand-written JSON forms of events, the
 //!    step-result envelope, and the protocol triple, pinned as literal
-//!    strings. `shell/types.js` mirrors these typedefs; a change here is
+//!    strings. `web/src/protocol/types.ts` mirrors these types; a change here is
 //!    a protocol version bump, not an edit.
 //! 2. **Pump parity** — every canonical corpus script replayed through
 //!    `Session` + `FixtureDriver` (natively — the crate is an rlib too)

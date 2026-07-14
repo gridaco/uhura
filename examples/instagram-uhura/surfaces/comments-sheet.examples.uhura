@@ -23,3 +23,20 @@ example empty {
   projection feed.viewer = fixture.users.mira
   projection comments.for-post("post-ayla-ferry") = fixture.comments.empty
 }
+
+example empty-composing {
+  from empty
+  events [ composer-changed(value: "First comment") ]
+}
+
+example empty-pending {
+  from empty-composing
+  events [ submit-requested() ]
+  note "the optimistic row replaces the empty state and serializes submission"
+}
+
+example rejected {
+  from empty-pending
+  events [ outcome add-comment.err(reason: "comment_body_invalid") ]
+  note "a refusal restores the submitted body for correction"
+}

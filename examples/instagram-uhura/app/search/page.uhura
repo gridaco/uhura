@@ -1,0 +1,178 @@
+page
+
+use component bottom-nav
+use component connection-row
+use component notice-bar
+use port feed { projection viewer }
+use port profile {
+  projection search-results
+  command search-people
+  command follow-user
+  command unfollow-user
+}
+
+store {
+  state {
+    query: text = ""
+    applied-query: text = ""
+    search-pending: bool = false
+    follow-pending: map[id]bool = {}
+    notice: text? = none
+  }
+
+  on query-changed(value: text) {
+    set query = value
+  }
+
+  on search-submitted() when !search-pending {
+    set search-pending = true
+    send search-people(query: query)
+  }
+
+  on search-people.ok(tag, cmd) {
+    set search-pending = false
+    set applied-query = cmd.query
+  }
+
+  on search-people.err(tag, cmd, refusal) {
+    set search-pending = false
+    set notice = "Search isn't available right now."
+  }
+
+  on follow-toggled(target: id, now-following: bool) when now-following && !(follow-pending[target] ?? false) {
+    set follow-pending[target] = true
+    send follow-user(user: target)
+  }
+
+  on follow-toggled(target: id, now-following: bool) when !now-following && !(follow-pending[target] ?? false) {
+    set follow-pending[target] = true
+    send unfollow-user(user: target)
+  }
+
+  on follow-user.ok(tag, cmd) {
+    set follow-pending[cmd.user] = none
+  }
+
+  on follow-user.err(tag, cmd, refusal) {
+    set follow-pending[cmd.user] = none
+    set notice = "Couldn't follow this person."
+  }
+
+  on unfollow-user.ok(tag, cmd) {
+    set follow-pending[cmd.user] = none
+  }
+
+  on unfollow-user.err(tag, cmd, refusal) {
+    set follow-pending[cmd.user] = none
+    set notice = "Couldn't unfollow this person."
+  }
+
+  on profile-tapped(target: id) {
+    navigate profile(user: target)
+  }
+
+  on post-tapped(post: id) {
+    navigate post(id: post)
+  }
+
+  on tab-selected(section: text) when section == "feed" {
+    navigate replace feed()
+  }
+
+  on tab-selected(section: text) when section == "create" {
+    navigate create()
+  }
+
+  on tab-selected(section: text) when section == "reels" {
+    navigate replace reels()
+  }
+
+  on tab-selected(section: text) when section == "profile" {
+    navigate replace profile(user: viewer.id)
+  }
+
+  on tab-selected(section: text) when section == "search" && !search-pending {
+    set search-pending = true
+    send search-people(query: query)
+  }
+
+  on notice-dismissed() {
+    set notice = none
+  }
+}
+
+<view class="screen search-page">
+  <view class="search-head">
+    <text class="search-title">Explore</text>
+    <view class="search-controls">
+      <text-field value={query} label="Search accounts and posts" placeholder="Search accounts and posts…" disabled={search-pending} on:change={emit query-changed()} on:submit={emit search-submitted()} />
+      <button label="Search" busy={search-pending} on:press={emit search-submitted()}>
+        <icon name="search" />
+      </button>
+    </view>
+  </view>
+  {#if notice != none}
+    <notice-bar text={notice ?? ""} on:dismissed={emit notice-dismissed()} />
+  {/if}
+  {#match search-results}
+    {:when loading}
+      <view class="fill-center">
+        <text class="muted">Finding people…</text>
+      </view>
+    {:when failed reason}
+      <view class="fill-center">
+        <text class="muted">Search isn't available.</text>
+      </view>
+    {:when ready results}
+      {#if count(results.people) == 0 && count(results.posts) == 0}
+        <view class="fill-center stack-sm">
+          <text>No results found.</text>
+          <text class="muted">Try an account name or a word from a caption.</text>
+        </view>
+      {:else}
+        <scroll class="search-results">
+          {#if count(results.people) > 0}
+            <view class="search-section">
+              <text class="section-title">{if applied-query == "" then "Suggested accounts" else "Accounts"}</text>
+              <view role="list" class="people-results">
+                {#each results.people as person (person.user.id)}
+                  <connection-row person={person} viewer={viewer.id} pending={follow-pending[person.user.id] ?? false} on:profile-tapped on:follow-toggled />
+                {/each}
+              </view>
+            </view>
+          {/if}
+          {#if count(results.posts) > 0}
+            <view class="search-section">
+              <text class="section-title">{if applied-query == "" then "Explore posts" else "Posts"}</text>
+              <view role="list" class="explore-grid">
+                {#each results.posts as post (post.id)}
+                  <view class="explore-item">
+                    <region class="explore-link" label={"View post: " ++ post.alt} on:activate={emit post-tapped(post: post.id)}>
+                      <image class="explore-tile" src={post.src} alt={post.alt} />
+                    </region>
+                  </view>
+                {/each}
+              </view>
+            </view>
+          {/if}
+        </scroll>
+      {/if}
+  {/match}
+  <bottom-nav current="search" on:tab-selected />
+</view>
+
+<style>
+.search-page .search-head { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-line); }
+.search-page .search-title { font-size: var(--type-xl); font-weight: 700; }
+.search-page .search-controls { display: flex; align-items: flex-end; gap: var(--space-2); }
+.search-page .search-controls .uh-text-field { flex: 1; }
+.search-page .search-controls .uh-button { min-inline-size: 42px; min-block-size: 42px; justify-content: center; }
+.search-page .search-results { flex: 1; min-block-size: 0; }
+.search-page .search-section { display: flex; flex-direction: column; }
+.search-page .section-title { padding: var(--space-4); font-weight: 700; }
+.search-page .people-results { border-block: 1px solid var(--color-line); }
+.search-page .explore-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.search-page .explore-item { min-inline-size: 0; }
+.search-page .explore-link { display: block; aspect-ratio: 3 / 4; overflow: hidden; }
+.search-page .explore-tile { inline-size: 100%; block-size: 100%; object-fit: cover; }
+</style>

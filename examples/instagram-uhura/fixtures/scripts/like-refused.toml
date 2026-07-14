@@ -1,4 +1,4 @@
-# §11.4 step 3: the authority refuses — heart and count roll back, the
+# §11.4 step 3: the authority is unavailable — heart and count roll back, the
 # notice explains; after dismissing it the feed subtree is byte-identical
 # to pre-like (the scoped invariant). CI-goldened.
 
@@ -11,8 +11,8 @@ slice = "feed.page-1"
 [[reply]]
 on = { command = "like-post", where = { post = "post-lena-glaze" } }
 after-ticks = 1
-outcome = "refused"
-refusal = "rate-limited"
+outcome = "unavailable"
+reason = "network unavailable"
 
 [[ui]]
 at-tick = 2

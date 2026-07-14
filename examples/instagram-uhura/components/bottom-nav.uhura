@@ -9,23 +9,37 @@ emits {
 }
 
 <view role="navigation" class="bottom-nav">
-  <button label="Home" current={current == "feed"} on:press={emit tab-selected(section: "feed")}>
-    <icon name="home" />
-  </button>
-  <button label="Search" disabled>
-    <icon name="search" />
-  </button>
-  <button label="Create" disabled>
-    <icon name="plus" />
-  </button>
-  <button label="Reels" disabled>
-    <icon name="reels" />
-  </button>
-  <button label="Profile" current={current == "profile"} on:press={emit tab-selected(section: "profile")}>
-    <icon name="profile" />
-  </button>
+  <text class="nav-brand">Instagram</text>
+  <view class="nav-items">
+    <button label="Home" current={current == "feed"} on:press={emit tab-selected(section: "feed")}>
+      <icon name="home" />
+      <text class="nav-label">Home</text>
+    </button>
+    <button label="Search" current={current == "search"} on:press={emit tab-selected(section: "search")}>
+      <icon name="search" />
+      <text class="nav-label">Search</text>
+    </button>
+    <button label="Create" current={current == "create"} on:press={emit tab-selected(section: "create")}>
+      <icon name="plus" />
+      <text class="nav-label">Create</text>
+    </button>
+    <button label="Reels" current={current == "reels"} on:press={emit tab-selected(section: "reels")}>
+      <icon name="reels" />
+      <text class="nav-label">Reels</text>
+    </button>
+    <button label="Profile" current={current == "profile"} on:press={emit tab-selected(section: "profile")}>
+      <icon name="profile" />
+      <text class="nav-label">Profile</text>
+    </button>
+  </view>
 </view>
 
 <style>
-.bottom-nav { display: flex; justify-content: space-around; padding: var(--space-2) 0; border-block-start: 1px solid var(--color-line); }
+.bottom-nav { z-index: 6; flex: none; display: flex; align-items: center; min-block-size: 54px; padding: var(--space-1) var(--space-2); border-block-start: 1px solid var(--color-line); background: var(--color-surface); }
+.bottom-nav .nav-brand,
+.bottom-nav .nav-label { display: none; }
+.bottom-nav .nav-items { flex: 1; display: flex; align-items: center; justify-content: space-around; min-inline-size: 0; }
+.bottom-nav .nav-items .uh-button { flex: 1; justify-content: center; min-inline-size: 44px; min-block-size: 44px; padding: var(--space-2); }
+.bottom-nav .nav-items .uh-button[aria-current="true"] { font-weight: 700; }
+.bottom-nav .nav-items .uh-button[aria-current="true"] .uh-icon { transform: scale(1.08); }
 </style>

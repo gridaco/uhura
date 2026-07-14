@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>uhura play</title>
+    <link rel="icon" href="data:," />
+    <!-- shell bases first, compiled app stylesheet second: the app always
+         wins on shared selectors (same order as the static canvas). -->
+    <link rel="stylesheet" href="./shell.css" />
+  </head>
+  <body class="uh-play-shell">
+    <header id="uh-shell-toolbar">
+      <div class="uh-shell-brand" aria-label="Uhura Play">
+        <span class="uh-shell-mark" aria-hidden="true">U</span>
+        <strong>Uhura</strong>
+        <span class="uh-shell-mode">Play</span>
+        <!-- uhura-editor-navigation -->
+      </div>
+
+      <div class="uh-frame-switch" role="group" aria-label="Prototype viewport">
+        <button type="button" data-uh-frame="mobile" aria-pressed="true">
+          <svg aria-hidden="true" viewBox="0 0 16 16">
+            <rect x="4.25" y="1.5" width="7.5" height="13" rx="1.5"></rect>
+            <path d="M6.75 3h2.5M7.25 12.75h1.5"></path>
+          </svg>
+          Mobile
+        </button>
+        <button type="button" data-uh-frame="desktop" aria-pressed="false">
+          <svg aria-hidden="true" viewBox="0 0 16 16">
+            <rect x="1.5" y="2.25" width="13" height="9" rx="1.25"></rect>
+            <path d="M5.25 14h5.5M8 11.25V14"></path>
+          </svg>
+          Desktop
+        </button>
+      </div>
+
+      <div class="uh-shell-controls">
+        <output id="uh-runtime-status" class="uh-runtime-status" aria-live="polite">
+          <span aria-hidden="true"></span> Starting
+        </output>
+        <label id="uh-provider-control" class="uh-system-select" for="uh-provider-select" hidden>
+          <span>Provider</span>
+          <select id="uh-provider-select" disabled>
+            <option>Starting…</option>
+          </select>
+        </label>
+        <label class="uh-system-select uh-actor-select" for="uh-actor-select">
+          <span>Actor</span>
+          <select id="uh-actor-select" disabled>
+            <option>Starting…</option>
+          </select>
+        </label>
+        <button id="uh-restart" class="uh-restart" type="button" disabled>
+          <svg aria-hidden="true" viewBox="0 0 16 16">
+            <path d="M13.25 6A5.5 5.5 0 1 0 13 10.5"></path>
+            <path d="M10.5 3.25h3v3"></path>
+          </svg>
+          Restart
+        </button>
+      </div>
+    </header>
+
+    <main id="uh-stage">
+      <div id="uh-frame-stack">
+        <div id="uh-frame-label">Mobile <span>390 × 844</span></div>
+        <div id="uh-frame-sizer">
+          <div id="uh-frame" data-frame="mobile">
+            <div id="uh-app">
+              <div id="uh-page"></div>
+              <div id="uh-surfaces"></div>
+            </div>
+            <div id="uh-overlay" hidden></div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="./chrome.ts"></script>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

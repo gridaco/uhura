@@ -1,4 +1,4 @@
 error[UH5006 markup/bad-children]: `<button>` children are content elements (text / image / icon)
-  --> components/post-card.uhura:51:7
+  --> components/post-card.uhura:51:9
 error[UH5007 markup/nested-interactive]: `<button>` cannot nest inside another interactive element (§10)
-  --> components/post-card.uhura:51:7
+  --> components/post-card.uhura:51:9

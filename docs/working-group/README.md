@@ -49,6 +49,26 @@ accepted.
 - [Application-scale stress-test requirements](application-scale-stress-test.md)
   preserves reusable requirements from an earlier application-scale stress
   study and explicitly reassigns state ownership for Uhura.
+- [Database-bound state in client applications: a field survey](db-bound-state-survey.md)
+  surveys how shipping systems bind client stores to database authority
+  (query caches, sync engines, reactive databases, CRDTs), extracts a
+  ten-axis taxonomy and storage-class topology, and issues modelability
+  verdicts per pattern. Proposes no syntax.
+- [Client state architecture in the wild](client-state-survey.md) is the
+  companion at one altitude up: the recognizable per-ecosystem stacks
+  (React, Vue, Svelte, Angular, Flutter, SwiftUI, Compose, XAML/QML),
+  the state-domain taxonomy front-end practice converged on, twelve
+  cross-ecosystem convergences, and a twenty-entry use-case catalog of
+  what any state model must serve. Proposes no syntax.
+
+## Draft proposals
+
+- [A class-differentiated state IR](state-ir-proposal.md) — draft 0,
+  unaccepted. Proposes the store/derive/machine/intent/contract/nav
+  sections of a state IR that discharges the two surveys' findings, with
+  an operational model, twelve static checks, use-case walkthroughs, and
+  conformance case seeds. Illustrative encodings only; surface syntax
+  remains out of scope.
 
 ## Immediate research queue
 

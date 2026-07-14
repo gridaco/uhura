@@ -12,6 +12,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm -C web install --frozen-lockfile
+      - run: pnpm -C web check
+      - name: guard — compiled web artifacts are current
+        run: |
+          git diff --exit-code -- web/dist examples/instagram-uhura/providers/dist
+          test -z "$(git status --porcelain --untracked-files=all -- web/dist examples/instagram-uhura/providers/dist)"
       # rustup honors rust-toolchain.toml automatically.
       - uses: Swatinem/rust-cache@v2
       # --locked everywhere: the committed Cargo.lock IS the pin.
@@ -29,7 +43,6 @@ jobs:
           name: uhura-canvas
           path: renders/canvas.html
       # M5: the wasm crate compiles for its real target (bindgen + parity
-      # land with M6's full battery); the play shell typechecks strict.
+      # land with M6's full battery).
       - run: cargo build --locked -p uhura-wasm --target wasm32-unknown-unknown
-      - run: npx -y -p typescript@5.6.3 tsc -p shell/jsconfig.json
       # M6: ./scripts/build-wasm.sh && node scripts/parity.mjs && acceptance

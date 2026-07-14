@@ -1,4 +1,5 @@
 /target
 /renders
 /crates/uhura-wasm/pkg
+/web/node_modules
 .DS_Store

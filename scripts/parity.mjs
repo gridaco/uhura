@@ -44,7 +44,7 @@ const irText = read("ir.json");
 const script = JSON.parse(read("script.json"));
 const native = read("native.jsonl").trim().split("\n");
 
-// ── the same pump as shell/main.js and abi_contract.rs ──────────────────
+// ── the same pump as web/src/play/main.ts and abi_contract.rs ──────────
 const session = new Session(irText);
 session.boot(read("boot.json"));
 const driver = new FixtureDriver(read("fixture.json"), JSON.stringify(script));

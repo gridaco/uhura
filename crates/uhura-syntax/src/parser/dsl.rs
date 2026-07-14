@@ -612,13 +612,18 @@ fn parse_stmt(s: &mut DslStream) -> Option<Stmt> {
         }
         "navigate" => {
             s.bump();
-            let (target_name, tspan) = s.expect_ident("as a route name or `back`")?;
+            let (mut target_name, tspan) =
+                s.expect_ident("as a route name, `replace`, or `back`")?;
             if target_name == "back" {
                 return Some(Stmt::Navigate {
                     target: NavTarget::Back,
                     span: start.to(tspan),
                     leading,
                 });
+            }
+            let replace = target_name == "replace";
+            if replace {
+                (target_name, _) = s.expect_ident("as the route name after `replace`")?;
             }
             let args = if *s.peek() == T::LParen {
                 parse_args(s)
@@ -627,9 +632,16 @@ fn parse_stmt(s: &mut DslStream) -> Option<Stmt> {
             };
             let span = start.to(s.peek_span());
             Some(Stmt::Navigate {
-                target: NavTarget::Route {
-                    name: target_name,
-                    args,
+                target: if replace {
+                    NavTarget::Replace {
+                        name: target_name,
+                        args,
+                    }
+                } else {
+                    NavTarget::Route {
+                        name: target_name,
+                        args,
+                    }
                 },
                 span,
                 leading,

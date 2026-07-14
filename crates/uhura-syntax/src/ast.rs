@@ -241,6 +241,7 @@ pub struct SetPath {
 #[derive(Debug)]
 pub enum NavTarget {
     Route { name: String, args: Vec<Arg> },
+    Replace { name: String, args: Vec<Arg> },
     Back,
 }
 

@@ -234,11 +234,9 @@ impl Frame<'_> {
                 let base = self.eval_expr(base)?;
                 let key = self.eval_expr(key)?;
                 match base {
-                    Value::Record(map) => {
+                    Value::Map(map) => {
                         let key = map_key_string(&key)
                             .ok_or_else(|| Stop::Internal("non-identity map key".into()))?;
-                        let key = Ident::new(&key)
-                            .map_err(|e| Stop::Internal(format!("map key: {e}")))?;
                         Ok(map.get(&key).cloned().unwrap_or(Value::None))
                     }
                     Value::List(items) => match key {
@@ -276,7 +274,7 @@ impl Frame<'_> {
             }
             E::Count(inner) => match self.eval_expr(inner)? {
                 Value::List(items) => Ok(Value::Int(items.len() as i64)),
-                Value::Record(map) => Ok(Value::Int(map.len() as i64)),
+                Value::Map(map) => Ok(Value::Int(map.len() as i64)),
                 other => Stop::internal(format!("count on {other:?}")),
             },
             E::RecordLit(entries) => {
@@ -384,15 +382,13 @@ impl Frame<'_> {
         let seq = self.value(&each.seq)?;
         let items: Vec<Value> = match (&each.over, seq) {
             (ir::OverIr::List, Value::List(items)) => items,
-            (ir::OverIr::MapIdKeys, Value::Record(map)) => map
-                .keys()
-                .map(|k| Value::Id(k.as_str().to_string()))
-                .collect(),
-            (ir::OverIr::MapTagKeys, Value::Record(map)) => map
+            (ir::OverIr::MapIdKeys, Value::Map(map)) => {
+                map.keys().map(|k| Value::Id(k.clone())).collect()
+            }
+            (ir::OverIr::MapTagKeys, Value::Map(map)) => map
                 .keys()
                 .map(|k| {
-                    k.as_str()
-                        .strip_prefix("t-")
+                    k.strip_prefix("t-")
                         .and_then(|n| n.parse::<u64>().ok())
                         .map(Value::Tag)
                         .ok_or_else(|| EvalError(format!("non-tag map key `{k}`")))

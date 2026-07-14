@@ -3,9 +3,39 @@ use fixture standard
 example lena default {
   props {
     user = fixture.users.lena
-    bio = "Ceramics + slow mornings. Studio in SE Portland. Seconds sale every first Sunday."
-    posts-label = "214"
-    followers-label = "18.2k"
-    following-label = "512"
+    bio = "Ceramics and slow mornings. Small-batch studio work from Portland."
+    is-self = false
+    viewer-follows = true
+    relationship-pending = false
+    post-count = 10
+    follower-count = 8
+    following-count = 5
+  }
+}
+
+example self {
+  props {
+    user = fixture.users.mira
+    bio = "Food and travel photographer in Lisbon. Usually awake before the trams."
+    is-self = true
+    viewer-follows = false
+    relationship-pending = false
+    post-count = 6
+    follower-count = 4
+    following-count = 6
+  }
+  note "the current actor gets a New post action, never a self-follow action"
+}
+
+example follow-pending {
+  props {
+    user = fixture.users.nils
+    bio = "Night skies and northern water, filmed around Tromsø."
+    is-self = false
+    viewer-follows = true
+    relationship-pending = true
+    post-count = 1
+    follower-count = 2
+    following-count = 3
   }
 }

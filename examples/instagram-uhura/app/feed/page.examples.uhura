@@ -17,8 +17,20 @@ example like-pending {
 
 example like-refused {
   from like-pending
-  events [ outcome like-post.err(refusal: rate-limited) ]
-  note "authority refused — rollback, notice explains"
+  events [ outcome like-post.err(reason: "network unavailable") ]
+  note "transport unavailable — rollback, notice explains"
+}
+
+example save-pending {
+  from first-page
+  events [ save-toggled(post: "post-lena-glaze", now-saved: true) ]
+  note "optimistic bookmark while save-post is in flight"
+}
+
+example unsave-pending {
+  from first-page
+  events [ save-toggled(post: "post-marco-baja", now-saved: false) ]
+  note "Marco's post starts saved because the seed contains Mira's save edge"
 }
 
 example comments-open {
@@ -46,6 +58,7 @@ example appended {
     projection feed.feed-page = fixture.feed.pages-1-2
     outcome load-next-page.ok()
   ]
+  note "all six followed-author posts are now loaded, so has-more is false"
 }
 
 example exhausted {

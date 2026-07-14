@@ -11,22 +11,36 @@ perform I/O, or own authoritative product truth.
 
 The project is an incubating spike: a Rust workspace under `crates/`
 implements the checker, core machine, fixture driver, static canvas, wasm
-session, play shell (`shell/`), and `uhura` CLI, exercised end to end by the
+session, TypeScript Play host (`web/src/play/`), and `uhura` CLI, exercised end to end by the
 Instagram slice at `examples/instagram-uhura/`. The design doc
 (`docs/working-group/instagram-spike-design.md`) is authoritative; there is no
 accepted grammar freeze, package, or compatibility promise yet.
 
 Quick tour (run from the repo root): `cargo run -p uhura-cli --
-check examples/instagram-uhura`, `… project examples/instagram-uhura`
-(static canvas), `… trace examples/instagram-uhura --script=like-refused
---expanded` (headless machine), and `scripts/build-wasm.sh && cargo run -p
-uhura-cli -- dev examples/instagram-uhura` (live play shell at
-http://127.0.0.1:8787/). `cargo test --workspace` runs the
+examples/instagram-uhura` opens the default read-only Editor at
+http://127.0.0.1:8787/; its Play button enters the live shell on the same
+server. `… check examples/instagram-uhura` checks the project, `… trace
+examples/instagram-uhura --script=like-refused --expanded` (headless
+machine), and `scripts/build-wasm.sh && cargo run -p uhura-cli -- play
+examples/instagram-uhura` opens the interactive Play shell directly.
+`editor` remains an explicit spelling of the default, `project` remains the
+build-only Canvas command, and `dev` remains an alias for `play`.
+`cargo test --workspace` runs the
 golden suites plus the design's §13 acceptance battery
 (`crates/uhura-tests/tests/acceptance_feed.rs`); the battery's native↔wasm
 parity criterion runs when `node` and the wasm package are present and is
 reported as skipped otherwise (`UHURA_REQUIRE_PARITY=1` makes that a
 failure).
+
+The browser host and read-only Editor controller are authored as strict,
+framework-free TypeScript under `web/`. Their small compiled assets are
+checked in so Cargo, `uhura editor`, and `uhura play` remain usable without a
+Node runtime. Contributors changing web source run
+`(cd web && corepack pnpm install --frozen-lockfile)` once and then
+`(cd web && corepack pnpm check)` under the versions pinned by `.nvmrc` and the
+package manager declaration. The umbrella Spock checkout and this repository
+share the same Node 24 LTS patch and pnpm 10.11.0; React remains deliberately
+deferred.
 
 ## Why Uhura exists
 

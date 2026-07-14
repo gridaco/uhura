@@ -1,5 +1,6 @@
-//! `uhura dev [path] [--port <n>]` — the play server (design §12.4):
-//! tiny_http + SSE. Watch `*.{uhura,toml,css}` under the corpus (100 ms
+//! `uhura play [path] [--port <n>]` — the interactive play server (design
+//! §12.4). `uhura dev` remains a compatibility alias.
+//! tiny_http + SSE. Watch `*.{uhura,toml,css,js}` under the corpus (100 ms
 //! debounce) → recheck natively → serve the LAST-GOOD IR + compiled
 //! stylesheet from memory; a failing check pushes its diagnostics
 //! envelope over `/events` and the shell overlays it OVER the running
@@ -7,8 +8,9 @@
 //! open RFC topic the spike must not fake.
 //!
 //! Endpoints: `/` `/shell/*` `/wasm/*` `/ir.json` `/stylesheet.css`
-//! `/fixture.json` `/script.json` `/boot.json` `/icons.json` `/assets/*`
-//! `/events` (SSE). Nothing is ever written into the watched tree.
+//! `/fixture.json` `/script.json` `/boot.json` `/icons.json` `/play.json`
+//! `/provider.js` `/assets/*` `/events` (SSE). Nothing is ever written into
+//! the watched tree.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -18,7 +20,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
-use uhura_base::{Severity, to_canonical_json, to_envelope};
+use uhura_base::{Severity, sha256_hex, to_canonical_json, to_envelope};
 use uhura_check::check;
 use uhura_check::fixture::load_fixture;
 use uhura_core::ir::ProgramIr;
@@ -27,6 +29,53 @@ use crate::CommonArgs;
 use crate::cmd::trace::{boot_updates, fixture_slices_json};
 
 pub fn run(common: &CommonArgs, port: u16) -> ExitCode {
+    run_host(common, port, HostEntry::Play)
+}
+
+/// Host the read-only Canvas and the live Play runtime on one origin. Keeping
+/// this in the Play server means `/play` exercises the exact same artifacts,
+/// provider, watcher, and SSE path as the dedicated command.
+pub(crate) fn run_with_editor(common: &CommonArgs, port: u16, canvas: Vec<u8>) -> ExitCode {
+    run_host(common, port, HostEntry::Editor(Arc::from(canvas)))
+}
+
+#[derive(Clone)]
+enum HostEntry {
+    Play,
+    Editor(Arc<[u8]>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EntryDocument {
+    Canvas,
+    Play,
+    EmptyFavicon,
+}
+
+impl HostEntry {
+    fn command(&self) -> &'static str {
+        match self {
+            Self::Play => "uhura play",
+            Self::Editor(_) => "uhura editor",
+        }
+    }
+
+    fn document(&self, path: &str) -> Option<EntryDocument> {
+        match self {
+            Self::Play if path == "/" => Some(EntryDocument::Play),
+            Self::Editor(_) => match path {
+                "/" | "/index.html" | "/canvas.html" => Some(EntryDocument::Canvas),
+                "/play" | "/play/" => Some(EntryDocument::Play),
+                "/favicon.ico" => Some(EntryDocument::EmptyFavicon),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+fn run_host(common: &CommonArgs, port: u16, entry: HostEntry) -> ExitCode {
+    let command = entry.command();
     let root = common.root.clone();
     let state = Arc::new(RwLock::new(DevState {
         generation: 0,
@@ -44,26 +93,35 @@ pub fn run(common: &CommonArgs, port: u16) -> ExitCode {
     {
         let s = state.read().expect("state lock");
         match (&s.good, s.ok) {
-            (Some(_), true) => println!("uhura dev: checked clean"),
-            (Some(_), false) => println!("uhura dev: check FAILING — serving the last good build"),
-            (None, _) => println!("uhura dev: check FAILING — no good build yet (overlay only)"),
+            (Some(_), true) => println!("{command}: checked clean"),
+            (Some(_), false) => {
+                println!("{command}: check FAILING — serving the last good build")
+            }
+            (None, _) => println!("{command}: check FAILING — no good build yet (overlay only)"),
         }
     }
 
     let server = match tiny_http::Server::http(("127.0.0.1", port)) {
         Ok(server) => server,
         Err(e) => {
-            eprintln!("uhura dev: could not bind 127.0.0.1:{port}: {e}");
+            eprintln!("{command}: could not bind 127.0.0.1:{port}: {e}");
             return ExitCode::from(2);
         }
     };
-    println!("uhura dev: http://127.0.0.1:{port}/ (tick=250ms, override with ?tick=<ms>)");
+    match &entry {
+        HostEntry::Play => println!("{command}: http://127.0.0.1:{port}/"),
+        HostEntry::Editor(_) => {
+            println!("{command}: http://127.0.0.1:{port}/ (read-only; restart to rebuild Canvas)");
+            println!("{command}: Play http://127.0.0.1:{port}/play");
+        }
+    }
 
     // ── the watcher: poll mtimes, debounce, recheck, broadcast ──────────
     {
         let root = root.clone();
         let state = Arc::clone(&state);
         let clients = Arc::clone(&clients);
+        let command = entry.command();
         std::thread::spawn(move || {
             let mut seen = baseline;
             loop {
@@ -86,7 +144,7 @@ pub fn run(common: &CommonArgs, port: u16) -> ExitCode {
                 recheck_into(&root, &state, &clients);
                 let s = state.read().expect("state lock");
                 println!(
-                    "uhura dev: generation {} — {}",
+                    "{command}: generation {} — {}",
                     s.generation,
                     if s.ok {
                         "ok, shell reloads"
@@ -104,7 +162,8 @@ pub fn run(common: &CommonArgs, port: u16) -> ExitCode {
         let state = Arc::clone(&state);
         let clients = Arc::clone(&clients);
         let root = root.clone();
-        std::thread::spawn(move || handle(request, &root, &state, &clients));
+        let entry = entry.clone();
+        std::thread::spawn(move || handle(request, &root, &state, &clients, &entry));
     }
     ExitCode::SUCCESS
 }
@@ -127,6 +186,11 @@ struct GoodBuild {
     script_json: String,
     boot_json: String,
     icons_json: String,
+    /// Browser play selection. The fixture remains the native test double;
+    /// a module provider replaces it only in the `uhura play` shell.
+    play_json: String,
+    /// Provider module bytes captured with the rest of the last-good build.
+    provider_js: Option<String>,
 }
 
 type Clients = Arc<Mutex<Vec<Sender<String>>>>;
@@ -165,7 +229,7 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
             "version": 0,
             "diagnostics": [{
                 "code": "UH9000",
-                "rule": "dev/recheck",
+                "rule": "play/recheck",
                 "severity": "error",
                 "message": message,
             }],
@@ -215,6 +279,29 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
     uhura_fixture::FixtureDriver::new(&fixture_json, &script_canonical)
         .map_err(|e| fail(format!("script `{}`: {e}", profile.script)))?;
 
+    let (play_json, provider_js) = match &profile.provider {
+        Some(provider) => {
+            let provider_js = read(&provider.module)?;
+            let provider_hash = sha256_hex(provider_js.as_bytes());
+            let play_json = to_canonical_json(&serde_json::json!({
+                "allow_fixture": profile.allow_fixture,
+                "provider": {
+                    "kind": "module",
+                    "module": format!("/provider.js?sha256={provider_hash}"),
+                    "config": &provider.config,
+                },
+            }));
+            (play_json, Some(provider_js))
+        }
+        None => (
+            to_canonical_json(&serde_json::json!({
+                "allow_fixture": true,
+                "provider": { "kind": "fixture" },
+            })),
+            None,
+        ),
+    };
+
     Ok(GoodBuild {
         ir: program.to_canonical_string(),
         stylesheet: output.stylesheet.clone(),
@@ -222,6 +309,8 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
         script_json: script_canonical,
         boot_json: boot_envelope(program, &fixture).map_err(fail)?,
         icons_json: icons_json(root, &manifest.catalog_path),
+        play_json,
+        provider_js,
     })
 }
 
@@ -263,7 +352,7 @@ fn icons_json(root: &Path, catalog_rel: &str) -> String {
 
 // ── the watcher's view of the tree ──────────────────────────────────────────
 
-/// (path → (mtime, len)) for every watched file: `*.{uhura,toml,css}`,
+/// (path → (mtime, len)) for every watched file: `*.{uhura,toml,css,js}`,
 /// excluding emitted/derived trees and the lock (check writes it when
 /// absent — watching it would loop).
 fn scan_watched(root: &Path) -> BTreeMap<PathBuf, (SystemTime, u64)> {
@@ -281,14 +370,17 @@ fn scan_dir(dir: &Path, out: &mut BTreeMap<PathBuf, (SystemTime, u64)>) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if !matches!(name.as_ref(), "build" | "renders" | "target" | ".git") {
+            if !matches!(
+                name.as_ref(),
+                "build" | "renders" | "target" | "node_modules" | ".git"
+            ) {
                 scan_dir(&path, out);
             }
             continue;
         }
         let watched = matches!(
             path.extension().and_then(|e| e.to_str()),
-            Some("uhura" | "toml" | "css")
+            Some("uhura" | "toml" | "css" | "js")
         ) && name != "uhura.lock";
         if watched && let Ok(meta) = entry.metadata() {
             let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -349,18 +441,46 @@ impl Read for SseStream {
 
 // ── request handling ────────────────────────────────────────────────────────
 
-/// The uhura workspace root — the shell and wasm bundle live in the
-/// TOOLCHAIN tree, not the corpus (compile-time anchored; `uhura dev`
+/// The uhura workspace root — the compiled web host and wasm bundle live in the
+/// TOOLCHAIN tree, not the corpus (compile-time anchored; `uhura play`
 /// is a dev tool run from this repo).
 fn tool_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn handle(request: tiny_http::Request, root: &Path, state: &RwLock<DevState>, clients: &Clients) {
+fn handle(
+    request: tiny_http::Request,
+    root: &Path,
+    state: &RwLock<DevState>,
+    clients: &Clients,
+    entry: &HostEntry,
+) {
     let url = request.url().to_string();
-    let path = url.split('?').next().unwrap_or("/");
+    let (path, query) = split_request_url(&url);
+
+    if !matches!(
+        request.method(),
+        tiny_http::Method::Get | tiny_http::Method::Head
+    ) {
+        let response = tiny_http::Response::from_string("the Uhura host accepts GET and HEAD only")
+            .with_status_code(405)
+            .with_header(header("Allow", "GET, HEAD"))
+            .with_header(header("Content-Type", "text/plain; charset=utf-8"))
+            .with_header(header("Cache-Control", "no-store"));
+        let _ = request.respond(response);
+        return;
+    }
 
     if path == "/events" {
+        if request.method() != &tiny_http::Method::Get {
+            let response = tiny_http::Response::from_string("/events requires GET")
+                .with_status_code(405)
+                .with_header(header("Allow", "GET"))
+                .with_header(header("Content-Type", "text/plain; charset=utf-8"))
+                .with_header(header("Cache-Control", "no-store"));
+            let _ = request.respond(response);
+            return;
+        }
         let (tx, rx) = channel::<String>();
         {
             // Registration and the hello snapshot happen under the same
@@ -389,36 +509,48 @@ fn handle(request: tiny_http::Request, root: &Path, state: &RwLock<DevState>, cl
         return;
     }
 
-    let outcome: Served = match path {
-        "/" => file_bytes(&tool_root().join("shell/index.html")).map(|b| (ct("html"), b, None)),
-        "/ir.json" => artifact(state, |g| g.ir.clone().into_bytes(), "json"),
-        "/stylesheet.css" => artifact(state, |g| g.stylesheet.clone().into_bytes(), "css"),
-        "/fixture.json" => artifact(state, |g| g.fixture_json.clone().into_bytes(), "json"),
-        "/script.json" => artifact(state, |g| g.script_json.clone().into_bytes(), "json"),
-        "/boot.json" => artifact(state, |g| g.boot_json.clone().into_bytes(), "json"),
-        "/icons.json" => artifact(state, |g| g.icons_json.clone().into_bytes(), "json"),
-        _ => {
-            if let Some(rel) = path.strip_prefix("/shell/") {
-                serve_tree(&tool_root().join("shell"), rel)
-            } else if let Some(rel) = path.strip_prefix("/wasm/") {
-                serve_tree(&tool_root().join("crates/uhura-wasm/pkg/web"), rel).map_err(
-                    |(code, msg)| {
-                        (
-                            code,
-                            format!("{msg}\n(build the bundle first: scripts/build-wasm.sh)"),
-                        )
-                    },
-                )
-            } else if let Some(rel) = path.strip_prefix("/assets/") {
-                serve_tree(&root.join("fixtures/assets"), rel)
-            } else {
-                Err((404, format!("no such endpoint: {path}")))
+    let outcome: Served = match entry.document(path) {
+        Some(EntryDocument::Canvas) => match entry {
+            HostEntry::Editor(canvas) => Ok((ct("html"), canvas.to_vec(), None)),
+            HostEntry::Play => unreachable!("Play has no Canvas route"),
+        },
+        Some(EntryDocument::Play) => play_document(matches!(entry, HostEntry::Editor(_))),
+        Some(EntryDocument::EmptyFavicon) => Ok((ct("ico"), Vec::new(), None)),
+        None => match path {
+            "/ir.json" => artifact(state, |g| g.ir.clone().into_bytes(), "json"),
+            "/stylesheet.css" => artifact(state, |g| g.stylesheet.clone().into_bytes(), "css"),
+            "/fixture.json" => artifact(state, |g| g.fixture_json.clone().into_bytes(), "json"),
+            "/script.json" => artifact(state, |g| g.script_json.clone().into_bytes(), "json"),
+            "/boot.json" => artifact(state, |g| g.boot_json.clone().into_bytes(), "json"),
+            "/icons.json" => artifact(state, |g| g.icons_json.clone().into_bytes(), "json"),
+            "/play.json" => artifact(state, |g| g.play_json.clone().into_bytes(), "json"),
+            "/provider.js" => provider_artifact(state, query),
+            _ => {
+                if let Some(rel) = path.strip_prefix("/shell/") {
+                    serve_tree(&tool_root().join("web/dist/play"), rel)
+                } else if let Some(rel) = path.strip_prefix("/wasm/") {
+                    serve_tree(&tool_root().join("crates/uhura-wasm/pkg/web"), rel).map_err(
+                        |(code, msg)| {
+                            (
+                                code,
+                                format!("{msg}\n(build the bundle first: scripts/build-wasm.sh)"),
+                            )
+                        },
+                    )
+                } else if let Some(rel) = path.strip_prefix("/assets/") {
+                    serve_tree(&root.join("fixtures/assets"), rel)
+                } else {
+                    Err((404, format!("no such endpoint: {path}")))
+                }
             }
-        }
+        },
     };
 
     let _ = match outcome {
-        Ok((content_type, bytes, generation)) => {
+        Ok((content_type, mut bytes, generation)) => {
+            if request.method() == &tiny_http::Method::Head {
+                bytes.clear();
+            }
             let mut response = tiny_http::Response::from_data(bytes)
                 .with_header(header("Content-Type", &content_type))
                 .with_header(header("Cache-Control", "no-store"));
@@ -437,6 +569,31 @@ fn handle(request: tiny_http::Request, root: &Path, state: &RwLock<DevState>, cl
     };
 }
 
+fn split_request_url(url: &str) -> (&str, Option<&str>) {
+    url.split_once('?')
+        .map_or((url, None), |(path, query)| (path, Some(query)))
+}
+
+/// The editor's `/play` document differs from dedicated Play by one host-owned
+/// return link. The runtime scripts and every endpoint remain identical.
+fn play_document(with_editor_navigation: bool) -> Served {
+    let bytes = file_bytes(&tool_root().join("web/dist/play/index.html"))?;
+    if !with_editor_navigation {
+        return Ok((ct("html"), bytes, None));
+    }
+    let shell = String::from_utf8(bytes).map_err(|error| {
+        (
+            500,
+            format!("web/dist/play/index.html is not UTF-8: {error}"),
+        )
+    })?;
+    Ok((
+        ct("html"),
+        super::editor::play_html(&shell).into_bytes(),
+        None,
+    ))
+}
+
 /// A last-good in-memory artifact; 503 + the failure story before the
 /// first clean check. The generation stamp lets the shell detect a
 /// recheck landing between its artifact fetches (mixed-build boot).
@@ -444,6 +601,41 @@ fn artifact(state: &RwLock<DevState>, pick: impl Fn(&GoodBuild) -> Vec<u8>, ext:
     let s = state.read().expect("state lock");
     match &s.good {
         Some(good) => Ok((ct(ext), pick(good), Some(s.generation))),
+        None => Err((
+            503,
+            "no good build yet — fix the check errors (the overlay lists them)".to_string(),
+        )),
+    }
+}
+
+/// The configured provider module, captured in the same last-good generation
+/// as the IR and play config. Fixture-backed profiles intentionally have no
+/// module endpoint.
+fn provider_artifact(state: &RwLock<DevState>, query: Option<&str>) -> Served {
+    let s = state.read().expect("state lock");
+    match &s.good {
+        Some(good) => match &good.provider_js {
+            Some(module) => {
+                let requested_hash = query.and_then(|query| {
+                    query
+                        .split('&')
+                        .find_map(|part| part.strip_prefix("sha256="))
+                });
+                let actual_hash = sha256_hex(module.as_bytes());
+                if requested_hash.is_some_and(|expected| expected != actual_hash) {
+                    return Err((
+                        409,
+                        "the provider changed after play.json was fetched — reload the page"
+                            .to_string(),
+                    ));
+                }
+                Ok((ct("js"), module.clone().into_bytes(), Some(s.generation)))
+            }
+            None => Err((
+                404,
+                "the play profile uses the fixture provider".to_string(),
+            )),
+        },
         None => Err((
             503,
             "no good build yet — fix the check errors (the overlay lists them)".to_string(),
@@ -473,6 +665,7 @@ fn ct(ext: &str) -> String {
         "json" => "application/json; charset=utf-8",
         "wasm" => "application/wasm",
         "jpg" | "jpeg" => "image/jpeg",
+        "mp4" => "video/mp4",
         "svg" => "image/svg+xml",
         _ => "application/octet-stream",
     }
@@ -481,4 +674,49 @@ fn ct(ext: &str) -> String {
 
 fn header(name: &str, value: &str) -> tiny_http::Header {
     tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("static header")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{EntryDocument, HostEntry, ct, play_document, split_request_url};
+
+    #[test]
+    fn editor_and_dedicated_play_have_distinct_entry_routes() {
+        let editor = HostEntry::Editor(Arc::from(Vec::<u8>::new()));
+        assert_eq!(editor.document("/"), Some(EntryDocument::Canvas));
+        assert_eq!(editor.document("/canvas.html"), Some(EntryDocument::Canvas));
+        assert_eq!(editor.document("/play"), Some(EntryDocument::Play));
+        assert_eq!(editor.document("/play/"), Some(EntryDocument::Play));
+
+        let play = HostEntry::Play;
+        assert_eq!(play.document("/"), Some(EntryDocument::Play));
+        assert_eq!(play.document("/play"), None);
+    }
+
+    #[test]
+    fn app_query_is_separate_from_the_editor_play_route() {
+        let (path, query) = split_request_url("/play?post=42&compose=open");
+        assert_eq!(path, "/play");
+        assert_eq!(query, Some("post=42&compose=open"));
+    }
+
+    #[test]
+    fn only_editor_hosted_play_gets_return_navigation() {
+        let (_, dedicated, _) = play_document(false).expect("dedicated Play document");
+        let (_, editor, _) = play_document(true).expect("editor-hosted Play document");
+        let dedicated = String::from_utf8(dedicated).expect("UTF-8 shell");
+        let editor = String::from_utf8(editor).expect("UTF-8 shell");
+
+        assert!(dedicated.contains("<!-- uhura-editor-navigation -->"));
+        assert!(!dedicated.contains("Return to Uhura Editor"));
+        assert!(!editor.contains("uhura-editor-navigation"));
+        assert!(editor.contains("Return to Uhura Editor"));
+    }
+
+    #[test]
+    fn fixture_video_assets_are_served_as_mp4() {
+        assert_eq!(ct("mp4"), "video/mp4");
+    }
 }

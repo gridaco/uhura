@@ -273,6 +273,16 @@ fn fmt_stmt(st: &Stmt, out: &mut String) {
                         out.push_str(&format!("{pad}navigate {name}({})\n", args_str(args)));
                     }
                 }
+                NavTarget::Replace { name, args } => {
+                    if args.is_empty() {
+                        out.push_str(&format!("{pad}navigate replace {name}()\n"));
+                    } else {
+                        out.push_str(&format!(
+                            "{pad}navigate replace {name}({})\n",
+                            args_str(args)
+                        ));
+                    }
+                }
             }
         }
         Stmt::Error { .. } => {}

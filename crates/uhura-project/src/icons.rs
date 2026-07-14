@@ -47,6 +47,18 @@ pub fn glyph(name: &str) -> Option<&'static str> {
         "progress" => {
             r#"<circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8" opacity="0.25"/><path d="M12 4.5a7.5 7.5 0 0 1 7.5 7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>"#
         }
+        "bookmark" => {
+            r#"<path d="M6.5 4.5h11a1 1 0 0 1 1 1v15L12 16.2l-6.5 4.3v-15a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>"#
+        }
+        "bookmark-filled" => {
+            r#"<path d="M6.5 4.5h11a1 1 0 0 1 1 1v15L12 16.2l-6.5 4.3v-15a1 1 0 0 1 1-1z" fill="currentColor"/>"#
+        }
+        "chevron-left" => {
+            r#"<path d="m14.5 5-6.5 7 6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>"#
+        }
+        "chevron-right" => {
+            r#"<path d="m9.5 5 6.5 7-6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>"#
+        }
         _ => return None,
     };
     Some(body)

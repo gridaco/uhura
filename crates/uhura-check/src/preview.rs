@@ -40,7 +40,53 @@ pub struct ResolvedPreview {
     /// Direct parent, for the provenance caption (`from first-page`).
     pub from: Option<String>,
     pub note: Option<String>,
+    /// Editor-only, read-only values and authored origins. This sidecar is
+    /// deliberately excluded from ProgramIr: examples never affect runtime
+    /// semantics or the checked bundle.
+    pub data: Vec<PreviewData>,
     pub payload: PreviewPayload,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewDataKind {
+    Property,
+    PageAddress,
+    ProvidedData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreviewDataValue {
+    Ready(Value),
+    Waiting,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreviewData {
+    pub kind: PreviewDataKind,
+    pub name: Ident,
+    /// A keyed projection's resolved key. Props, params, and unkeyed
+    /// projections leave this empty.
+    pub key: Option<Value>,
+    pub value: PreviewDataValue,
+    pub origin: Option<PreviewOrigin>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreviewOrigin {
+    /// The example that introduced this binding. A different name from the
+    /// selected preview means the value arrived through `from` inheritance.
+    pub declared_in: Option<String>,
+    pub source: PreviewSource,
+    /// True when the last value came from a projection update in `events`.
+    pub timeline: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreviewSource {
+    Inline,
+    Fixture { fixture: String, path: Vec<String> },
+    AutomaticFixture { fixture: String, path: Vec<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -62,14 +108,28 @@ pub enum PreviewPayload {
 /// The merged content of an example after walking its `from` chain.
 #[derive(Clone, Default)]
 struct Effective<'a> {
-    params: BTreeMap<String, &'a ast::Expr>,
-    props: BTreeMap<String, &'a ast::Expr>,
-    state: BTreeMap<String, &'a ast::Expr>,
+    fixture_name: Option<&'a str>,
+    params: BTreeMap<String, Authored<'a, ast::Expr>>,
+    props: BTreeMap<String, Authored<'a, ast::Expr>>,
+    state: BTreeMap<String, Authored<'a, ast::Expr>>,
     /// (port, projection, key-literal-json) → pin.
-    projections: BTreeMap<(String, String, String), &'a ast::ProjectionPin>,
+    projections: BTreeMap<(String, String, String), Authored<'a, ast::ProjectionPin>>,
     /// The concatenated timeline down the `from` chain, ancestor-first.
-    events: Vec<&'a ast::ExampleEvent>,
+    events: Vec<Authored<'a, ast::ExampleEvent>>,
     state_pinned: bool,
+}
+
+struct Authored<'a, T> {
+    node: &'a T,
+    declared_in: &'a str,
+}
+
+impl<T> Copy for Authored<'_, T> {}
+
+impl<T> Clone for Authored<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 pub fn resolve_previews(
@@ -145,6 +205,7 @@ fn resolve_file(
         return;
     }
     let empty = FixtureData::default();
+    let fixture_name = fixture_imports.first().copied();
     let fixture: &FixtureData = fixture_imports
         .first()
         .and_then(|name| Ident::new(name).ok())
@@ -168,6 +229,7 @@ fn resolve_file(
                 }
             }
         }
+        effective.fixture_name = fixture_name;
 
         for clause in &example.clauses {
             match clause {
@@ -175,18 +237,36 @@ fn resolve_file(
                 ast::ExampleClause::Note { text, .. } => note = Some(text.clone()),
                 ast::ExampleClause::Params { entries, .. } => {
                     for (name, value) in entries {
-                        effective.params.insert(name.clone(), value);
+                        effective.params.insert(
+                            name.clone(),
+                            Authored {
+                                node: value,
+                                declared_in: &example.name,
+                            },
+                        );
                     }
                 }
                 ast::ExampleClause::Props { entries, .. } => {
                     for (name, value) in entries {
-                        effective.props.insert(name.clone(), value);
+                        effective.props.insert(
+                            name.clone(),
+                            Authored {
+                                node: value,
+                                declared_in: &example.name,
+                            },
+                        );
                     }
                 }
                 ast::ExampleClause::State { entries, .. } => {
                     effective.state_pinned = true;
                     for (name, value) in entries {
-                        effective.state.insert(name.clone(), value);
+                        effective.state.insert(
+                            name.clone(),
+                            Authored {
+                                node: value,
+                                declared_in: &example.name,
+                            },
+                        );
                     }
                 }
                 ast::ExampleClause::Projection(pin) => {
@@ -196,11 +276,22 @@ fn resolve_file(
                         .and_then(|k| static_json(k, fixture).ok())
                         .map(|j| j.to_string())
                         .unwrap_or_default();
-                    effective
-                        .projections
-                        .insert((pin.port.clone(), pin.projection.clone(), key), pin);
+                    effective.projections.insert(
+                        (pin.port.clone(), pin.projection.clone(), key),
+                        Authored {
+                            node: pin,
+                            declared_in: &example.name,
+                        },
+                    );
                 }
-                ast::ExampleClause::Events { entries, .. } => effective.events.extend(entries),
+                ast::ExampleClause::Events { entries, .. } => {
+                    effective
+                        .events
+                        .extend(entries.iter().map(|event| Authored {
+                            node: event,
+                            declared_in: &example.name,
+                        }));
+                }
             }
         }
 
@@ -240,13 +331,34 @@ fn resolve_file(
             continue; // errors already diagnosed
         };
 
+        let mut data = binding_data(&bindings, &effective);
+        let mut projection_origins = bindings.projection_origins.clone();
+        for authored in &effective.events {
+            let ast::ExampleEvent::Projection(pin) = authored.node else {
+                continue;
+            };
+            if let Ok((_, projection, key)) = projection_instance(pin, resolved, fixture) {
+                projection_origins.insert(
+                    (projection, key),
+                    origin_for_expr(
+                        &pin.value,
+                        effective.fixture_name,
+                        Some(authored.declared_in),
+                        true,
+                    ),
+                );
+            }
+        }
+
         let (payload, in_flight) = if derived {
+            let replay_events: Vec<&ast::ExampleEvent> =
+                effective.events.iter().map(|event| event.node).collect();
             let input = replay::ReplayInput {
                 x: bindings.x,
                 params: bindings.params,
                 props: bindings.props,
                 state_pins: bindings.state_pins,
-                events: &effective.events,
+                events: &replay_events,
                 span: example.span,
             };
             match replay::replay(program, resolved, env, fixture, input) {
@@ -268,6 +380,7 @@ fn resolve_file(
                 None => continue,
             }
         };
+        data.extend(projection_data(env, &payload, &projection_origins));
         previews.push(ResolvedPreview {
             subject: env.kind.clone(),
             example: example.name.clone(),
@@ -277,6 +390,7 @@ fn resolve_file(
             in_flight,
             from,
             note,
+            data,
             payload,
         });
     }
@@ -291,6 +405,7 @@ pub(crate) struct Bindings {
     pub params: BTreeMap<Ident, Value>,
     pub props: BTreeMap<Ident, Value>,
     pub state_pins: BTreeMap<Ident, Value>,
+    projection_origins: BTreeMap<(Ident, Option<Value>), PreviewOrigin>,
 }
 
 fn resolve_bindings(
@@ -315,12 +430,15 @@ fn resolve_bindings(
 
     // ── projections: pins + boot auto-bind ─────────────────────────────
     let mut x = Projections::default();
-    for ((_, _, _), pin) in &effective.projections {
-        let Some((port_name, proj_name)) = Ident::new(&pin.port)
-            .ok()
-            .zip(Ident::new(&pin.projection).ok())
-        else {
-            continue;
+    let mut projection_origins = BTreeMap::new();
+    for authored in effective.projections.values() {
+        let pin = authored.node;
+        let (port_name, proj_name, key) = match projection_instance(pin, resolved, fixture) {
+            Ok(instance) => instance,
+            Err(error) => {
+                pin_error(diags, &mut ok, pin.span, error);
+                continue;
+            }
         };
         let Some((contract, port_types)) = resolved.ports.get(&port_name) else {
             continue; // legality pass diagnosed
@@ -328,20 +446,12 @@ fn resolve_bindings(
         let Some(decl) = contract.projections.get(&proj_name) else {
             continue;
         };
-        let key = match (&decl.key, &pin.key) {
-            (Some(key_ty), Some(key_expr)) => {
-                let key_ty = port_types.from_expr(contract, key_ty);
-                match static_json(key_expr, fixture).and_then(|j| decode_against_ty(&j, &key_ty)) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
-                        pin_error(diags, &mut ok, pin.span, format!("projection key: {e}"));
-                        continue;
-                    }
-                }
-            }
-            (None, None) => None,
-            _ => continue, // keyedness mismatch diagnosed by legality
-        };
+        let origin = origin_for_expr(
+            &pin.value,
+            effective.fixture_name,
+            Some(authored.declared_in),
+            false,
+        );
         // `failed("<reason>")` pins the failure state (micro-decision —
         // mirrors `projection-failed`, §9.3).
         if let ast::ExprKind::Call { name, args } = &pin.value.kind
@@ -350,7 +460,8 @@ fn resolve_bindings(
             match args.as_slice() {
                 [reason] => match static_json(reason, fixture) {
                     Ok(serde_json::Value::String(reason)) => {
-                        x.failed.insert((proj_name.clone(), key), reason);
+                        x.failed.insert((proj_name.clone(), key.clone()), reason);
+                        projection_origins.insert((proj_name.clone(), key), origin);
                     }
                     _ => pin_error(
                         diags,
@@ -372,9 +483,10 @@ fn resolve_bindings(
         match static_json(&pin.value, fixture).and_then(|j| decode_against_ty(&j, &ty)) {
             Ok(value) => {
                 x.snapshots.insert(
-                    (proj_name.clone(), key),
+                    (proj_name.clone(), key.clone()),
                     ProjectionSnapshot { revision: 1, value },
                 );
+                projection_origins.insert((proj_name.clone(), key), origin);
             }
             Err(e) => pin_error(
                 diags,
@@ -419,6 +531,19 @@ fn resolve_bindings(
                         (proj_name.clone(), None),
                         ProjectionSnapshot { revision: 1, value },
                     );
+                    if let Some(fixture_name) = effective.fixture_name {
+                        projection_origins.insert(
+                            instance,
+                            PreviewOrigin {
+                                declared_in: None,
+                                source: PreviewSource::AutomaticFixture {
+                                    fixture: fixture_name.to_string(),
+                                    path: vec!["boot".to_string(), proj_name.to_string()],
+                                },
+                                timeline: false,
+                            },
+                        );
+                    }
                 }
                 Err(e) => pin_error(diags, &mut ok, span, format!("boot.{proj_name}: {e}")),
             },
@@ -426,14 +551,15 @@ fn resolve_bindings(
     }
 
     // ── typed pin decoding against the subject's declarations ──────────
-    let decode_map = |entries: &BTreeMap<String, &ast::Expr>,
+    let decode_map = |entries: &BTreeMap<String, Authored<'_, ast::Expr>>,
                       declared: &BTreeMap<Ident, Ty>,
                       what: &str,
                       diags: &mut Vec<Diagnostic>,
                       ok: &mut bool|
      -> BTreeMap<Ident, Value> {
         let mut out = BTreeMap::new();
-        for (name, expr) in entries {
+        for (name, authored) in entries {
+            let expr = authored.node;
             let Ok(ident) = Ident::new(name) else {
                 continue;
             };
@@ -499,7 +625,158 @@ fn resolve_bindings(
         params,
         props,
         state_pins,
+        projection_origins,
     })
+}
+
+fn projection_instance(
+    pin: &ast::ProjectionPin,
+    resolved: &Resolved,
+    fixture: &FixtureData,
+) -> Result<(Ident, Ident, Option<Value>), String> {
+    let port = Ident::new(&pin.port).map_err(|error| error.to_string())?;
+    let projection = Ident::new(&pin.projection).map_err(|error| error.to_string())?;
+    let (contract, port_types) = resolved
+        .ports
+        .get(&port)
+        .ok_or_else(|| format!("no linked port `{port}`"))?;
+    let declaration = contract
+        .projections
+        .get(&projection)
+        .ok_or_else(|| format!("port `{port}` declares no projection `{projection}`"))?;
+    let key = match (&declaration.key, &pin.key) {
+        (Some(key_ty), Some(key_expr)) => {
+            let key_ty = port_types.from_expr(contract, key_ty);
+            let json = static_json(key_expr, fixture)?;
+            Some(
+                decode_against_ty(&json, &key_ty)
+                    .map_err(|error| format!("projection key: {error}"))?,
+            )
+        }
+        (None, None) => None,
+        _ => return Err("projection key does not match its declaration".to_string()),
+    };
+    Ok((port, projection, key))
+}
+
+fn binding_data(bindings: &Bindings, effective: &Effective<'_>) -> Vec<PreviewData> {
+    let mut data = Vec::new();
+    for (name, value) in &bindings.params {
+        let origin = effective.params.get(name.as_str()).map(|authored| {
+            origin_for_expr(
+                authored.node,
+                effective.fixture_name,
+                Some(authored.declared_in),
+                false,
+            )
+        });
+        data.push(PreviewData {
+            kind: PreviewDataKind::PageAddress,
+            name: name.clone(),
+            key: None,
+            value: PreviewDataValue::Ready(value.clone()),
+            origin,
+        });
+    }
+    for (name, value) in &bindings.props {
+        let origin = effective.props.get(name.as_str()).map(|authored| {
+            origin_for_expr(
+                authored.node,
+                effective.fixture_name,
+                Some(authored.declared_in),
+                false,
+            )
+        });
+        data.push(PreviewData {
+            kind: PreviewDataKind::Property,
+            name: name.clone(),
+            key: None,
+            value: PreviewDataValue::Ready(value.clone()),
+            origin,
+        });
+    }
+    data
+}
+
+fn projection_data(
+    env: &DefEnv,
+    payload: &PreviewPayload,
+    origins: &BTreeMap<(Ident, Option<Value>), PreviewOrigin>,
+) -> Vec<PreviewData> {
+    let x = match payload {
+        PreviewPayload::Page { x, .. } | PreviewPayload::Fragment { x, .. } => x,
+    };
+    let mut data = Vec::new();
+    for (name, info) in &env.projections {
+        let mut found = false;
+        for ((projection, key), snapshot) in &x.snapshots {
+            if projection != name {
+                continue;
+            }
+            found = true;
+            data.push(PreviewData {
+                kind: PreviewDataKind::ProvidedData,
+                name: name.clone(),
+                key: key.clone(),
+                value: PreviewDataValue::Ready(snapshot.value.clone()),
+                origin: origins.get(&(projection.clone(), key.clone())).cloned(),
+            });
+        }
+        for ((projection, key), reason) in &x.failed {
+            if projection != name {
+                continue;
+            }
+            found = true;
+            data.push(PreviewData {
+                kind: PreviewDataKind::ProvidedData,
+                name: name.clone(),
+                key: key.clone(),
+                value: PreviewDataValue::Failed(reason.clone()),
+                origin: origins.get(&(projection.clone(), key.clone())).cloned(),
+            });
+        }
+        // Only unkeyed data has one unambiguous missing instance. A keyed
+        // read's key is an expression in the page and is not part of the
+        // static example binding when no value has been delivered.
+        if !found && info.key.is_none() {
+            data.push(PreviewData {
+                kind: PreviewDataKind::ProvidedData,
+                name: name.clone(),
+                key: None,
+                value: PreviewDataValue::Waiting,
+                origin: None,
+            });
+        }
+    }
+    data
+}
+
+fn origin_for_expr(
+    expr: &ast::Expr,
+    fixture_name: Option<&str>,
+    declared_in: Option<&str>,
+    timeline: bool,
+) -> PreviewOrigin {
+    let fixture_path =
+        fixture_name.and_then(|fixture| fixture_path(expr).map(|path| (fixture.to_string(), path)));
+    let source = match fixture_path {
+        Some((fixture, path)) => PreviewSource::Fixture { fixture, path },
+        None => PreviewSource::Inline,
+    };
+    PreviewOrigin {
+        declared_in: declared_in.map(str::to_string),
+        source,
+        timeline,
+    }
+}
+
+fn fixture_path(expr: &ast::Expr) -> Option<Vec<String>> {
+    let mut path = Vec::new();
+    collect_path(expr, &mut path).ok()?;
+    let ["fixture", _, _, ..] = path.as_slice() else {
+        return None;
+    };
+    Some(path.into_iter().skip(1).map(str::to_string).collect())
 }
 
 /// A pinned example freezes its bindings directly — no machine runs.

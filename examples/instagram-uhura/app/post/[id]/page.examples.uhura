@@ -1,0 +1,35 @@
+use fixture standard
+
+example loading {
+  params { id = "post-lena-glaze" }
+  projection feed.viewer = fixture.users.mira
+}
+
+example lena default {
+  params { id = "post-lena-glaze" }
+  projection feed.viewer = fixture.users.mira
+  projection feed.post-by-id("post-lena-glaze") = fixture.posts.lena-glaze
+}
+
+example profile-history {
+  params { id = "post-lena-bowls" }
+  projection feed.viewer = fixture.users.mira
+  projection feed.post-by-id("post-lena-bowls") = fixture.posts.lena-bowls
+  note "a profile-grid tile opens a genuine post, not a decorative thumbnail"
+}
+
+example like-pending {
+  from lena
+  events [ like-toggled(post: "post-lena-glaze", now-liked: true) ]
+}
+
+example save-pending {
+  from lena
+  events [ save-toggled(post: "post-lena-glaze", now-saved: true) ]
+}
+
+example comments-open {
+  from lena
+  projection comments.for-post("post-lena-glaze") = fixture.comments.lena-glaze
+  events [ comments-requested(post: "post-lena-glaze") ]
+}

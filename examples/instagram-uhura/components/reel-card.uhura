@@ -1,0 +1,84 @@
+component reel-card
+
+use port feed { type post-summary }
+
+props {
+  post: post-summary
+  liked: bool
+  like-pending: bool
+  saved: bool
+  save-pending: bool
+}
+
+emits {
+  like-toggled(post: id, now-liked: bool)
+  save-toggled(post: id, now-saved: bool)
+  comments-requested(post: id)
+  author-tapped(user: id)
+  post-tapped(post: id)
+}
+
+<view class="reel-card">
+  <view class="reel-media-layer">
+    {#match post.media}
+      {:when video v}
+        <video class="reel-media" src={v.src} poster={v.poster.src} label={v.poster.alt} muted loop controls playsinline />
+      {:when image m}
+        <image class="reel-media" src={m.image.src} alt={m.image.alt} />
+      {:when carousel c}
+        <pager class="reel-media" indicator="dots" label="Reel carousel">
+          {#each c.slides as s (s.id)}
+            <image class="reel-slide" src={s.src} alt={s.alt} />
+          {/each}
+        </pager>
+    {/match}
+  </view>
+  <view class="reel-scrim" />
+  <view class="reel-overlay">
+    <view class="reel-copy">
+      <region label={"View " ++ post.author.username} on:activate={emit author-tapped(user: post.author.id)}>
+        <view class="reel-author">
+          <image class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
+          <text class="username">{post.author.username}</text>
+        </view>
+      </region>
+      <text class="reel-caption">{post.caption}</text>
+    </view>
+    <view class="reel-actions">
+      <button class={if liked then "reel-action liked" else "reel-action"} pressed={liked} busy={like-pending} label={if liked then "Unlike" else "Like"} on:press={emit like-toggled(post: post.id, now-liked: !liked)}>
+        <icon name={if liked then "heart-filled" else "heart"} />
+        <text>{to-text(post.like-count + (if liked && !post.viewer-has-liked then 1 else if !liked && post.viewer-has-liked then 0 - 1 else 0))}</text>
+      </button>
+      <button class="reel-action" label="Comments" on:press={emit comments-requested(post: post.id)}>
+        <icon name="comment" />
+        <text>{to-text(post.comment-count)}</text>
+      </button>
+      <button class="reel-action" pressed={saved} busy={save-pending} label={if saved then "Remove from saved" else "Save reel"} on:press={emit save-toggled(post: post.id, now-saved: !saved)}>
+        <icon name={if saved then "bookmark-filled" else "bookmark"} />
+      </button>
+      <button class="reel-open" label="View post details" on:press={emit post-tapped(post: post.id)}>
+        <text>View post</text>
+      </button>
+    </view>
+  </view>
+</view>
+
+<style>
+.reel-card { position: relative; display: grid; min-block-size: 100%; color: var(--color-on-media); background: #050505; overflow: hidden; scroll-snap-align: start; scroll-snap-stop: always; }
+.reel-card > * { grid-area: 1 / 1; }
+.reel-card .reel-media-layer { min-block-size: 0; background: #050505; }
+.reel-card .reel-media { inline-size: 100%; block-size: calc(100% - 54px); object-fit: cover; }
+.reel-card .reel-slide { inline-size: 100%; block-size: 100%; object-fit: cover; }
+.reel-card .reel-scrim { pointer-events: none; background: linear-gradient(to bottom, rgba(0,0,0,.14), transparent 38%, rgba(0,0,0,.72)); }
+.reel-card .reel-overlay { pointer-events: none; display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); padding: var(--space-6) var(--space-3) 118px var(--space-4); }
+.reel-card .reel-copy { pointer-events: auto; display: flex; flex-direction: column; gap: var(--space-2); max-inline-size: calc(100% - 76px); text-shadow: 0 1px 2px rgba(0,0,0,.65); }
+.reel-card .reel-author { display: flex; align-items: center; gap: var(--space-2); }
+.reel-card .avatar { inline-size: 34px; block-size: 34px; border: 1px solid rgba(255,255,255,.8); border-radius: var(--radius-full); object-fit: cover; }
+.reel-card .username { font-weight: 700; }
+.reel-card .reel-caption { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.reel-card .reel-actions { pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.reel-card .reel-action { flex-direction: column; justify-content: center; min-inline-size: 48px; min-block-size: 48px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+.reel-card .reel-action .uh-text { font-size: var(--type-xs); font-weight: 600; }
+.reel-card .liked { color: var(--color-accent); }
+.reel-card .reel-open { min-block-size: 36px; padding-inline: var(--space-3); color: #fff; background: rgba(0,0,0,.42); border: 1px solid rgba(255,255,255,.42); border-radius: var(--radius-full); }
+</style>

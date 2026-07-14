@@ -63,15 +63,16 @@ pub fn decode_value(json: &serde_json::Value, ty: &TyIr) -> Result<Value, String
         },
         TyIr::Map { key, value } => match json {
             J::Object(map) => {
-                let mut record = BTreeMap::new();
+                let mut entries = BTreeMap::new();
                 for (k, v) in map {
                     if *key == MapKeyIr::Tag && parse_tag(k).is_none() {
                         return Err(format!("`{k}` is not a `t-<n>` tag key"));
                     }
-                    let k = Ident::new(k).map_err(|e| e.to_string())?;
-                    record.insert(k, decode_value(v, value)?);
+                    // Map keys are canonical key strings, not identifiers:
+                    // external ids (UUIDs) are valid keys.
+                    entries.insert(k.clone(), decode_value(v, value)?);
                 }
-                Ok(Value::Record(record))
+                Ok(Value::Map(entries))
             }
             other => Err(mismatch("a map object", other)),
         },
@@ -163,6 +164,20 @@ mod tests {
             Value::Id("post-1".into())
         );
         assert_eq!(fields[&Ident::new("cursor").unwrap()], Value::None);
+    }
+
+    #[test]
+    fn map_keys_accept_external_ids() {
+        // Regression: provider-minted ids (UUIDv7) are valid map keys —
+        // map keys are key strings, never forced through `Ident`.
+        let ty = TyIr::Map {
+            key: MapKeyIr::Id,
+            value: Box::new(TyIr::Bool),
+        };
+        let uuid = "01890a5d-ac96-774b-bcce-b302099a8057";
+        let v = decode_value(&serde_json::json!({ uuid: true }), &ty).unwrap();
+        let Value::Map(entries) = v else { panic!() };
+        assert_eq!(entries[uuid], Value::Bool(true));
     }
 
     #[test]

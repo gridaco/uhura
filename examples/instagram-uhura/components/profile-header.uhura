@@ -5,31 +5,54 @@ use port profile { type user-ref }
 props {
   user: user-ref
   bio: text
-  posts-label: text
-  followers-label: text
-  following-label: text
+  is-self: bool
+  viewer-follows: bool
+  relationship-pending: bool
+  post-count: int
+  follower-count: int
+  following-count: int
+}
+
+emits {
+  posts-tapped()
+  followers-tapped(target: id)
+  following-tapped(target: id)
+  follow-toggled(target: id, now-following: bool)
+  create-tapped()
 }
 
 <view class="profile-header">
   <view class="head-row">
     <image class="avatar" src={user.avatar.src} alt={user.avatar.alt} />
     <view class="stats">
-      <view class="stat">
-        <text class="stat-num">{posts-label}</text>
-        <text class="stat-name">Posts</text>
-      </view>
-      <view class="stat">
-        <text class="stat-num">{followers-label}</text>
-        <text class="stat-name">Followers</text>
-      </view>
-      <view class="stat">
-        <text class="stat-num">{following-label}</text>
+      <button class="stat" label={to-text(post-count) ++ (if post-count == 1 then " post" else " posts")} on:press={emit posts-tapped()}>
+        <text class="stat-num">{to-text(post-count)}</text>
+        <text class="stat-name">{if post-count == 1 then "Post" else "Posts"}</text>
+      </button>
+      <button class="stat" label={to-text(follower-count) ++ (if follower-count == 1 then " follower" else " followers")} on:press={emit followers-tapped(target: user.id)}>
+        <text class="stat-num">{to-text(follower-count)}</text>
+        <text class="stat-name">{if follower-count == 1 then "Follower" else "Followers"}</text>
+      </button>
+      <button class="stat" label={to-text(following-count) ++ " following"} on:press={emit following-tapped(target: user.id)}>
+        <text class="stat-num">{to-text(following-count)}</text>
         <text class="stat-name">Following</text>
-      </view>
+      </button>
     </view>
   </view>
   <text class="display-name">{user.display-name}</text>
+  <text class="profile-handle">{"@" ++ user.username}</text>
   <text class="bio">{bio}</text>
+  <view class="profile-actions">
+    {#if is-self}
+      <button class="secondary-button profile-action" label="Create a new post" on:press={emit create-tapped()}>
+        <text>New post</text>
+      </button>
+    {:else}
+      <button class={if viewer-follows then "secondary-button profile-action" else "primary-button profile-action"} pressed={viewer-follows} busy={relationship-pending} label={if viewer-follows then "Unfollow " ++ user.username else "Follow " ++ user.username} on:press={emit follow-toggled(target: user.id, now-following: !viewer-follows)}>
+        <text>{if viewer-follows then "Following" else "Follow"}</text>
+      </button>
+    {/if}
+  </view>
 </view>
 
 <style>
@@ -41,5 +64,8 @@ props {
 .profile-header .stat-num { font-weight: 600; }
 .profile-header .stat-name { font-size: var(--type-xs); color: var(--color-ink-subtle); }
 .profile-header .display-name { font-weight: 600; }
+.profile-header .profile-handle { margin-block-start: calc(0px - var(--space-2)); color: var(--color-ink-subtle); font-size: var(--type-xs); }
 .profile-header .bio { font-size: var(--type-sm); }
+.profile-header .profile-actions { display: flex; gap: var(--space-2); }
+.profile-header .profile-action { flex: 1; justify-content: center; min-block-size: 38px; }
 </style>

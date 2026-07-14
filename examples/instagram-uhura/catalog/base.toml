@@ -1,4 +1,4 @@
-# The base semantic element catalog (design §10 — normative). Nine
+# The base semantic element catalog (design §10 — normative). Ten
 # elements, three classes; layout and aesthetics belong to CSS. The catalog
 # is DATA: source cannot invent an element, prop, or event by naming it,
 # and the checker validates this file against a meta-schema (input events
@@ -15,6 +15,7 @@ icons = [
   "home", "search", "plus", "reels", "profile",
   "heart", "heart-filled", "comment", "close", "back",
   "grid", "layers", "video-off", "progress",
+  "bookmark", "bookmark-filled", "chevron-left", "chevron-right",
 ]
 
 [elements.view]
@@ -77,6 +78,39 @@ required = true
 type = "text"
 
 [elements.image.props.decorative]
+type = "bool"
+
+# First-class time-based media. The semantic props are deliberately small:
+# source/poster are provider-resolved assets, label is the accessible name,
+# and playback policy remains explicit instead of renderer magic.
+[elements.video]
+class = "content"
+children = "none"
+
+[elements.video.props.src]
+type = "asset"
+required = true
+
+[elements.video.props.poster]
+type = "asset"
+
+[elements.video.props.label]
+type = "text"
+required = true
+
+[elements.video.props.autoplay]
+type = "bool"
+
+[elements.video.props.muted]
+type = "bool"
+
+[elements.video.props.loop]
+type = "bool"
+
+[elements.video.props.controls]
+type = "bool"
+
+[elements.video.props.playsinline]
 type = "bool"
 
 [elements.icon]

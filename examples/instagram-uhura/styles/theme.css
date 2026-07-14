@@ -23,6 +23,11 @@
   --radius-lg: 16px;
   --radius-full: 999px;
 
+  /* responsive app shell */
+  --nav-rail-width: 244px;
+  --content-narrow: 630px;
+  --content-wide: 935px;
+
   /* ink ramp + surfaces */
   --color-surface: #ffffff;
   --color-surface-sunken: #f6f7f8;
@@ -35,6 +40,7 @@
   /* the one accent — used only where it means something */
   --color-accent: #ed4956;
   --color-accent-ink: #ffffff;
+  --color-action: #0095f6;
   --color-focus: #ed4956;
 }
 
@@ -43,8 +49,39 @@ body {
   margin: 0;
   font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   font-size: var(--type-md);
+  line-height: 1.35;
   color: var(--color-ink);
   background: var(--color-surface);
+}
+
+/* Play's host chrome has its own smaller font. Re-establish the authored app
+   typography at the prototype boundary instead of inheriting host UI styles. */
+#uh-app {
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: var(--type-md);
+  line-height: 1.35;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  -webkit-font-smoothing: antialiased;
+}
+
+#uh-app button.uh-button,
+#uh-app .uh-text-field input { min-block-size: 44px; }
+
+.uh-button.primary-button {
+  padding-inline: var(--space-4);
+  color: #fff;
+  background: var(--color-action);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+
+.uh-button.secondary-button {
+  padding-inline: var(--space-4);
+  color: var(--color-ink);
+  background: #efefef;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
 }
 
 /* shared utilities the slice names in class= */
@@ -57,3 +94,124 @@ body {
 .pad-lg { padding: var(--space-6); }
 .muted { color: var(--color-ink-subtle); }
 .title { font-weight: 600; }
+
+/* The desktop prototype is an application layout, not a stretched phone.
+   Navigation becomes a persistent Instagram-style rail; content retains
+   readable widths. Story intentionally stays full-bleed. */
+#uh-frame[data-frame="desktop"] .screen:not(.story-page) {
+  position: relative;
+  padding-inline-start: var(--nav-rail-width);
+}
+
+#uh-frame[data-frame="desktop"] .bottom-nav {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 6;
+  inline-size: var(--nav-rail-width);
+  min-block-size: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: var(--space-8) var(--space-3) var(--space-6);
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border-block-start: 0;
+  border-inline-end: 1px solid var(--color-line);
+}
+
+#uh-frame[data-frame="desktop"] .bottom-nav .nav-brand {
+  display: block;
+  flex: none;
+  padding-inline: var(--space-3);
+  font-family: "Snell Roundhand", "Segoe Script", cursive;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+#uh-frame[data-frame="desktop"] .bottom-nav .nav-items {
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  margin-block-start: var(--space-8);
+}
+
+#uh-frame[data-frame="desktop"] .bottom-nav .nav-items .uh-button {
+  flex: none;
+  justify-content: flex-start;
+  inline-size: 100%;
+  min-block-size: 50px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+#uh-frame[data-frame="desktop"] .bottom-nav .nav-items .uh-button:hover {
+  background: var(--color-surface-sunken);
+}
+
+#uh-frame[data-frame="desktop"] .bottom-nav .nav-label {
+  display: block;
+  font-size: var(--type-md);
+}
+
+#uh-frame[data-frame="desktop"] .bottom-nav .uh-icon svg {
+  inline-size: 25px;
+  block-size: 25px;
+}
+
+#uh-frame[data-frame="desktop"] .screen:not(.story-page):not(.reels-page) > :not(.bottom-nav) {
+  inline-size: 100%;
+  max-inline-size: var(--content-wide);
+  margin-inline: auto;
+}
+
+#uh-frame[data-frame="desktop"] .feed-page > :not(.bottom-nav),
+#uh-frame[data-frame="desktop"] .post-page > :not(.bottom-nav),
+#uh-frame[data-frame="desktop"] .people-page > :not(.bottom-nav) {
+  max-inline-size: var(--content-narrow);
+}
+
+#uh-frame[data-frame="desktop"] .create-page > :not(.bottom-nav) {
+  max-inline-size: 720px;
+}
+
+#uh-frame[data-frame="desktop"] .feed-page .feed-head {
+  justify-content: flex-end;
+}
+
+#uh-frame[data-frame="desktop"] .feed-page .feed-head .wordmark {
+  display: none;
+}
+
+/* Reels remains an immersive black surface, but a desktop-sized video should
+   not stretch across the full workspace beside the rail. */
+#uh-frame[data-frame="desktop"] .reels-page > :not(.bottom-nav):not(.reels-head) {
+  inline-size: 100%;
+  max-inline-size: 520px;
+  margin-inline: auto;
+}
+
+#uh-frame[data-frame="desktop"] .reels-page .reels-head {
+  inset-inline: var(--nav-rail-width) 0;
+}
+
+#uh-frame[data-frame="desktop"] .reels-page .reels-head .title {
+  display: block;
+  max-inline-size: 520px;
+  margin-inline: auto;
+}
+
+#uh-frame[data-frame="desktop"] .reels-page > .notice-bar {
+  inset-inline-start: var(--nav-rail-width);
+}
+
+#uh-frame[data-frame="desktop"] .reel-card .reel-media {
+  block-size: 100%;
+}
+
+#uh-frame[data-frame="desktop"] .reel-card .reel-overlay {
+  padding-block-end: 58px;
+}

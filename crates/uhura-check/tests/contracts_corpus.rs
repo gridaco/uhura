@@ -10,13 +10,14 @@ const CATALOG: &str = include_str!("../../../examples/instagram-uhura/catalog/ba
 const FEED: &str = include_str!("../../../examples/instagram-uhura/ports/feed.port.toml");
 const COMMENTS: &str = include_str!("../../../examples/instagram-uhura/ports/comments.port.toml");
 const PROFILE: &str = include_str!("../../../examples/instagram-uhura/ports/profile.port.toml");
+const CREATE: &str = include_str!("../../../examples/instagram-uhura/ports/create.port.toml");
 const MANIFEST: &str = include_str!("../../../examples/instagram-uhura/uhura.toml");
 
 #[test]
-fn base_catalog_loads_with_nine_elements_and_fourteen_icons() {
+fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {
     let catalog = load_catalog(CATALOG).unwrap();
-    assert_eq!(catalog.elements.len(), 9, "design §10: nine elements");
-    assert_eq!(catalog.icons.len(), 14, "design §10: the closed icon set");
+    assert_eq!(catalog.elements.len(), 10, "design §10: ten elements");
+    assert_eq!(catalog.icons.len(), 18, "design §10: the closed icon set");
 
     let names: Vec<&str> = catalog.elements.keys().map(|k| k.as_str()).collect();
     assert_eq!(
@@ -30,6 +31,7 @@ fn base_catalog_loads_with_nine_elements_and_fourteen_icons() {
             "scroll",
             "text",
             "text-field",
+            "video",
             "view"
         ]
     );
@@ -66,13 +68,13 @@ fn base_catalog_loads_with_nine_elements_and_fourteen_icons() {
 }
 
 #[test]
-fn all_three_ports_load_clean() {
+fn all_four_ports_load_clean() {
     let feed = load_port_contract(FEED).unwrap();
     assert_eq!(feed.name.as_str(), "feed");
-    assert_eq!(feed.types.len(), 8);
-    assert_eq!(feed.projections.len(), 2);
+    assert_eq!(feed.types.len(), 11);
+    assert_eq!(feed.projections.len(), 5);
     assert!(feed.projections[&ident("viewer")].boot);
-    assert_eq!(feed.commands.len(), 4);
+    assert_eq!(feed.commands.len(), 7);
     assert!(
         feed.commands[&ident("reload")].payload.is_empty(),
         "ok payloads and reload's payload are empty (§9.1)"
@@ -86,7 +88,14 @@ fn all_three_ports_load_clean() {
     );
 
     let profile = load_port_contract(PROFILE).unwrap();
-    assert!(profile.commands.is_empty(), "read-only port");
+    assert_eq!(profile.types.len(), 7);
+    assert_eq!(profile.projections.len(), 4);
+    assert_eq!(profile.commands.len(), 3);
+
+    let create = load_port_contract(CREATE).unwrap();
+    assert_eq!(create.name.as_str(), "create");
+    assert_eq!(create.projections.len(), 1);
+    assert_eq!(create.commands.len(), 2);
 }
 
 #[test]
@@ -111,12 +120,93 @@ fn contract_hashes_are_deterministic_and_tamper_evident() {
 }
 
 #[test]
-fn manifest_loads_and_binds_all_three_ports() {
+fn manifest_loads_and_binds_all_four_ports() {
     let manifest = load_manifest(MANIFEST).unwrap();
     assert_eq!(manifest.entry.as_str(), "feed");
-    assert_eq!(manifest.ports.len(), 3);
+    assert_eq!(manifest.ports.len(), 4);
     assert_eq!(manifest.catalog_path, "catalog/base.toml");
-    assert_eq!(manifest.play[&ident("default")].script.as_str(), "demo");
+    let play = &manifest.play[&ident("default")];
+    assert_eq!(play.script.as_str(), "demo");
+    assert!(!play.allow_fixture, "Instagram browser Play is Spock-only");
+    let provider = play.provider.as_ref().expect("live play provider");
+    assert_eq!(provider.module, "providers/dist/spock.js");
+    assert_eq!(
+        provider.config["graphql_url"],
+        "http://127.0.0.1:4000/graphql/v1"
+    );
+    assert_eq!(
+        provider.config["rpc_url"],
+        "http://127.0.0.1:4000/rest/v1/rpc"
+    );
+    assert_eq!(
+        provider.config["storage_url"],
+        "http://127.0.0.1:4000/storage/v1"
+    );
+    assert_eq!(
+        provider.config["actor"],
+        "10000000-0000-4000-8000-000000000001"
+    );
+}
+
+#[test]
+fn play_fixture_selection_defaults_on_and_requires_a_live_alternative_when_disabled() {
+    let compatible = MANIFEST.replace("allow_fixture = false\n", "");
+    let manifest = load_manifest(&compatible).unwrap();
+    assert!(manifest.play[&ident("default")].allow_fixture);
+
+    let fixture_only = r#"
+[app]
+name = "fixture-only"
+entry = "feed"
+
+[catalog]
+path = "catalog/base.toml"
+
+[fixtures]
+standard = "fixtures/standard.toml"
+
+[play.default]
+fixture = "standard"
+script = "demo"
+allow_fixture = false
+"#;
+    let issues = load_manifest(fixture_only).unwrap_err();
+    assert!(
+        issues.iter().any(|issue| {
+            issue.path == "play.default.allow_fixture"
+                && issue.message.contains("without a live provider")
+        }),
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn manifest_rejects_unsafe_provider_modules_and_non_string_config() {
+    let unsafe_module = MANIFEST.replace(
+        "module = \"providers/dist/spock.js\"",
+        "module = \"../outside.js\"",
+    );
+    let issues = load_manifest(&unsafe_module).unwrap_err();
+    assert!(
+        issues.iter().any(|issue| {
+            issue.path == "play.default.provider.module"
+                && issue.message.contains("corpus-relative")
+        }),
+        "{issues:?}"
+    );
+
+    let non_string = MANIFEST.replace(
+        "graphql_url = \"http://127.0.0.1:4000/graphql/v1\"",
+        "graphql_url = 4000",
+    );
+    let issues = load_manifest(&non_string).unwrap_err();
+    assert!(
+        issues.iter().any(|issue| {
+            issue.path == "play.default.provider.config.graphql_url"
+                && issue.message.contains("must be strings")
+        }),
+        "{issues:?}"
+    );
 }
 
 #[test]

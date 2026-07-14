@@ -618,8 +618,11 @@ impl<'a> Typer<'a> {
     }
 
     fn check_navigate(&mut self, target: &ast::NavTarget, span: Span) {
-        let ast::NavTarget::Route { name, args } = target else {
-            return;
+        let (name, args) = match target {
+            ast::NavTarget::Route { name, args } | ast::NavTarget::Replace { name, args } => {
+                (name, args)
+            }
+            ast::NavTarget::Back => return,
         };
         let Ok(route) = Ident::new(name) else {
             return;

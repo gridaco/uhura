@@ -111,7 +111,7 @@ fn criterion_2_like(program: &ProgramIr) {
     // itself (found by its heart icon, not by position).
     let card = lena_card(&steps[press - 1]["v"]["page"]["root"], "§13.2 pre-press");
     assert!(
-        find_text(card, "214 likes"),
+        find_text(card, "7 likes"),
         "pre-like shows the authored count"
     );
     let like = like_button(card);
@@ -130,7 +130,7 @@ fn criterion_2_like(program: &ProgramIr) {
     // word arrives (§11.4 step 2).
     let card = lena_card(&steps[press]["v"]["page"]["root"], "§13.2 press");
     assert!(
-        find_text(card, "215 likes"),
+        find_text(card, "8 likes"),
         "the optimistic count computes in-card"
     );
     let like = like_button(card);
@@ -155,7 +155,7 @@ fn criterion_2_like(program: &ProgramIr) {
             &format!("§13.2 flicker window, step {i}"),
         );
         assert!(
-            find_text(card, "215 likes") && !find_text(card, "214 likes"),
+            find_text(card, "8 likes") && !find_text(card, "7 likes"),
             "§13.2: step {i} flickered the count"
         );
         let like = like_button(card);
@@ -270,7 +270,7 @@ fn criterion_3_comments(program: &ProgramIr) {
 // ── §13.4 — pagination: dedupe, failure → retry, exhaustion is truth ────────
 
 /// Test-local script (the canonical list stays closed): the first
-/// `load-next-page` is refused, the author-visible retry sends the
+/// `load-next-page` is unavailable, the author-visible retry sends the
 /// second, page 2 appends. File order is the fixture's reply order.
 const PAGINATE_RETRY: &str = r#"
 [[deliver]]
@@ -282,8 +282,8 @@ slice = "feed.page-1"
 [[reply]]
 on = { command = "load-next-page", where = { cursor = "cursor-page-2" } }
 after-ticks = 1
-outcome = "refused"
-refusal = "rate-limited"
+outcome = "unavailable"
+reason = "network unavailable"
 
 [[reply]]
 on = { command = "load-next-page", where = { cursor = "cursor-page-2" } }
@@ -305,7 +305,7 @@ emit = "retry-load-tapped"
 "#;
 
 /// Test-local script: boot straight into the EXHAUSTED feed
-/// (`feed.final`: 8 posts, `has-more = false`, no cursor) and press
+/// (`feed.final`: 6 followed-author posts, `has-more = false`, no cursor) and press
 /// near-end once. No timeline coupling to any canonical script.
 const EXHAUSTED: &str = r#"
 [[deliver]]
@@ -341,7 +341,7 @@ fn criterion_4_pagination(program: &ProgramIr) {
     });
     let before = post_keys(&steps[ready]["v"]["page"]["root"]);
     let after = post_keys(&steps[steps.len() - 1]["v"]["page"]["root"]);
-    assert_eq!((before.len(), after.len()), (4, 8));
+    assert_eq!((before.len(), after.len()), (4, 6));
     assert_eq!(
         &after[..4],
         &before[..],
@@ -374,7 +374,7 @@ fn criterion_4_pagination(program: &ProgramIr) {
         !find_text(last, "Couldn't load more."),
         "the retry recovers"
     );
-    assert_eq!(post_keys(last).len(), 8, "page 2 appends after the retry");
+    assert_eq!(post_keys(last).len(), 6, "page 2 appends after the retry");
     assert_eq!(
         &post_keys(last)[..4],
         &retry_before[..],
@@ -410,17 +410,26 @@ fn criterion_4_pagination(program: &ProgramIr) {
         "register #67: the markup-authored observation descriptor stays in V"
     );
 
-    // The empty feed renders its empty state and observes nothing at all
-    // (§8.1): the positive anchor keeps the negative check honest.
+    // The empty feed renders its empty state. Its scroll still owns the
+    // authored observation descriptor, but projection truth guard-drops the
+    // observation without emitting a pagination command.
     let steps = trace(program, "feed-empty", true);
     let root = &steps[steps.len() - 1]["v"]["page"]["root"];
     assert!(
-        find_text(root, "Follow people to fill your feed."),
+        find_text(root, "Posts from people you follow will appear here."),
         "§13.4: the empty state actually renders"
     );
     assert!(
-        !has_near_end_descriptor(root),
-        "§13.4/§8.1: an empty feed subscribes to nothing"
+        has_near_end_descriptor(root),
+        "§13.4/§8.1: the markup-authored scroll observation stays in V"
+    );
+    assert!(
+        commands(&steps, "load-next-page").is_empty(),
+        "§13.4: projection truth prevents empty-feed pagination"
+    );
+    assert_eq!(
+        last["drop"], "no-handler",
+        "the empty-feed observation is rejected by the guard"
     );
 }
 
@@ -443,7 +452,7 @@ fn criterion_5_navigation(program: &ProgramIr) {
 
     // History intents are emitted and traced, in walkthrough order:
     // dismiss, navigate, back. (§13.5's "executed as no-ops" half is the
-    // SHELL's contract — §7.4, shell/main.js — outside this headless
+    // SHELL's contract — §7.4, web/src/play/main.ts — outside this headless
     // battery; no automated test pins it.)
     let intents: Vec<String> = steps
         .iter()
