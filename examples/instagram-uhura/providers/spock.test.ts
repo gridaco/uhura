@@ -235,6 +235,22 @@ function graphql(data: unknown): Response {
   return new Response(JSON.stringify({ data }));
 }
 
+function frameworkEnvironment(
+  authority: Record<string, unknown> = {
+    graphql_path: "/framework/graphql",
+    rpc_path: "/framework/rpc",
+    storage_path: "/framework/storage",
+  },
+): Record<string, unknown> {
+  return {
+    protocol: "spock-host-environment/1",
+    mode: "dev",
+    project_generation_id: 7,
+    backend_generation_id: 3,
+    authority,
+  };
+}
+
 function whoami(init: RequestInit): Response {
   const headers = new Headers(init?.headers);
   const actor = headers.get("x-spock-actor");
@@ -333,6 +349,167 @@ function onlyOutcome(messages: Decoded[]): Decoded {
   assert.deepEqual(outcome.outcome, { ok: {} });
   return outcome;
 }
+
+test("prefers one strictly typed framework environment before authority work", async () => {
+  const data = snapshot();
+  const calls: string[] = [];
+  await withFetch(async (input, init) => {
+    const url = String(input);
+    calls.push(url);
+    if (url === "/~project/environment") {
+      assert.equal(init.method, "GET");
+      assert.equal(new Headers(init.headers).get("accept"), "application/json");
+      return new Response(JSON.stringify(frameworkEnvironment()));
+    }
+    if (url === "/framework/graphql") return graphql(data);
+    if (url === "/~whoami") return whoami(init);
+    if (url === "/framework/storage/object/sign/media-theo") {
+      return new Response(
+        JSON.stringify({
+          url: "/framework/storage/object/media-theo?exp=9999999999&sig=test",
+        }),
+      );
+    }
+    if (url === "/framework/rpc/unlike_post") {
+      return new Response(JSON.stringify({ user: MIRA, post: "post-lena-video" }));
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }, async () => {
+    const remote = driver();
+    await remote.assembleBoot();
+    bootMessages(remote);
+
+    assert.equal(
+      await remote.resolveAsset("media-theo"),
+      "/framework/storage/object/media-theo?exp=9999999999&sig=test",
+    );
+    remote.deliver(
+      command("feed", "unlike-post", { post: "post-lena-video" }),
+    );
+    onlyOutcome(await settle(remote));
+    remote.dispose();
+  });
+
+  assert.equal(calls[0], "/~project/environment");
+  assert.equal(
+    calls.filter((url) => url === "/~project/environment").length,
+    1,
+  );
+  assert.ok(calls.includes("/framework/graphql"));
+  assert.ok(calls.includes("/framework/rpc/unlike_post"));
+  assert.ok(calls.includes("/framework/storage/object/sign/media-theo"));
+  assert.equal(calls.some((url) => url.startsWith("http://spock.test")), false);
+});
+
+test("falls back for unavailable or invalid framework metadata", async () => {
+  const cases: Array<{ name: string; response: () => Response }> = [
+    {
+      name: "unavailable",
+      response: () => new Response(null, { status: 404 }),
+    },
+    {
+      name: "wrong protocol",
+      response: () =>
+        new Response(
+          JSON.stringify({
+            ...frameworkEnvironment(),
+            protocol: "spock-host-environment/0",
+          }),
+        ),
+    },
+    {
+      name: "extra top-level provider data",
+      response: () =>
+        new Response(
+          JSON.stringify({ ...frameworkEnvironment(), provider: { actor: THEO } }),
+        ),
+    },
+    {
+      name: "absolute authority URL",
+      response: () =>
+        new Response(
+          JSON.stringify(
+            frameworkEnvironment({
+              graphql_path: "https://other.test/graphql",
+              rpc_path: "/framework/rpc",
+              storage_path: "/framework/storage",
+            }),
+          ),
+        ),
+    },
+    {
+      name: "invalid generation",
+      response: () =>
+        new Response(
+          JSON.stringify({
+            ...frameworkEnvironment(),
+            backend_generation_id: 0,
+          }),
+        ),
+    },
+  ];
+
+  for (const candidate of cases) {
+    const calls: string[] = [];
+    const data = snapshot();
+    await withFetch(async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "/~project/environment") return candidate.response();
+      if (url === "http://spock.test/graphql/v1") return graphql(data);
+      if (url === "http://spock.test/~whoami") return whoami(init);
+      throw new Error(`unexpected fetch ${url}`);
+    }, async () => {
+      const remote = driver();
+      await remote.assembleBoot();
+      remote.dispose();
+    });
+    assert.deepEqual(
+      calls.slice(0, 2),
+      ["/~project/environment", "http://spock.test/graphql/v1"],
+      candidate.name,
+    );
+  }
+});
+
+test("disposing during environment discovery aborts without authority fallback", async () => {
+  const controller = new AbortController();
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let authorityCalls = 0;
+
+  await withFetch(async (input, init) => {
+    if (String(input) !== "/~project/environment") {
+      authorityCalls += 1;
+      throw new Error(`unexpected authority fetch ${String(input)}`);
+    }
+    markStarted();
+    return await new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("disposed", "AbortError")),
+        { once: true },
+      );
+    });
+  }, async () => {
+    const remote = driver("mira.santos", {
+      signal: controller.signal,
+      pickFile: async () => null,
+    });
+    const boot = remote.assembleBoot();
+    await started;
+    controller.abort();
+    await assert.rejects(
+      boot,
+      (error: unknown) =>
+        error instanceof DOMException && error.name === "AbortError",
+    );
+  });
+
+  assert.equal(authorityCalls, 0);
+});
 
 test("normalizes a configured username and exposes authority-owned actors", async () => {
   const data = snapshot();
