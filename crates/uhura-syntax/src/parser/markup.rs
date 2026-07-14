@@ -298,7 +298,8 @@ fn push_node_coalescing_text(list: &mut MarkupList, node: Node) {
 
 fn parse_markup_comment(cur: &mut Cursor) -> MarkupComment {
     let start = cur.pos();
-    debug_assert!(cur.eat_str("<!--"));
+    let opened = cur.eat_str("<!--");
+    debug_assert!(opened);
     let body_start = cur.pos();
     let Some(close) = cur.rest().find("-->") else {
         // Recover at a safe next-line markup boundary when possible.
