@@ -120,10 +120,13 @@ export interface RemoteSystemInfo {
 }
 
 export interface ProviderHost {
+  /** Aborts when the Play route that owns this provider is retired. */
+  readonly signal: AbortSignal;
   pickFile(options?: { accept?: string }): Promise<File | null>;
 }
 
 export interface RemoteDriver extends Driver {
+  dispose(): void;
   assembleBoot(): Promise<string>;
   resolveAsset?(assetRef: string): Promise<string>;
   systemInfo?(): RemoteSystemInfo;
@@ -152,7 +155,7 @@ export interface DevEvent {
 export interface ProviderModule {
   createDriver?: (
     config: Record<string, string>,
-    host?: ProviderHost,
+    host: ProviderHost,
   ) => RemoteDriver;
 }
 

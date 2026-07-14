@@ -19,7 +19,6 @@
   },
   "include": [
     "vite.config.ts",
-    "vite.editor.config.ts",
     "vite.provider.config.ts",
     "vitest.config.ts"
   ]

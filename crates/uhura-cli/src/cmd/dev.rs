@@ -1,260 +1,218 @@
-//! `uhura play [path] [--port <n>]` — the interactive play server (design
-//! §12.4). `uhura dev` remains a compatibility alias.
-//! tiny_http + SSE. Play watches its source inputs and serves the LAST-GOOD IR
-//! plus stylesheet; a failing check pushes diagnostics over `/events`. The
-//! Editor additionally rebuilds one complete static Canvas and publishes its
-//! independent candidate/active state over `/editor/events`. A rejected Canvas
-//! never replaces its last-good document.
+//! One native host for the model-driven Editor and interactive Play routes.
 //!
-//! Endpoints: `/` `/shell/*` `/wasm/*` `/ir.json` `/stylesheet.css`
-//! `/fixture.json` `/script.json` `/boot.json` `/icons.json` `/play.json`
-//! `/provider.js` `/assets/*` `/events` `/editor/events` (SSE).
+//! Rust owns coherent project capture, checking/evaluation, immutable
+//! `EditorState`, last-good Play artifacts, and HTTP/SSE transport. The
+//! compiled web application owns every browser document and all presentation.
 
-use std::collections::BTreeMap;
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use uhura_base::{Severity, sha256_hex, to_canonical_json, to_envelope};
 use uhura_check::check;
 use uhura_check::fixture::load_fixture;
 use uhura_core::ir::ProgramIr;
+use uhura_editor_model::{EditorRender, EditorState};
 
 use crate::CommonArgs;
 use crate::cmd::trace::{boot_updates, fixture_slices_json};
 
+const EDITOR_EVENT_PROTOCOL: &str = "uhura-editor-event/0";
+
 pub fn run(common: &CommonArgs, port: u16) -> ExitCode {
-    run_host(common, port, HostEntry::Play, None)
+    run_host(common, port, PrimarySurface::Play)
 }
 
-/// Host the read-only Canvas and the live Play runtime on one origin. Keeping
-/// this in the Play server means `/play` exercises the exact same artifacts,
-/// provider, watcher, and SSE path as the dedicated command.
-pub(crate) fn run_with_editor(common: &CommonArgs, port: u16, out_dir: Option<&str>) -> ExitCode {
-    run_host(common, port, HostEntry::Editor, out_dir.map(PathBuf::from))
-}
-
-#[derive(Clone)]
-enum HostEntry {
-    Play,
-    Editor,
+pub(crate) fn run_with_editor(common: &CommonArgs, port: u16) -> ExitCode {
+    run_host(common, port, PrimarySurface::Editor)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EntryDocument {
-    Canvas,
+enum PrimarySurface {
+    Editor,
     Play,
-    EmptyFavicon,
 }
 
-impl HostEntry {
-    fn command(&self) -> &'static str {
+impl PrimarySurface {
+    fn command(self) -> &'static str {
         match self {
-            Self::Play => "uhura play",
-            Self::Editor => "uhura editor",
+            PrimarySurface::Editor => "uhura editor",
+            PrimarySurface::Play => "uhura play",
         }
     }
 
-    fn document(&self, path: &str) -> Option<EntryDocument> {
+    fn route(self) -> &'static str {
         match self {
-            Self::Play if path == "/" => Some(EntryDocument::Play),
-            Self::Editor => match path {
-                "/" | "/index.html" | "/canvas.html" => Some(EntryDocument::Canvas),
-                "/play" | "/play/" => Some(EntryDocument::Play),
-                "/favicon.ico" => Some(EntryDocument::EmptyFavicon),
-                _ => None,
-            },
-            _ => None,
+            PrimarySurface::Editor => "/",
+            PrimarySurface::Play => "/play",
         }
     }
 }
 
-fn run_host(
-    common: &CommonArgs,
-    port: u16,
-    entry: HostEntry,
-    editor_out_dir: Option<PathBuf>,
-) -> ExitCode {
-    let command = entry.command();
+fn run_host(common: &CommonArgs, port: u16, primary: PrimarySurface) -> ExitCode {
+    let command = primary.command();
+    let web = match WebApp::locate() {
+        Ok(web) => Arc::new(web),
+        Err(error) => {
+            eprintln!("{command}: {error}");
+            return ExitCode::from(2);
+        }
+    };
+
     let root = common.root.clone();
-    let common = Arc::new(common.clone());
+    let first_observation = project_fingerprint(&root);
+    let (editor_outcome, baseline_snapshot) = build_stable_editor(&root, first_observation, 1);
+    let baseline = baseline_snapshot.fingerprint.clone();
+    match &editor_outcome {
+        Ok(artifact) => println!(
+            "{command}: Editor revision 1 — {} previews ({} replay-derived)",
+            artifact.preview_count, artifact.replay_derived_count
+        ),
+        Err(_) => {
+            println!("{command}: Editor revision 1 rejected — application starts with diagnostics")
+        }
+    }
+    let editor = match EditorHostState::initial(editor_outcome) {
+        Ok(editor) => editor,
+        Err(error) => {
+            eprintln!("{command}: could not publish initial Editor state: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let state = Arc::new(RwLock::new(DevState {
-        generation: 0,
-        ok: false,
-        diagnostics: None,
-        good: None,
-        canvas: matches!(entry, HostEntry::Editor).then(CanvasState::default),
+        play: PlayState::default(),
+        editor,
     }));
     let play_clients: Clients = Arc::new(Mutex::new(Vec::new()));
     let editor_clients: Clients = Arc::new(Mutex::new(Vec::new()));
 
-    // Scan before the synchronous builds so a save landing during either one
-    // is observed. Canvas additionally verifies its content snapshot before
-    // accepting the candidate.
-    let play_baseline = scan_play_watched(&root);
-    let mut canvas_baseline =
-        matches!(entry, HostEntry::Editor).then(|| scan_canvas_watched(&root));
-    if let Some(seen) = &mut canvas_baseline {
-        let (outcome, mut stable) = build_stable_canvas(&common, seen.clone());
-        settle_canvas(
-            outcome,
-            editor_out_dir.as_deref(),
-            &root,
-            &mut stable,
-            &state,
-            &editor_clients,
-        );
-        *seen = stable;
-    }
-    recheck_into(&root, &state, &play_clients);
+    recheck_play_into(&baseline_snapshot.files, &state, &play_clients);
     {
-        let s = state.read().expect("state lock");
-        match (&s.good, s.ok) {
-            (Some(_), true) => println!("{command}: checked clean"),
+        let state = state.read().expect("state lock");
+        match (&state.play.good, state.play.ok) {
+            (Some(_), true) => println!("{command}: Play checked clean"),
             (Some(_), false) => {
-                println!("{command}: check FAILING — serving the last good build")
+                println!("{command}: Play check failing — serving the last good build")
             }
-            (None, _) => println!("{command}: check FAILING — no good build yet (overlay only)"),
+            (None, _) => println!("{command}: Play check failing — no good build yet"),
         }
     }
 
+    // Browser assets are resolved before binding so a source-built CLI fails
+    // clearly instead of opening an unusable port.
     let server = match tiny_http::Server::http(("127.0.0.1", port)) {
         Ok(server) => server,
-        Err(e) => {
-            eprintln!("{command}: could not bind 127.0.0.1:{port}: {e}");
+        Err(error) => {
+            eprintln!("{command}: could not bind 127.0.0.1:{port}: {error}");
             return ExitCode::from(2);
         }
     };
-    match &entry {
-        HostEntry::Play => println!("{command}: http://127.0.0.1:{port}/"),
-        HostEntry::Editor => {
-            println!("{command}: http://127.0.0.1:{port}/ (read-only; Canvas rebuilds on save)");
-            println!("{command}: Play http://127.0.0.1:{port}/play");
+    println!("{command}: http://127.0.0.1:{port}{}", primary.route());
+    println!(
+        "{command}: {} http://127.0.0.1:{port}{}",
+        if primary == PrimarySurface::Editor {
+            "Play"
+        } else {
+            "Editor"
+        },
+        if primary == PrimarySurface::Editor {
+            "/play"
+        } else {
+            "/"
         }
-    }
+    );
 
-    // ── the watcher: poll mtimes, debounce, recheck, broadcast ──────────
+    // One observer drives both independent products. Editor publication is a
+    // complete-state replacement; Play keeps its own last-good generation.
     {
         let root = root.clone();
-        let common = Arc::clone(&common);
         let state = Arc::clone(&state);
         let play_clients = Arc::clone(&play_clients);
         let editor_clients = Arc::clone(&editor_clients);
-        let command = entry.command();
-        let editor = matches!(entry, HostEntry::Editor);
-        let editor_out_dir = editor_out_dir.clone();
         std::thread::spawn(move || {
-            let mut seen_play = play_baseline;
-            let mut seen_canvas = canvas_baseline;
+            let mut seen = baseline;
             loop {
                 std::thread::sleep(Duration::from_millis(150));
-                let now_play = scan_play_watched(&root);
-                let now_canvas = editor.then(|| scan_canvas_watched(&root));
-                let play_changed = now_play != seen_play;
-                let canvas_changed = now_canvas != seen_canvas;
-                if !play_changed && !canvas_changed {
+                let observed = project_fingerprint(&root);
+                if observed == seen {
+                    continue;
+                }
+                let stable = wait_for_stable_fingerprint(&root, observed);
+                if stable == seen {
                     continue;
                 }
 
-                // Debounce the complete project observation. Play retains its
-                // historical extension boundary; Canvas is conservative and
-                // content-addressed.
-                let mut stable_play = now_play;
-                let mut stable_canvas = now_canvas;
-                loop {
-                    std::thread::sleep(Duration::from_millis(100));
-                    let again_play = scan_play_watched(&root);
-                    let again_canvas = editor.then(|| scan_canvas_watched(&root));
-                    if again_play == stable_play && again_canvas == stable_canvas {
-                        break;
+                let revision = state.read().expect("state lock").editor.source_revision + 1;
+                let (outcome, settled) = build_stable_editor(&root, stable, revision);
+                seen = settled.fingerprint.clone();
+                let report = outcome
+                    .as_ref()
+                    .ok()
+                    .map(|artifact| (artifact.preview_count, artifact.replay_derived_count));
+                if let Err(error) =
+                    publish_editor_candidate(revision, outcome, &state, &editor_clients)
+                {
+                    // This is an internal ordering/contract break, not an
+                    // author diagnostic. Leave the prior atomic state intact.
+                    eprintln!("uhura host: could not publish Editor revision {revision}: {error}");
+                } else if let Some((previews, derived)) = report {
+                    println!(
+                        "uhura host: Editor revision {revision} current — {previews} previews \
+                         ({derived} replay-derived)"
+                    );
+                } else {
+                    println!(
+                        "uhura host: Editor revision {revision} rejected — last render is stale"
+                    );
+                }
+
+                recheck_play_into(&settled.files, &state, &play_clients);
+                let play = &state.read().expect("state lock").play;
+                println!(
+                    "uhura host: Play generation {} — {}",
+                    play.generation,
+                    if play.ok {
+                        "ok, clients reload"
+                    } else {
+                        "check failing, last-good runtime retained"
                     }
-                    stable_play = again_play;
-                    stable_canvas = again_canvas;
-                }
-                let play_changed = stable_play != seen_play;
-                let canvas_changed = stable_canvas != seen_canvas;
-                seen_play = stable_play;
-                seen_canvas = stable_canvas;
-
-                if canvas_changed && let Some(expected) = seen_canvas.take() {
-                    let (outcome, mut stable) = build_stable_canvas(&common, expected);
-                    settle_canvas(
-                        outcome,
-                        editor_out_dir.as_deref(),
-                        &root,
-                        &mut stable,
-                        &state,
-                        &editor_clients,
-                    );
-                    seen_canvas = Some(stable);
-                    let s = state.read().expect("state lock");
-                    let canvas = s.canvas.as_ref().expect("Editor Canvas state");
-                    println!(
-                        "{command}: Canvas candidate {} — {}",
-                        canvas.candidate_generation,
-                        if canvas.diagnostics.is_none() {
-                            "active, Editor clients converge"
-                        } else {
-                            "rejected, serving the last good Canvas"
-                        }
-                    );
-                }
-
-                if play_changed {
-                    recheck_into(&root, &state, &play_clients);
-                    let s = state.read().expect("state lock");
-                    println!(
-                        "{command}: Play generation {} — {}",
-                        s.generation,
-                        if s.ok {
-                            "ok, shell reloads"
-                        } else {
-                            "check failing, overlay pushed"
-                        }
-                    );
-                }
+                );
             }
         });
     }
 
-    // ── serve: one thread per request (SSE holds its thread) ────────────
     let server = Arc::new(server);
     for request in server.incoming_requests() {
         let state = Arc::clone(&state);
         let play_clients = Arc::clone(&play_clients);
         let editor_clients = Arc::clone(&editor_clients);
         let root = root.clone();
-        let entry = entry.clone();
+        let web = Arc::clone(&web);
         std::thread::spawn(move || {
-            handle(
-                request,
-                &root,
-                &state,
-                &play_clients,
-                &editor_clients,
-                &entry,
-            )
+            handle(request, &root, &web, &state, &play_clients, &editor_clients)
         });
     }
     ExitCode::SUCCESS
 }
 
-// ── state ───────────────────────────────────────────────────────────────────
+// ── state and coherent Editor publication ──────────────────────────────────
 
 struct DevState {
-    /// Play's latest attempted generation. Canvas has an independent clock.
+    play: PlayState,
+    editor: EditorHostState,
+}
+
+#[derive(Default)]
+struct PlayState {
     generation: u64,
     ok: bool,
-    /// `uhura-diagnostics/0` envelope of the latest FAILING check.
     diagnostics: Option<serde_json::Value>,
-    /// Last-good artifacts — what every endpoint serves (§12.4).
+    /// Last-good artifacts; a rejected generation never replaces these.
     good: Option<GoodBuild>,
-    /// Present only for the combined Editor host.
-    canvas: Option<CanvasState>,
 }
 
 struct GoodBuild {
@@ -264,388 +222,194 @@ struct GoodBuild {
     script_json: String,
     boot_json: String,
     icons_json: String,
-    /// Browser play selection. The fixture remains the native test double;
-    /// a module provider replaces it only in the `uhura play` shell.
-    play_json: String,
-    /// Provider module bytes captured with the rest of the last-good build.
+    config_json: String,
     provider_js: Option<String>,
 }
 
-#[derive(Default)]
-struct CanvasState {
-    /// Advances for every settled Canvas build, including rejected builds.
-    candidate_generation: u64,
-    /// The accepted candidate whose document is currently served.
-    active_generation: Option<u64>,
-    /// SHA-256 of the exact base self-contained HTML. Unlike the numeric
-    /// counter, this remains meaningful across server process restarts.
-    active_build_id: Option<String>,
-    /// Diagnostics for the latest rejected candidate.
-    diagnostics: Option<serde_json::Value>,
-    /// Non-fatal checker warnings belonging to the active generation.
-    active_warnings: Option<serde_json::Value>,
-    /// Base self-contained Canvas HTML. Editor-only host metadata is injected
-    /// at response time so it cannot leak into `uhura project` exports.
-    good_html: Option<String>,
+type EditorBuildOutcome = Result<super::editor_model::EditorModelArtifact, serde_json::Value>;
+
+struct EditorHostState {
+    source_revision: u64,
+    state_json: String,
+    /// Always kept with its original render revision and `current` marker;
+    /// stale publication mutates a clone only.
+    last_renderable: Option<EditorRender>,
 }
 
-impl CanvasState {
-    fn settle(&mut self, outcome: Result<(String, Option<serde_json::Value>), serde_json::Value>) {
-        self.candidate_generation += 1;
-        match outcome {
-            Ok((html, warnings)) => {
-                self.active_build_id = Some(sha256_hex(html.as_bytes()));
-                self.active_generation = Some(self.candidate_generation);
-                self.diagnostics = None;
-                self.active_warnings = warnings;
-                self.good_html = Some(html);
-            }
-            Err(diagnostics) => {
-                self.diagnostics = Some(diagnostics);
-            }
-        }
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RevisionOrderError {
+    expected: u64,
+    received: u64,
+}
+
+impl std::fmt::Display for RevisionOrderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Editor candidate revision {} arrived; expected {}",
+            self.received, self.expected
+        )
     }
 }
 
-type Clients = Arc<Mutex<Vec<Sender<String>>>>;
+impl std::error::Error for RevisionOrderError {}
 
-/// (content-type, body, generation stamp, Canvas build identity) or
-/// (status, message).
-type Served = Result<(String, Vec<u8>, Option<u64>, Option<String>), (u16, String)>;
+impl EditorHostState {
+    fn initial(outcome: EditorBuildOutcome) -> Result<Self, String> {
+        let (state_json, last_renderable) = materialize_editor_state(1, outcome, None)?;
+        Ok(Self {
+            source_revision: 1,
+            state_json,
+            last_renderable,
+        })
+    }
 
-/// Build until the project content observed before and after projection is
-/// identical. A candidate assembled while another save lands is discarded
-/// before it can become active.
-fn build_stable_canvas(
-    common: &CommonArgs,
-    mut before: super::project::CanvasSourceFingerprint,
+    fn apply(&mut self, revision: u64, outcome: EditorBuildOutcome) -> Result<(), String> {
+        let expected = self.source_revision + 1;
+        if revision != expected {
+            return Err(RevisionOrderError {
+                expected,
+                received: revision,
+            }
+            .to_string());
+        }
+        // Build the whole replacement before mutating the published slot.
+        let (state_json, last_renderable) =
+            materialize_editor_state(revision, outcome, self.last_renderable.as_ref())?;
+        self.source_revision = revision;
+        self.state_json = state_json;
+        self.last_renderable = last_renderable;
+        Ok(())
+    }
+}
+
+fn materialize_editor_state(
+    revision: u64,
+    outcome: EditorBuildOutcome,
+    last_renderable: Option<&EditorRender>,
+) -> Result<(String, Option<EditorRender>), String> {
+    let (state, next_renderable) = match outcome {
+        Ok(artifact) => {
+            let next_renderable = artifact.render.clone();
+            let state = EditorState::current(revision, artifact.diagnostics, artifact.render)
+                .map_err(|error| error.to_string())?;
+            (state, Some(next_renderable))
+        }
+        Err(diagnostics) => match last_renderable {
+            Some(render) => (
+                EditorState::stale(revision, diagnostics, render.clone())
+                    .map_err(|error| error.to_string())?,
+                Some(render.clone()),
+            ),
+            None => (
+                EditorState::cold_invalid(revision, diagnostics)
+                    .map_err(|error| error.to_string())?,
+                None,
+            ),
+        },
+    };
+    let state_json = state
+        .to_canonical_string()
+        .map_err(|error| error.to_string())?;
+    Ok((state_json, next_renderable))
+}
+
+fn publish_editor_candidate(
+    revision: u64,
+    outcome: EditorBuildOutcome,
+    state: &RwLock<DevState>,
+    clients: &Clients,
+) -> Result<(), String> {
+    {
+        let mut state = state.write().expect("state lock");
+        state.editor.apply(revision, outcome)?;
+    }
+    broadcast(clients, &editor_sse_payload(revision));
+    Ok(())
+}
+
+/// Build until the exact captured bytes equal the observation both before and
+/// after evaluation. An edit landing during work can never publish a mixed
+/// model or an older candidate over a newer one.
+fn build_stable_editor(
+    root: &Path,
+    mut before: super::editor_model::ProjectSourceFingerprint,
+    revision: u64,
 ) -> (
-    Result<super::project::CanvasArtifact, super::project::CanvasBuildFailure>,
-    super::project::CanvasSourceFingerprint,
+    EditorBuildOutcome,
+    super::editor_model::ProjectSourceSnapshot,
 ) {
     loop {
-        let snapshot = super::project::capture_canvas_snapshot(&common.root);
+        let snapshot = super::editor_model::capture_project_snapshot(root);
         if before != snapshot.fingerprint {
-            before = snapshot.fingerprint;
-            loop {
-                std::thread::sleep(Duration::from_millis(100));
-                let again = scan_canvas_watched(&common.root);
-                if again == before {
-                    break;
-                }
-                before = again;
-            }
+            before = wait_for_stable_fingerprint(root, snapshot.fingerprint);
             continue;
         }
 
-        let outcome = super::project::build_captured_snapshot(&snapshot);
-        let after = scan_canvas_watched(&common.root);
+        let outcome = super::editor_model::build_captured_snapshot_at(&snapshot, revision)
+            .map_err(|failure| failure.envelope);
+        let after = project_fingerprint(root);
         if snapshot.fingerprint == after {
-            return (outcome, after);
+            return (outcome, snapshot);
         }
-
-        before = after;
-        loop {
-            std::thread::sleep(Duration::from_millis(100));
-            let again = scan_canvas_watched(&common.root);
-            if again == before {
-                break;
-            }
-            before = again;
-        }
+        before = wait_for_stable_fingerprint(root, after);
     }
 }
 
-/// Filesystem identity of one pre-existing logical path to the configured
-/// export. The canonical target catches retargeted parent-directory symlinks;
-/// the optional link target catches replacement/retargeting of the final path.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CanvasOutputAliasIdentity {
-    canonical_target: PathBuf,
-    symlink_target: Option<PathBuf>,
+fn project_fingerprint(root: &Path) -> super::editor_model::ProjectSourceFingerprint {
+    super::editor_model::capture_project_snapshot(root).fingerprint
 }
 
-impl CanvasOutputAliasIdentity {
-    fn observe(path: &Path) -> Option<Self> {
-        let metadata = std::fs::symlink_metadata(path).ok()?;
-        if !metadata.is_file() && !metadata.file_type().is_symlink() {
-            return None;
-        }
-        let symlink_target = metadata
-            .file_type()
-            .is_symlink()
-            .then(|| std::fs::read_link(path).ok())
-            .flatten();
-        if metadata.file_type().is_symlink() && symlink_target.is_none() {
-            return None;
-        }
-        let canonical_target = std::fs::canonicalize(path).ok().or_else(|| {
-            symlink_target
-                .as_ref()
-                .and_then(|_| prospective_canonical_output(path))
-        })?;
-        Some(Self {
-            canonical_target,
-            symlink_target,
-        })
-    }
-
-    fn matches_fingerprint(&self, fingerprint: &str) -> bool {
-        match &self.symlink_target {
-            Some(target) => {
-                let target = format!("{:?}", target.as_os_str());
-                fingerprint.starts_with(&format!("!symlink-file:{target}:"))
-                    || fingerprint.starts_with(&format!("!symlink-unresolved:{target}:"))
-            }
-            None => {
-                fingerprint.len() == 64 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
-            }
-        }
-    }
-
-    fn fingerprint(&self, digest: &str) -> String {
-        match &self.symlink_target {
-            Some(target) => format!("!symlink-file:{:?}:{digest}", target.as_os_str()),
-            None => digest.to_string(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CanvasOutputAliasPatch {
-    path: PathBuf,
-    identity: CanvasOutputAliasIdentity,
-}
-
-/// Authorization captured before an export write. Only paths that already
-/// resolved to the destination in the accepted candidate, plus the exact
-/// lexical/canonical files that this write can create, are eligible. Applying
-/// the token never imports arbitrary post-write aliases or bytes.
-#[derive(Clone, Debug)]
-struct CanvasOutputBaselinePatch {
-    canonical_target: PathBuf,
-    aliases: Vec<CanvasOutputAliasPatch>,
-    created_paths: Vec<PathBuf>,
-    destination_absent: bool,
-}
-
-impl CanvasOutputBaselinePatch {
-    fn capture(
-        root: &Path,
-        destination: &Path,
-        baseline: &super::project::CanvasSourceFingerprint,
-    ) -> Option<Self> {
-        let logical_root = absolute_logical_path(root)?;
-        let root = super::project::canvas_scan_root(root);
-        let absolute_destination = absolute_logical_path(destination)?;
-        let destination = absolute_destination
-            .strip_prefix(&logical_root)
-            .map(|relative| root.join(relative))
-            .unwrap_or(absolute_destination);
-        let canonical_target = prospective_canonical_output(&destination)?;
-        if !canonical_target.starts_with(&root) {
-            return None;
-        }
-
-        let aliases = baseline
-            .iter()
-            .filter_map(|(path, fingerprint)| {
-                let identity = CanvasOutputAliasIdentity::observe(path)?;
-                (identity.canonical_target == canonical_target
-                    && identity.matches_fingerprint(fingerprint))
-                .then(|| CanvasOutputAliasPatch {
-                    path: path.clone(),
-                    identity,
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let destination_absent = matches!(
-            std::fs::symlink_metadata(&destination),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound
-        );
-        let mut created_paths = Vec::new();
-        for path in [&destination, &canonical_target] {
-            if !baseline.contains_key(path)
-                && matches!(
-                    std::fs::symlink_metadata(path),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
-                )
-            {
-                created_paths.push(path.clone());
-            }
-        }
-        created_paths.sort();
-        created_paths.dedup();
-
-        Some(Self {
-            canonical_target,
-            aliases,
-            created_paths,
-            destination_absent,
-        })
-    }
-
-    fn apply(
-        self,
-        root: &Path,
-        bytes: &[u8],
-        baseline: &mut super::project::CanvasSourceFingerprint,
-    ) {
-        let digest = sha256_hex(bytes);
-        let current = scan_canvas_watched(root);
-
-        for alias in self.aliases {
-            let expected = alias.identity.fingerprint(&digest);
-            if CanvasOutputAliasIdentity::observe(&alias.path) == Some(alias.identity)
-                && current.get(&alias.path) == Some(&expected)
-            {
-                baseline.insert(alias.path, expected);
-            }
-        }
-
-        let created_identity = CanvasOutputAliasIdentity {
-            canonical_target: self.canonical_target,
-            symlink_target: None,
-        };
-        for path in self.created_paths {
-            if CanvasOutputAliasIdentity::observe(&path) == Some(created_identity.clone())
-                && current.get(&path) == Some(&digest)
-            {
-                baseline.insert(path, digest.clone());
-            }
-        }
-    }
-}
-
-fn absolute_logical_path(path: &Path) -> Option<PathBuf> {
-    if path.is_absolute() {
-        Some(path.to_path_buf())
-    } else {
-        std::env::current_dir()
-            .ok()
-            .map(|current| current.join(path))
-    }
-}
-
-fn prospective_canonical_output(path: &Path) -> Option<PathBuf> {
-    if let Ok(canonical) = std::fs::canonicalize(path) {
-        return Some(canonical);
-    }
-    if std::fs::symlink_metadata(path)
-        .ok()
-        .is_some_and(|metadata| metadata.file_type().is_symlink())
-    {
-        let target = std::fs::read_link(path).ok()?;
-        let target = if target.is_absolute() {
-            target
-        } else {
-            path.parent()?.join(target)
-        };
-        return target.parent().and_then(|parent| {
-            std::fs::canonicalize(parent)
-                .ok()
-                .and_then(|parent| target.file_name().map(|name| parent.join(name)))
-        });
-    }
-    path.parent().and_then(|parent| {
-        std::fs::canonicalize(parent)
-            .ok()
-            .and_then(|parent| path.file_name().map(|name| parent.join(name)))
-    })
-}
-
-fn settle_canvas(
-    outcome: Result<super::project::CanvasArtifact, super::project::CanvasBuildFailure>,
-    out_dir: Option<&Path>,
+fn wait_for_stable_fingerprint(
     root: &Path,
-    baseline: &mut super::project::CanvasSourceFingerprint,
+    mut observed: super::editor_model::ProjectSourceFingerprint,
+) -> super::editor_model::ProjectSourceFingerprint {
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+        let again = project_fingerprint(root);
+        if again == observed {
+            return observed;
+        }
+        observed = again;
+    }
+}
+
+// ── Play's independent last-good artifacts ─────────────────────────────────
+
+fn recheck_play_into(
+    files: &super::editor_model::ProjectSourceFiles,
     state: &RwLock<DevState>,
     clients: &Clients,
 ) {
-    let outcome = match outcome {
-        Ok(artifact) => {
-            let mut destination = String::new();
-            if let Some(dir) = out_dir {
-                let path = dir.join("canvas.html");
-                let export = std::fs::create_dir_all(dir).and_then(|()| {
-                    let patch = CanvasOutputBaselinePatch::capture(root, &path, baseline);
-                    let destination_absent =
-                        patch.as_ref().is_some_and(|patch| patch.destination_absent);
-                    write_canvas_output(&path, artifact.html.as_bytes(), destination_absent)?;
-                    if let Some(patch) = patch {
-                        patch.apply(root, artifact.html.as_bytes(), baseline);
-                    }
-                    Ok(())
-                });
-                match export {
-                    Ok(()) => destination = format!(" and exported to {}", path.display()),
-                    Err(error) => eprintln!(
-                        "uhura editor: could not export {}: {error}; the in-memory Canvas remains active",
-                        path.display()
-                    ),
-                }
-            }
-            println!(
-                "uhura editor: projected {} previews ({} replay-derived) in memory{}",
-                artifact.preview_count, artifact.replay_derived_count, destination
-            );
-            Ok((artifact.html, artifact.warnings))
-        }
-        Err(failure) => Err(failure.envelope),
-    };
-
+    let outcome = recheck_play(files);
     let payload;
     {
-        let mut s = state.write().expect("state lock");
-        let canvas = s.canvas.as_mut().expect("Editor Canvas state");
-        canvas.settle(outcome);
-        payload = canvas_sse_payload(canvas);
-    }
-    broadcast(clients, &payload);
-}
-
-fn write_canvas_output(path: &Path, bytes: &[u8], create_new: bool) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true);
-    if create_new {
-        options.create_new(true);
-    } else {
-        options.create(true).truncate(true);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)
-}
-
-/// One recheck: run the pure pipeline, swap the state, broadcast the SSE
-/// event. A failing check NEVER clobbers the last good build.
-fn recheck_into(root: &Path, state: &RwLock<DevState>, clients: &Clients) {
-    let outcome = recheck(root);
-    let payload;
-    {
-        let mut s = state.write().expect("state lock");
-        s.generation += 1;
+        let mut state = state.write().expect("state lock");
+        state.play.generation += 1;
         match outcome {
             Ok(good) => {
-                s.ok = true;
-                s.diagnostics = None;
-                s.good = Some(good);
+                state.play.ok = true;
+                state.play.diagnostics = None;
+                state.play.good = Some(good);
             }
             Err(envelope) => {
-                s.ok = false;
-                s.diagnostics = Some(envelope);
+                state.play.ok = false;
+                state.play.diagnostics = Some(envelope);
             }
         }
-        payload = sse_payload(&s);
+        payload = play_sse_payload(&state.play);
     }
     broadcast(clients, &payload);
 }
 
-fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
+fn recheck_play(
+    files: &super::editor_model::ProjectSourceFiles,
+) -> Result<GoodBuild, serde_json::Value> {
     let fail = |message: String| {
         serde_json::json!({
             "format": "uhura-diagnostics",
             "version": 0,
+            "summary": { "errors": 1, "warnings": 0 },
             "diagnostics": [{
                 "code": "UH9000",
                 "rule": "play/recheck",
@@ -654,13 +418,13 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
             }],
         })
     };
-    let input = crate::cmd::assemble_input(root)
-        .map_err(|_| fail("the corpus could not be read (see the server log)".to_string()))?;
+    let input =
+        super::editor_model::assemble_snapshot_input(files).map_err(|failure| failure.envelope)?;
     let output = check(&input);
     if output
         .diagnostics
         .iter()
-        .any(|d| d.severity == Severity::Error)
+        .any(|diagnostic| diagnostic.severity == Severity::Error)
     {
         return Err(to_envelope(&output.diagnostics, &output.source_map));
     }
@@ -669,7 +433,6 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
     };
     let program = &lowered.program;
 
-    // The play profile names the fixture + script (§3).
     let manifest = &input.manifest;
     let profile = manifest
         .play
@@ -682,8 +445,14 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
             profile.fixture
         ))
     })?;
-    let read = |rel: &str| -> Result<String, serde_json::Value> {
-        std::fs::read_to_string(root.join(rel)).map_err(|e| fail(format!("{rel}: {e}")))
+    let read = |relative: &str| -> Result<String, serde_json::Value> {
+        let bytes = files
+            .resolve(Path::new(relative))
+            .map_err(|error| fail(format!("{relative}: {error}")))?
+            .ok_or_else(|| fail(format!("{relative}: missing from the captured project")))?;
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|error| fail(format!("{relative}: source is not UTF-8: {error}")))
     };
     let fixture_text = read(fixture_rel)?;
     let script_text = read(&format!("fixtures/scripts/{}.toml", profile.script))?;
@@ -692,25 +461,24 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
     let script_json = uhura_fixture::toml_to_json(&script_text).map_err(fail)?;
     let fixture_json = fixture_slices_json(&fixture);
     let script_canonical = to_canonical_json(&script_json);
-    // An "ok" generation must be BOOT-VIABLE: the driver's strict grammar
-    // (slice refs, closed script fields) validates here, not in the
-    // browser after a reload.
     uhura_fixture::FixtureDriver::new(&fixture_json, &script_canonical)
-        .map_err(|e| fail(format!("script `{}`: {e}", profile.script)))?;
+        .map_err(|error| fail(format!("script `{}`: {error}", profile.script)))?;
 
-    let (play_json, provider_js) = match &profile.provider {
+    let (config_json, provider_js) = match &profile.provider {
         Some(provider) => {
             let provider_js = read(&provider.module)?;
             let provider_hash = sha256_hex(provider_js.as_bytes());
-            let play_json = to_canonical_json(&serde_json::json!({
+            let config_json = to_canonical_json(&serde_json::json!({
                 "allow_fixture": profile.allow_fixture,
                 "provider": {
                     "kind": "module",
-                    "module": format!("/provider.js?sha256={provider_hash}"),
+                    "module": format!(
+                        "/api/play/provider.js?sha256={provider_hash}"
+                    ),
                     "config": &provider.config,
                 },
             }));
-            (play_json, Some(provider_js))
+            (config_json, Some(provider_js))
         }
         None => (
             to_canonical_json(&serde_json::json!({
@@ -727,15 +495,14 @@ fn recheck(root: &Path) -> Result<GoodBuild, serde_json::Value> {
         fixture_json,
         script_json: script_canonical,
         boot_json: boot_envelope(program, &fixture).map_err(fail)?,
-        icons_json: icons_json(root, &manifest.catalog_path),
-        play_json,
+        icons_json: structured_icons_json(),
+        config_json,
         provider_js,
     })
 }
 
-/// The `/boot.json` wire form — `{"updates": […]}` over `boot_updates`.
-/// The acceptance battery's parity artifacts reuse it so the file the
-/// wasm side boots from has exactly one producer.
+/// The `/api/play/boot.json` wire form. Acceptance tests reuse this exact
+/// producer, so fixture and browser boot cannot drift.
 pub fn boot_envelope(
     program: &ProgramIr,
     fixture: &uhura_check::fixture::FixtureData,
@@ -749,156 +516,468 @@ pub fn boot_envelope(
     })))
 }
 
-/// The catalog's closed icon set → inline SVG glyph table. One source of
-/// truth: the same `uhura_project::icons` the static canvas embeds.
-fn icons_json(root: &Path, catalog_rel: &str) -> String {
-    let mut glyphs = serde_json::Map::new();
-    if let Ok(text) = std::fs::read_to_string(root.join(catalog_rel))
-        && let Ok(value) = text.parse::<toml::Value>()
-        && let Some(icons) = value
-            .get("catalog")
-            .and_then(|c| c.get("icons"))
-            .and_then(|i| i.as_array())
-    {
-        for name in icons.iter().filter_map(|n| n.as_str()) {
-            if let Some(glyph) = uhura_project::icons::glyph(name) {
-                glyphs.insert(name.to_string(), serde_json::Value::String(glyph.into()));
-            }
-        }
-    }
-    to_canonical_json(&serde_json::Value::Object(glyphs))
+fn structured_icons_json() -> String {
+    let icons = uhura_editor_model::icons::table()
+        .into_iter()
+        .map(|(name, icon)| (name, icon.to_json()))
+        .collect::<serde_json::Map<_, _>>();
+    to_canonical_json(&serde_json::Value::Object(icons))
 }
 
-// ── the watcher's view of the tree ──────────────────────────────────────────
+// ── SSE ────────────────────────────────────────────────────────────────────
 
-/// Play retains its existing saved-source observation boundary. Static Canvas
-/// observation below is deliberately broader and content-addressed.
-fn scan_play_watched(root: &Path) -> BTreeMap<PathBuf, (SystemTime, u64)> {
-    let mut out = BTreeMap::new();
-    scan_play_dir(root, &mut out);
-    out
-}
+type Clients = Arc<Mutex<Vec<Sender<String>>>>;
 
-fn scan_play_dir(dir: &Path, out: &mut BTreeMap<PathBuf, (SystemTime, u64)>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if path.is_dir() {
-            if !matches!(
-                name.as_ref(),
-                "build" | "renders" | "target" | "node_modules" | ".git"
-            ) {
-                scan_play_dir(&path, out);
-            }
-            continue;
-        }
-        let watched = matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("uhura" | "toml" | "css" | "js")
-        ) && name != "uhura.lock";
-        if watched && let Ok(meta) = entry.metadata() {
-            let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            out.insert(path, (mtime, meta.len()));
-        }
-    }
-}
-
-/// The initial live-Canvas implementation favors completeness over a derived
-/// dependency graph: every non-generated project file is content-fingerprinted
-/// so fixtures, locks, catalogs, and binary media all invalidate projection.
-fn scan_canvas_watched(root: &Path) -> super::project::CanvasSourceFingerprint {
-    super::project::capture_canvas_snapshot(root).fingerprint
-}
-
-// ── SSE ─────────────────────────────────────────────────────────────────────
-
-fn sse_payload(s: &DevState) -> String {
+fn play_sse_payload(play: &PlayState) -> String {
     let mut event = serde_json::json!({
-        "generation": s.generation,
-        "ok": s.ok,
+        "generation": play.generation,
+        "ok": play.ok,
     });
-    if let Some(diagnostics) = &s.diagnostics {
+    if let Some(diagnostics) = &play.diagnostics {
         event["diagnostics"] = diagnostics.clone();
     }
-    // Trailing SSE comment pads past tiny_http's ~8 KiB write buffer so
-    // the data frame flushes NOW — EventSource ignores comment lines.
-    format!(
-        "data: {}\n\n: {}\n\n",
-        to_canonical_json(&event),
-        "·".repeat(4096)
-    )
+    sse_frame(&event)
 }
 
-fn canvas_sse_payload(canvas: &CanvasState) -> String {
-    let mut event = serde_json::json!({
-        "candidateGeneration": canvas.candidate_generation,
-        "activeGeneration": canvas.active_generation,
-        "activeBuildId": canvas.active_build_id,
-        "status": if canvas.diagnostics.is_some() { "rejected" } else { "active" },
-    });
-    if let Some(diagnostics) = &canvas.diagnostics {
-        event["diagnostics"] = diagnostics.clone();
-    } else if let Some(warnings) = &canvas.active_warnings {
-        event["diagnostics"] = warnings.clone();
-    }
+fn editor_sse_payload(source_revision: u64) -> String {
+    sse_frame(&serde_json::json!({
+        "protocol": EDITOR_EVENT_PROTOCOL,
+        "sourceRevision": source_revision,
+    }))
+}
+
+fn sse_frame(value: &serde_json::Value) -> String {
+    // Padding crosses tiny_http's write buffer; EventSource ignores comments.
     format!(
         "data: {}\n\n: {}\n\n",
-        to_canonical_json(&event),
+        to_canonical_json(value),
         "·".repeat(4096)
     )
 }
 
 fn broadcast(clients: &Clients, payload: &str) {
     let mut clients = clients.lock().expect("clients lock");
-    clients.retain(|tx| tx.send(payload.to_string()).is_ok());
+    clients.retain(|sender| sender.send(payload.to_string()).is_ok());
 }
 
-/// Blocking channel-backed body: each `read` hands out the next pushed
-/// SSE frame; the response thread parks in `recv` between events.
 struct SseStream {
-    rx: Receiver<String>,
+    receiver: Receiver<String>,
     buffer: Vec<u8>,
     offset: usize,
 }
 
 impl Read for SseStream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
         if self.offset >= self.buffer.len() {
-            match self.rx.recv() {
+            match self.receiver.recv() {
                 Ok(frame) => {
                     self.buffer = frame.into_bytes();
                     self.offset = 0;
                 }
-                Err(_) => return Ok(0), // server side dropped: EOF
+                Err(_) => return Ok(0),
             }
         }
-        let n = (self.buffer.len() - self.offset).min(buf.len());
-        buf[..n].copy_from_slice(&self.buffer[self.offset..self.offset + n]);
-        self.offset += n;
-        Ok(n)
+        let count = (self.buffer.len() - self.offset).min(output.len());
+        output[..count].copy_from_slice(&self.buffer[self.offset..self.offset + count]);
+        self.offset += count;
+        Ok(count)
     }
 }
 
-// ── request handling ────────────────────────────────────────────────────────
+fn respond_sse(request: tiny_http::Request, clients: &Clients, hello: impl FnOnce() -> String) {
+    let (sender, receiver) = channel::<String>();
+    {
+        // Registration and snapshot share the broadcast lock: an update can
+        // be duplicated at the boundary but can never be lost.
+        let mut clients = clients.lock().expect("clients lock");
+        let _ = sender.send(hello());
+        clients.push(sender);
+    }
+    let response = tiny_http::Response::new(
+        tiny_http::StatusCode(200),
+        vec![
+            header("Content-Type", "text/event-stream; charset=utf-8"),
+            header("Cache-Control", "no-store"),
+        ],
+        SseStream {
+            receiver,
+            buffer: Vec::new(),
+            offset: 0,
+        },
+        None,
+        None,
+    );
+    let _ = request.respond(response);
+}
 
-/// The uhura workspace root — the compiled web host and wasm bundle live in the
-/// TOOLCHAIN tree, not the corpus (compile-time anchored; `uhura play`
-/// is a dev tool run from this repo).
+// ── one web application and namespaced transport ───────────────────────────
+
+#[derive(Clone, Debug)]
+struct WebApp {
+    files: Arc<BTreeMap<String, WebFile>>,
+    index: Arc<Vec<u8>>,
+    wasm_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct WebFile {
+    bytes: Arc<Vec<u8>>,
+    content_type: String,
+}
+
+impl WebApp {
+    fn locate() -> Result<Self, String> {
+        let mut candidates = Vec::new();
+        if let Some(explicit) = std::env::var_os("UHURA_WEB_DIST") {
+            candidates.push(PathBuf::from(explicit));
+        }
+        if let Ok(executable) = std::env::current_exe()
+            && let Some(bin) = executable.parent()
+        {
+            candidates.push(bin.join("../share/uhura/web"));
+        }
+        candidates.push(tool_root().join("web/dist"));
+        load_web_app_from(&candidates)
+    }
+}
+
+fn load_web_app_from(candidates: &[PathBuf]) -> Result<WebApp, String> {
+    let mut attempted = Vec::new();
+    for root in candidates {
+        if attempted.iter().any(|seen: &PathBuf| seen == root) {
+            continue;
+        }
+        attempted.push(root.clone());
+        let index_path = root.join("index.html");
+        match std::fs::symlink_metadata(&index_path) {
+            Ok(_) => {
+                let files = snapshot_web_bundle(root)?;
+                let index = files
+                    .get("index.html")
+                    .ok_or_else(|| format!("{} is not a regular file", index_path.display()))?;
+                if index.bytes.is_empty() {
+                    return Err(format!("{} is empty", index_path.display()));
+                }
+                if files.len() == 1 {
+                    return Err(format!(
+                        "browser application bundle at {} contains only index.html",
+                        root.display()
+                    ));
+                }
+                validate_index_assets(root, index.bytes.as_slice(), &files)?;
+                let index = Arc::clone(&index.bytes);
+                return Ok(WebApp {
+                    files: Arc::new(files),
+                    index,
+                    wasm_root: locate_wasm_for(root),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!("could not read {}: {error}", index_path.display()));
+            }
+        }
+    }
+    let locations = attempted
+        .iter()
+        .map(|root| root.join("index.html").display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "browser application is not built (looked for {locations}); set \
+         UHURA_WEB_DIST or build web/ before starting a browser surface"
+    ))
+}
+
+fn snapshot_web_bundle(root: &Path) -> Result<BTreeMap<String, WebFile>, String> {
+    let mut files = BTreeMap::new();
+    let mut directories = vec![root.to_path_buf()];
+
+    while let Some(directory) = directories.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|error| format!("could not read {}: {error}", directory.display()))?;
+        let mut entries = entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("could not read {}: {error}", directory.display()))?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+
+        for entry in entries {
+            let path = entry.path();
+            let relative = normalized_web_bundle_path(root, &path)?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+            if file_type.is_dir() {
+                directories.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
+                return Err(format!(
+                    "browser application bundle contains an unsafe non-regular entry: {}",
+                    path.display()
+                ));
+            }
+
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            let bytes = std::fs::read(&path)
+                .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+            files.insert(
+                relative,
+                WebFile {
+                    bytes: Arc::new(bytes),
+                    content_type: content_type(extension),
+                },
+            );
+        }
+    }
+
+    Ok(files)
+}
+
+fn validate_index_assets(
+    root: &Path,
+    index: &[u8],
+    files: &BTreeMap<String, WebFile>,
+) -> Result<(), String> {
+    let index = std::str::from_utf8(index).map_err(|error| {
+        format!(
+            "{} is not UTF-8: {error}",
+            root.join("index.html").display()
+        )
+    })?;
+    let references = index_asset_references(index)?;
+    if references.is_empty() {
+        return Err(format!(
+            "{} references no local JavaScript or CSS assets",
+            root.join("index.html").display()
+        ));
+    }
+    for reference in references {
+        if !files.contains_key(&reference) {
+            return Err(format!(
+                "{} references a missing application asset: /{reference}",
+                root.join("index.html").display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn index_asset_references(index: &str) -> Result<BTreeSet<String>, String> {
+    let bytes = index.as_bytes();
+    let mut references = BTreeSet::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if !bytes[cursor].is_ascii_alphabetic() {
+            cursor += 1;
+            continue;
+        }
+        let name_start = cursor;
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+        {
+            cursor += 1;
+        }
+        let name = &index[name_start..cursor];
+        if !name.eq_ignore_ascii_case("src") && !name.eq_ignore_ascii_case("href") {
+            continue;
+        }
+        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'=') {
+            continue;
+        }
+        cursor += 1;
+        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        let Some(first) = bytes.get(cursor).copied() else {
+            break;
+        };
+        let (value_start, value_end) = if matches!(first, b'\'' | b'"') {
+            cursor += 1;
+            let start = cursor;
+            while bytes.get(cursor).is_some_and(|byte| *byte != first) {
+                cursor += 1;
+            }
+            let end = cursor;
+            if cursor < bytes.len() {
+                cursor += 1;
+            }
+            (start, end)
+        } else {
+            let start = cursor;
+            while bytes
+                .get(cursor)
+                .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b'>')
+            {
+                cursor += 1;
+            }
+            (start, cursor)
+        };
+        let value = &index[value_start..value_end];
+        let path_end = value.find(['?', '#']).unwrap_or(value.len());
+        let path = &value[..path_end];
+        let lowercase = path.to_ascii_lowercase();
+        if !lowercase.ends_with(".js")
+            && !lowercase.ends_with(".mjs")
+            && !lowercase.ends_with(".css")
+        {
+            continue;
+        }
+        if path.starts_with("//")
+            || path
+                .find(':')
+                .is_some_and(|colon| path.find('/').is_none_or(|slash| colon < slash))
+        {
+            continue;
+        }
+        let relative = path.strip_prefix('/').unwrap_or(path);
+        if relative.contains('\\')
+            || relative
+                .split('/')
+                .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+            || Path::new(relative).is_absolute()
+        {
+            return Err(format!(
+                "index.html contains an unsafe local application asset reference: {value}"
+            ));
+        }
+        references.insert(relative.to_string());
+    }
+    Ok(references)
+}
+
+fn normalized_web_bundle_path(root: &Path, path: &Path) -> Result<String, String> {
+    let relative = path.strip_prefix(root).map_err(|_| {
+        format!(
+            "browser application bundle entry escapes {}: {}",
+            root.display(),
+            path.display()
+        )
+    })?;
+    let mut segments = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(segment) = component else {
+            return Err(format!(
+                "browser application bundle contains an unsafe path: {}",
+                path.display()
+            ));
+        };
+        let segment = segment.to_str().ok_or_else(|| {
+            format!(
+                "browser application bundle path is not UTF-8: {}",
+                path.display()
+            )
+        })?;
+        if segment.contains('\\') {
+            return Err(format!(
+                "browser application bundle contains an unsafe path: {}",
+                path.display()
+            ));
+        }
+        segments.push(segment);
+    }
+    if segments.is_empty() {
+        return Err(format!(
+            "browser application bundle contains an unsafe path: {}",
+            path.display()
+        ));
+    }
+    Ok(segments.join("/"))
+}
+
+fn locate_wasm_for(web_root: &Path) -> PathBuf {
+    if let Some(explicit) = std::env::var_os("UHURA_WASM_DIST") {
+        return PathBuf::from(explicit);
+    }
+    let nested = web_root.join("wasm");
+    if nested.is_dir() {
+        return nested;
+    }
+    if let Some(parent) = web_root.parent() {
+        let packaged = parent.join("wasm");
+        if packaged.is_dir() {
+            return packaged;
+        }
+    }
+    tool_root().join("crates/uhura-wasm/pkg/web")
+}
+
 fn tool_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlayArtifact {
+    Ir,
+    Stylesheet,
+    Fixture,
+    Script,
+    Boot,
+    Icons,
+    Config,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApiRoute<'a> {
+    EditorState,
+    EditorEvents,
+    PlayEvents,
+    PlayArtifact(PlayArtifact),
+    PlayProvider,
+    PlayAsset(&'a str),
+    PlayWasm(&'a str),
+    Unknown,
+}
+
+fn api_route(path: &str) -> Option<ApiRoute<'_>> {
+    let route = match path {
+        "/api/editor/state" => ApiRoute::EditorState,
+        "/api/editor/events" => ApiRoute::EditorEvents,
+        "/api/play/events" => ApiRoute::PlayEvents,
+        "/api/play/ir.json" => ApiRoute::PlayArtifact(PlayArtifact::Ir),
+        "/api/play/stylesheet.css" => ApiRoute::PlayArtifact(PlayArtifact::Stylesheet),
+        "/api/play/fixture.json" => ApiRoute::PlayArtifact(PlayArtifact::Fixture),
+        "/api/play/script.json" => ApiRoute::PlayArtifact(PlayArtifact::Script),
+        "/api/play/boot.json" => ApiRoute::PlayArtifact(PlayArtifact::Boot),
+        "/api/play/icons.json" => ApiRoute::PlayArtifact(PlayArtifact::Icons),
+        "/api/play/config.json" => ApiRoute::PlayArtifact(PlayArtifact::Config),
+        "/api/play/provider.js" => ApiRoute::PlayProvider,
+        _ => {
+            if let Some(relative) = path.strip_prefix("/api/play/assets/")
+                && !relative.is_empty()
+            {
+                ApiRoute::PlayAsset(relative)
+            } else if let Some(relative) = path.strip_prefix("/api/play/wasm/")
+                && !relative.is_empty()
+            {
+                ApiRoute::PlayWasm(relative)
+            } else if path.starts_with("/api/") {
+                ApiRoute::Unknown
+            } else {
+                return None;
+            }
+        }
+    };
+    Some(route)
+}
+
+/// (content type, body, optional Play generation) or (status, message).
+type Served = Result<(String, Vec<u8>, Option<u64>), (u16, String)>;
+
 fn handle(
     request: tiny_http::Request,
     root: &Path,
+    web: &WebApp,
     state: &RwLock<DevState>,
     play_clients: &Clients,
     editor_clients: &Clients,
-    entry: &HostEntry,
 ) {
     let url = request.url().to_string();
     let (path, query) = split_request_url(&url);
@@ -916,118 +995,53 @@ fn handle(
         return;
     }
 
-    if path == "/events" {
-        if request.method() != &tiny_http::Method::Get {
-            let response = tiny_http::Response::from_string("/events requires GET")
-                .with_status_code(405)
-                .with_header(header("Allow", "GET"))
-                .with_header(header("Content-Type", "text/plain; charset=utf-8"))
-                .with_header(header("Cache-Control", "no-store"));
-            let _ = request.respond(response);
-            return;
-        }
-        let (tx, rx) = channel::<String>();
-        {
-            // Registration and the hello snapshot happen under the same
-            // lock `broadcast` takes, so no generation can slip between
-            // them (it lands as a duplicate, never a gap).
-            let mut clients = play_clients.lock().expect("clients lock");
-            let hello = sse_payload(&state.read().expect("state lock"));
-            let _ = tx.send(hello);
-            clients.push(tx);
-        }
-        let response = tiny_http::Response::new(
-            tiny_http::StatusCode(200),
-            vec![
-                header("Content-Type", "text/event-stream; charset=utf-8"),
-                header("Cache-Control", "no-store"),
-            ],
-            SseStream {
-                rx,
-                buffer: Vec::new(),
-                offset: 0,
-            },
-            None,
-            None,
-        );
-        let _ = request.respond(response); // blocks for the client's lifetime
-        return;
-    }
-
-    if path == "/editor/events" && matches!(entry, HostEntry::Editor) {
-        if request.method() != &tiny_http::Method::Get {
-            let response = tiny_http::Response::from_string("/editor/events requires GET")
-                .with_status_code(405)
-                .with_header(header("Allow", "GET"))
-                .with_header(header("Content-Type", "text/plain; charset=utf-8"))
-                .with_header(header("Cache-Control", "no-store"));
-            let _ = request.respond(response);
-            return;
-        }
-        let (tx, rx) = channel::<String>();
-        {
-            // As with Play, registration and hello share the broadcast lock:
-            // an activation can duplicate but never slip through the gap.
-            let mut clients = editor_clients.lock().expect("Editor clients lock");
-            let s = state.read().expect("state lock");
-            let canvas = s.canvas.as_ref().expect("Editor Canvas state");
-            let _ = tx.send(canvas_sse_payload(canvas));
-            clients.push(tx);
-        }
-        let response = tiny_http::Response::new(
-            tiny_http::StatusCode(200),
-            vec![
-                header("Content-Type", "text/event-stream; charset=utf-8"),
-                header("Cache-Control", "no-store"),
-            ],
-            SseStream {
-                rx,
-                buffer: Vec::new(),
-                offset: 0,
-            },
-            None,
-            None,
-        );
-        let _ = request.respond(response);
-        return;
-    }
-
-    let outcome: Served = match entry.document(path) {
-        Some(EntryDocument::Canvas) => canvas_document(state),
-        Some(EntryDocument::Play) => play_document(matches!(entry, HostEntry::Editor)),
-        Some(EntryDocument::EmptyFavicon) => Ok((ct("ico"), Vec::new(), None, None)),
-        None => match path {
-            "/ir.json" => artifact(state, |g| g.ir.clone().into_bytes(), "json"),
-            "/stylesheet.css" => artifact(state, |g| g.stylesheet.clone().into_bytes(), "css"),
-            "/fixture.json" => artifact(state, |g| g.fixture_json.clone().into_bytes(), "json"),
-            "/script.json" => artifact(state, |g| g.script_json.clone().into_bytes(), "json"),
-            "/boot.json" => artifact(state, |g| g.boot_json.clone().into_bytes(), "json"),
-            "/icons.json" => artifact(state, |g| g.icons_json.clone().into_bytes(), "json"),
-            "/play.json" => artifact(state, |g| g.play_json.clone().into_bytes(), "json"),
-            "/provider.js" => provider_artifact(state, query),
-            _ => {
-                if let Some(rel) = path.strip_prefix("/shell/") {
-                    serve_tree(&tool_root().join("web/dist/play"), rel)
-                } else if let Some(rel) = path.strip_prefix("/wasm/") {
-                    serve_tree(&tool_root().join("crates/uhura-wasm/pkg/web"), rel).map_err(
-                        |(code, msg)| {
-                            (
-                                code,
-                                format!("{msg}\n(build the bundle first: scripts/build-wasm.sh)"),
-                            )
-                        },
-                    )
-                } else if let Some(rel) = path.strip_prefix("/assets/") {
-                    serve_tree(&root.join("fixtures/assets"), rel)
-                } else {
-                    Err((404, format!("no such endpoint: {path}")))
-                }
+    match api_route(path) {
+        Some(ApiRoute::PlayEvents) => {
+            if request.method() != &tiny_http::Method::Get {
+                respond_sse_method_error(request, path);
+                return;
             }
-        },
+            respond_sse(request, play_clients, || {
+                play_sse_payload(&state.read().expect("state lock").play)
+            });
+            return;
+        }
+        Some(ApiRoute::EditorEvents) => {
+            if request.method() != &tiny_http::Method::Get {
+                respond_sse_method_error(request, path);
+                return;
+            }
+            respond_sse(request, editor_clients, || {
+                let revision = state.read().expect("state lock").editor.source_revision;
+                editor_sse_payload(revision)
+            });
+            return;
+        }
+        _ => {}
+    }
+
+    let outcome = match api_route(path) {
+        Some(ApiRoute::EditorState) => editor_state_artifact(state),
+        Some(ApiRoute::PlayArtifact(artifact_kind)) => play_artifact(state, artifact_kind),
+        Some(ApiRoute::PlayProvider) => provider_artifact(state, query),
+        Some(ApiRoute::PlayAsset(relative)) => {
+            serve_play_asset(&root.join("fixtures/assets"), relative)
+        }
+        Some(ApiRoute::PlayWasm(relative)) => {
+            serve_tree(&web.wasm_root, relative).map_err(|(status, message)| {
+                (
+                    status,
+                    format!("{message}\n(build the Wasm bundle first: scripts/build-wasm.sh)"),
+                )
+            })
+        }
+        Some(ApiRoute::EditorEvents | ApiRoute::PlayEvents) => unreachable!("returned above"),
+        Some(ApiRoute::Unknown) => Err((404, format!("no such API endpoint: {path}"))),
+        None => application_path(web, path),
     };
 
     let _ = match outcome {
-        Ok((content_type, mut bytes, generation, build_id)) => {
+        Ok((content_type, mut bytes, generation)) => {
             if request.method() == &tiny_http::Method::Head {
                 bytes.clear();
             }
@@ -1037,9 +1051,6 @@ fn handle(
             if let Some(generation) = generation {
                 response =
                     response.with_header(header("X-Uhura-Generation", &generation.to_string()));
-            }
-            if let Some(build_id) = build_id {
-                response = response.with_header(header("X-Uhura-Build", &build_id));
             }
             request.respond(response)
         }
@@ -1052,128 +1063,208 @@ fn handle(
     };
 }
 
+fn respond_sse_method_error(request: tiny_http::Request, path: &str) {
+    let response = tiny_http::Response::from_string(format!("{path} requires GET"))
+        .with_status_code(405)
+        .with_header(header("Allow", "GET"))
+        .with_header(header("Content-Type", "text/plain; charset=utf-8"))
+        .with_header(header("Cache-Control", "no-store"));
+    let _ = request.respond(response);
+}
+
 fn split_request_url(url: &str) -> (&str, Option<&str>) {
     url.split_once('?')
         .map_or((url, None), |(path, query)| (path, Some(query)))
 }
 
-fn canvas_document(state: &RwLock<DevState>) -> Served {
-    let s = state.read().expect("state lock");
-    let canvas = s
-        .canvas
-        .as_ref()
-        .expect("Canvas route requires Editor mode");
-    match (
-        &canvas.good_html,
-        canvas.active_generation,
-        &canvas.active_build_id,
-    ) {
-        (Some(html), Some(generation), Some(build_id)) => Ok((
-            ct("html"),
-            super::editor::editor_html(html, generation, build_id).into_bytes(),
-            Some(generation),
-            Some(build_id.clone()),
-        )),
-        _ => Ok((
-            ct("html"),
-            super::editor::cold_html().into_bytes(),
-            None,
-            None,
-        )),
-    }
-}
-
-/// The editor's `/play` document differs from dedicated Play by one host-owned
-/// return link. The runtime scripts and every endpoint remain identical.
-fn play_document(with_editor_navigation: bool) -> Served {
-    let bytes = file_bytes(&tool_root().join("web/dist/play/index.html"))?;
-    if !with_editor_navigation {
-        return Ok((ct("html"), bytes, None, None));
-    }
-    let shell = String::from_utf8(bytes).map_err(|error| {
-        (
-            500,
-            format!("web/dist/play/index.html is not UTF-8: {error}"),
-        )
-    })?;
+fn editor_state_artifact(state: &RwLock<DevState>) -> Served {
+    let state = state.read().expect("state lock");
     Ok((
-        ct("html"),
-        super::editor::play_html(&shell).into_bytes(),
-        None,
+        content_type("json"),
+        state.editor.state_json.clone().into_bytes(),
         None,
     ))
 }
 
-/// A last-good in-memory artifact; 503 + the failure story before the
-/// first clean check. The generation stamp lets the shell detect a
-/// recheck landing between its artifact fetches (mixed-build boot).
-fn artifact(state: &RwLock<DevState>, pick: impl Fn(&GoodBuild) -> Vec<u8>, ext: &str) -> Served {
-    let s = state.read().expect("state lock");
-    match &s.good {
-        Some(good) => Ok((ct(ext), pick(good), Some(s.generation), None)),
-        None => Err((
+fn play_artifact(state: &RwLock<DevState>, artifact_kind: PlayArtifact) -> Served {
+    let state = state.read().expect("state lock");
+    let Some(good) = &state.play.good else {
+        return Err((
             503,
-            "no good build yet — fix the check errors (the overlay lists them)".to_string(),
-        )),
-    }
+            "no good Play build yet — fix the project diagnostics".to_string(),
+        ));
+    };
+    let (extension, bytes) = match artifact_kind {
+        PlayArtifact::Ir => ("json", good.ir.as_bytes()),
+        PlayArtifact::Stylesheet => ("css", good.stylesheet.as_bytes()),
+        PlayArtifact::Fixture => ("json", good.fixture_json.as_bytes()),
+        PlayArtifact::Script => ("json", good.script_json.as_bytes()),
+        PlayArtifact::Boot => ("json", good.boot_json.as_bytes()),
+        PlayArtifact::Icons => ("json", good.icons_json.as_bytes()),
+        PlayArtifact::Config => ("json", good.config_json.as_bytes()),
+    };
+    Ok((
+        content_type(extension),
+        bytes.to_vec(),
+        Some(state.play.generation),
+    ))
 }
 
-/// The configured provider module, captured in the same last-good generation
-/// as the IR and play config. Fixture-backed profiles intentionally have no
-/// module endpoint.
 fn provider_artifact(state: &RwLock<DevState>, query: Option<&str>) -> Served {
-    let s = state.read().expect("state lock");
-    match &s.good {
-        Some(good) => match &good.provider_js {
-            Some(module) => {
-                let requested_hash = query.and_then(|query| {
-                    query
-                        .split('&')
-                        .find_map(|part| part.strip_prefix("sha256="))
-                });
-                let actual_hash = sha256_hex(module.as_bytes());
-                if requested_hash.is_some_and(|expected| expected != actual_hash) {
-                    return Err((
-                        409,
-                        "the provider changed after play.json was fetched — reload the page"
-                            .to_string(),
-                    ));
-                }
-                Ok((
-                    ct("js"),
-                    module.clone().into_bytes(),
-                    Some(s.generation),
-                    None,
-                ))
-            }
-            None => Err((
-                404,
-                "the play profile uses the fixture provider".to_string(),
-            )),
-        },
-        None => Err((
+    let state = state.read().expect("state lock");
+    let Some(good) = &state.play.good else {
+        return Err((
             503,
-            "no good build yet — fix the check errors (the overlay lists them)".to_string(),
-        )),
+            "no good Play build yet — fix the project diagnostics".to_string(),
+        ));
+    };
+    let Some(module) = &good.provider_js else {
+        return Err((
+            404,
+            "the Play profile uses the fixture provider".to_string(),
+        ));
+    };
+    let requested_hash = query.and_then(|query| {
+        query
+            .split('&')
+            .find_map(|part| part.strip_prefix("sha256="))
+    });
+    let actual_hash = sha256_hex(module.as_bytes());
+    if requested_hash.is_some_and(|expected| expected != actual_hash) {
+        return Err((
+            409,
+            "the provider changed after config.json was fetched — reload the page".to_string(),
+        ));
+    }
+    Ok((
+        content_type("js"),
+        module.clone().into_bytes(),
+        Some(state.play.generation),
+    ))
+}
+
+fn app_document(web: &WebApp) -> Served {
+    Ok((content_type("html"), web.index.as_ref().clone(), None))
+}
+
+fn application_path(web: &WebApp, path: &str) -> Served {
+    let Some(relative) = path.strip_prefix('/') else {
+        return app_document(web);
+    };
+    if relative == "assets" {
+        return Err((404, "no such application asset".to_string()));
+    }
+    if web.files.contains_key(relative) {
+        return serve_web_file(web, relative);
+    }
+    if relative.starts_with("assets/") {
+        return serve_web_file(web, relative);
+    }
+    if relative == "favicon.ico" {
+        return favicon(web);
+    }
+    app_document(web)
+}
+
+fn serve_web_file(web: &WebApp, relative: &str) -> Served {
+    if relative.contains('\\')
+        || relative
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        || Path::new(relative).is_absolute()
+    {
+        return Err((400, "bad application asset path".to_string()));
+    }
+    let file = web
+        .files
+        .get(relative)
+        .ok_or_else(|| (404, format!("no such application asset: /{relative}")))?;
+    Ok((file.content_type.clone(), file.bytes.as_ref().clone(), None))
+}
+
+fn favicon(web: &WebApp) -> Served {
+    match serve_web_file(web, "favicon.ico") {
+        Ok(file) => Ok(file),
+        Err((404, _)) => Ok((content_type("ico"), Vec::new(), None)),
+        Err(error) => Err(error),
     }
 }
 
-/// One file under a served tree; refuses traversal.
-fn serve_tree(base: &Path, rel: &str) -> Served {
-    if rel.split('/').any(|seg| seg == ".." || seg.is_empty()) || rel.contains('\\') {
+fn serve_play_asset(base: &Path, encoded_relative: &str) -> Served {
+    let relative = decode_play_asset_path(encoded_relative)?;
+    serve_tree(base, &relative)
+}
+
+/// Decode one URL-path suffix without giving an encoded percent sign a second
+/// interpretation. Asset identities may contain spaces and safe nested `/`
+/// separators, but the decoded result must remain a lexical relative path.
+fn decode_play_asset_path(encoded: &str) -> Result<String, (u16, String)> {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+
+        let Some(high) = bytes.get(index + 1).and_then(|byte| hex_value(*byte)) else {
+            return Err((400, "bad asset path: malformed percent escape".to_string()));
+        };
+        let Some(low) = bytes.get(index + 2).and_then(|byte| hex_value(*byte)) else {
+            return Err((400, "bad asset path: malformed percent escape".to_string()));
+        };
+        decoded.push((high << 4) | low);
+        index += 3;
+    }
+
+    let decoded = String::from_utf8(decoded)
+        .map_err(|_| (400, "bad asset path: decoded path is not UTF-8".to_string()))?;
+    let path = Path::new(&decoded);
+    if decoded.contains(['\\', '\0'])
+        || decoded
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err((400, "bad asset path".to_string()));
+    }
+    Ok(decoded)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn serve_tree(base: &Path, relative: &str) -> Served {
+    if relative
+        .split('/')
+        .any(|segment| segment == ".." || segment.is_empty())
+        || relative.contains('\\')
+    {
         return Err((400, "bad path".to_string()));
     }
-    let path = base.join(rel);
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    file_bytes(&path).map(|b| (ct(ext), b, None, None))
+    let path = base.join(relative);
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    std::fs::read(&path)
+        .map(|bytes| (content_type(extension), bytes, None))
+        .map_err(|error| (404, format!("{}: {error}", path.display())))
 }
 
-fn file_bytes(path: &Path) -> Result<Vec<u8>, (u16, String)> {
-    std::fs::read(path).map_err(|e| (404, format!("{}: {e}", path.display())))
-}
-
-fn ct(ext: &str) -> String {
-    match ext {
+fn content_type(extension: &str) -> String {
+    match extension {
         "html" => "text/html; charset=utf-8",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
@@ -1182,647 +1273,419 @@ fn ct(ext: &str) -> String {
         "jpg" | "jpeg" => "image/jpeg",
         "mp4" => "video/mp4",
         "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
         _ => "application/octet-stream",
     }
     .to_string()
 }
 
 fn header(name: &str, value: &str) -> tiny_http::Header {
-    tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("static header")
+    tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("valid header")
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
-    use std::sync::RwLock;
-    use std::sync::{Arc, Mutex};
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use uhura_base::sha256_hex;
+    use uhura_editor_model::{Application, EditorRender, RenderFreshness};
 
-    use crate::CommonArgs;
-    use crate::cmd::project::{CanvasSourceFingerprint, capture_canvas_snapshot};
+    use crate::cmd::editor_model::EditorModelArtifact;
 
     use super::{
-        CanvasOutputBaselinePatch, CanvasState, DevState, EntryDocument, HostEntry,
-        canvas_document, canvas_sse_payload, ct, play_document, scan_canvas_watched, settle_canvas,
-        split_request_url, write_canvas_output,
+        ApiRoute, EditorHostState, PlayArtifact, WebApp, api_route, app_document, application_path,
+        content_type, decode_play_asset_path, editor_sse_payload, load_web_app_from,
+        serve_play_asset, split_request_url,
     };
 
-    fn export_and_patch(
-        root: &std::path::Path,
-        out: &std::path::Path,
-        bytes: &[u8],
-        baseline: &mut CanvasSourceFingerprint,
-    ) -> std::io::Result<()> {
-        fs::create_dir_all(out)?;
-        let path = out.join("canvas.html");
-        let patch = CanvasOutputBaselinePatch::capture(root, &path, baseline);
-        let create_new = patch.as_ref().is_some_and(|patch| patch.destination_absent);
-        write_canvas_output(&path, bytes, create_new)?;
-        if let Some(patch) = patch {
-            patch.apply(root, bytes, baseline);
+    fn render(revision: u64, name: &str) -> EditorRender {
+        EditorRender {
+            revision,
+            freshness: RenderFreshness::Current,
+            application: Application {
+                name: name.to_string(),
+            },
+            groups: Vec::new(),
+            previews: Vec::new(),
+            stylesheet: String::new(),
+            icons: BTreeMap::new(),
+            assets: BTreeMap::new(),
         }
-        Ok(())
     }
 
-    #[test]
-    fn editor_and_dedicated_play_have_distinct_entry_routes() {
-        let editor = HostEntry::Editor;
-        assert_eq!(editor.document("/"), Some(EntryDocument::Canvas));
-        assert_eq!(editor.document("/canvas.html"), Some(EntryDocument::Canvas));
-        assert_eq!(editor.document("/play"), Some(EntryDocument::Play));
-        assert_eq!(editor.document("/play/"), Some(EntryDocument::Play));
-
-        let play = HostEntry::Play;
-        assert_eq!(play.document("/"), Some(EntryDocument::Play));
-        assert_eq!(play.document("/play"), None);
+    fn artifact(revision: u64, name: &str) -> EditorModelArtifact {
+        EditorModelArtifact {
+            render: render(revision, name),
+            preview_count: 0,
+            replay_derived_count: 0,
+            diagnostics: serde_json::Value::Null,
+        }
     }
 
-    #[test]
-    fn app_query_is_separate_from_the_editor_play_route() {
-        let (path, query) = split_request_url("/play?post=42&compose=open");
-        assert_eq!(path, "/play");
-        assert_eq!(query, Some("post=42&compose=open"));
-    }
-
-    #[test]
-    fn only_editor_hosted_play_gets_return_navigation() {
-        let (_, dedicated, _, _) = play_document(false).expect("dedicated Play document");
-        let (_, editor, _, _) = play_document(true).expect("editor-hosted Play document");
-        let dedicated = String::from_utf8(dedicated).expect("UTF-8 shell");
-        let editor = String::from_utf8(editor).expect("UTF-8 shell");
-
-        assert!(dedicated.contains("<!-- uhura-editor-navigation -->"));
-        assert!(!dedicated.contains("Return to Uhura Editor"));
-        assert!(!editor.contains("uhura-editor-navigation"));
-        assert!(editor.contains("Return to Uhura Editor"));
-    }
-
-    #[test]
-    fn fixture_video_assets_are_served_as_mp4() {
-        assert_eq!(ct("mp4"), "video/mp4");
-    }
-
-    #[test]
-    fn rejected_canvas_candidate_retains_the_active_document_and_generation() {
-        let mut canvas = CanvasState::default();
-        canvas.settle(Ok(("Canvas A".to_string(), None)));
-        canvas.settle(Err(serde_json::json!({ "diagnostics": ["broken B"] })));
-
-        assert_eq!(canvas.candidate_generation, 2);
-        assert_eq!(canvas.active_generation, Some(1));
-        assert_eq!(
-            canvas.active_build_id.as_deref(),
-            Some(sha256_hex(b"Canvas A").as_str())
-        );
-        assert_eq!(canvas.good_html.as_deref(), Some("Canvas A"));
-        assert!(canvas.diagnostics.is_some());
-    }
-
-    #[test]
-    fn valid_canvas_after_rejection_activates_the_new_candidate() {
-        let mut canvas = CanvasState::default();
-        canvas.settle(Err(serde_json::json!({ "diagnostics": ["broken A"] })));
-        canvas.settle(Ok(("Canvas B".to_string(), None)));
-
-        assert_eq!(canvas.candidate_generation, 2);
-        assert_eq!(canvas.active_generation, Some(2));
-        assert_eq!(
-            canvas.active_build_id.as_deref(),
-            Some(sha256_hex(b"Canvas B").as_str())
-        );
-        assert_eq!(canvas.good_html.as_deref(), Some("Canvas B"));
-        assert!(canvas.diagnostics.is_none());
-    }
-
-    #[test]
-    fn canvas_build_identity_is_content_derived_across_process_local_counters() {
-        let mut first_process = CanvasState::default();
-        first_process.settle(Err(serde_json::json!({ "diagnostics": ["broken"] })));
-        first_process.settle(Ok(("same Canvas".to_string(), None)));
-
-        let mut restarted_process = CanvasState::default();
-        restarted_process.settle(Ok(("same Canvas".to_string(), None)));
-
-        assert_ne!(
-            first_process.active_generation,
-            restarted_process.active_generation
-        );
-        assert_eq!(
-            first_process.active_build_id,
-            restarted_process.active_build_id
-        );
-
-        restarted_process.settle(Ok(("different Canvas".to_string(), None)));
-        assert_ne!(
-            first_process.active_build_id,
-            restarted_process.active_build_id
-        );
-    }
-
-    #[test]
-    fn editor_event_distinguishes_candidate_from_active_generation() {
-        let mut canvas = CanvasState::default();
-        canvas.settle(Ok(("Canvas A".to_string(), None)));
-        canvas.settle(Err(serde_json::json!({
-            "format": "uhura-diagnostics",
-            "diagnostics": [{ "message": "broken B" }],
-        })));
-
-        let frame = canvas_sse_payload(&canvas);
-        let json = frame
-            .lines()
-            .next()
-            .and_then(|line| line.strip_prefix("data: "))
-            .expect("SSE data line");
-        let event: serde_json::Value = serde_json::from_str(json).expect("event JSON");
-
-        assert_eq!(event["candidateGeneration"], 2);
-        assert_eq!(event["activeGeneration"], 1);
-        assert_eq!(event["activeBuildId"], sha256_hex(b"Canvas A"));
-        assert_eq!(event["status"], "rejected");
-        assert_eq!(event["diagnostics"]["format"], "uhura-diagnostics");
-    }
-
-    #[test]
-    fn active_canvas_event_retains_its_non_fatal_warnings() {
-        let warnings = serde_json::json!({
+    fn diagnostics(message: &str) -> serde_json::Value {
+        serde_json::json!({
             "format": "uhura-diagnostics",
             "version": 0,
-            "summary": { "errors": 0, "warnings": 1 },
-            "diagnostics": [{ "severity": "warning", "message": "check this" }],
-        });
-        let mut canvas = CanvasState::default();
-        canvas.settle(Ok(("Canvas A".to_string(), Some(warnings.clone()))));
+            "summary": { "errors": 1, "warnings": 0 },
+            "diagnostics": [{
+                "code": "UH9000",
+                "rule": "editor/test",
+                "severity": "error",
+                "message": message,
+            }],
+        })
+    }
 
-        let frame = canvas_sse_payload(&canvas);
+    fn state_json(state: &EditorHostState) -> serde_json::Value {
+        serde_json::from_str(&state.state_json).expect("state JSON")
+    }
+
+    #[test]
+    fn editor_transitions_current_to_stale_and_recovers() {
+        let mut state = EditorHostState::initial(Ok(artifact(1, "first"))).unwrap();
+        let first = state_json(&state);
+        assert_eq!(first["sourceRevision"], 1);
+        assert_eq!(first["render"]["freshness"], "current");
+        assert_eq!(first["render"]["revision"], 1);
+
+        state.apply(2, Err(diagnostics("broken"))).unwrap();
+        let stale = state_json(&state);
+        assert_eq!(stale["sourceRevision"], 2);
+        assert_eq!(stale["render"]["freshness"], "stale");
+        assert_eq!(stale["render"]["revision"], 1);
+        assert_eq!(stale["diagnostics"]["diagnostics"][0]["message"], "broken");
+
+        state.apply(3, Ok(artifact(3, "recovered"))).unwrap();
+        let recovered = state_json(&state);
+        assert_eq!(recovered["sourceRevision"], 3);
+        assert_eq!(recovered["render"]["freshness"], "current");
+        assert_eq!(recovered["render"]["revision"], 3);
+        assert_eq!(recovered["render"]["application"]["name"], "recovered");
+        assert_eq!(recovered["diagnostics"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn editor_cold_invalid_recovers_without_a_process_restart() {
+        let mut state = EditorHostState::initial(Err(diagnostics("cold"))).unwrap();
+        let cold = state_json(&state);
+        assert_eq!(cold["sourceRevision"], 1);
+        assert_eq!(cold["render"], serde_json::Value::Null);
+
+        state.apply(2, Ok(artifact(2, "ready"))).unwrap();
+        let ready = state_json(&state);
+        assert_eq!(ready["render"]["freshness"], "current");
+        assert_eq!(ready["render"]["revision"], 2);
+    }
+
+    #[test]
+    fn editor_revisions_are_strictly_monotonic_and_atomic() {
+        let mut state = EditorHostState::initial(Ok(artifact(1, "one"))).unwrap();
+        let before = state.state_json.clone();
+        assert!(state.apply(1, Ok(artifact(1, "old"))).is_err());
+        assert!(state.apply(3, Ok(artifact(3, "future"))).is_err());
+        assert_eq!(state.source_revision, 1);
+        assert_eq!(state.state_json, before);
+
+        state.apply(2, Ok(artifact(2, "two"))).unwrap();
+        assert_eq!(state.source_revision, 2);
+    }
+
+    #[test]
+    fn editor_sse_event_has_only_protocol_and_source_revision() {
+        let frame = editor_sse_payload(7);
         let json = frame
             .lines()
             .next()
             .and_then(|line| line.strip_prefix("data: "))
-            .expect("SSE data line");
-        let event: serde_json::Value = serde_json::from_str(json).expect("event JSON");
-
-        assert_eq!(event["status"], "active");
-        assert_eq!(event["candidateGeneration"], event["activeGeneration"]);
-        assert_eq!(event["diagnostics"], warnings);
-    }
-
-    #[test]
-    fn canvas_document_serves_cold_recovery_then_the_exact_active_generation() {
-        let state = RwLock::new(DevState {
-            generation: 0,
-            ok: false,
-            diagnostics: None,
-            good: None,
-            canvas: Some(CanvasState::default()),
-        });
-        let (_, cold, cold_generation, cold_build_id) =
-            canvas_document(&state).expect("cold document");
-        let cold = String::from_utf8(cold).expect("cold HTML");
-        assert_eq!(cold_generation, None);
-        assert_eq!(cold_build_id, None);
-        assert!(cold.contains("name=\"uhura-editor-host\" content=\"0\""));
-        assert!(cold.contains("name=\"uhura-editor-build\" content=\"\""));
-
-        state
-            .write()
-            .expect("state")
-            .canvas
-            .as_mut()
-            .expect("Canvas")
-            .settle(Ok((
-                "<html><head><title>Demo — uhura canvas</title></head><body><!-- uhura-editor-actions --></body></html>"
-                    .to_string(),
-                None,
-            )));
-        let (_, active, active_generation, active_build_id) =
-            canvas_document(&state).expect("active document");
-        let active = String::from_utf8(active).expect("active HTML");
-        let expected_build_id = state
-            .read()
-            .expect("state")
-            .canvas
-            .as_ref()
-            .expect("Canvas")
-            .active_build_id
-            .clone();
-        assert_eq!(active_generation, Some(1));
-        assert_eq!(active_build_id, expected_build_id);
-        assert!(active.contains("name=\"uhura-editor-host\" content=\"1\""));
-        assert!(active.contains(&format!(
-            "name=\"uhura-editor-build\" content=\"{}\"",
-            active_build_id.expect("active build ID")
-        )));
-    }
-
-    #[test]
-    fn canvas_observation_includes_lock_and_binary_assets_but_not_outputs() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "uhura-canvas-watch-{}-{unique}",
-            std::process::id()
-        ));
-        let assets = root.join("fixtures/assets");
-        let nested_build = root.join("components/build");
-        let nested_target = root.join("fixtures/target");
-        let nested_dependencies = root.join("fixtures/node_modules/package");
-        let root_build = root.join("build");
-        let renders = root.join("renders");
-        fs::create_dir_all(&assets).expect("asset directory");
-        fs::create_dir_all(&nested_build).expect("nested source directory");
-        fs::create_dir_all(&nested_target).expect("nested fixture directory");
-        fs::create_dir_all(&nested_dependencies).expect("nested dependency directory");
-        fs::create_dir_all(&root_build).expect("root build directory");
-        fs::create_dir_all(&renders).expect("renders directory");
-        fs::write(root.join("uhura.lock"), "locked").expect("lock");
-        fs::write(assets.join("photo.jpg"), [1_u8, 2, 3]).expect("asset");
-        fs::write(nested_build.join("card.uhura"), "component card").expect("nested source");
-        fs::write(nested_target.join("feed.toml"), "items = []").expect("nested fixture");
-        fs::write(nested_dependencies.join("ignored.toml"), "generated = true")
-            .expect("nested dependency");
-        fs::write(root_build.join("ir.json"), "generated").expect("root build output");
-        fs::write(renders.join("canvas.html"), "generated").expect("render");
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&root, root.join("cycle")).expect("directory symlink");
-
-        let observed_root = fs::canonicalize(&root).expect("canonical test root");
-        let before = scan_canvas_watched(&root);
-        assert!(before.contains_key(&observed_root.join("uhura.lock")));
-        assert!(before.contains_key(&observed_root.join("fixtures/assets/photo.jpg")));
-        assert!(before.contains_key(&observed_root.join("components/build/card.uhura")));
-        assert!(before.contains_key(&observed_root.join("fixtures/target/feed.toml")));
-        assert!(!before.contains_key(&observed_root.join("build/ir.json")));
-        assert!(!before.contains_key(&observed_root.join("renders/canvas.html")));
-        assert!(
-            !before.contains_key(&observed_root.join("fixtures/node_modules/package/ignored.toml"))
-        );
-        #[cfg(unix)]
-        {
-            let cycle = observed_root.join("cycle");
-            assert!(before.contains_key(&cycle));
-            assert!(
-                !before
-                    .keys()
-                    .any(|path| path != &cycle && path.starts_with(&cycle))
-            );
-        }
-
-        fs::write(assets.join("photo.jpg"), [3_u8, 2, 1]).expect("same-size asset edit");
-        let after = scan_canvas_watched(&root);
-        assert_ne!(
-            before.get(&observed_root.join("fixtures/assets/photo.jpg")),
-            after.get(&observed_root.join("fixtures/assets/photo.jpg"))
-        );
-
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn captured_instagram_snapshot_build_matches_the_disk_export_builder() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("examples/instagram-uhura");
-        let common = CommonArgs {
-            root: root.clone(),
-            format_json: false,
-            deny_warnings: false,
-            emit_ir: false,
-        };
-        let snapshot = capture_canvas_snapshot(&root);
-
-        let disk = crate::cmd::project::build(&common).expect("disk Canvas build");
-        let captured =
-            crate::cmd::project::build_snapshot(&snapshot.files).expect("snapshot Canvas build");
-
-        assert_eq!(captured.html, disk.html);
-        assert_eq!(captured.preview_count, disk.preview_count);
-        assert_eq!(captured.replay_derived_count, disk.replay_derived_count);
-        assert_eq!(captured.warnings, disk.warnings);
-    }
-
-    #[test]
-    fn patching_our_export_does_not_swallow_a_source_save_during_activation() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "uhura-canvas-baseline-{}-{unique}",
-            std::process::id()
-        ));
-        let source = root.join("app/page.uhura");
-        let out = root.join("export");
-        fs::create_dir_all(source.parent().expect("source parent")).expect("source directory");
-        fs::write(&source, "page A").expect("source A");
-        let observed_source = fs::canonicalize(&source).expect("canonical source");
-        let mut built = scan_canvas_watched(&root);
-        let built_source = built
-            .get(&observed_source)
-            .cloned()
-            .expect("source fingerprint");
-
-        // This save lands after the candidate's stable scan. The host also
-        // writes its optional export before updating the watcher baseline.
-        fs::write(&source, "page B").expect("source B");
-        export_and_patch(&root, &out, b"Canvas A", &mut built).expect("Canvas export");
-
-        assert_eq!(built.get(&observed_source), Some(&built_source));
-        assert!(built.contains_key(&fs::canonicalize(out.join("canvas.html")).expect("export")));
-        assert_ne!(built, scan_canvas_watched(&root));
-
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn declared_export_under_generated_root_is_patched_without_self_triggering() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "uhura-declared-canvas-output-{}-{unique}",
-            std::process::id()
-        ));
-        let out = root.join("build");
-        fs::create_dir_all(&out).expect("output directory");
-        fs::write(
-            root.join("uhura.toml"),
-            "[app]\nname = \"test-app\"\nentry = \"home\"\n\n[catalog]\npath = \"build/canvas.html\"\n",
-        )
-        .expect("manifest");
-        fs::write(out.join("canvas.html"), "catalog before export").expect("declared output");
-        let mut baseline = scan_canvas_watched(&root);
-        let output = fs::canonicalize(out.join("canvas.html")).expect("canonical output");
-        assert!(baseline.contains_key(&output));
-
-        export_and_patch(&root, &out, b"generated Canvas", &mut baseline).expect("export write");
-
-        assert_eq!(baseline, scan_canvas_watched(&root));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlinked_exports_patch_every_output_alias_without_swallowing_source_saves() {
-        use std::os::unix::fs::symlink;
-
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "uhura-symlinked-canvas-output-{}-{unique}",
-            std::process::id()
-        ));
-        let source = root.join("app/page.uhura");
-        let target_out = root.join("export-target");
-        let linked_out = root.join("export-link");
-        fs::create_dir_all(source.parent().expect("source parent")).expect("source directory");
-        fs::create_dir_all(&target_out).expect("target output directory");
-        fs::write(&source, "page A").expect("source A");
-        symlink("export-target", &linked_out).expect("output-directory symlink");
-
-        let observed_root = fs::canonicalize(&root).expect("canonical root");
-        let observed_source = observed_root.join("app/page.uhura");
-        let linked_output = observed_root.join("export-link/canvas.html");
-        let target_output = observed_root.join("export-target/canvas.html");
-        let mut baseline = scan_canvas_watched(&root);
-
-        export_and_patch(
-            &root,
-            &linked_out,
-            b"Canvas through linked directory",
-            &mut baseline,
-        )
-        .expect("linked-directory export");
-
-        assert_eq!(baseline, scan_canvas_watched(&root));
-        assert_eq!(baseline.get(&linked_output), baseline.get(&target_output));
-
-        let source_before = baseline
-            .get(&observed_source)
-            .cloned()
-            .expect("source fingerprint");
-        fs::write(&source, "page B").expect("concurrent source save");
-        export_and_patch(
-            &root,
-            &linked_out,
-            b"Canvas after source save",
-            &mut baseline,
-        )
-        .expect("second linked-directory export");
-        let current = scan_canvas_watched(&root);
-
-        assert_eq!(baseline.get(&observed_source), Some(&source_before));
-        assert_eq!(baseline.get(&linked_output), current.get(&linked_output));
-        assert_eq!(baseline.get(&target_output), current.get(&target_output));
-        assert_ne!(baseline, current);
-
-        let file_link_out = root.join("file-link-export");
-        fs::create_dir_all(&file_link_out).expect("file-link output directory");
-        symlink("../canvas-target.html", file_link_out.join("canvas.html"))
-            .expect("dangling output-file symlink");
-        let mut file_link_baseline = scan_canvas_watched(&root);
-
-        export_and_patch(
-            &root,
-            &file_link_out,
-            b"Canvas through file link",
-            &mut file_link_baseline,
-        )
-        .expect("linked-file export");
-
-        let current = scan_canvas_watched(&root);
-        let logical_file_link = observed_root.join("file-link-export/canvas.html");
-        assert_eq!(file_link_baseline, current);
-        assert!(
-            file_link_baseline
-                .get(&logical_file_link)
-                .is_some_and(|identity| identity.starts_with("!symlink-file:"))
-        );
-
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn output_patch_does_not_absorb_retargeted_or_new_aliases() {
-        use std::os::unix::fs::symlink;
-
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "uhura-canvas-output-race-{}-{unique}",
-            std::process::id()
-        ));
-        let target_a = root.join("target-a");
-        let target_b = root.join("target-b");
-        let linked_out = root.join("out-link");
-        fs::create_dir_all(&target_a).expect("target A");
-        fs::create_dir_all(&target_b).expect("target B");
-        fs::write(target_a.join("canvas.html"), "Canvas A before").expect("Canvas A");
-        fs::write(target_b.join("canvas.html"), "Canvas B before").expect("Canvas B");
-        symlink("target-a", &linked_out).expect("initial output link");
-
-        let mut baseline = scan_canvas_watched(&root);
-        let destination = linked_out.join("canvas.html");
-        let patch = CanvasOutputBaselinePatch::capture(&root, &destination, &baseline)
-            .expect("pre-write patch token");
-
-        fs::remove_file(&linked_out).expect("remove initial output link");
-        symlink("target-b", &linked_out).expect("retarget output link");
-        write_canvas_output(&destination, b"Canvas host write", false).expect("host write");
-        patch.apply(&root, b"Canvas host write", &mut baseline);
-
-        let current = scan_canvas_watched(&root);
-        let observed_root = fs::canonicalize(&root).expect("canonical root");
-        let target_b_output = observed_root.join("target-b/canvas.html");
-        assert_ne!(
-            baseline.get(&target_b_output),
-            current.get(&target_b_output)
-        );
-        assert_ne!(baseline, current);
-
-        // A new alias created after authorization is user-observed state, not
-        // something the host may import into the accepted baseline.
-        fs::remove_file(&linked_out).expect("remove retargeted link");
-        symlink("target-a", &linked_out).expect("restore output link");
-        let mut baseline = scan_canvas_watched(&root);
-        let patch = CanvasOutputBaselinePatch::capture(&root, &destination, &baseline)
-            .expect("second pre-write patch token");
-        let new_alias = root.join("new-canvas-alias.html");
-        symlink("target-a/canvas.html", &new_alias).expect("concurrent new alias");
-        write_canvas_output(&destination, b"Canvas second host write", false)
-            .expect("second host write");
-        patch.apply(&root, b"Canvas second host write", &mut baseline);
-
-        let current = scan_canvas_watched(&root);
-        let observed_new_alias = observed_root.join("new-canvas-alias.html");
-        assert!(!baseline.contains_key(&observed_new_alias));
-        assert!(current.contains_key(&observed_new_alias));
-        assert_ne!(baseline, current);
-
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn rejected_canvas_does_not_patch_a_concurrent_output_repair() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "uhura-rejected-canvas-output-{}-{unique}",
-            std::process::id()
-        ));
-        let out = root.join("export");
-        fs::create_dir_all(&out).expect("output directory");
-        fs::write(out.join("canvas.html"), "broken dependency").expect("initial output");
-        let mut baseline = scan_canvas_watched(&root);
-        let accepted_baseline = baseline.clone();
-        fs::write(out.join("canvas.html"), "repaired dependency").expect("output repair");
-
-        let common = CommonArgs {
-            root: root.clone(),
-            format_json: false,
-            deny_warnings: false,
-            emit_ir: false,
-        };
-        let failure = match crate::cmd::project::build(&common) {
-            Ok(_) => panic!("missing project sources must reject"),
-            Err(failure) => failure,
-        };
-        let state = RwLock::new(DevState {
-            generation: 0,
-            ok: false,
-            diagnostics: None,
-            good: None,
-            canvas: Some(CanvasState::default()),
-        });
-        let clients: super::Clients = Arc::new(Mutex::new(Vec::new()));
-
-        settle_canvas(
-            Err(failure),
-            Some(&out),
-            &root,
-            &mut baseline,
-            &state,
-            &clients,
-        );
-
-        assert_eq!(baseline, accepted_baseline);
-        assert_ne!(baseline, scan_canvas_watched(&root));
+            .expect("data line");
+        let event: serde_json::Value = serde_json::from_str(json).unwrap();
         assert_eq!(
-            fs::read_to_string(out.join("canvas.html")).expect("repaired output"),
-            "repaired dependency"
+            event,
+            serde_json::json!({
+                "protocol": "uhura-editor-event/0",
+                "sourceRevision": 7,
+            })
         );
-        let state = state.read().expect("state");
-        let canvas = state.canvas.as_ref().expect("Canvas");
-        assert_eq!(canvas.candidate_generation, 1);
-        assert!(canvas.active_generation.is_none());
-        assert!(canvas.diagnostics.is_some());
-        drop(state);
-
-        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
-    fn export_failure_does_not_reject_a_valid_in_memory_canvas() {
+    fn editor_and_play_routes_serve_byte_identical_application_entry() {
+        let web = WebApp {
+            files: Arc::new(BTreeMap::new()),
+            index: Arc::new(b"<!doctype html><main>Uhura</main>".to_vec()),
+            wasm_root: PathBuf::from("unused-wasm"),
+        };
+        let (_, editor, _) = app_document(&web).unwrap();
+        let (_, play, _) = app_document(&web).unwrap();
+        assert_eq!(editor, play);
+        assert_eq!(editor.as_slice(), b"<!doctype html><main>Uhura</main>");
+    }
+
+    #[test]
+    fn api_routes_are_explicit_and_play_is_fully_namespaced() {
+        assert_eq!(api_route("/api/editor/state"), Some(ApiRoute::EditorState));
+        assert_eq!(
+            api_route("/api/editor/events"),
+            Some(ApiRoute::EditorEvents)
+        );
+        assert_eq!(api_route("/api/play/events"), Some(ApiRoute::PlayEvents));
+        assert_eq!(
+            api_route("/api/play/ir.json"),
+            Some(ApiRoute::PlayArtifact(PlayArtifact::Ir))
+        );
+        assert_eq!(
+            api_route("/api/play/assets/avatar.jpg"),
+            Some(ApiRoute::PlayAsset("avatar.jpg"))
+        );
+        assert_eq!(
+            api_route("/api/play/wasm/uhura_wasm.js"),
+            Some(ApiRoute::PlayWasm("uhura_wasm.js"))
+        );
+        assert_eq!(api_route("/ir.json"), None);
+        assert_eq!(api_route("/events"), None);
+        assert_eq!(api_route("/api/nope"), Some(ApiRoute::Unknown));
+    }
+
+    #[test]
+    fn play_asset_paths_decode_spaces_and_safe_nested_slashes_once() {
+        assert_eq!(
+            decode_play_asset_path("gallery%2Fsummer%20day.jpg").unwrap(),
+            "gallery/summer day.jpg"
+        );
+        assert_eq!(
+            decode_play_asset_path("%252e%252e%2Fsecret.jpg").unwrap(),
+            "%2e%2e/secret.jpg"
+        );
+    }
+
+    #[test]
+    fn play_asset_paths_reject_unsafe_or_malformed_input() {
+        for encoded in [
+            "",
+            "/absolute.jpg",
+            "%2Fabsolute.jpg",
+            "album//photo.jpg",
+            "album%2F%2Fphoto.jpg",
+            ".",
+            "%2e",
+            "..",
+            "%2e%2e%2Fsecret.jpg",
+            "album/./photo.jpg",
+            "album%2F%2e%2e%2Fsecret.jpg",
+            "album\\photo.jpg",
+            "album%5Cphoto.jpg",
+            "%",
+            "%2",
+            "%GG",
+            "%FF.jpg",
+            "%00.jpg",
+        ] {
+            let error = decode_play_asset_path(encoded).unwrap_err();
+            assert_eq!(error.0, 400, "{encoded}");
+        }
+    }
+
+    #[test]
+    fn play_asset_serving_preserves_decoded_extension_and_never_decodes_twice() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("clock")
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("uhura-play-assets-{}-{unique}", std::process::id()));
+        let assets = root.join("assets");
+        fs::create_dir_all(assets.join("summer album")).unwrap();
+        fs::write(assets.join("summer album/clip one.mp4"), b"fixture-video").unwrap();
+        fs::write(root.join("secret.jpg"), b"outside").unwrap();
+
+        let (kind, bytes, generation) =
+            serve_play_asset(&assets, "summer%20album%2Fclip%20one.mp4").unwrap();
+        assert_eq!(kind, "video/mp4");
+        assert_eq!(bytes, b"fixture-video");
+        assert_eq!(generation, None);
+
+        let error = serve_play_asset(&assets, "%252e%252e%2Fsecret.jpg").unwrap_err();
+        assert_eq!(error.0, 404);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frontend_locator_uses_a_complete_later_candidate() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("uhura-web-dist-{}-{unique}", std::process::id()));
+        let missing = root.join("missing");
+        let ready = root.join("ready");
+        fs::create_dir_all(ready.join("assets")).unwrap();
+        fs::write(
+            ready.join("index.html"),
+            r#"<script type="module" src="/assets/app.js"></script>"#,
+        )
+        .unwrap();
+        fs::write(ready.join("assets/app.js"), "application code").unwrap();
+
+        let web = load_web_app_from(&[missing, ready]).unwrap();
+        assert_eq!(
+            web.index.as_slice(),
+            br#"<script type="module" src="/assets/app.js"></script>"#
+        );
+        assert!(web.files.contains_key("assets/app.js"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frontend_bundle_snapshot_survives_a_dist_rebuild() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "uhura-canvas-export-failure-{}-{unique}",
+            "uhura-web-snapshot-{}-{unique}",
             std::process::id()
         ));
-        fs::create_dir_all(&root).expect("test directory");
-        let blocked_out = root.join("not-a-directory");
-        fs::write(&blocked_out, "file blocks create_dir_all").expect("output blocker");
-        let state = RwLock::new(DevState {
-            generation: 0,
-            ok: false,
-            diagnostics: None,
-            good: None,
-            canvas: Some(CanvasState::default()),
-        });
-        let clients: super::Clients = Arc::new(Mutex::new(Vec::new()));
-        let mut baseline = scan_canvas_watched(&root);
-        let accepted_baseline = baseline.clone();
-        fs::write(&blocked_out, "concurrent blocker repair").expect("repair blocker contents");
+        let assets = root.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(
+            root.join("index.html"),
+            r#"<script src="/assets/app-old.js"></script>"#,
+        )
+        .unwrap();
+        fs::write(assets.join("app-old.js"), "old application").unwrap();
+        fs::write(assets.join("app-old.css"), "old styles").unwrap();
 
-        settle_canvas(
-            Ok(crate::cmd::project::CanvasArtifact {
-                html: "Canvas in memory".to_string(),
-                preview_count: 1,
-                replay_derived_count: 0,
-                warnings: None,
-            }),
-            Some(&blocked_out),
-            &root,
-            &mut baseline,
-            &state,
-            &clients,
+        let web = load_web_app_from(std::slice::from_ref(&root)).unwrap();
+
+        fs::remove_dir_all(&root).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(
+            root.join("index.html"),
+            r#"<script src="/assets/app-new.js"></script>"#,
+        )
+        .unwrap();
+        fs::write(root.join("assets/app-new.js"), "new application").unwrap();
+
+        let (index_type, index, _) = app_document(&web).unwrap();
+        assert_eq!(index_type, "text/html; charset=utf-8");
+        assert_eq!(index, br#"<script src="/assets/app-old.js"></script>"#);
+        let (script_type, script, _) = application_path(&web, "/assets/app-old.js").unwrap();
+        assert_eq!(script_type, "text/javascript; charset=utf-8");
+        assert_eq!(script, b"old application");
+        let (style_type, style, _) = application_path(&web, "/assets/app-old.css").unwrap();
+        assert_eq!(style_type, "text/css; charset=utf-8");
+        assert_eq!(style, b"old styles");
+        assert_eq!(
+            application_path(&web, "/assets/app-new.js").unwrap_err().0,
+            404
         );
 
-        let state = state.read().expect("state");
-        let canvas = state.canvas.as_ref().expect("Canvas");
-        assert_eq!(canvas.good_html.as_deref(), Some("Canvas in memory"));
-        assert_eq!(canvas.active_generation, Some(1));
-        assert!(canvas.active_build_id.is_some());
-        assert!(canvas.diagnostics.is_none());
-        drop(state);
-        assert_eq!(baseline, accepted_baseline);
-        assert_ne!(baseline, scan_canvas_watched(&root));
+        fs::remove_dir_all(root).unwrap();
+    }
 
-        fs::remove_dir_all(root).expect("cleanup");
+    #[test]
+    fn frontend_locator_rejects_an_index_only_bundle() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "uhura-web-index-only-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("index.html"), "incomplete application").unwrap();
+
+        let error = load_web_app_from(std::slice::from_ref(&root)).unwrap_err();
+        assert!(error.contains("contains only index.html"), "{error}");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frontend_locator_rejects_missing_index_assets() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "uhura-web-missing-asset-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(
+            root.join("index.html"),
+            r#"<link rel="stylesheet" href="/assets/missing.css"><script src="assets/app.js"></script>"#,
+        )
+        .unwrap();
+        fs::write(root.join("assets/app.js"), "application").unwrap();
+
+        let error = load_web_app_from(std::slice::from_ref(&root)).unwrap_err();
+        assert!(
+            error.contains("missing application asset: /assets/missing.css"),
+            "{error}"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn frontend_locator_rejects_unsafe_bundle_entries_and_paths() {
+        use std::os::unix::fs::symlink;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("uhura-web-unsafe-{}-{unique}", std::process::id()));
+        let linked = root.join("linked");
+        fs::create_dir_all(linked.join("assets")).unwrap();
+        fs::write(linked.join("index.html"), "application").unwrap();
+        fs::write(linked.join("outside.js"), "outside").unwrap();
+        symlink("../outside.js", linked.join("assets/app.js")).unwrap();
+
+        let error = load_web_app_from(std::slice::from_ref(&linked)).unwrap_err();
+        assert!(error.contains("unsafe non-regular entry"), "{error}");
+
+        let backslash = root.join("backslash");
+        fs::create_dir_all(&backslash).unwrap();
+        fs::write(backslash.join("index.html"), "application").unwrap();
+        fs::write(backslash.join("assets\\app.js"), "application").unwrap();
+
+        let error = load_web_app_from(std::slice::from_ref(&backslash)).unwrap_err();
+        assert!(error.contains("unsafe path"), "{error}");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn query_is_transport_metadata_not_a_client_route() {
+        assert_eq!(
+            split_request_url("/api/play/provider.js?sha256=abc"),
+            ("/api/play/provider.js", Some("sha256=abc"))
+        );
+        assert_eq!(
+            split_request_url("/play?post=42"),
+            ("/play", Some("post=42"))
+        );
+    }
+
+    #[test]
+    fn media_and_browser_asset_content_types_are_preserved() {
+        assert_eq!(content_type("mp4"), "video/mp4");
+        assert_eq!(content_type("wasm"), "application/wasm");
+        assert_eq!(content_type("woff2"), "font/woff2");
     }
 }

@@ -4,8 +4,7 @@
 // published. The page (and every non-top surface) is `inert` while
 // anything is stacked above it.
 
-import * as focus from "./focus.js";
-import { findScope } from "./reconciler.js";
+import { findScope } from "../renderer/play.js";
 import type {
   Descriptor,
   Snapshot,
@@ -23,16 +22,20 @@ interface SurfaceContext {
     parentPath: string,
     parentIsList: boolean,
   ): void;
+  disposeSubtree(root: HTMLElement): void;
+  enterSurface(surface: HTMLElement): void;
 }
 
 export interface SurfaceController {
   render(snapshot: Snapshot): void;
+  dispose(): void;
 }
 
 export function createSurfaces(ctx: SurfaceContext): SurfaceController {
   let stack: SurfaceView[] = [];
+  const document = ctx.host.ownerDocument;
 
-  document.addEventListener("keydown", (event) => {
+  const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== "Escape" || stack.length === 0) return;
     // An Escape that cancels an IME composition is not a dismiss gesture
     // (WebKit stamps keyCode 229 even after compositionend).
@@ -42,13 +45,15 @@ export function createSurfaces(ctx: SurfaceContext): SurfaceController {
       event.preventDefault();
       ctx.emit(top.dismiss);
     }
-  });
+  };
+  document.addEventListener("keydown", onKeyDown);
 
   function render(snapshot: Snapshot): void {
     stack = snapshot.surfaces;
     const wanted = new Set(stack.map((s) => s.key));
     for (const el of [...ctx.host.children]) {
       if (el instanceof HTMLElement && !wanted.has(el.dataset["surfaceKey"] ?? "")) {
+        ctx.disposeSubtree(el);
         el.remove();
       }
     }
@@ -99,11 +104,19 @@ export function createSurfaces(ctx: SurfaceContext): SurfaceController {
 
       // Only the top surface is interactive; everything below waits.
       overlay.inert = index !== stack.length - 1;
-      if (mounted && index === stack.length - 1) focus.enterSurface(panel);
+      if (mounted && index === stack.length - 1) ctx.enterSurface(panel);
     });
 
     ctx.pageHost.inert = stack.length > 0;
   }
 
-  return { render };
+  function dispose(): void {
+    stack = [];
+    document.removeEventListener("keydown", onKeyDown);
+    ctx.disposeSubtree(ctx.host);
+    ctx.host.replaceChildren();
+    ctx.pageHost.inert = false;
+  }
+
+  return { render, dispose };
 }

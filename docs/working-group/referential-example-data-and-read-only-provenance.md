@@ -2,10 +2,10 @@
 
 - **Status:** Design note; read-only inspection is implemented, editing
   semantics are deferred
-- **Scope:** Static examples, fixture-backed data, and the Canvas inspector
+- **Scope:** Static examples, fixture-backed data, and the read-only Editor inspector
 - **Authority:** Non-normative working-group material
 - **Related:** [Instagram spike design, §6](instagram-spike-design.md#6-examples--example-defined-design)
-  and [RFC 0002: live static Editor previews](../rfcs/0002-live-static-editor-preview-rebuilds.md)
+  and [RFC 0002: model-driven Editor live updates](../rfcs/0002-model-driven-editor-live-updates.md)
 
 ## Decision for the current milestone
 
@@ -39,7 +39,7 @@ syntax.
 - An example may inherit another example with `from`; the child's bindings win.
 - Page and surface examples may also pin local state and external page data.
   Derived examples replay declared events during checking and freeze the result
-  before Canvas rendering.
+  before Editor-model construction.
 - The checker resolves every binding and validates it against its declared
   type. Resolved component and surface previews retain computed props, state,
   and page data; resolved page previews retain route parameters, state, and
@@ -47,13 +47,13 @@ syntax.
 - During that resolution, a fixture reference is replaced by a cloned, typed
   value. The checker now carries a separate, editor-only description of each
   top-level property, page parameter, and provided-data value together with its
-  authored origin. Generated Canvas frames include that read-only description.
+  authored origin. The Editor read model includes that description.
 - Missing or failed provided data is represented as **Waiting for data** or
   **Couldn’t load** rather than being omitted. Local state is not included
   because replay can change it after its authored starting value.
 
 Examples remain design artifacts and are excluded from runtime IR. Displaying
-their data in Canvas must not change that boundary.
+their data in the Editor must not change that boundary.
 
 ## Implemented read-only inspector
 

@@ -116,6 +116,8 @@ export interface SpockDriverConfig {
 }
 
 export interface ProviderHost {
+  /** Aborts when the Play route that owns this provider is retired. */
+  readonly signal: AbortSignal;
   /**
    * Browser capability supplied by the play shell. The selected File remains
    * entirely outside Uhura Core and its wire envelopes.
@@ -129,6 +131,7 @@ export interface RemoteSystemInfo {
 }
 
 export interface SpockDriver {
+  dispose(): void;
   assembleBoot(): Promise<string>;
   deliver(commandJson: string): void;
   tick(): string[];
@@ -142,6 +145,31 @@ export interface SpockDriver {
  * unhandled while an earlier provider command finishes.
  */
 type PickedFile = Promise<{ file: File | null } | { error: unknown }>;
+
+// A retired driver can have a mutation already accepted by Spock. New driver
+// boot waits for that work before reading its authority snapshot, so a route
+// remount cannot strand a just-accepted mutation behind stale boot data.
+let authorityTail: Promise<void> = Promise.resolve();
+
+const AUTHORITY_COMMANDS = new Set([
+  "feed/like-post",
+  "feed/unlike-post",
+  "feed/save-post",
+  "feed/unsave-post",
+  "comments/add-comment",
+  "feed/mark-story-seen",
+  "profile/follow-user",
+  "profile/unfollow-user",
+  "create/publish-image",
+]);
+
+const AUTHORITY_REQUEST_TIMEOUT_MS = 15_000;
+
+function enqueueAuthorityWork(work: () => Promise<void>): Promise<void> {
+  const queued = authorityTail.then(work, work);
+  authorityTail = queued.catch(() => {});
+  return queued;
+}
 
 type GraphRef = { id: string };
 
@@ -467,6 +495,27 @@ export function createDriver(
   const signedAssets = new Map<string, { url: string; refreshAt: number }>();
   const signingAssets = new Map<string, Promise<string>>();
   const uploadedFileNames = new Map<string, string>();
+  const cancellable = new AbortController();
+  let disposed = host.signal.aborted;
+
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    host.signal.removeEventListener("abort", dispose);
+    cancellable.abort();
+    outbox.length = 0;
+    signedAssets.clear();
+    signingAssets.clear();
+    uploadedFileNames.clear();
+  }
+
+  if (disposed) cancellable.abort();
+  else host.signal.addEventListener("abort", dispose, { once: true });
+
+  function assertLive(): void {
+    if (!disposed) return;
+    throw new DOMException("Uhura Play provider was disposed", "AbortError");
+  }
 
   const revisions = new Map<string, number>();
 
@@ -540,6 +589,7 @@ export function createDriver(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: encode({ query: SNAPSHOT_QUERY }),
+      signal: cancellable.signal,
     });
     const body = await response.text();
     if (!response.ok) {
@@ -577,6 +627,7 @@ export function createDriver(
     const expected = viewerId();
     const response = await fetch(whoamiUrl, {
       headers: { "x-spock-actor": expected },
+      signal: cancellable.signal,
     });
     const body = await response.text();
     if (!response.ok) {
@@ -599,14 +650,29 @@ export function createDriver(
     fn: string,
     payload: Record<string, unknown>,
   ): Promise<RpcReply> {
-    const response = await fetch(`${rpcUrl}/${fn}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-spock-actor": viewerId(),
-      },
-      body: encode(payload),
-    });
+    const timeout = new AbortController();
+    const timeoutId = setTimeout(
+      () => timeout.abort(),
+      AUTHORITY_REQUEST_TIMEOUT_MS,
+    );
+    let response: Response;
+    try {
+      // Once sent, a domain mutation may already be accepted by Spock. Do not
+      // abort it merely because its route retired; the module-level authority
+      // barrier makes the next driver wait for settlement. The finite timeout
+      // prevents a broken connection from blocking every future boot forever.
+      response = await fetch(`${rpcUrl}/${fn}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-spock-actor": viewerId(),
+        },
+        body: encode(payload),
+        signal: timeout.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     const body = await response.text();
     if (response.ok) {
       return { ok: true, result: body ? JSON.parse(body) : null };
@@ -630,6 +696,7 @@ export function createDriver(
    * @returns {Promise<string>}
    */
   async function resolveAsset(asset: string): Promise<string> {
+    assertLive();
     const cached = signedAssets.get(asset);
     if (cached && Date.now() < cached.refreshAt) return cached.url;
     const current = signingAssets.get(asset);
@@ -641,6 +708,7 @@ export function createDriver(
         {
           method: "POST",
           headers: { "x-spock-actor": viewerId() },
+          signal: cancellable.signal,
         },
       );
       const body = await response.text();
@@ -685,6 +753,7 @@ export function createDriver(
     const mintResponse = await fetch(`${storageUrl}/object/upload/sign`, {
       method: "POST",
       headers: { "x-spock-actor": viewerId() },
+      signal: cancellable.signal,
     });
     const mintBody = await mintResponse.text();
     if (!mintResponse.ok) {
@@ -702,6 +771,7 @@ export function createDriver(
       method: "PUT",
       headers: { "content-type": contentType },
       body: file,
+      signal: cancellable.signal,
     });
     const putBody = await putResponse.text();
     if (!putResponse.ok) {
@@ -1326,6 +1396,7 @@ export function createDriver(
     result: CommandOutcome,
     updates: ProjectionUpdate[] = [],
   ): void {
+    if (disposed) return;
     outbox.push(
       encode({
         kind: "outcome",
@@ -1522,6 +1593,8 @@ export function createDriver(
   }
 
   return {
+    dispose,
+
     systemInfo() {
       return {
         actor: viewerRow?.id ?? actor,
@@ -1536,7 +1609,10 @@ export function createDriver(
     },
 
     async assembleBoot() {
+      await authorityTail;
+      assertLive();
       await loadAll();
+      assertLive();
       const viewer = viewerRow;
       if (!viewer) throw new Error(`actor \`${actor}\` is not a seeded user`);
       await verifyViewer();
@@ -1590,6 +1666,7 @@ export function createDriver(
     },
 
     deliver(commandJson: string) {
+      if (disposed) return;
       const command = JSON.parse(commandJson) as ProviderCommand;
       let pickedFile: PickedFile | undefined;
       if (`${command.port}/${command.command}` === "create/choose-image") {
@@ -1606,17 +1683,26 @@ export function createDriver(
         }
       }
       inflight += 1;
-      // Every settlement carries a whole-feed snapshot. Preserve delivery
-      // order so an older, slower snapshot can never mint a newer revision
-      // after a later command and visually rewind authority state.
-      commandTail = commandTail
-        .then(() => handle(command, pickedFile))
+      // Preserve delivery order inside this driver. Only domain mutations
+      // enter the cross-driver authority barrier: a picker, upload draft, or
+      // ordinary read must never strand a later Play boot.
+      const route = `${command.port}/${command.command}`;
+      const predecessor = commandTail;
+      commandTail = predecessor
+        .then(() => {
+          if (disposed) return;
+          const work = () => handle(command, pickedFile);
+          return AUTHORITY_COMMANDS.has(route)
+            ? enqueueAuthorityWork(work)
+            : work();
+        })
         .finally(() => {
           inflight -= 1;
         });
     },
 
     tick() {
+      if (disposed) return [];
       return outbox.splice(0, outbox.length);
     },
 

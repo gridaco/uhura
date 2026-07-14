@@ -40,10 +40,12 @@ pub struct PlayProfile {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayProvider {
-    /// Corpus-relative ES module path. `uhura dev` reads the bytes into its
-    /// last-good build and exposes them at a content-addressed `/provider.js` URL.
+    /// Corpus-relative ES module path. `uhura play` reads the bytes into its
+    /// last-good build and exposes them at a content-addressed
+    /// `/api/play/provider.js` URL.
     pub module: String,
-    /// Opaque string settings passed to the provider module in `/play.json`.
+    /// Opaque string settings published with the provider selection in
+    /// `/api/play/config.json`.
     pub config: BTreeMap<String, String>,
 }
 

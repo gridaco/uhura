@@ -1,0 +1,226 @@
+import assert from "node:assert/strict";
+
+import { test } from "vitest";
+
+import type {
+  EditorPreview,
+  EditorRender,
+  EditorRevisionEvent,
+  EditorState,
+} from "../editor-state.js";
+import {
+  editorBoardUnchanged,
+  EditorUpdateSession,
+  retainPreviewSelection,
+  reusablePreviewIds,
+} from "../editor-updates.js";
+
+const state = (sourceRevision: number): EditorState => ({
+  protocol: "uhura-editor-state/0",
+  sourceRevision,
+  diagnostics: null,
+  render: null,
+});
+
+const event = (sourceRevision: number): EditorRevisionEvent => ({
+  protocol: "uhura-editor-event/0",
+  sourceRevision,
+});
+
+const preview = (id: string, content = id): EditorPreview => ({
+  id,
+  identity: { kind: "component", subject: id, example: "default" },
+  default: true,
+  pinned: false,
+  derived: false,
+  inFlight: 0,
+  from: null,
+  note: null,
+  data: [],
+  interactions: [],
+  content: {
+    key: "root",
+    element: "text",
+    props: { content: { t: "plain", v: content } },
+  },
+});
+
+const render = (
+  revision: number,
+  previews: EditorPreview[] = [preview("alpha"), preview("beta")],
+): EditorRender => ({
+  revision,
+  freshness: "current",
+  application: { name: "Example" },
+  groups: [{
+    id: "component/examples",
+    kind: "component",
+    subject: "examples",
+    previews: previews.map((item) => item.id),
+  }],
+  previews,
+  stylesheet: ":root { --accent: blue; }",
+  icons: {
+    check: { viewBox: [0, 0, 24, 24], commands: [] },
+  },
+  assets: {
+    photo: { dataUri: "data:image/png;base64,AA==", alt: "Photo" },
+  },
+});
+
+test("every connection open fetches, including equal counters after a restart", () => {
+  const updates = new EditorUpdateSession();
+  const initial = updates.opened();
+  const initialState = state(2);
+  assert.equal(updates.consider(initial, initialState).kind, "prepare");
+  assert.equal(updates.commit(initial, initialState), true);
+
+  const reopened = updates.opened();
+  assert.notEqual(reopened, initial);
+  assert.equal(updates.consider(reopened, state(2)).kind, "prepare");
+});
+
+test("events deduplicate the active and already requested revision", () => {
+  const updates = new EditorUpdateSession();
+  const initial = updates.opened();
+  assert.equal(updates.commit(initial, state(4)), true);
+  assert.equal(updates.announced(event(4)), null);
+
+  const next = updates.announced(event(5));
+  assert.ok(next);
+  assert.equal(updates.announced(event(5)), null);
+});
+
+test("an older overlapping response cannot replace a newer request", () => {
+  const updates = new EditorUpdateSession();
+  const older = updates.opened();
+  const newer = updates.announced(event(8));
+  assert.ok(newer);
+
+  assert.deepEqual(updates.consider(older, state(7)), { kind: "ignored" });
+  assert.equal(updates.commit(older, state(7)), false);
+  assert.equal(updates.consider(newer, state(8)).kind, "prepare");
+  assert.equal(updates.commit(newer, state(8)), true);
+  assert.equal(updates.activeRevision, 8);
+});
+
+test("a response behind its announcement retries only while still current", () => {
+  const updates = new EditorUpdateSession();
+  const expected = updates.announced(event(6));
+  assert.ok(expected);
+  assert.deepEqual(updates.consider(expected, state(5)), {
+    kind: "behind",
+    expectedRevision: 6,
+    receivedRevision: 5,
+  });
+
+  const retry = updates.retry(expected, 6);
+  assert.ok(retry);
+  assert.equal(updates.retry(expected, 6), null);
+  assert.equal(updates.consider(retry, state(6)).kind, "prepare");
+});
+
+test("a failed install keeps the revision retryable and unpublished", () => {
+  const updates = new EditorUpdateSession();
+  const token = updates.opened();
+  const nextState = state(9);
+
+  assert.throws(
+    () => updates.commit(token, nextState, () => {
+      throw new Error("detached board install failed");
+    }),
+    /install failed/,
+  );
+  assert.equal(updates.activeRevision, null);
+  assert.equal(updates.isCurrent(token), true);
+
+  let installed = false;
+  assert.equal(updates.commit(token, nextState, () => { installed = true; }), true);
+  assert.equal(installed, true);
+  assert.equal(updates.activeRevision, 9);
+});
+
+test("semantic selection survives replacement and disappears with its preview", () => {
+  const selection = { kind: "page", subject: "feed", example: "default" } as const;
+  const matching: EditorState = {
+    ...state(3),
+    render: {
+      revision: 3,
+      freshness: "current",
+      application: { name: "Example" },
+      groups: [],
+      previews: [{
+        id: "new-dom-independent-id",
+        identity: selection,
+        default: true,
+        pinned: false,
+        derived: false,
+        inFlight: 0,
+        from: null,
+        note: null,
+        data: [],
+        interactions: [],
+        content: { key: "root", element: "view", props: {} },
+      }],
+      stylesheet: "",
+      icons: {},
+      assets: {},
+    },
+  };
+
+  assert.deepEqual(retainPreviewSelection(selection, matching), selection);
+  assert.equal(retainPreviewSelection(
+    { kind: "page", subject: "profile", example: "private" },
+    matching,
+  ), null);
+});
+
+test("reuses only structurally unchanged previews with compatible resources", () => {
+  const previous = render(3);
+  const next = render(4, [preview("alpha"), preview("beta", "changed"), preview("gamma")]);
+
+  assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha"]);
+});
+
+test("stylesheet changes retain frames but require a board update", () => {
+  const previous = render(3);
+  const next = { ...render(4), stylesheet: "body { color: rebeccapurple; }" };
+
+  assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
+  assert.equal(editorBoardUnchanged(previous, next), false);
+});
+
+test("icon and asset changes conservatively invalidate every realized frame", () => {
+  const previous = render(3);
+  const changedIcons = structuredClone(render(4));
+  changedIcons.icons["check"]!.commands.push({ kind: "path", d: "M0 0" });
+  const changedAssets = structuredClone(render(4));
+  changedAssets.assets["photo"]!.dataUri = "data:image/png;base64,BB==";
+
+  assert.deepEqual([...reusablePreviewIds(previous, changedIcons)], []);
+  assert.deepEqual([...reusablePreviewIds(previous, changedAssets)], []);
+});
+
+test("diagnostic-only and stale transitions leave the entire board untouched", () => {
+  const previous = render(3);
+  const next = { ...structuredClone(previous), freshness: "stale" as const };
+
+  assert.equal(editorBoardUnchanged(previous, next), true);
+});
+
+test("equal revisions never hide changed preview content", () => {
+  const previous = render(1);
+  const restartedHost = render(1, [preview("alpha", "different"), preview("beta")]);
+
+  assert.equal(editorBoardUnchanged(previous, restartedHost), false);
+  assert.deepEqual([...reusablePreviewIds(previous, restartedHost)], ["beta"]);
+});
+
+test("group order changes update the board while retaining frame identities", () => {
+  const previous = render(3);
+  const next = structuredClone(render(4));
+  next.groups[0]!.previews.reverse();
+
+  assert.equal(editorBoardUnchanged(previous, next), false);
+  assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
+});

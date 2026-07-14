@@ -14,10 +14,9 @@ program has two deliberately separate data paths:
   It reads authority truth through Spock GraphQL, signs image and video downloads and
   uploads selected files through Spock storage, and sends domain commands
   through Spock RPC.
-- `uhura editor` builds and hosts the read-only Canvas; examples, checks, and
-  traces continue to use the deterministic fixture under `fixtures/`. Canvas
-  output never needs a running backend. `uhura project` remains available when
-  only the self-contained HTML artifact is wanted.
+- `uhura editor` checks the project and hosts the read-only, model-driven
+  Editor; examples, checks, and traces continue to use the deterministic
+  fixture under `fixtures/`. Editor previews never need a running backend.
 
 The Spock authority for live play is
 [`../../../examples/instagram-poc/app.spock`](../../../examples/instagram-poc/app.spock).
@@ -40,9 +39,9 @@ the Uhura Editor, and stops both together:
 ```
 
 Open <http://127.0.0.1:8787/> and use **Play** in the Editor's right details
-panel to enter the live prototype at `/play`. The frontend and Wasm artifacts
-are built as part of contributor setup and then served without a Node process
-at runtime.
+panel to enter the live prototype at `/play`. The runner builds the frontend,
+provider, and Wasm artifacts, then serves them without a Node process at
+runtime.
 
 For low-level development, the equivalent two-terminal commands are:
 
@@ -55,6 +54,7 @@ cargo run --locked -p spock-cli -- run examples/instagram-poc/app.spock --port 4
 
 ```sh
 uhura/scripts/build-wasm.sh # needed once, and after wasm changes
+(cd uhura/web && corepack pnpm build) # after web/provider changes
 cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
   editor uhura/examples/instagram-uhura --port 8787
 ```
@@ -75,7 +75,7 @@ data. Actor selection is local prototype impersonation over the demo's
 is a visual frame in this placeholder host; true browser viewport/media-query
 emulation is intentionally deferred.
 
-The strict fixture script is intentionally bounded to deterministic Canvas,
+The strict fixture script is intentionally bounded to deterministic Editor,
 check, and trace walkthroughs, so it is not offered as a Play provider. This
 keeps every valid control in the interactive Instagram demo Spock-backed.
 
@@ -96,14 +96,15 @@ domain checks the future policy/identity floor must make authoritative.
 
 ```sh
 cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
-  uhura/examples/instagram-uhura --port 8787 --out=uhura/renders
+  uhura/examples/instagram-uhura --port 8787
 ```
 
-Open <http://127.0.0.1:8787/>. This first editor surface deliberately exposes
-the deterministic, fixture-backed Canvas as a static, read-only projection.
-Its searchable navigator and artboards select previews; the details panel then
-shows that preview's metadata and declared interactions. The headerless editor
-uses a compact floating toolbar for Cursor, Hand, zoom, and centering. Press
+Open <http://127.0.0.1:8787/>. The Editor exposes deterministic,
+fixture-backed examples as a read-only projection. Its searchable navigator
+and artboards select previews; the details panel then shows that preview's
+metadata, computed example values and provenance, and declared interactions.
+The headerless Editor uses a compact floating toolbar for Cursor, Hand, zoom,
+and centering. Press
 `Cmd+\` (`Ctrl+\` on Windows/Linux) to hide or restore all editor chrome;
 that preference is remembered in local browser storage. The wheel pans,
 Ctrl/Cmd-wheel and pinch zoom, `V`/`H` switch tools, and holding Space
@@ -112,22 +113,13 @@ Spock data.
 
 Click **Play** in the right details panel to enter the real Play shell at
 `/play` on the same server; the dedicated `uhura play` command remains
-available when the Canvas is not needed. Restart the command to rebuild the
-Canvas after source changes.
+available when the Editor is not needed. Saving a valid source change replaces
+the preview model without restarting the command or reloading the application.
+An invalid save keeps the last renderable previews visible, marks them stale,
+and shows diagnostics until a later valid save recovers.
 When running from the project directory, bare `uhura` is equivalent to
 `uhura editor`. Build the wasm bundle once with `uhura/scripts/build-wasm.sh`
 before using Play in a source checkout.
-
-To generate the same self-contained Canvas without starting a server:
-
-```sh
-cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
-  project uhura/examples/instagram-uhura --out=uhura/renders
-```
-
-The generated `uhura/renders/canvas.html` contains the deterministic page,
-component, loading, failure, and interaction previews without contacting
-Spock.
 
 ## Layout
 
@@ -135,6 +127,6 @@ Spock.
 - `components/` — reusable markup + `store` machines
 - `ports/` — the typed service seam the Spock-backed provider satisfies
 - `providers/` — play-only app bindings to live authority
-- `fixtures/` — scripted provider data and scripts for canvas, trace, and CI
+- `fixtures/` — scripted provider data and scripts for Editor, trace, and CI
 - `catalog/`, `styles/`, `surfaces/` — icon/token catalog, CSS, surface defs
 - `uhura.toml` / `uhura.lock` — app manifest and port-binding lock

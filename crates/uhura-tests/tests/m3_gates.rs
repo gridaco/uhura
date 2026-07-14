@@ -1,8 +1,8 @@
 //! The M3 gate (plan §M3): every pinned example resolves and evaluates to
 //! a deterministic V snapshot (per-preview goldens); boot projections
 //! auto-bind; `eval_view` emits no commands by construction (its output
-//! type has nowhere to put one — the zero-commands property of
-//! `uhura project` is structural). Derived examples resolve too since M4;
+//! type has nowhere to put one — the zero-commands property of Editor-model
+//! construction is structural). Derived examples resolve too since M4;
 //! their replay goldens live in `m4_gates`.
 //!
 //! Bless goldens with `UPDATE_GOLDEN=1 cargo test -p uhura-tests`.

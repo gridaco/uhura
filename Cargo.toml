@@ -1,5 +1,5 @@
-# The Uhura spike workspace. Independently buildable: checked-in web artifacts
-# keep Cargo and the runtime free of pnpm/node coupling (RFC 0001 §9).
+# The Uhura spike workspace. Cargo language commands are independently
+# buildable; browser assets are separate build/package products (RFC 0002).
 # Design: docs/working-group/instagram-spike-design.md.
 [workspace]
 resolver = "3"
@@ -30,7 +30,7 @@ uhura-port = { path = "crates/uhura-port" }
 uhura-check = { path = "crates/uhura-check" }
 uhura-core = { path = "crates/uhura-core" }
 uhura-fixture = { path = "crates/uhura-fixture" }
-uhura-project = { path = "crates/uhura-project" }
+uhura-editor-model = { path = "crates/uhura-editor-model" }
 uhura-cli = { path = "crates/uhura-cli" }
 
 [workspace.lints.rust]

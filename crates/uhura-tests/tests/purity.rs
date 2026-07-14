@@ -159,7 +159,7 @@ fn pure_crates_reach_no_io_capable_externals() {
         "uhura-port",
         "uhura-syntax",
         "uhura-fixture",
-        "uhura-project",
+        "uhura-editor-model",
     ] {
         let closure = normal_dep_closure(&meta, krate);
         for denied in DENIED_EXTERNALS {

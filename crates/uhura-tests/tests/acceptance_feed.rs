@@ -9,8 +9,8 @@
 //!   failure → retry; a post-exhaustion near-end refused by the guard
 //!   (the observation descriptor is markup-authored and STAYS in V —
 //!   projection truth rejects the fetch, register #67); feed page state
-//!   surviving the profile round trip byte-identically; the real
-//!   `uhura project` run twice to byte-equal canvases; uncorrelated
+//!   surviving the profile round trip byte-identically; the Editor model
+//!   built twice to byte-equal canonical states; uncorrelated
 //!   outcome injection as a check error; IR-bytes invariance with and
 //!   without `*.examples.uhura`; and native ↔ wasm parity through
 //!   `scripts/parity.mjs` against the real wasm32 binary.
@@ -469,48 +469,36 @@ fn criterion_5_navigation(program: &ProgramIr) {
 // ── §13.6 — projection: eval-only, deterministic, injection rejected ────────
 
 fn criterion_6_projection(out: &CheckOutput) {
-    // `uhura project` executes zero transitions and zero I/O at projection
-    // time: its render path is eval-only by construction — no driver is
-    // even constructible from its inputs. The executable witnesses are
-    // determinism and coverage: the REAL command, twice, to the byte.
-    let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("acceptance-project");
-    let mut canvases = Vec::new();
-    for run in ["a", "b"] {
-        let dir = tmp.join(run);
-        let args = uhura_cli::CommonArgs {
-            root: corpus_root(),
-            format_json: false,
-            deny_warnings: false,
-            emit_ir: false,
-        };
-        let code = uhura_cli::cmd::project::run(&args, dir.to_str());
-        assert_eq!(
-            format!("{code:?}"),
-            format!("{:?}", std::process::ExitCode::SUCCESS),
-            "§13.6: `uhura project` succeeds"
-        );
-        canvases.push(std::fs::read(dir.join("canvas.html")).expect("canvas.html"));
-    }
+    // Editor-model construction executes zero transitions and zero I/O: it
+    // accepts only the checked result and immutable asset values, and its
+    // semantic evaluation path cannot construct a driver. Determinism and
+    // coverage are executable at the actual browser-facing contract boundary.
+    let first = uhura_editor_model::build_current_state(1, out, BTreeMap::new())
+        .expect("first Editor state");
+    let second = uhura_editor_model::build_current_state(1, out, BTreeMap::new())
+        .expect("second Editor state");
+    let first_json = first.to_canonical_string().expect("canonical first state");
+    let second_json = second
+        .to_canonical_string()
+        .expect("canonical second state");
     assert_eq!(
-        canvases[0], canvases[1],
-        "§13.6: projection is byte-deterministic"
+        first_json, second_json,
+        "§13.6: Editor projection is byte-deterministic"
     );
 
-    // Every resolved preview — pinned and replay-derived — is on the
-    // board, matched by the exact caption markup render_frame emits (a
-    // bare-name contains() is satisfiable by CSS rules, provenance badges,
-    // and same-named examples of OTHER subjects).
-    let canvas = String::from_utf8(canvases.pop().expect("one canvas")).expect("utf8");
+    // Every resolved preview — pinned and replay-derived — crosses the model
+    // boundary with the same stable semantic identity.
+    let render = first.render.expect("clean check has a render");
     assert!(!out.previews.is_empty());
+    assert_eq!(render.previews.len(), out.previews.len());
     for preview in &out.previews {
-        let caption = format!(
-            "<span class=\"caption-title\">{} / {}</span>",
-            preview.subject.name(),
-            preview.example
-        );
+        let subject = preview.subject.name().to_string();
         assert!(
-            canvas.contains(&caption),
-            "§13.6: preview `{}/{}` is framed (missing caption `{caption}`)",
+            render.previews.iter().any(|candidate| {
+                candidate.identity.subject == subject
+                    && candidate.identity.example == preview.example
+            }),
+            "§13.6: preview `{}/{}` crosses the Editor-state boundary",
             preview.subject.name(),
             preview.example
         );

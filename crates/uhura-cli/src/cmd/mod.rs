@@ -1,8 +1,8 @@
 pub mod check;
 pub mod dev;
 pub mod editor;
+pub mod editor_model;
 pub mod fmt;
-pub mod project;
 pub mod trace;
 
 use std::path::Path;
@@ -13,7 +13,7 @@ use uhura_check::{CheckInput, SourceInput};
 
 use crate::fsio::walk_corpus;
 
-/// Reads everything `uhura check`/`uhura project` need from a corpus root
+/// Reads everything the Uhura checker needs from a corpus root
 /// and assembles the pure pipeline input.
 pub fn assemble_input(root: &Path) -> Result<CheckInput, ExitCode> {
     // ── manifest (tells us what else to read) ──────────────────────────

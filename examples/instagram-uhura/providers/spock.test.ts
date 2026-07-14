@@ -215,7 +215,10 @@ function snapshot(): typeof BASE_SNAPSHOT {
 
 function driver(
   actor = "mira.santos",
-  host: ProviderHost = { pickFile: async () => null },
+  host: ProviderHost = {
+    signal: new AbortController().signal,
+    pickFile: async () => null,
+  },
 ): SpockDriver {
   return createDriver(
     {
@@ -695,7 +698,10 @@ test("empty create metadata publishes and uses a provenance-only fallback alt", 
     }
     throw new Error(`unexpected fetch ${url}`);
   }, async () => {
-    const remote = driver("mira.santos", { pickFile: async () => selected });
+    const remote = driver("mira.santos", {
+      signal: new AbortController().signal,
+      pickFile: async () => selected,
+    });
     await remote.assembleBoot();
     bootMessages(remote);
 
@@ -741,5 +747,131 @@ test("empty create metadata publishes and uses a provenance-only fallback alt", 
       "post-upload",
     );
     assert.deepEqual(update(published, "create", "draft"), { empty: {} });
+  });
+});
+
+test("a remounted driver waits for an accepted retired mutation before boot", async () => {
+  const data = snapshot();
+  let graphqlCalls = 0;
+  let abortedRetiredReads = 0;
+  let markMutationStarted!: () => void;
+  let finishMutation!: () => void;
+  const mutationStarted = new Promise<void>((resolve) => {
+    markMutationStarted = resolve;
+  });
+  const mutationFinished = new Promise<void>((resolve) => {
+    finishMutation = resolve;
+  });
+
+  await withFetch(async (input, init) => {
+    const url = String(input);
+    if (init.signal?.aborted) {
+      abortedRetiredReads += 1;
+      throw new DOMException("retired", "AbortError");
+    }
+    if (url.endsWith("/~whoami")) return whoami(init);
+    if (url.endsWith("/graphql/v1")) {
+      graphqlCalls += 1;
+      return graphql(data);
+    }
+    if (url.endsWith("/unlike_post")) {
+      markMutationStarted();
+      await mutationFinished;
+      data.likes = data.likes.filter(
+        (like) => !(like.user.id === MIRA && like.post.id === "post-lena-video"),
+      );
+      return new Response(JSON.stringify({ user: MIRA, post: "post-lena-video" }));
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }, async () => {
+    const retired = driver();
+    await retired.assembleBoot();
+    bootMessages(retired);
+    retired.deliver(
+      command("feed", "unlike-post", { post: "post-lena-video" }),
+    );
+    await mutationStarted;
+    retired.dispose();
+
+    const fresh = driver();
+    const freshBoot = fresh.assembleBoot();
+    await Promise.resolve();
+    assert.equal(graphqlCalls, 1, "fresh boot must wait behind accepted authority work");
+
+    finishMutation();
+    await freshBoot;
+    assert.equal(graphqlCalls, 2);
+    assert.equal(abortedRetiredReads, 1);
+    assert.deepEqual(retired.tick(), []);
+    assert.equal(
+      projection(
+        bootMessages(fresh),
+        "feed",
+        "post-by-id",
+        "post-lena-video",
+      )["viewer-has-liked"],
+      false,
+    );
+    fresh.dispose();
+  });
+});
+
+test("a retired hung upload cannot block the replacement driver boot", async () => {
+  const data = snapshot();
+  const controller = new AbortController();
+  const selected = new File(["jpeg bytes"], "never-finishes.jpg", {
+    type: "image/jpeg",
+  });
+  let markUploadStarted!: () => void;
+  const uploadStarted = new Promise<void>((resolve) => {
+    markUploadStarted = resolve;
+  });
+  let uploadSignal: AbortSignal | null = null;
+  let graphqlCalls = 0;
+
+  await withFetch(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/~whoami")) return whoami(init);
+    if (url.endsWith("/graphql/v1")) {
+      graphqlCalls += 1;
+      return graphql(data);
+    }
+    if (url.endsWith("/object/upload/sign")) {
+      uploadSignal = init.signal ?? null;
+      markUploadStarted();
+      // Model a transport that fails to settle even after cancellation. A
+      // draft upload is not domain authority work, so it must not gate boot.
+      return await new Promise<Response>(() => {});
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }, async () => {
+    const retired = driver("mira.santos", {
+      signal: controller.signal,
+      pickFile: async () => selected,
+    });
+    await retired.assembleBoot();
+    bootMessages(retired);
+    retired.deliver(command("create", "choose-image", {}));
+    await uploadStarted;
+    retired.dispose();
+    assert.equal(uploadSignal?.aborted, true);
+
+    const fresh = driver();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        fresh.assembleBoot(),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("replacement provider boot stayed blocked")),
+            250,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
+    assert.equal(graphqlCalls, 2);
+    fresh.dispose();
   });
 });

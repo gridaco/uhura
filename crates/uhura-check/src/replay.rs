@@ -3,7 +3,7 @@
 //! dispatcher via `FragmentMachine` for standalone surfaces — over the
 //! example's timeline. Replay is a build/check phase: each derived example
 //! resolves to a frozen `(route, U, X, surface stack)` snapshot;
-//! `uhura project` executes zero transitions.
+//! Editor-model construction executes zero transitions.
 //!
 //! This is what makes derived examples SELF-VERIFYING: change a guard and
 //! the timeline's event drops (`no-handler`), which is a check error here.

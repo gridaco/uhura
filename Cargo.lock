@@ -441,9 +441,9 @@ dependencies = [
  "uhura-base",
  "uhura-check",
  "uhura-core",
+ "uhura-editor-model",
  "uhura-fixture",
  "uhura-port",
- "uhura-project",
  "uhura-syntax",
 ]
 
@@ -455,6 +455,16 @@ dependencies = [
  "serde_json",
  "uhura-base",
  "uhura-port",
+]
+
+[[package]]
+name = "uhura-editor-model"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "uhura-base",
+ "uhura-check",
+ "uhura-core",
 ]
 
 [[package]]
@@ -479,15 +489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "uhura-project"
-version = "0.0.0"
-dependencies = [
- "serde_json",
- "uhura-base",
- "uhura-core",
-]
-
-[[package]]
 name = "uhura-syntax"
 version = "0.0.0"
 dependencies = [
@@ -504,9 +505,9 @@ dependencies = [
  "uhura-check",
  "uhura-cli",
  "uhura-core",
+ "uhura-editor-model",
  "uhura-fixture",
  "uhura-port",
- "uhura-project",
  "uhura-syntax",
 ]
 

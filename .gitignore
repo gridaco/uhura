@@ -1,5 +1,8 @@
 /target
+/dist
 /renders
 /crates/uhura-wasm/pkg
 /web/node_modules
+/web/dist
+/examples/instagram-uhura/providers/dist
 .DS_Store

@@ -254,7 +254,7 @@ fn deliver_commands(
 
 /// The boot deliveries (§9.2): every `boot = true` projection from its
 /// `boot.<name>` fixture slice, revision 1 (driver mints start at 2 —
-/// micro-decision #43). `uhura dev`'s `/boot.json` and the wasm ABI
+/// micro-decision #43). `uhura play`'s `/api/play/boot.json` and the wasm ABI
 /// contract test build the same envelope.
 pub fn boot_updates(
     program: &ProgramIr,
@@ -282,7 +282,8 @@ pub fn boot_updates(
 }
 
 /// The resolved fixture slices as one canonical JSON object — the
-/// `FixtureDriver::new` input (`uhura dev` serves it as `/fixture.json`).
+/// `FixtureDriver::new` input (`uhura play` serves it as
+/// `/api/play/fixture.json`).
 pub fn fixture_slices_json(fixture: &FixtureData) -> String {
     let mut root = serde_json::Map::new();
     for (ns, slices) in &fixture.slices {
