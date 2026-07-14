@@ -9,7 +9,7 @@ use std::io::{Cursor, Read};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::path::{Component, Path};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -517,7 +517,12 @@ fn publication_report(play: &PlayState, summary: CandidateSummary) -> Publicatio
 
 // ── SSE ────────────────────────────────────────────────────────────────────
 
-type Clients = Arc<Mutex<Vec<Sender<String>>>>;
+// Event frames are invalidations, not an artifact log: Editor and Play clients
+// refetch the host's current immutable state after receiving one. Each
+// subscriber therefore has a one-frame queue. If it is stalled, the already
+// queued frame remains a sufficient invalidation and later publications are
+// intentionally coalesced instead of growing memory without bound.
+type Clients = Arc<Mutex<Vec<SyncSender<String>>>>;
 
 fn play_sse_payload(play: &PlayState) -> String {
     let mut event = serde_json::json!({
@@ -549,7 +554,10 @@ fn sse_frame(value: &serde_json::Value) -> String {
 
 fn broadcast(clients: &Clients, payload: &str) {
     let mut clients = clients.lock().expect("clients lock");
-    clients.retain(|sender| sender.send(payload.to_string()).is_ok());
+    clients.retain(|sender| match sender.try_send(payload.to_string()) {
+        Ok(()) | Err(TrySendError::Full(_)) => true,
+        Err(TrySendError::Disconnected(_)) => false,
+    });
 }
 
 pub struct EventStream {
@@ -601,12 +609,15 @@ impl Read for EventStream {
 }
 
 fn subscribe(clients: &Clients, hello: impl FnOnce() -> String) -> EventStream {
-    let (sender, receiver) = channel::<String>();
+    let (sender, receiver) = sync_channel::<String>(1);
     {
         // Registration and snapshot share the broadcast lock: an update can
-        // be duplicated at the boundary but can never be lost.
+        // be coalesced with the initial invalidation but can never leave the
+        // subscriber without an invalidation to refetch current state.
         let mut clients = clients.lock().expect("clients lock");
-        let _ = sender.send(hello());
+        sender
+            .try_send(hello())
+            .expect("new event queue has one available slot");
         clients.push(sender);
     }
     EventStream {
@@ -1376,7 +1387,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::io::Read;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use uhura_base::to_canonical_json;
@@ -1386,9 +1397,9 @@ mod tests {
 
     use super::{
         ApiRoute, EditorHostState, EventStream, EventStreamPoll, PlayArtifact, RequestMethod,
-        RouteBody, RouteRequest, WebAssets, api_route, app_document, application_path,
+        RouteBody, RouteRequest, WebAssets, api_route, app_document, application_path, broadcast,
         captured_play_asset, content_type, decode_play_asset_path, editor_sse_payload,
-        load_web_app_from, recheck_play, serve_file_map, split_request_url, tool_root,
+        load_web_app_from, recheck_play, serve_file_map, split_request_url, subscribe, tool_root,
     };
 
     fn render(revision: u64, name: &str) -> EditorRender {
@@ -1644,6 +1655,40 @@ mod tests {
             .and_then(|line| line.strip_prefix("data: "))
             .expect("event data line");
         serde_json::from_str(json).expect("event JSON")
+    }
+
+    #[test]
+    fn stalled_event_subscriber_keeps_only_one_invalidation() {
+        let clients = Arc::new(Mutex::new(Vec::new()));
+        let stream = subscribe(&clients, || editor_sse_payload(1));
+
+        for revision in 2..=128 {
+            broadcast(&clients, &editor_sse_payload(revision));
+        }
+
+        // The initial frame still invalidates the client's view, so it can
+        // refetch the current artifact. Redundant frames did not accumulate.
+        assert_eq!(next_event(&stream)["sourceRevision"], 1);
+        assert_eq!(
+            stream.next_frame_timeout(Duration::from_millis(1)),
+            EventStreamPoll::Timeout
+        );
+
+        // Draining the slot lets the next publication wake the same stream.
+        broadcast(&clients, &editor_sse_payload(129));
+        assert_eq!(next_event(&stream)["sourceRevision"], 129);
+    }
+
+    #[test]
+    fn publication_prunes_disconnected_event_subscribers() {
+        let clients = Arc::new(Mutex::new(Vec::new()));
+        let stream = subscribe(&clients, || editor_sse_payload(1));
+        assert_eq!(clients.lock().expect("clients lock").len(), 1);
+
+        drop(stream);
+        broadcast(&clients, &editor_sse_payload(2));
+
+        assert!(clients.lock().expect("clients lock").is_empty());
     }
 
     #[test]
