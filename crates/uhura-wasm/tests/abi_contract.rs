@@ -2,7 +2,7 @@
 //!
 //! Two layers:
 //! 1. **Shape goldens** — the hand-written JSON forms of events, the
-//!    step-result envelope, and the protocol triple, pinned as literal
+//!    step-result envelope, and the protocol set, pinned as literal
 //!    strings. `web/src/protocol/types.ts` mirrors these types; a change here is
 //!    a protocol version bump, not an edit.
 //! 2. **Pump parity** — every canonical corpus script replayed through
@@ -30,10 +30,10 @@ fn ident(s: &str) -> Ident {
 // ── layer 1: shape goldens ──────────────────────────────────────────────────
 
 #[test]
-fn protocol_triple_is_pinned() {
+fn protocol_set_is_pinned() {
     assert_eq!(
         protocols(),
-        r#"{"ir":"uhura-ir/0","provider":"uhura-provider/0","view":"uhura-view/0"}"#
+        r#"{"inspect":"uhura-inspect/0","ir":"uhura-ir/0","provider":"uhura-provider/0","view":"uhura-view/0"}"#
     );
 }
 
@@ -422,4 +422,54 @@ fn session_refuses_foreign_ir_and_premature_views() {
     assert_eq!(session.ir_version(), "uhura-ir/0");
     assert_eq!(session.revision(), 0.0);
     assert!(session.view().is_err(), "no view before the first dispatch");
+    let inspection: serde_json::Value = serde_json::from_str(&session.inspect()).unwrap();
+    assert_eq!(inspection["protocol"], "uhura-inspect/0");
+    assert_eq!(inspection["kind"], "snapshot");
+    assert_eq!(inspection["revision"], 0);
+    assert!(inspection["view"].is_null());
+    assert_eq!(inspection["x"]["snapshots"], serde_json::json!([]));
+}
+
+#[test]
+fn inspection_is_separate_from_the_frozen_step_envelope() {
+    let program = checked_program();
+    let fixture_text =
+        std::fs::read_to_string(corpus_root().join("fixtures/standard.toml")).unwrap();
+    let fixture = load_fixture(&fixture_text).expect("fixture loads");
+    let boot = boot_updates(&program, &fixture).expect("boot slices");
+    let boot_json = serde_json::json!({
+        "updates": boot.iter().map(ProjectionUpdate::to_json).collect::<Vec<_>>(),
+    });
+    let mut session = Session::new(&program.to_canonical_string()).unwrap();
+    session.boot(&to_canonical_json(&boot_json)).unwrap();
+
+    let before: serde_json::Value = serde_json::from_str(&session.inspect()).unwrap();
+    assert!(!before["pending-applies"].as_array().unwrap().is_empty());
+    assert!(before["view"].is_null());
+
+    let step: serde_json::Value = serde_json::from_str(
+        &session
+            .dispatch(&to_canonical_json(&serde_json::json!({
+                "kind": "init",
+                "route": program.entry.to_string(),
+                "params": {},
+            })))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        step.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["c", "g", "i", "t", "v"],
+        "inspection must not alter the frozen step envelope",
+    );
+
+    let after: serde_json::Value = serde_json::from_str(&session.inspect()).unwrap();
+    assert_eq!(after["protocol"], "uhura-inspect/0");
+    assert_eq!(after["ir-hash"], program.hash());
+    assert_eq!(after["revision"], 1);
+    assert_eq!(after["u"]["rev"], 1);
+    assert_eq!(after["u-hash"], step["t"]["u-hash"]);
+    assert_eq!(after["view"]["route"], program.entry.to_string());
+    assert!(after["pending-applies"].as_array().unwrap().is_empty());
+    assert!(!after["x"]["snapshots"].as_array().unwrap().is_empty());
 }

@@ -6,6 +6,9 @@ import type {
   Descriptor,
   DevEvent,
   Driver,
+  InspectProgram,
+  InspectSnapshot,
+  InspectionHandle,
   PlayConfig,
   ProviderMode,
   ProviderModule,
@@ -26,6 +29,7 @@ import {
 import { createFocusController } from "./focus.js";
 import { PlayGenerationGate } from "./generation.js";
 import type { GenerationAction } from "./generation.js";
+import { createInspectionStore } from "./inspection-store.js";
 import { createOverlay } from "./overlay.js";
 import { selectPlayProvider } from "./play-provider-selection.js";
 import { createPump, providerMsgToEvent } from "./pump.js";
@@ -48,6 +52,7 @@ type WasmModule = typeof import("/api/play/wasm/uhura_wasm.js");
 
 export const PLAY_ARTIFACT_URLS = [
   "/api/play/ir.json",
+  "/api/play/inspect.json",
   "/api/play/boot.json",
   "/api/play/fixture.json",
   "/api/play/script.json",
@@ -74,6 +79,7 @@ async function loadWasm(): Promise<WasmModule> {
 }
 
 export interface PlayRuntime {
+  readonly inspection: InspectionHandle;
   dispose(): void;
 }
 
@@ -102,8 +108,8 @@ export function startPlayRuntime(
   const view = shell.document.defaultView ?? window;
   const overlay = createOverlay(shell.overlayHost);
   const generations = new PlayGenerationGate();
+  const inspection = createInspectionStore();
   const abort = new AbortController();
-  const steps: Record<string, unknown>[] = [];
   let disposed = false;
   let eventSource: EventSource | null = null;
   let ticks: ReturnType<typeof createTicks> | null = null;
@@ -121,7 +127,10 @@ export function startPlayRuntime(
   const runtime: RuntimeHandle = {
     session: null,
     driver: null,
-    steps,
+    inspection: inspection.handle,
+    get steps() {
+      return inspection.handle.state.history.map((step) => step.trace);
+    },
     ticks: null,
     get system() {
       return systemControls.state;
@@ -240,9 +249,21 @@ export function startPlayRuntime(
     const generationAction = generations.artifacts(artifacts.generation);
     applyGenerationAction(generationAction);
     if (generationAction.kind === "reload") return;
-    const [irText, bootText, fixtureText, scriptText, iconsText, playText, styleText] =
-      artifacts.texts;
+    const [
+      irText,
+      inspectText,
+      bootText,
+      fixtureText,
+      scriptText,
+      iconsText,
+      playText,
+      styleText,
+    ] = artifacts.texts;
     if (disposed) return;
+    inspection.installArtifacts({
+      generation: artifacts.generation,
+      program: JSON.parse(inspectText) as InspectProgram,
+    });
     applicationStyle.textContent = styleText;
 
     const wasm = await loadWasm();
@@ -251,6 +272,7 @@ export function startPlayRuntime(
 
     const spoken = JSON.parse(protocols()) as Record<string, unknown>;
     const expected: Record<string, string> = {
+      inspect: "uhura-inspect/0",
       ir: "uhura-ir/0",
       view: "uhura-view/0",
       provider: "uhura-provider/0",
@@ -406,7 +428,15 @@ export function startPlayRuntime(
       for (const guard of result.g) {
         console.warn(`uhura ${guard.code} ${guard.rule}: ${guard.message}`);
       }
-      steps.push(result.t);
+      try {
+        const snapshot = JSON.parse(session.inspect()) as InspectSnapshot;
+        inspection.record(result, snapshot);
+      } catch (error) {
+        // Inspection is observational. A tooling failure must not interrupt
+        // the already-committed machine step or the renderer/provider pump.
+        console.error("uhura inspection failed", error);
+        inspection.dispose();
+      }
       console.debug("uhura-step", JSON.stringify(result.t));
     }
 
@@ -456,6 +486,7 @@ export function startPlayRuntime(
   });
 
   return {
+    inspection: inspection.handle,
     dispose(): void {
       if (disposed) return;
       disposed = true;
@@ -476,6 +507,7 @@ export function startPlayRuntime(
       scrolls = null;
       playAssets?.dispose?.();
       playAssets = null;
+      inspection.dispose();
       release(runtime.driver);
       providerHost?.dispose();
       providerHost = null;

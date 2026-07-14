@@ -34,6 +34,7 @@ export interface PlayChromeOptions {
 }
 
 export interface PlayChrome {
+  setDebugOpen(open: boolean): void;
   dispose(): void;
 }
 
@@ -59,16 +60,43 @@ export function mountPlayChrome(
   let frameName: FrameName = "mobile";
   let disposed = false;
   let autoHideTimer: number | undefined;
+  const toolbar = shell.container.querySelector<HTMLElement>("#uh-shell-toolbar");
 
-  function hideShellUi(): void {
+  function chromeContains(target: EventTarget | null): boolean {
+    if (target === null) return false;
+    const node = target as Node;
+    return toolbar?.contains(node) === true || shell.restart.contains(node);
+  }
+
+  function chromeHasFocus(): boolean {
+    return chromeContains(shell.document.activeElement);
+  }
+
+  function revealShellUi(): void {
     if (autoHideTimer !== undefined) view.clearTimeout(autoHideTimer);
     autoHideTimer = undefined;
+    delete shell.container.dataset["uiHidden"];
+  }
+
+  function hideShellUi(): void {
+    revealShellUi();
+    if (
+      shell.container.dataset["debugOpen"] === "true"
+      || chromeHasFocus()
+    ) {
+      return;
+    }
     shell.container.dataset["uiHidden"] = "true";
   }
 
-  function scheduleAutoHide(): void {
-    if (autoHideTimer !== undefined) view.clearTimeout(autoHideTimer);
-    delete shell.container.dataset["uiHidden"];
+  function scheduleAutoHide(focusIsLeavingChrome = false): void {
+    revealShellUi();
+    if (
+      shell.container.dataset["debugOpen"] === "true"
+      || (!focusIsLeavingChrome && chromeHasFocus())
+    ) {
+      return;
+    }
     autoHideTimer = view.setTimeout(hideShellUi, AUTO_HIDE_DELAY_MS);
   }
 
@@ -223,6 +251,11 @@ export function mountPlayChrome(
     if (target instanceof Node && !shell.frame.contains(target)) toggleShellUi();
   };
   const onShellInteraction = (): void => scheduleAutoHide();
+  const onChromeFocusIn = (): void => revealShellUi();
+  const onChromeFocusOut = (event: FocusEvent): void => {
+    if (chromeContains(event.relatedTarget)) return;
+    scheduleAutoHide(true);
+  };
 
   view.addEventListener("uhura:system-state", onSystemState);
   shell.providerSelect.addEventListener("change", onProviderChange);
@@ -231,10 +264,12 @@ export function mountPlayChrome(
   shell.document.addEventListener("fullscreenchange", renderFullscreen);
   shell.restart.addEventListener("click", onRestart);
   shell.stage.addEventListener("click", onStageClick);
-  shell.container
-    .querySelector("#uh-shell-toolbar")
-    ?.addEventListener("pointerdown", onShellInteraction);
+  toolbar?.addEventListener("pointerdown", onShellInteraction);
+  toolbar?.addEventListener("focusin", onChromeFocusIn);
+  toolbar?.addEventListener("focusout", onChromeFocusOut);
   shell.restart.addEventListener("pointerdown", onShellInteraction);
+  shell.restart.addEventListener("focusin", onChromeFocusIn);
+  shell.restart.addEventListener("focusout", onChromeFocusOut);
 
   const observer = options.createResizeObserver
     ? options.createResizeObserver(fitFrame)
@@ -246,6 +281,12 @@ export function mountPlayChrome(
   if (view.__uhura?.system) renderSystem(view.__uhura.system);
 
   return {
+    setDebugOpen(open: boolean): void {
+      if (disposed) return;
+      revealShellUi();
+      if (!open) scheduleAutoHide();
+      fitFrame();
+    },
     dispose(): void {
       if (disposed) return;
       disposed = true;
@@ -259,10 +300,12 @@ export function mountPlayChrome(
       shell.document.removeEventListener("fullscreenchange", renderFullscreen);
       shell.restart.removeEventListener("click", onRestart);
       shell.stage.removeEventListener("click", onStageClick);
-      shell.container
-        .querySelector("#uh-shell-toolbar")
-        ?.removeEventListener("pointerdown", onShellInteraction);
+      toolbar?.removeEventListener("pointerdown", onShellInteraction);
+      toolbar?.removeEventListener("focusin", onChromeFocusIn);
+      toolbar?.removeEventListener("focusout", onChromeFocusOut);
       shell.restart.removeEventListener("pointerdown", onShellInteraction);
+      shell.restart.removeEventListener("focusin", onChromeFocusIn);
+      shell.restart.removeEventListener("focusout", onChromeFocusOut);
       for (const [button, listener] of frameListeners) {
         button.removeEventListener("click", listener);
       }
