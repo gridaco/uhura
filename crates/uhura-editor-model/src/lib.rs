@@ -77,6 +77,7 @@ pub struct PreviewGroup {
 pub struct Preview {
     pub id: String,
     pub identity: PreviewIdentity,
+    pub source_file: String,
     pub is_default: bool,
     pub pinned: bool,
     pub derived: bool,
@@ -978,6 +979,12 @@ impl AuthoringMetadata {
 
 impl Preview {
     fn validate_authoring(&self, authoring: &AuthoringIndex<'_>) -> Result<(), ValidationError> {
+        if !canonical_source_path(&self.source_file) {
+            return Err(ValidationError::InvalidAuthoringField {
+                owner: self.id.clone(),
+                field: "sourceFile",
+            });
+        }
         self.validate_documentation_entry(
             authoring,
             self.documentation.declaration_doc_id.as_deref(),
@@ -1365,6 +1372,7 @@ impl Preview {
         serde_json::json!({
             "id": self.id,
             "identity": self.identity.to_json(),
+            "sourceFile": self.source_file,
             "default": self.is_default,
             "pinned": self.pinned,
             "derived": self.derived,
@@ -1890,6 +1898,7 @@ fn build_preview(
     Ok(Preview {
         id,
         identity,
+        source_file: checked.source_file.clone(),
         is_default: checked.is_default,
         pinned: checked.pinned,
         derived: checked.derived,
@@ -2191,6 +2200,7 @@ mod tests {
                 subject: SubjectKind::Page {
                     route: home.clone(),
                 },
+                source_file: "pages/home.uhura".to_string(),
                 example: "default".to_string(),
                 is_default: true,
                 pinned: false,
@@ -2212,6 +2222,7 @@ mod tests {
                     name: sheet.clone(),
                     modality: Some("sheet".to_string()),
                 },
+                source_file: "surfaces/comments-sheet.uhura".to_string(),
                 example: "open".to_string(),
                 is_default: true,
                 pinned: true,
@@ -2232,6 +2243,7 @@ mod tests {
             },
             ResolvedPreview {
                 subject: SubjectKind::Component { name: card.clone() },
+                source_file: "components/post-card.uhura".to_string(),
                 example: "liked".to_string(),
                 is_default: false,
                 pinned: false,
@@ -2483,6 +2495,7 @@ mod tests {
             "the wire omits checker targets without metadata"
         );
         assert_eq!(render.authoring.entries.len(), 3);
+        assert_eq!(render.previews[0].source_file, "pages/home.uhura");
         let declaration_doc = render
             .authoring
             .entries
@@ -2544,6 +2557,16 @@ mod tests {
 
     #[test]
     fn validation_rejects_cross_preview_docs_and_invalid_semantic_anchors() {
+        let mut state = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
+        state.render.as_mut().unwrap().previews[0].source_file = "../home.uhura".to_string();
+        assert!(matches!(
+            state.validate(),
+            Err(ValidationError::InvalidAuthoringField {
+                field: "sourceFile",
+                ..
+            })
+        ));
+
         let mut state = build_current_state(5, &authored_output(), BTreeMap::new()).unwrap();
         state
             .render

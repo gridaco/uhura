@@ -73,6 +73,7 @@ store {
         <text class="muted">Comments couldn't load.</text>
       </view>
     {:when ready t}
+      <!-- @annotation Only the comment list scrolls so the title and composer remain fixed in the sheet. -->
       <scroll class="comment-list">
         {#if count(t.comments) == 0 && count(pending-appends) == 0}
           <view class="fill-center stack-sm">

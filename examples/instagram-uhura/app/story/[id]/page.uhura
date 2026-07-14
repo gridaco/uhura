@@ -58,6 +58,7 @@ store {
         <image class="story-media" src={s.image.src} alt={s.image.alt} />
         <view class="story-overlay">
           <view class="story-top">
+            <!-- @annotation Progress segments mirror the author's story sequence and distinguish viewed, current, and unseen frames. -->
             <view class="story-progress-row">
               {#each s.progress as segment (segment.id)}
                 <view class={if segment.is-current then "story-progress current" else if segment.is-viewed then "story-progress viewed" else "story-progress"} />

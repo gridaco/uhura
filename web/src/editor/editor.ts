@@ -23,6 +23,13 @@ import {
   validateAnnotationRealizations,
 } from "./annotation-overlay.js";
 import { EDITOR_STYLES } from "./editor-styles.js";
+import {
+  enterPreviewFocus,
+  exitPreviewFocus,
+  fitPreviewCamera,
+  retainPreviewFocus,
+  type PreviewFocusState,
+} from "./editor-focus.js";
 import { commentShortcutAction } from "./editor-shortcuts.js";
 import {
   EditorUpdateSession,
@@ -35,6 +42,8 @@ const EDITOR_EVENTS_PATH = "/api/editor/events";
 const UI_VISIBLE_KEY = "uhura.editor.ui-visible";
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 3;
+const FOCUS_MAX_SCALE = 1.5;
+const FOCUS_PADDING = 64;
 const ZOOM_STEP = 1.2;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 
@@ -92,6 +101,11 @@ interface EditorShell {
   zoomInButton: HTMLButtonElement;
   focusSelectionButton: HTMLButtonElement;
   sourceDrawerButton: HTMLButtonElement;
+  focusHeader: HTMLElement;
+  exitFocusButton: HTMLButtonElement;
+  focusBreadcrumbKind: HTMLElement;
+  focusBreadcrumbSubject: HTMLElement;
+  focusBreadcrumbExample: HTMLElement;
   inspectorOverview: HTMLElement;
   inspectorSelection: HTMLElement;
   overviewApplication: HTMLElement;
@@ -105,6 +119,8 @@ interface EditorShell {
   selectionExample: HTMLElement;
   selectionSize: HTMLElement;
   selectionOrigin: HTMLElement;
+  selectionSourceRow: HTMLElement;
+  selectionSource: HTMLButtonElement;
   selectionFromRow: HTMLElement;
   selectionFrom: HTMLElement;
   selectionStatus: HTMLElement;
@@ -140,6 +156,12 @@ const SHELL_HTML = `
     </label>
   </nav>
   <main class="editor-stage">
+    <header class="focus-header" hidden>
+      <button class="focus-exit" type="button" aria-label="Back to all previews" aria-keyshortcuts="Escape" title="Back to all previews (Esc)"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="m9.5 3.5-4.5 4.5 4.5 4.5M5 8h8"></path></svg>All previews</button>
+      <nav class="focus-breadcrumb" aria-label="Focused preview">
+        <span class="focus-breadcrumb-kind"></span><span class="focus-breadcrumb-separator" aria-hidden="true">/</span><strong class="focus-breadcrumb-subject"></strong><span class="focus-breadcrumb-separator" aria-hidden="true">/</span><span class="focus-breadcrumb-example" aria-current="page"></span>
+      </nav>
+    </header>
     <div class="ruler-corner" aria-hidden="true"></div>
     <canvas class="canvas-ruler ruler-x" aria-hidden="true"></canvas>
     <canvas class="canvas-ruler ruler-y" aria-hidden="true"></canvas>
@@ -177,6 +199,7 @@ const SHELL_HTML = `
         <div><dt>Example</dt><dd class="selection-example"></dd></div>
         <div><dt>Size</dt><dd class="selection-size"></dd></div>
         <div><dt>Origin</dt><dd class="selection-origin"></dd></div>
+        <div class="selection-source-row" hidden><dt>Source</dt><dd><button class="selection-source source-location" type="button"></button></dd></div>
         <div class="selection-from-row" hidden><dt>From</dt><dd class="selection-from"></dd></div>
         <div><dt>Status</dt><dd class="selection-status"></dd></div>
       </dl>
@@ -237,6 +260,11 @@ const buildShell = (root: HTMLElement): EditorShell => {
     zoomInButton: required(shell, ".zoom-in"),
     focusSelectionButton: required(shell, ".focus-selection"),
     sourceDrawerButton: required(shell, ".source-drawer-toggle"),
+    focusHeader: required(shell, ".focus-header"),
+    exitFocusButton: required(shell, ".focus-exit"),
+    focusBreadcrumbKind: required(shell, ".focus-breadcrumb-kind"),
+    focusBreadcrumbSubject: required(shell, ".focus-breadcrumb-subject"),
+    focusBreadcrumbExample: required(shell, ".focus-breadcrumb-example"),
     inspectorOverview: required(shell, ".inspector-overview"),
     inspectorSelection: required(shell, ".inspector-selection"),
     overviewApplication: required(shell, "[data-overview-application]"),
@@ -250,6 +278,8 @@ const buildShell = (root: HTMLElement): EditorShell => {
     selectionExample: required(shell, ".selection-example"),
     selectionSize: required(shell, ".selection-size"),
     selectionOrigin: required(shell, ".selection-origin"),
+    selectionSourceRow: required(shell, ".selection-source-row"),
+    selectionSource: required(shell, ".selection-source"),
     selectionFromRow: required(shell, ".selection-from-row"),
     selectionFrom: required(shell, ".selection-from"),
     selectionStatus: required(shell, ".selection-status"),
@@ -373,6 +403,10 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let y = 0;
   let scale = 1;
   let rulerFrame = 0;
+  let focusFitFrame = 0;
+  let focusFitGeneration = 0;
+  let focusState: PreviewFocusState | null = null;
+  let focusFrameObserver: ResizeObserver | null = null;
   let destroyed = false;
   let retryTimer: number | undefined;
   const touches = new Map<number, Point>();
@@ -382,7 +416,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     root: shell.annotationOverlay,
     chrome: [shell.tools, shell.sourceDrawer, shell.status],
     focusPreview: (previewId, anchors) => {
-      selectPreview(previewId, true);
+      navigatePreview(previewId, true);
       const anchor = anchors?.find(anchorVisibleInViewport) ?? anchors?.[0] ?? null;
       if (anchor) scrollAnchorWithinPreview(anchor, model.frameById.get(previewId) ?? null);
       revealElement(anchor);
@@ -609,6 +643,87 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     applyCamera();
   };
 
+  const focusedPreviewId = (): string | null =>
+    previewIdForIdentity(model, focusState?.identity ?? null);
+  const cancelFocusFit = (): void => {
+    focusFitGeneration += 1;
+    if (!focusFitFrame) return;
+    window.cancelAnimationFrame(focusFitFrame);
+    focusFitFrame = 0;
+  };
+  const scheduleFocusFit = (): void => {
+    const previewId = focusedPreviewId();
+    if (!previewId) return;
+    cancelFocusFit();
+    const generation = focusFitGeneration;
+    focusFitFrame = window.requestAnimationFrame(() => {
+      focusFitFrame = 0;
+      if (
+        destroyed
+        || generation !== focusFitGeneration
+        || focusedPreviewId() !== previewId
+      ) return;
+      const frame = model.frameById.get(previewId);
+      if (!frame) return;
+      const camera = fitPreviewCamera(
+        frameWorldRect(frame),
+        shell.viewport.clientWidth,
+        shell.viewport.clientHeight,
+        FOCUS_PADDING,
+        MIN_SCALE,
+        FOCUS_MAX_SCALE,
+      );
+      x = camera.x;
+      y = camera.y;
+      scale = camera.scale;
+      applyCamera();
+    });
+  };
+  const observeFocusedFrame = (frame: HTMLElement | null): void => {
+    focusFrameObserver?.disconnect();
+    if (!frame || !window.ResizeObserver) return;
+    focusFrameObserver ??= new window.ResizeObserver(scheduleFocusFit);
+    focusFrameObserver.observe(frame);
+  };
+  const syncFocusPresentation = (): void => {
+    const previewId = focusedPreviewId();
+    for (const frame of model.frameById.values()) frame.classList.remove("is-focus-target");
+    shell.board.querySelectorAll<HTMLElement>(".preview-row").forEach((row) => {
+      row.classList.remove("is-focus-row");
+    });
+    shell.navigatorResults.querySelectorAll<HTMLElement>(".navigator-frame").forEach((button) => {
+      button.classList.remove("is-focus-target");
+    });
+
+    const focusedPreview = previewId ? model.previewById.get(previewId) ?? null : null;
+    const frame = previewId ? model.frameById.get(previewId) ?? null : null;
+    const active = Boolean(focusState && focusedPreview && frame);
+    shell.shell.classList.toggle("is-focus-mode", active);
+    shell.board.classList.toggle("is-focus-mode", active);
+    shell.focusHeader.hidden = !active;
+    shell.focusSelectionButton.setAttribute(
+      "aria-label",
+      active ? "Fit focused preview" : "Center selected preview",
+    );
+    shell.focusSelectionButton.title = active ? "Fit focused preview" : "Center selected preview";
+    annotationOverlay.setFocusedPreview(active ? previewId : null);
+
+    if (!active || !focusedPreview || !frame || !previewId) {
+      observeFocusedFrame(null);
+      return;
+    }
+    shell.focusBreadcrumbKind.textContent = focusedPreview.identity.kind;
+    shell.focusBreadcrumbSubject.textContent = focusedPreview.identity.subject;
+    shell.focusBreadcrumbExample.textContent = focusedPreview.identity.example;
+    frame.classList.add("is-focus-target");
+    frame.closest<HTMLElement>(".preview-row")?.classList.add("is-focus-row");
+    const navigatorButton = Array.from(
+      shell.navigatorResults.querySelectorAll<HTMLElement>(".navigator-frame[data-preview-id]"),
+    ).find((button) => button.dataset.previewId === previewId);
+    navigatorButton?.classList.add("is-focus-target");
+    observeFocusedFrame(frame);
+  };
+
   const clearSelectionDom = (): void => {
     for (const frame of model.frameById.values()) {
       frame.classList.remove("is-selected");
@@ -669,15 +784,27 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   const renderInspector = (preview: EditorPreview): void => {
+    const focused = focusedPreviewId() === preview.id;
     shell.inspectorOverview.hidden = true;
     shell.inspectorSelection.hidden = false;
     shell.focusSelectionButton.disabled = false;
-    shell.selectionKind.textContent = preview.identity.kind;
+    shell.clearSelectionButton.hidden = focused;
+    shell.selectionKind.textContent = focused
+      ? `Focused ${preview.identity.kind}`
+      : preview.identity.kind;
     shell.selectionName.textContent = `${preview.identity.subject} / ${preview.identity.example}`;
     shell.selectionSubject.textContent = preview.identity.subject;
     shell.selectionExample.textContent = preview.identity.example;
     shell.selectionSize.textContent = shellSize(preview);
     shell.selectionOrigin.textContent = origin(preview);
+    shell.selectionSourceRow.hidden = preview.identity.kind !== "page";
+    shell.selectionSource.textContent = preview.sourceFile;
+    shell.selectionSource.dataset.sourcePath = preview.sourceFile;
+    shell.selectionSource.disabled = model.render?.freshness === "stale";
+    shell.selectionSource.setAttribute("aria-label", `Copy page source path ${preview.sourceFile}`);
+    shell.selectionSource.title = shell.selectionSource.disabled
+      ? "Copy is disabled while the preview is stale"
+      : "Copy page source path";
     shell.selectionFromRow.hidden = preview.from === null || preview.from === "";
     shell.selectionFrom.textContent = preview.from ?? "";
     const status = preview.default ? ["Default"] : [];
@@ -706,18 +833,27 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       return item;
     }));
     shell.selectionNoInteractions.hidden = preview.interactions.length > 0;
-    shell.selectionAnnouncement.textContent =
-      `${preview.identity.subject} / ${preview.identity.example} selected; details updated.`;
+    shell.selectionAnnouncement.textContent = focused
+      ? `${preview.identity.subject} / ${preview.identity.example} focused; details updated.`
+      : `${preview.identity.subject} / ${preview.identity.example} selected; details updated.`;
   };
 
   const clearSelection = (): void => {
     clearSelectionDom();
     selectedIdentity = null;
     annotationOverlay.activatePreviewOccurrences(null);
+    const previewId = focusedPreviewId();
+    const focusedPreview = previewId ? model.previewById.get(previewId) : null;
+    if (focusedPreview) {
+      renderInspector(focusedPreview);
+      return;
+    }
     shell.inspectorOverview.hidden = false;
     shell.inspectorSelection.hidden = true;
     shell.focusSelectionButton.disabled = true;
+    shell.clearSelectionButton.hidden = false;
     shell.selectionData.replaceChildren();
+    shell.selectionSource.dataset.sourcePath = "";
     shell.selectionDocumentation.replaceChildren();
     shell.selectionDocumentation.hidden = true;
     shell.selectionDocumentationBlock.hidden = true;
@@ -743,6 +879,41 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     }
     renderInspector(preview);
     if (reveal) revealElement(frame);
+  };
+
+  const focusPreview = (previewId: string): void => {
+    const preview = model.previewById.get(previewId);
+    if (!preview || !model.frameById.has(previewId)) return;
+    focusState = enterPreviewFocus(focusState, preview.identity, { x, y, scale });
+    syncFocusPresentation();
+    selectPreview(previewId, false);
+    scheduleFocusFit();
+  };
+
+  const navigatePreview = (previewId: string, reveal = false): void => {
+    if (focusState) {
+      focusPreview(previewId);
+      return;
+    }
+    selectPreview(previewId, reveal);
+  };
+
+  const leavePreviewFocus = (restoreDomFocus = true): void => {
+    const previewId = focusedPreviewId();
+    const returnTarget = previewId ? model.frameById.get(previewId) ?? null : null;
+    const camera = exitPreviewFocus(focusState);
+    if (!camera) return;
+    focusState = null;
+    cancelFocusFit();
+    syncFocusPresentation();
+    x = camera.x;
+    y = camera.y;
+    scale = camera.scale;
+    applyCamera();
+    const selectedId = previewIdForIdentity(model, selectedIdentity);
+    if (selectedId) selectPreview(selectedId, false);
+    else clearSelection();
+    if (restoreDomFocus) (returnTarget ?? shell.viewport).focus({ preventScroll: true });
   };
 
   const applySearch = (): void => {
@@ -838,6 +1009,13 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   const finishStateInstall = (nextState: EditorState): void => {
+    const previousFocus = focusState;
+    const retainedFocus = retainPreviewFocus(previousFocus, nextState);
+    const restoreCamera = previousFocus && !retainedFocus
+      ? exitPreviewFocus(previousFocus)
+      : null;
+    if (previousFocus) cancelFocusFit();
+    focusState = retainedFocus;
     selectedIdentity = retainPreviewSelection(selectedIdentity, nextState);
     state = nextState;
     renderOverview(nextState.render);
@@ -850,19 +1028,30 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       },
     );
     applySearch();
+    syncFocusPresentation();
+    if (restoreCamera) {
+      x = restoreCamera.x;
+      y = restoreCamera.y;
+      scale = restoreCamera.scale;
+      applyCamera();
+    }
     const selectedId = previewIdForIdentity(model, selectedIdentity);
     if (selectedId) selectPreview(selectedId, false);
     else clearSelection();
     showStateStatus(nextState);
+    if (focusState) scheduleFocusFit();
   };
 
   const installModel = (nextState: EditorState, nextModel: PreparedEditorModel): void => {
     const previousModel = model;
     const previousBoard = shell.board;
-    const focusedPreviewId = closest<HTMLElement>(
+    const keyboardFocusedFrame = closest<HTMLElement>(
       document.activeElement,
       ".editor-frame[data-preview-id]",
-    )?.dataset.previewId;
+    );
+    const keyboardFocusedIdentity = keyboardFocusedFrame?.dataset.previewId
+      ? previousModel.previewById.get(keyboardFocusedFrame.dataset.previewId)?.identity ?? null
+      : null;
     nextModel.board.style.transform = previousBoard.style.transform;
     nextModel.board.style.setProperty("--selection-stroke", `${2 / scale}px`);
     nextModel.board.style.setProperty("--selection-offset", `${4 / scale}px`);
@@ -892,8 +1081,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       if (model === nextModel) annotationOverlay.invalidate();
     });
     finishStateInstall(nextState);
-    if (focusedPreviewId) {
-      model.frameById.get(focusedPreviewId)?.focus({ preventScroll: true });
+    const reboundKeyboardFocusId = previewIdForIdentity(model, keyboardFocusedIdentity);
+    if (reboundKeyboardFocusId) {
+      model.frameById.get(reboundKeyboardFocusId)?.focus({ preventScroll: true });
     }
     requestRulers();
     annotationOverlay.invalidate();
@@ -970,9 +1160,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   listen(shell.zoomInButton, "click", () => zoomAt(scale * ZOOM_STEP, viewportCenter()));
   listen(shell.zoomOutput, "click", () => zoomAt(1, viewportCenter()));
   listen(shell.focusSelectionButton, "click", () => {
+    if (focusState) {
+      scheduleFocusFit();
+      return;
+    }
     const selectedId = previewIdForIdentity(model, selectedIdentity);
     if (selectedId) revealElement(model.frameById.get(selectedId) ?? null);
   });
+  listen(shell.exitFocusButton, "click", () => leavePreviewFocus());
   listen(shell.sourceDrawerButton, "click", () => {
     setSourceDrawer(shell.sourceDrawer.hasAttribute("hidden"), true);
   });
@@ -981,6 +1176,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.sourceDrawerButton.focus({ preventScroll: true });
   });
   listen(shell.clearSelectionButton, "click", clearSelection);
+  listen(shell.selectionSource, "click", () => {
+    const path = shell.selectionSource.dataset.sourcePath;
+    if (!path || shell.selectionSource.disabled) return;
+    void window.navigator.clipboard?.writeText(path);
+  });
   listen(shell.statusDismiss, "click", () => {
     shell.status.hidden = true;
     annotationOverlay.invalidate();
@@ -990,7 +1190,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   listen(shell.navigatorResults, "click", (event) => {
     const frameButton = closest<HTMLElement>(event.target, ".navigator-frame[data-preview-id]");
     if (frameButton?.dataset.previewId) {
-      selectPreview(frameButton.dataset.previewId, true);
+      navigatePreview(frameButton.dataset.previewId, true);
       return;
     }
     const groupButton = closest<HTMLElement>(event.target, ".navigator-row[data-group-id]");
@@ -998,7 +1198,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (!groupId) return;
     const group = state?.render?.groups.find((candidate) => candidate.id === groupId);
     const first = group?.previews[0];
-    if (first) revealElement(model.frameById.get(first) ?? null);
+    if (!first) return;
+    if (focusState) focusPreview(first);
+    else revealElement(model.frameById.get(first) ?? null);
   });
   listen(shell.navigatorSearch, "input", applySearch);
   listen(shell.navigatorSearch, "keydown", (rawEvent) => {
@@ -1006,6 +1208,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (event.key !== "Escape" || !shell.navigatorSearch.value) return;
     shell.navigatorSearch.value = "";
     applySearch();
+    event.preventDefault();
+    event.stopPropagation();
   });
 
   listen(shell.viewport, "click", (event) => {
@@ -1013,11 +1217,23 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
     if (frame?.dataset.previewId) selectPreview(frame.dataset.previewId, false);
   });
+  listen(shell.viewport, "dblclick", (event) => {
+    if (effectiveTool() !== "cursor" || performance.now() < suppressClickUntil) return;
+    const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
+    if (!frame?.dataset.previewId) return;
+    focusPreview(frame.dataset.previewId);
+    event.preventDefault();
+  });
   listen(shell.viewport, "keydown", (rawEvent) => {
     const event = rawEvent as KeyboardEvent;
     const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
-    if (!frame?.dataset.previewId || (event.key !== "Enter" && event.key !== " ")) return;
-    selectPreview(frame.dataset.previewId, false);
+    if (
+      !frame?.dataset.previewId
+      || event.target !== frame
+      || (event.key !== "Enter" && event.key !== " ")
+    ) return;
+    if (event.key === "Enter") focusPreview(frame.dataset.previewId);
+    else selectPreview(frame.dataset.previewId, false);
     event.preventDefault();
   });
 
@@ -1161,6 +1377,16 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       return;
     }
     if (
+      !event.repeat
+      && event.key === "Escape"
+      && (!shell.sourceDrawer.hidden || focusState)
+    ) {
+      if (!shell.sourceDrawer.hidden) setSourceDrawer(false);
+      else leavePreviewFocus();
+      event.preventDefault();
+      return;
+    }
+    if (
       isTextEntry(target)
       || event.metaKey
       || event.ctrlKey
@@ -1178,8 +1404,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     } else if (!event.repeat && event.key === "-") {
       zoomAt(scale / ZOOM_STEP, viewportCenter());
     } else if (!event.repeat && event.key === "Escape") {
-      if (!shell.sourceDrawer.hidden) setSourceDrawer(false);
-      else clearSelection();
+      clearSelection();
     }
   });
   listen(window, "keyup", (rawEvent) => {
@@ -1205,12 +1430,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     resizeObserver = new window.ResizeObserver(() => {
       requestRulers();
       annotationOverlay.invalidate();
+      scheduleFocusFit();
     });
     resizeObserver.observe(shell.viewport);
   } else {
     listen(window, "resize", () => {
       requestRulers();
       annotationOverlay.invalidate();
+      scheduleFocusFit();
     });
   }
 
@@ -1250,8 +1477,10 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     annotationOverlay.dispose();
     disposePreparedEditorModel(model);
     resizeObserver?.disconnect();
+    focusFrameObserver?.disconnect();
     if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     if (rulerFrame) window.cancelAnimationFrame(rulerFrame);
+    if (focusFitFrame) window.cancelAnimationFrame(focusFitFrame);
     for (const dispose of disposers.splice(0)) dispose();
     root.replaceChildren();
   };

@@ -19,6 +19,8 @@ export interface AnnotationLayoutInput {
   card: { width: number; height: number };
   /** Marker-only inputs participate in marker stacking without reserving card space. */
   showCard?: boolean;
+  /** Dense, persistent callouts can opt into stable viewport gutters. */
+  preferGutter?: boolean;
 }
 
 export interface AnnotationPlacement {
@@ -250,14 +252,16 @@ export const placeAnnotations = (
       };
     });
     const previous = previousPlacements.get(input.id)?.candidate;
-    const local = selectCandidate(
-      scored.filter((candidate) =>
-        candidate.overflow === 0
-        && candidate.collision === 0
-        && candidate.occlusion === 0
-      ),
-      previous,
-    );
+    const local = input.preferGutter
+      ? undefined
+      : selectCandidate(
+        scored.filter((candidate) =>
+          candidate.overflow === 0
+          && candidate.collision === 0
+          && candidate.occlusion === 0
+        ),
+        previous,
+      );
     let card: AnnotationRect;
     let candidate: AnnotationCandidate;
     let gutter = false;

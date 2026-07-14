@@ -1,8 +1,7 @@
-//! `gen-assets` — the committed, seeded demo-asset generator (plan
-//! micro-decision #19: local generation, no network, no licensing risk).
-//! Reads `fixtures/assets/manifest.toml`, renders each entry's motif
-//! deterministically from its seed, writes JPEGs next to the manifest.
-//! Same manifest → same bytes, byte-for-byte.
+//! `gen-assets` — validate materialized demo assets and render legacy motifs.
+//! Reads `fixtures/assets/manifest.toml`. Entries with a `source` are already
+//! materialized: their dimensions and SHA-256 are verified without a network
+//! request. Legacy entries with `motif` + `seed` remain reproducible locally.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -34,6 +33,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
 
+    let mut preserved = 0usize;
     let mut written = 0usize;
     for (id, entry) in assets {
         let Some(entry) = entry.as_table() else {
@@ -42,14 +42,10 @@ fn main() -> ExitCode {
         };
         let get_str = |k: &str| entry.get(k).and_then(toml::Value::as_str);
         let get_int = |k: &str| entry.get(k).and_then(toml::Value::as_integer);
-        let (Some(file), Some(alt), Some(motif), Some(seed), Some(size)) = (
-            get_str("file"),
-            get_str("alt"),
-            get_str("motif"),
-            get_int("seed"),
-            get_int("size"),
-        ) else {
-            eprintln!("gen-assets: `{id}` needs file, alt, motif, seed, size");
+        let (Some(file), Some(alt), Some(size)) =
+            (get_str("file"), get_str("alt"), get_int("size"))
+        else {
+            eprintln!("gen-assets: `{id}` needs file, alt, and size");
             return ExitCode::from(2);
         };
         if alt.trim().is_empty() {
@@ -57,6 +53,50 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
         let size = size.clamp(16, 2048) as u32;
+
+        if get_str("source").is_some() {
+            let Some(expected_hash) = get_str("sha256") else {
+                eprintln!("gen-assets: sourced asset `{id}` needs sha256");
+                return ExitCode::from(2);
+            };
+            let path = out_dir.join(file);
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    eprintln!("gen-assets: {}: {error}", path.display());
+                    return ExitCode::from(2);
+                }
+            };
+            let actual_hash = uhura_base::sha256_hex(&bytes);
+            if actual_hash != expected_hash {
+                eprintln!(
+                    "gen-assets: `{id}`: sha256 mismatch: expected {expected_hash}, got {actual_hash}"
+                );
+                return ExitCode::from(2);
+            }
+            let image = match image::load_from_memory(&bytes) {
+                Ok(image) => image,
+                Err(error) => {
+                    eprintln!("gen-assets: `{id}`: invalid image: {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            if image.width() != size || image.height() != size {
+                eprintln!(
+                    "gen-assets: `{id}`: expected {size}x{size}, got {}x{}",
+                    image.width(),
+                    image.height()
+                );
+                return ExitCode::from(2);
+            }
+            preserved += 1;
+            continue;
+        }
+
+        let (Some(motif), Some(seed)) = (get_str("motif"), get_int("seed")) else {
+            eprintln!("gen-assets: `{id}` needs source + sha256 or motif + seed");
+            return ExitCode::from(2);
+        };
         let image = render_motif(motif, seed as u64, size);
         let Some(image) = image else {
             eprintln!("gen-assets: `{id}`: unknown motif `{motif}`");
@@ -69,7 +109,7 @@ fn main() -> ExitCode {
         written += 1;
     }
     println!(
-        "gen-assets: wrote {written} JPEGs under {}",
+        "gen-assets: preserved {preserved} sourced assets and wrote {written} generated JPEGs under {}",
         out_dir.display()
     );
     ExitCode::SUCCESS

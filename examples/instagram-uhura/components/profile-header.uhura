@@ -43,6 +43,7 @@ emits {
   <text class="profile-handle">{"@" ++ user.username}</text>
   <text class="bio">{bio}</text>
   <view class="profile-actions">
+    <!-- @annotation The action slot changes by relationship: owners create, while visitors follow or unfollow. -->
     {#if is-self}
       <button class="secondary-button profile-action" label="Create a new post" on:press={emit create-tapped()}>
         <text>New post</text>

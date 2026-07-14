@@ -30,6 +30,7 @@ const event = (sourceRevision: number): EditorRevisionEvent => ({
 const preview = (id: string, content = id): EditorPreview => ({
   id,
   identity: { kind: "component", subject: id, example: "default" },
+  sourceFile: `components/${id}.uhura`,
   default: true,
   pinned: false,
   derived: false,
@@ -156,6 +157,7 @@ test("semantic selection survives replacement and disappears with its preview", 
       previews: [{
         id: "new-dom-independent-id",
         identity: selection,
+        sourceFile: "app/feed/page.uhura",
         default: true,
         pinned: false,
         derived: false,

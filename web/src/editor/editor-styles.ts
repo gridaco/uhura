@@ -2,6 +2,7 @@ export const EDITOR_STYLES = `
   .uhura-editor {
     --navigator-width: 240px;
     --inspector-width: 272px;
+    --focus-header-height: 0px;
     --ruler-size: 20px;
     --panel: #fff;
     --stage: #d3d8dd;
@@ -18,6 +19,11 @@ export const EDITOR_STYLES = `
     color: var(--ink);
     background: var(--panel);
     font: 13px/1.45 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .uhura-editor.is-focus-mode {
+    --navigator-width: 0px;
+    --inspector-width: 340px;
+    --focus-header-height: 42px;
   }
   .uhura-editor, .uhura-editor * { box-sizing: border-box; }
   .uhura-editor button, .uhura-editor input { color: inherit; font: inherit; }
@@ -44,6 +50,7 @@ export const EDITOR_STYLES = `
     inline-size: var(--navigator-width);
     border-inline-end: 1px solid var(--border);
   }
+  .uhura-editor.is-focus-mode .editor-navigator { display: none; }
   .editor-inspector {
     inset-inline-end: 0;
     inline-size: var(--inspector-width);
@@ -89,6 +96,50 @@ export const EDITOR_STYLES = `
     font-weight: 650;
   }
   .play-link svg { inline-size: 12px; block-size: 12px; fill: currentColor; }
+  .focus-header {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 55;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    block-size: 42px;
+    padding: 0 12px;
+    border-block-end: 1px solid var(--border);
+    background: rgb(255 255 255 / 96%);
+    backdrop-filter: blur(12px);
+  }
+  .focus-exit {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-block-size: 30px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 7px;
+    color: #4f5864;
+    background: transparent;
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  .focus-exit:hover { color: #20242a; background: var(--hover); }
+  .focus-exit svg { inline-size: 14px; block-size: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  .focus-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .focus-breadcrumb-kind { color: var(--faint); text-transform: capitalize; }
+  .focus-breadcrumb-separator { color: #b2b8c0; }
+  .focus-breadcrumb-subject,
+  .focus-breadcrumb-example { overflow: hidden; text-overflow: ellipsis; }
+  .focus-breadcrumb-subject { color: var(--ink); font-weight: 650; }
 
   .navigator-search {
     display: flex;
@@ -126,6 +177,7 @@ export const EDITOR_STYLES = `
   .navigator-frames { padding-inline-start: 13px; }
   .navigator-frame { gap: 7px; min-block-size: 27px; padding: 4px 7px; color: #4f5864; font-size: 12px; }
   .navigator-frame[aria-pressed="true"] { color: #075f9d; background: var(--accent-soft); }
+  .navigator-frame.is-focus-target { box-shadow: inset 2px 0 #6554c0; }
   .navigator-frame-icon { inline-size: 9px; block-size: 11px; border: 1px solid #a4acb6; border-radius: 2px; background: #fff; }
   .navigator-derived { color: #6a5acd; font-size: 9px; font-weight: 750; }
   .navigator-default { inline-size: 5px; block-size: 5px; border-radius: 999px; background: var(--accent); }
@@ -140,12 +192,12 @@ export const EDITOR_STYLES = `
     transition: inset-inline-start .18s ease, inset-inline-end .18s ease;
   }
   .ruler-corner, .canvas-ruler { position: absolute; z-index: 45; background: #f7f8f9; pointer-events: none; }
-  .ruler-corner { inset: 0 auto auto 0; inline-size: var(--ruler-size); block-size: var(--ruler-size); border-inline-end: 1px solid #cbd0d6; border-block-end: 1px solid #cbd0d6; }
-  .ruler-x { inset: 0 0 auto var(--ruler-size); inline-size: calc(100% - var(--ruler-size)); block-size: var(--ruler-size); border-block-end: 1px solid #cbd0d6; }
-  .ruler-y { inset: var(--ruler-size) auto 0 0; inline-size: var(--ruler-size); block-size: calc(100% - var(--ruler-size)); border-inline-end: 1px solid #cbd0d6; }
+  .ruler-corner { inset: var(--focus-header-height) auto auto 0; inline-size: var(--ruler-size); block-size: var(--ruler-size); border-inline-end: 1px solid #cbd0d6; border-block-end: 1px solid #cbd0d6; }
+  .ruler-x { inset: var(--focus-header-height) 0 auto var(--ruler-size); inline-size: calc(100% - var(--ruler-size)); block-size: var(--ruler-size); border-block-end: 1px solid #cbd0d6; }
+  .ruler-y { inset: calc(var(--focus-header-height) + var(--ruler-size)) auto 0 0; inline-size: var(--ruler-size); block-size: calc(100% - var(--focus-header-height) - var(--ruler-size)); border-inline-end: 1px solid #cbd0d6; }
   .editor-viewport {
     position: absolute;
-    inset: var(--ruler-size) 0 0 var(--ruler-size);
+    inset: calc(var(--focus-header-height) + var(--ruler-size)) 0 0 var(--ruler-size);
     overflow: hidden;
     touch-action: none;
     user-select: none;
@@ -157,6 +209,10 @@ export const EDITOR_STYLES = `
   .editor-viewport.panning { cursor: grabbing; user-select: none; }
   .editor-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .editor-board { position: absolute; transform-origin: 0 0; padding: 46px 40px 120px; }
+  .editor-board.is-focus-mode > .preview-row:not(.is-focus-row),
+  .editor-board.is-focus-mode .editor-frame:not(.is-focus-target) { display: none; }
+  .editor-board.is-focus-mode > .preview-row.is-focus-row { margin-block-end: 0; }
+  .editor-board.is-focus-mode > .preview-row.is-focus-row > .row-title { display: none; }
 
   .annotation-overlay {
     position: absolute;
@@ -305,6 +361,7 @@ export const EDITOR_STYLES = `
   .property-list > div { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 8px; padding-block: 9px; border-block-end: 1px solid #eef0f2; }
   .property-list dt { color: var(--faint); font-size: 11px; }
   .property-list dd { min-inline-size: 0; margin: 0; color: #343b44; font-size: 11px; overflow-wrap: anywhere; }
+  .property-list .selection-source { display: block; inline-size: 100%; padding: 4px 6px; text-align: start; font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .inspector-block { margin-block-start: 18px; }
   .inspector-block h3 { margin: 0 0 8px; color: #59616c; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
   .inspector-block p { color: #626c78; font-size: 11px; overflow-wrap: anywhere; }
@@ -390,6 +447,7 @@ export const EDITOR_STYLES = `
   .uhura-editor.ui-hidden .editor-navigator,
   .uhura-editor.ui-hidden .editor-inspector,
   .uhura-editor.ui-hidden .editor-source-drawer,
+  .uhura-editor.ui-hidden .focus-header,
   .uhura-editor.ui-hidden .canvas-tools,
   .uhura-editor.ui-hidden .annotation-overlay,
   .uhura-editor.ui-hidden .ruler-corner,
@@ -400,6 +458,11 @@ export const EDITOR_STYLES = `
   @media (max-width: 1199px) {
     .editor-inspector { display: none; }
     .editor-stage { inset-inline-end: 0; }
+    .uhura-editor.is-focus-mode {
+      --inspector-width: min(320px, 40vw);
+    }
+    .uhura-editor.is-focus-mode .editor-inspector { display: flex; }
+    .uhura-editor.is-focus-mode .editor-stage { inset-inline-end: var(--inspector-width); }
   }
   @media (max-width: 799px) {
     .editor-navigator { display: none; }

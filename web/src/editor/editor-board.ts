@@ -137,6 +137,7 @@ const frame = (
   figure.tabIndex = 0;
   figure.setAttribute("role", "button");
   figure.setAttribute("aria-pressed", "false");
+  figure.setAttribute("aria-keyshortcuts", "Enter");
 
   const shellClass = preview.identity.kind === "page"
     ? "device"

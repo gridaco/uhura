@@ -14,8 +14,7 @@ workspace = true
 name = "uhura"
 path = "src/main.rs"
 
-# The committed asset generator (plan micro-decision #19): seeded
-# subject-motif JPEGs, regenerated from fixtures/assets/manifest.toml.
+# Validates materialized fixture assets and renders legacy seeded motifs.
 [[bin]]
 name = "gen-assets"
 path = "src/bin/gen_assets.rs"

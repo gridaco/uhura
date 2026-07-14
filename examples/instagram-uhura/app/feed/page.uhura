@@ -207,6 +207,7 @@ store {
         </button>
       </view>
     {:when ready f}
+      <!-- @annotation This scroll boundary owns infinite-feed pagination; near-end emits once and the store guard prevents duplicate loads. -->
       <scroll class="feed-scroll" on:near-end={emit feed-near-end()}>
         <stories-tray stories={f.stories} on:story-tapped />
         {#if count(f.posts) == 0}

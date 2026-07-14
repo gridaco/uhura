@@ -101,6 +101,7 @@ const stateFixture = (): unknown => ({
     previews: [{
       id: "page-feed-default",
       identity: { kind: "page", subject: "feed", example: "default" },
+      sourceFile: "app/feed/page.uhura",
       default: true,
       pinned: false,
       derived: false,
@@ -174,6 +175,7 @@ test("decodes the complete fixed EditorState contract", () => {
   assert.equal(state.protocol, "uhura-editor-state/1");
   assert.equal(state.sourceRevision, 3);
   assert.equal(state.render?.previews[0]?.data[0]?.source?.kind, "fixture");
+  assert.equal(state.render?.previews[0]?.sourceFile, "app/feed/page.uhura");
   assert.deepEqual(state.render?.previews[0]?.interactions[0]?.payload, { id: "post-1" });
   assert.equal(state.render?.icons["heart"]?.commands[0]?.kind, "path");
   assert.equal(state.render?.authoring.entries[1]?.class, "annotation");
@@ -388,6 +390,12 @@ test("annotation kinds use the full ASCII lower-kebab grammar", () => {
 });
 
 test("validates documentation and semantic provenance while allowing zero anchors", () => {
+  const wrongSourceFile = stateFixture() as {
+    render: { previews: Array<{ sourceFile: string }> };
+  };
+  wrongSourceFile.render.previews[0]!.sourceFile = "../feed.uhura";
+  assert.throws(() => decodeEditorState(wrongSourceFile), /canonical project-relative source path/);
+
   const zeroAnchors = stateFixture() as {
     render: { previews: Array<{ provenance: { occurrences: Array<{ anchors: unknown[] }> } }> };
   };

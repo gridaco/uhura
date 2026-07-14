@@ -320,6 +320,7 @@ export class AnnotationOverlay {
   readonly #focusSourceTarget: ((targetId: string) => void) | undefined;
   readonly #chrome: readonly HTMLElement[];
   #canvasVisible = true;
+  #focusedPreviewId: string | null = null;
   #activePreviewId: string | null = null;
   #activeMarkerId: string | null = null;
   #revealedTargetId: string | null = null;
@@ -339,6 +340,7 @@ export class AnnotationOverlay {
   #records: OverlayRecord[] = [];
   #placementOrder: OverlayMarkerRecord[] = [];
   #placementsById = new Map<string, AnnotationPlacement>();
+  #expandedMarkerIds = new Set<string>();
   #frame = 0;
   #disposed = false;
   readonly #onViewportScroll = (): void => {
@@ -369,6 +371,7 @@ export class AnnotationOverlay {
     this.#revealedTargetId = null;
     this.#pendingFocusTargetId = null;
     this.#placementsById.clear();
+    this.#expandedMarkerIds.clear();
     const svg = this.#document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.classList.add("annotation-leaders");
     svg.setAttribute("aria-hidden", "true");
@@ -459,6 +462,7 @@ export class AnnotationOverlay {
     if (this.#canvasVisible === visible) return;
     this.#canvasVisible = visible;
     if (!visible) {
+      this.#expandedMarkerIds.clear();
       for (const record of this.#records) {
         record.card.hidden = true;
         record.card.classList.toggle("is-revealed", false);
@@ -479,10 +483,13 @@ export class AnnotationOverlay {
     this.#revealedTargetId = null;
     this.#activeMarkerId = null;
     this.#pendingFocusTargetId = null;
-    for (const record of this.#records) {
-      record.card.hidden = true;
-      record.card.classList.toggle("is-revealed", false);
-      for (const marker of record.markers) marker.line.style.display = "none";
+    if (this.#focusedPreviewId === null) {
+      this.#expandedMarkerIds.clear();
+      for (const record of this.#records) {
+        record.card.hidden = true;
+        record.card.classList.toggle("is-revealed", false);
+        for (const marker of record.markers) marker.line.style.display = "none";
+      }
     }
     this.#syncStateClasses();
     this.invalidate();
@@ -501,10 +508,12 @@ export class AnnotationOverlay {
       ?? record.markers.find((candidate) => !candidate.marker.hidden)
       ?? record.markers[0];
     if (!marker) return false;
-    for (const candidate of this.#records) {
-      candidate.card.hidden = candidate !== record;
-      candidate.card.classList.toggle("is-revealed", candidate === record);
-      for (const realization of candidate.markers) realization.line.style.display = "none";
+    if (this.#focusedPreviewId === null) {
+      for (const candidate of this.#records) {
+        candidate.card.hidden = candidate !== record;
+        candidate.card.classList.toggle("is-revealed", candidate === record);
+        for (const realization of candidate.markers) realization.line.style.display = "none";
+      }
     }
     this.#activeMarkerId = marker.id;
     this.#revealedTargetId = targetId;
@@ -532,6 +541,15 @@ export class AnnotationOverlay {
     this.invalidate();
   }
 
+  /** Limits presentation to one preview and expands that preview's annotation cards. */
+  setFocusedPreview(previewId: string | null): void {
+    if (this.#focusedPreviewId === previewId) return;
+    this.#focusedPreviewId = previewId;
+    this.#expandedMarkerIds.clear();
+    this.#syncStateClasses();
+    this.invalidate();
+  }
+
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
@@ -542,6 +560,7 @@ export class AnnotationOverlay {
     this.#records = [];
     this.#placementOrder = [];
     this.#placementsById.clear();
+    this.#expandedMarkerIds.clear();
   }
 
   #layout(): void {
@@ -552,10 +571,19 @@ export class AnnotationOverlay {
       marker: OverlayMarkerRecord;
       anchor: AnnotationRect;
     }> = [];
+    const visibleMarkerIds = new Set<string>();
     for (const record of this.#records) {
-      const cardRequested = this.#canvasVisible
-        && this.#revealedTargetId === record.annotation.target.id
-        && record.markers.some((marker) => marker.id === this.#activeMarkerId);
+      const activeMarker = record.markers.find((marker) => marker.id === this.#activeMarkerId);
+      const cardRequested = this.#canvasVisible && (
+        (
+          this.#focusedPreviewId !== null
+          && record.markers.some((marker) => this.#matchesFocusedPreview(marker))
+        )
+        || (
+          this.#revealedTargetId === record.annotation.target.id
+          && Boolean(activeMarker && this.#matchesFocusedPreview(activeMarker))
+        )
+      );
       record.card.hidden = !cardRequested;
       record.card.classList.toggle("is-revealed", cardRequested);
       const visibleKinds = record.annotation.entries.map((entry) => `@${entry.kind}`);
@@ -564,8 +592,7 @@ export class AnnotationOverlay {
           "aria-label",
           `${visibleKinds.join(", ")} on ${record.annotation.target.label}; rendered instance ${markerIndex + 1} of ${record.markers.length}`,
         );
-        if (!this.#canvasVisible) {
-          this.#setMarkerVisibility(marker, false, false);
+        if (!this.#canvasVisible || !this.#matchesFocusedPreview(marker)) {
           continue;
         }
         const resources = this.#install.resourcesByPreviewId.get(marker.occurrence.previewId);
@@ -584,11 +611,23 @@ export class AnnotationOverlay {
           return rect ? [rect] : [];
         });
         const anchor = unionAnnotationRects(rects);
-        const cardVisible = Boolean(anchor)
-          && this.#revealedTargetId === record.annotation.target.id
-          && this.#activeMarkerId === marker.id;
-        this.#setMarkerVisibility(marker, Boolean(anchor), cardVisible);
-        if (anchor) visible.push({ record, marker, anchor });
+        if (anchor) {
+          visible.push({ record, marker, anchor });
+          visibleMarkerIds.add(marker.id);
+        }
+      }
+    }
+    const expandedMarkerIds = new Set<string>();
+    for (const record of this.#records) {
+      const marker = this.#cardMarker(record, visibleMarkerIds);
+      if (marker) expandedMarkerIds.add(marker.id);
+    }
+    this.#expandedMarkerIds = expandedMarkerIds;
+    for (const record of this.#records) {
+      for (const marker of record.markers) {
+        const expanded = expandedMarkerIds.has(marker.id);
+        this.#setMarkerVisibility(marker, visibleMarkerIds.has(marker.id), expanded);
+        marker.marker.setAttribute("aria-expanded", String(expanded));
       }
     }
     const placements = placeAnnotations(
@@ -600,8 +639,9 @@ export class AnnotationOverlay {
           width: record.card.offsetWidth || 260,
           height: record.card.offsetHeight || 132,
         },
-        showCard: this.#revealedTargetId === record.annotation.target.id
-          && this.#activeMarkerId === marker.id,
+        showCard: expandedMarkerIds.has(marker.id),
+        preferGutter: this.#focusedPreviewId !== null
+          && expandedMarkerIds.has(marker.id),
       })),
       { left: 0, top: 0, width: viewportRect.width, height: viewportRect.height },
       12,
@@ -636,8 +676,7 @@ export class AnnotationOverlay {
       marker.highlight.setAttribute("y", String(anchor.top));
       marker.highlight.setAttribute("width", String(anchor.width));
       marker.highlight.setAttribute("height", String(anchor.height));
-      const showsCard = this.#revealedTargetId === record.annotation.target.id
-        && this.#activeMarkerId === marker.id;
+      const showsCard = expandedMarkerIds.has(marker.id);
       if (showsCard) {
         shownCards.add(record);
         record.card.hidden = false;
@@ -671,24 +710,33 @@ export class AnnotationOverlay {
     markerVisible: boolean,
     cardVisible: boolean,
   ): void {
+    const presented = markerVisible && this.#matchesFocusedPreview(record);
     const previewActive = this.#activePreviewId !== null
       && record.occurrence.previewId === this.#activePreviewId;
-    record.marker.hidden = !markerVisible;
-    record.line.style.display = cardVisible ? "" : "none";
-    record.highlight.style.display = markerVisible && previewActive ? "" : "none";
+    record.marker.hidden = !presented;
+    record.line.style.display = presented && cardVisible ? "" : "none";
+    record.highlight.style.display = presented && previewActive ? "" : "none";
   }
 
   #syncStateClasses(): void {
     for (const record of this.#records) {
+      let activeMarkerPresented = false;
       for (const marker of record.markers) {
+        const presented = this.#matchesFocusedPreview(marker);
         const previewActive = this.#activePreviewId !== null
           && marker.occurrence.previewId === this.#activePreviewId;
         const active = marker.id === this.#activeMarkerId;
+        activeMarkerPresented ||= presented && active;
         for (const node of [marker.marker, marker.highlight, marker.line]) {
           node.classList.toggle("is-preview-active", previewActive);
           node.classList.toggle("is-active", active);
         }
+        if (!presented) {
+          marker.marker.hidden = true;
+          marker.line.style.display = "none";
+        }
         marker.highlight.style.display = this.#canvasVisible
+          && presented
           && !marker.marker.hidden
           && previewActive
           ? ""
@@ -697,12 +745,42 @@ export class AnnotationOverlay {
           "aria-expanded",
           String(
             this.#canvasVisible
-            && active
-            && this.#revealedTargetId === record.annotation.target.id,
+            && presented
+            && (
+              this.#expandedMarkerIds.has(marker.id)
+              || (
+                this.#focusedPreviewId === null
+                && active
+                && this.#revealedTargetId === record.annotation.target.id
+              )
+            ),
           ),
         );
       }
+      if (
+        this.#focusedPreviewId === null
+        && this.#revealedTargetId === record.annotation.target.id
+        && !activeMarkerPresented
+      ) {
+        record.card.hidden = true;
+        record.card.classList.toggle("is-revealed", false);
+      }
     }
+  }
+
+  #matchesFocusedPreview(record: OverlayMarkerRecord): boolean {
+    return this.#focusedPreviewId === null
+      || record.occurrence.previewId === this.#focusedPreviewId;
+  }
+
+  #cardMarker(
+    record: OverlayRecord,
+    visibleMarkerIds: ReadonlySet<string>,
+  ): OverlayMarkerRecord | null {
+    const visible = record.markers.filter((marker) => visibleMarkerIds.has(marker.id));
+    const active = visible.find((marker) => marker.id === this.#activeMarkerId) ?? null;
+    if (this.#focusedPreviewId !== null) return active ?? visible[0] ?? null;
+    return this.#revealedTargetId === record.annotation.target.id ? active : null;
   }
 
   #focusMarker(marker: OverlayMarkerRecord): void {
@@ -711,11 +789,13 @@ export class AnnotationOverlay {
     this.#activeMarkerId = marker.id;
     this.#revealedTargetId = marker.annotation.target.id;
     this.#pendingFocusTargetId = null;
-    for (const record of this.#records) {
-      const revealed = record.annotation.target.id === marker.annotation.target.id;
-      record.card.hidden = !revealed;
-      record.card.classList.toggle("is-revealed", revealed);
-      for (const candidate of record.markers) candidate.line.style.display = "none";
+    if (this.#focusedPreviewId === null) {
+      for (const record of this.#records) {
+        const revealed = record.annotation.target.id === marker.annotation.target.id;
+        record.card.hidden = !revealed;
+        record.card.classList.toggle("is-revealed", revealed);
+        for (const candidate of record.markers) candidate.line.style.display = "none";
+      }
     }
     this.#syncStateClasses();
     if (changed) this.#focusSourceTarget?.(marker.annotation.target.id);

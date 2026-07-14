@@ -132,3 +132,29 @@ test("marker-only realizations stack badges without reserving hidden card collis
     "badges sharing an anchor still receive distinct hit targets",
   );
 });
+
+test("persistent callouts can prefer collision-aware viewport gutters", () => {
+  const viewport = { left: 0, top: 0, width: 600, height: 400 };
+  const placements = placeAnnotations([
+    {
+      id: "first",
+      sourceOrder: 0,
+      anchor: { left: 270, top: 80, width: 60, height: 30 },
+      card: { width: 180, height: 90 },
+      preferGutter: true,
+    },
+    {
+      id: "second",
+      sourceOrder: 1,
+      anchor: { left: 270, top: 190, width: 60, height: 30 },
+      card: { width: 180, height: 90 },
+      preferGutter: true,
+    },
+  ], viewport);
+
+  assert.ok(placements.every((placement) => placement.gutter));
+  assert.ok(placements.every((placement) =>
+    placement.card.left === 12 || placement.card.left === viewport.width - 12 - 180
+  ));
+  assert.notDeepEqual(placements[0]?.card, placements[1]?.card);
+});

@@ -336,6 +336,7 @@ const render = (
   previews: [{
     id: "card/default",
     identity: { kind: "component", subject: "card", example: "default" },
+    sourceFile: "components/card.uhura",
     default: true,
     pinned: false,
     derived: false,

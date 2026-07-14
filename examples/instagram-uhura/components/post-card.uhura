@@ -30,6 +30,7 @@ emits {
       <text class="username">{post.author.username}</text>
     </view>
   </region>
+  <!-- @annotation Media preserves a square visual rhythm across image, carousel, and video posts. -->
   {#match post.media}
     {:when image m}
       <region label="Like this post" supplementary on:activate-double={emit like-toggled(post: post.id, now-liked: true)}>
@@ -46,6 +47,7 @@ emits {
     {:when video v}
       <video class="media" src={v.src} poster={v.poster.src} label={v.poster.alt} controls playsinline />
   {/match}
+  <!-- @annotation Like and comment stay grouped at the leading edge while Save remains a distinct trailing action. -->
   <view class="action-row">
     <view class="action-primary">
       <button class={if liked then "icon-action liked" else "icon-action"} pressed={liked} busy={like-pending} label={if liked then "Unlike" else "Like"} on:press={emit like-toggled(post: post.id, now-liked: !liked)}>

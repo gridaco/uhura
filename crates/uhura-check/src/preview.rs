@@ -29,6 +29,9 @@ use crate::types::Ty;
 #[derive(Clone, Debug)]
 pub struct ResolvedPreview {
     pub subject: SubjectKind,
+    /// Canonical project-relative path of the definition source. Editor-only
+    /// provenance; examples may live in a different companion file.
+    pub source_file: String,
     pub example: String,
     pub is_default: bool,
     /// A state pin somewhere in the chain — the caption marks `pinned`.
@@ -170,6 +173,7 @@ pub fn resolve_previews(
             program,
             resolved,
             env,
+            &sources[env.source].rel_path,
             src,
             file,
             fixtures,
@@ -186,6 +190,7 @@ fn resolve_file(
     program: &ProgramIr,
     resolved: &Resolved,
     env: &DefEnv,
+    source_file: &str,
     src: &ParsedSource,
     file: &ast::ExamplesFile,
     fixtures: &BTreeMap<Ident, FixtureData>,
@@ -400,6 +405,7 @@ fn resolve_file(
             .and_then(|target| authoring.doc_for_target(target));
         previews.push(ResolvedPreview {
             subject: env.kind.clone(),
+            source_file: source_file.to_string(),
             example: example.name.clone(),
             is_default: example.is_default,
             pinned: effective.state_pinned,

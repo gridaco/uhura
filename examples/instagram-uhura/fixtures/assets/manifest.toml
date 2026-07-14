@@ -1,253 +1,531 @@
-# Asset manifest — id → file, required alt text, and the motif spec the
-# committed generator renders (plan micro-decision #19: assets are locally
-# generated, seeded, no network or licensing). Regenerate with:
-#   cargo run -p uhura-cli --bin gen-assets -- examples/instagram
-# Motifs: duotone (avatars), glaze (tile grids), wave, aurora, crumb
-# (speckle), field (soft gradient blocks). Same seed → same bytes.
-# Play-only `media-*.mp4` files intentionally sit beside this manifest rather
-# than becoming generator entries: `gen-assets` emits JPEGs, while read-only
-# Editor previews project each video's listed poster and never embed its source.
-
-# ── avatars (96×96) ─────────────────────────────────────────────────────
+# Materialized Grida Library assets for the Instagram demo.
+#
+# Uhura Editor embeds these local bytes as data URIs and Uhura Play serves
+# them from /api/play/assets, so remote URLs are provenance only: the demo
+# remains deterministic and works offline. Every normalized WebP is square,
+# metadata-free, encoded at quality 82, and pinned by SHA-256. Grida Library terms:
+# https://grida.co/library/license
+#
+# `cargo run -p uhura-cli --bin gen-assets -- examples/instagram-uhura`
+# validates and preserves sourced files; it only renders legacy motif entries.
 
 [assets.avatar-mira]
-file = "avatar-mira.jpg"
+file = "avatar-mira.webp"
 alt = "Mira Santos"
-motif = "duotone"
-seed = 11
 size = 96
+source = "2f59229e-289b-4516-961b-c04071cae97e"
+sha256 = "acae81c0cab21c63bf14acbbad00f153ffce2e456a66565df76cd6a9fcaa07a7"
 
 [assets.avatar-lena]
-file = "avatar-lena.jpg"
+file = "avatar-lena.webp"
 alt = "Lena Holt"
-motif = "duotone"
-seed = 12
 size = 96
+source = "9aeef2ca-e5a6-4e57-aa62-7aaab40b12ac"
+sha256 = "48563b24e12ad4f43294683e83d43d672678fba84c1095e60f5133d5e652b8af"
 
 [assets.avatar-marco]
-file = "avatar-marco.jpg"
+file = "avatar-marco.webp"
 alt = "Marco Reyes"
-motif = "duotone"
-seed = 13
 size = 96
+source = "91d0101c-747d-494d-a486-6bc1831ccdc1"
+sha256 = "6d85aa8d94ebbc5b8a08c21078c8179c04eb6d0c7d21ac68441601e7e5dd8e2d"
 
 [assets.avatar-nils]
-file = "avatar-nils.jpg"
+file = "avatar-nils.webp"
 alt = "Nils Bergman"
-motif = "duotone"
-seed = 14
 size = 96
+source = "3576d1ef-dd7e-4139-98d0-4f655c3e7632"
+sha256 = "fca86e95abf9a2c67ef7455de9011fe69c3e66422b3588412420c2d328a670c0"
 
 [assets.avatar-priya]
-file = "avatar-priya.jpg"
+file = "avatar-priya.webp"
 alt = "Priya Raman"
-motif = "duotone"
-seed = 15
 size = 96
+source = "5a74d96e-afff-4c4f-97c0-6f414c68228b"
+sha256 = "eaa15bffd6daaf007f947c6f7835bbef81b6dad30cb7f2db2f1b55d2954c7e0a"
 
 [assets.avatar-ayla]
-file = "avatar-ayla.jpg"
+file = "avatar-ayla.webp"
 alt = "Ayla Demir"
-motif = "duotone"
-seed = 16
 size = 96
+source = "f3c4f2f4-96ef-4879-8fb5-af957df040a5"
+sha256 = "28518b941990fd2863becb348cbb737c3505359a6dde949240d1987ec03630c0"
 
 [assets.avatar-june]
-file = "avatar-june.jpg"
+file = "avatar-june.webp"
 alt = "June Park"
-motif = "duotone"
-seed = 17
 size = 96
+source = "fa67ad53-50bd-4560-b549-394bad8a432c"
+sha256 = "e41031b96eb192c18f231fbb80769da725cbf2091ffed2a6a7b04506ac925e25"
 
 [assets.avatar-theo]
-file = "avatar-theo.jpg"
+file = "avatar-theo.webp"
 alt = "Theo Okafor"
-motif = "duotone"
-seed = 18
 size = 96
+source = "76034717-f3c2-4f41-8606-f7bc0f5453b3"
+sha256 = "860e4b2bb8f86b4e4871a0d490ad4cfbb91c4d59655765956b9856665e5fdbe1"
 
 [assets.avatar-kenji]
-file = "avatar-kenji.jpg"
+file = "avatar-kenji.webp"
 alt = "Kenji Tanaka"
-motif = "duotone"
-seed = 19
 size = 96
-
-# ── post media (640×640) ────────────────────────────────────────────────
+source = "ffa8705a-ac74-4348-8208-e139a9d95126"
+sha256 = "f85504648e4f76e2ba6eca84e5c998341014d87030ec21b2266960f0ef8bb744"
 
 [assets.media-lena-glaze]
-file = "media-lena-glaze.jpg"
-alt = "Grid of copper-red glaze test tiles on a maple bench"
-motif = "glaze"
-seed = 31
+file = "media-lena-glaze.webp"
+alt = "Decorative ceramic tile panels leaning in an artisan studio"
 size = 640
+source = "79ea4b31-10e5-4bc4-8cbf-2abf7f0af8e9"
+sha256 = "1431e6fa2192a294e01dcf8ab057ec62197823645a163b9cd5aae0f06444d27d"
 
 [assets.media-marco-baja-1]
-file = "media-marco-baja-1.jpg"
-alt = "Long left-hand wave peeling along a desert point"
-motif = "wave"
-seed = 32
+file = "media-marco-baja-1.webp"
+alt = "Ocean wave exploding into white spray against deep blue water"
 size = 640
+source = "e59fb89a-695d-4988-934b-68527df3a40a"
+sha256 = "b28170eb3865d3c3a926e57849ad756a2a7ca0ebf611bfc8d8745a7796161fdc"
 
 [assets.media-marco-baja-2]
-file = "media-marco-baja-2.jpg"
-alt = "Campfire on the bluff above the break at dusk"
-motif = "wave"
-seed = 33
+file = "media-marco-baja-2.webp"
+alt = "Glowing campfire beside a tent under a desert night sky"
 size = 640
+source = "acd39bc1-dca3-4ea4-b74b-f489618c9676"
+sha256 = "bb0052f57117cb9746b0676b793c6fe3759c1681b8a1b3cec1a6960e9f296fb0"
 
 [assets.media-marco-baja-3]
-file = "media-marco-baja-3.jpg"
-alt = "Board fins silhouetted against the sunrise"
-motif = "wave"
-seed = 34
+file = "media-marco-baja-3.webp"
+alt = "Palm-lined ocean glowing orange and violet at sunset"
 size = 640
+source = "9085e308-d9ec-46d8-bf38-3bbb0b1238af"
+sha256 = "2f5b2a74c6d6458f9f710003053e0bfe22467e3713db0c6334f1e3758ac6e883"
 
 [assets.media-nils-aurora-poster]
-file = "media-nils-aurora-poster.jpg"
-alt = "Green aurora curtains over a dark fjord"
-motif = "aurora"
-seed = 35
+file = "media-nils-aurora-poster.webp"
+alt = "Soft bands of blue, violet, and green light across a dark sky"
 size = 640
+source = "594e83dc-0f30-49ce-a5cb-4e2a6e531c7c"
+sha256 = "c203b6d60042a3503a8c8157832a326db344c4cdf8fb6a12e31b7c83aa09a9e6"
 
 [assets.media-priya-starter]
-file = "media-priya-starter.jpg"
-alt = "Open crumb of a sourdough loaf, sliced on a flour-dusted board"
-motif = "crumb"
-seed = 36
+file = "media-priya-starter.webp"
+alt = "Black-and-white cross-section of a rustic bread loaf"
 size = 640
+source = "c90aed47-5b22-47a7-b1bb-527d0ca472fb"
+sha256 = "bc1e0e6cbe4e991d71fb2f4157dd2c2e5648a484c42084bbccbd04f7dfea3b73"
 
 [assets.media-ayla-ferry]
-file = "media-ayla-ferry.jpg"
-alt = "Ferry deck railing over blue water, city skyline behind"
-motif = "wave"
-seed = 37
+file = "media-ayla-ferry.webp"
+alt = "Small boat crossing blue water toward the Jaffa skyline"
 size = 640
+source = "9580a2e2-4792-4349-9bf8-042dacb2ca18"
+sha256 = "cdccd6befe9f7c007b4b0150c60f3cd5d701f0488fd7ee32b02744c77f95c321"
 
 [assets.media-june-lookbook]
-file = "media-june-lookbook.jpg"
-alt = "Folded linen garments stacked by shade on a workbench"
-motif = "field"
-seed = 38
+file = "media-june-lookbook.webp"
+alt = "Navy mosaic printed across natural linen fabric"
 size = 640
+source = "5f91e814-0ffd-4fbf-b5f9-87aa8765dc50"
+sha256 = "114156cf5b9879688c28ec7d1c7f023a6655bade774d4aa0dbd5a758a6c5033b"
 
 [assets.media-theo-court]
-file = "media-theo-court.jpg"
-alt = "Basketball court painted with bold geometric shapes"
-motif = "field"
-seed = 39
+file = "media-theo-court.webp"
+alt = "Colorful patterned staircase framed by saturated yellow walls"
 size = 640
+source = "4f15c848-9587-49c0-8585-11b46a0ee8db"
+sha256 = "ea65673a673b538e431ba4e3d0cd81a49b0b4144c3fb26bbbea1baec4e7f9bcf"
 
 [assets.media-kenji-copper]
-file = "media-kenji-copper.jpg"
-alt = "Road bike leaning on a stone wall at a mountain pass"
-motif = "field"
-seed = 40
+file = "media-kenji-copper.webp"
+alt = "Cyclists riding through a crowded market square"
 size = 640
-
-# ── profile grid thumbs (320×320) ───────────────────────────────────────
+source = "69083e76-d2f3-4d72-9c52-a9e62eb8476d"
+sha256 = "02c48eee5a8d76c6c8bffaa1b71d2c0a9773c685ac8d5adb99ad41d88341a358"
 
 [assets.thumb-lena-1]
-file = "thumb-lena-1.jpg"
-alt = "Copper-red glaze tiles"
-motif = "glaze"
-seed = 51
+file = "thumb-lena-1.webp"
+alt = "Decorative ceramic tile panels in warm glaze colors"
 size = 320
+source = "79ea4b31-10e5-4bc4-8cbf-2abf7f0af8e9"
+sha256 = "481a25bff6f9027e85f4ea82d07c4a131d3b2da8fc3c2c1e139c8aa6ac6b009f"
 
 [assets.thumb-lena-2]
-file = "thumb-lena-2.jpg"
-alt = "Stack of unglazed bowls"
-motif = "glaze"
-seed = 52
+file = "thumb-lena-2.webp"
+alt = "Celadon ceramic vessel with a sculpted wave rim"
 size = 320
+source = "ec36ef84-8266-43de-921c-48e9531d96b1"
+sha256 = "995a6f1cfb2bcadc81fd44d0250933cec0721aad486ec3b300f3cfe589dd8ad0"
 
 [assets.thumb-lena-3]
-file = "thumb-lena-3.jpg"
-alt = "Kiln shelf mid-load"
-motif = "glaze"
-seed = 53
+file = "thumb-lena-3.webp"
+alt = "Editorial catalog of handmade stoneware ceramics"
 size = 320
+source = "6b040e86-a7f4-4847-bf7e-dd542a58f40e"
+sha256 = "0869effd4eb8160cc0a314d340a9c45e1e9f0235087fe005d3f29f175fcd0c3b"
 
 [assets.thumb-lena-4]
-file = "thumb-lena-4.jpg"
-alt = "Celadon test cups"
-motif = "glaze"
-seed = 54
+file = "thumb-lena-4.webp"
+alt = "White ceramic vessel with a flowing sculptural form"
 size = 320
+source = "9e6eaf2a-fdb5-4235-b2c6-5aa9ba6f0160"
+sha256 = "496d22b701356f30bd38349c745d6646684d6f163b879a1b7269da39bdd40f45"
 
 [assets.thumb-lena-5]
-file = "thumb-lena-5.jpg"
-alt = "Wedging table with fresh clay"
-motif = "crumb"
-seed = 55
+file = "thumb-lena-5.webp"
+alt = "Miniature artist studio with shelves and a workbench"
 size = 320
+source = "dce54a9f-c54c-4d65-ab0e-a99df3c95462"
+sha256 = "4fa3e8eb0f3a12a832545b9943a3b00d356d40ebe37cf5733b234b7a8d64613e"
 
 [assets.thumb-lena-6]
-file = "thumb-lena-6.jpg"
-alt = "Iron-speckled dinner plates"
-motif = "crumb"
-seed = 56
+file = "thumb-lena-6.webp"
+alt = "Blush ceramic sculpture with a looping organic form"
 size = 320
+source = "25cb2f23-daae-430e-81b4-bf30b2a336ab"
+sha256 = "bf19a0cf6095a3fd5eddf9aacd946b08a5bf367b1e1716b2f62473bd2e3c2ba1"
 
 [assets.thumb-lena-7]
-file = "thumb-lena-7.jpg"
-alt = "Throwing a tall cylinder"
-motif = "field"
-seed = 57
+file = "thumb-lena-7.webp"
+alt = "Glossy ceramic head with small floral decorations"
 size = 320
+source = "4e0a9076-f9d3-465b-bd1b-0ab1483ca1d9"
+sha256 = "59cda68ff20c98a7507667e2a41475f0375f03acf8cadfbf4dd9bf5b933d2b74"
 
 [assets.thumb-lena-8]
-file = "thumb-lena-8.jpg"
-alt = "Glaze buckets labelled by cone"
-motif = "glaze"
-seed = 58
+file = "thumb-lena-8.webp"
+alt = "Two painted ceramic vases filled with flowers"
 size = 320
+source = "86cc66c2-f78d-4142-9584-6244f520e396"
+sha256 = "d5895e2a5538cb62ebd699ed5d777831246b2b7929a90d3b7fa741375cc13778"
 
 [assets.thumb-lena-9]
-file = "thumb-lena-9.jpg"
-alt = "Morning light across the studio bench"
-motif = "field"
-seed = 59
+file = "thumb-lena-9.webp"
+alt = "Artisan material study arranged on a dark catalog page"
 size = 320
+source = "55faa69a-e1f6-4815-b6f0-0e4e20b8cae0"
+sha256 = "b9c8076aad65e468eead20f68d5be0cbade06924f79d8782db4d75f6268bbe85"
 
 [assets.thumb-mira-1]
-file = "thumb-mira-1.jpg"
-alt = "Pastéis de nata on a marble counter"
-motif = "crumb"
-seed = 61
+file = "thumb-mira-1.webp"
+alt = "Translucent citrus and radish slices on white"
 size = 320
+source = "b95e551c-f7bf-44b9-bef5-fc1a584d8684"
+sha256 = "425e9d633d178a5ab134bd1a00caaa479b2e5c48ae3f5e1372687e93bf49c2f5"
 
 [assets.thumb-mira-2]
-file = "thumb-mira-2.jpg"
-alt = "Tram rails catching dawn light"
-motif = "field"
-seed = 62
+file = "thumb-mira-2.webp"
+alt = "Colorful geometric Mediterranean hillside village"
 size = 320
+source = "0426d0d3-84df-4145-adef-2d0f48c6de49"
+sha256 = "2ce92010b2d4f26198454abbae66c4963715f1c265719a515381ed4e0eb9f0e2"
 
 [assets.thumb-mira-3]
-file = "thumb-mira-3.jpg"
-alt = "Market citrus stacked in crates"
-motif = "glaze"
-seed = 63
+file = "thumb-mira-3.webp"
+alt = "Grid of cross-sectioned fruits and vegetables"
 size = 320
+source = "b47fd9c7-390f-4917-b3ea-a24081b44662"
+sha256 = "8129678f486e6ace998afbf5f7cb8a00be69b6c9230d40f68ea5852054d86dd6"
 
 [assets.thumb-mira-4]
-file = "thumb-mira-4.jpg"
-alt = "Tiled facade in alternating blues"
-motif = "glaze"
-seed = 64
+file = "thumb-mira-4.webp"
+alt = "Colorful patterned staircase framed by yellow walls"
 size = 320
+source = "4f15c848-9587-49c0-8585-11b46a0ee8db"
+sha256 = "535d3e9d7dcd68b6ad26c4f432763c92e788b6f95fd7d210b9611be8fb216ea5"
 
 [assets.thumb-mira-5]
-file = "thumb-mira-5.jpg"
-alt = "Grilled sardines over coals"
-motif = "crumb"
-seed = 65
+file = "thumb-mira-5.webp"
+alt = "Bold illustrated food flavors in a four-panel grid"
 size = 320
+source = "58e06e31-7747-4202-a7e9-732e93b04810"
+sha256 = "9f81c78f25fc826fc6612c707e8ed622ab1da8aff7dd227b1d9e983c371f911f"
 
 [assets.thumb-mira-6]
-file = "thumb-mira-6.jpg"
-alt = "Ferry wake at golden hour"
-motif = "wave"
-seed = 66
+file = "thumb-mira-6.webp"
+alt = "Ocean spray breaking over rocks in golden light"
 size = 320
+source = "2665c0c1-807d-4158-9d8a-48b2a559306a"
+sha256 = "5901f2cb720222122303b307cea42625466de12293d8552cb59d41ae23235dfc"
+
+# Source objects are normalized once into the asset entries above; no runtime
+# request is made to these URLs. `LicenseRef-GridaLibrary` means the custom
+# no-attribution personal/commercial grant stated on Grida Library's license page.
+
+[sources.2f59229e-289b-4516-961b-c04071cae97e]
+collection = "home"
+page = "https://grida.co/library/o/2f59229e-289b-4516-961b-c04071cae97e"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/6b41eeafc2c1310a.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "6b41eeafc2c1310aefd2d6cb2e0a00312276acc9f2d3cf2aee89fee1069cccae"
+
+[sources.9aeef2ca-e5a6-4e57-aa62-7aaab40b12ac]
+collection = "home"
+page = "https://grida.co/library/o/9aeef2ca-e5a6-4e57-aa62-7aaab40b12ac"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/28ee1adef3887eca.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "28ee1adef3887eca2c82389840a1b341836fbde7d7975b9201694a4e1d906d25"
+
+[sources.91d0101c-747d-494d-a486-6bc1831ccdc1]
+collection = "generated"
+page = "https://grida.co/library/o/91d0101c-747d-494d-a486-6bc1831ccdc1"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/generated/a01ad4fb-c03d-4c6f-bf48-fd2694483732.png?download="
+license = "CC0-1.0"
+generator = "gpt-image-1"
+source-sha256 = "5671a37b123c157446cbdb1ab736d9715a1bf88f30d2a3280e7c7da6b053bd7a"
+
+[sources.3576d1ef-dd7e-4139-98d0-4f655c3e7632]
+collection = "generated"
+page = "https://grida.co/library/o/3576d1ef-dd7e-4139-98d0-4f655c3e7632"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/generated/946fee89-5b03-408b-b29c-41ad4c11ed74.png?download="
+license = "CC0-1.0"
+generator = "gpt-image-1"
+source-sha256 = "46b611bc242a3a5ce5d56ab61ec190236b1ee1f2a57fd5cb8c4e0dd2b4dcabc5"
+
+[sources.5a74d96e-afff-4c4f-97c0-6f414c68228b]
+collection = "home"
+page = "https://grida.co/library/o/5a74d96e-afff-4c4f-97c0-6f414c68228b"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/691e2b2cc34a408f.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "691e2b2cc34a408f8c3cd8d425316a67ac426e478ce7241694a86223925dceb3"
+
+[sources.fa67ad53-50bd-4560-b549-394bad8a432c]
+collection = "home"
+page = "https://grida.co/library/o/fa67ad53-50bd-4560-b549-394bad8a432c"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/bdcc24b2c6d9c275.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "bdcc24b2c6d9c27546f71bcc4b5cef4060d766bb7285c1f8bb10d8d52a92639d"
+
+[sources.76034717-f3c2-4f41-8606-f7bc0f5453b3]
+collection = "generated"
+page = "https://grida.co/library/o/76034717-f3c2-4f41-8606-f7bc0f5453b3"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/generated/61d80404-33a1-4a80-bc36-ddef7a3c0e5a.png?download="
+license = "CC0-1.0"
+generator = "gpt-image-1"
+source-sha256 = "48595e71b1d7dde12064af0132577763a7ee8a7dc388f50be498da95566defb8"
+
+[sources.79ea4b31-10e5-4bc4-8cbf-2abf7f0af8e9]
+collection = "home"
+page = "https://grida.co/library/o/79ea4b31-10e5-4bc4-8cbf-2abf7f0af8e9"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/cb5e48bf198a901c.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "cb5e48bf198a901cab098ccec51ac3343b0e8eff65a90248765fcae053522bbb"
+
+[sources.e59fb89a-695d-4988-934b-68527df3a40a]
+collection = "home"
+page = "https://grida.co/library/o/e59fb89a-695d-4988-934b-68527df3a40a"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/f165f2a27cb3784c.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "f165f2a27cb3784ce8df2a884e2fcfb390bea473cf15f0c1fbb42e48270a77fd"
+
+[sources.acd39bc1-dca3-4ea4-b74b-f489618c9676]
+collection = "home"
+page = "https://grida.co/library/o/acd39bc1-dca3-4ea4-b74b-f489618c9676"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/04231616cbc0468a.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "04231616cbc0468a09cfb6189b4996d34919eb6f5780b29343f8b273058b349b"
+
+[sources.9085e308-d9ec-46d8-bf38-3bbb0b1238af]
+collection = "generated"
+page = "https://grida.co/library/o/9085e308-d9ec-46d8-bf38-3bbb0b1238af"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/generated/91160813-3daa-4bd8-89ef-c04dcae2aa25.webp?download="
+license = "CC0-1.0"
+generator = "black-forest-labs/flux-schnell"
+source-sha256 = "94351b626f27e95e068e502feb9770e5a6ff9da0bec8731bb24e8bba8463aed2"
+
+[sources.594e83dc-0f30-49ce-a5cb-4e2a6e531c7c]
+collection = "home"
+page = "https://grida.co/library/o/594e83dc-0f30-49ce-a5cb-4e2a6e531c7c"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/4e3ab20795e27683.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "4e3ab20795e276837cebfb9c75b944a1138e201a757b6097fbf7cc4f1ebf39e2"
+
+[sources.c90aed47-5b22-47a7-b1bb-527d0ca472fb]
+collection = "pdimagearchive"
+page = "https://grida.co/library/o/c90aed47-5b22-47a7-b1bb-527d0ca472fb"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/pdimagearchive/316b7e62-9fb6-4cbd-a5f3-c64f086d0260.jpg?download="
+license = "CC0"
+source-sha256 = "362e6f4fc0814b7071a4e767eee3deee939fc70e713a4692a97bf32623e0a76e"
+
+[sources.9580a2e2-4792-4349-9bf8-042dacb2ca18]
+collection = "pdimagearchive"
+page = "https://grida.co/library/o/9580a2e2-4792-4349-9bf8-042dacb2ca18"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/pdimagearchive/1ce6c187-16e2-4bdc-8cee-02dec1710fd6.jpg?download="
+license = "CC0"
+source-sha256 = "707fc479b0e02e925f3fc12b3096ae96ecc609484150444a228314f61ba4eb11"
+
+[sources.5f91e814-0ffd-4fbf-b5f9-87aa8765dc50]
+collection = "home"
+page = "https://grida.co/library/o/5f91e814-0ffd-4fbf-b5f9-87aa8765dc50"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/9bf12ccc5bf6c05c.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "9bf12ccc5bf6c05cddf782bdc88837296aada96ef26aef511a67105852d4d248"
+
+[sources.4f15c848-9587-49c0-8585-11b46a0ee8db]
+collection = "home"
+page = "https://grida.co/library/o/4f15c848-9587-49c0-8585-11b46a0ee8db"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/942ddf30d06adc77.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "942ddf30d06adc77d1ee252017aceefa0adebc8f48bbced33ad1bceb9e16a436"
+
+[sources.69083e76-d2f3-4d72-9c52-a9e62eb8476d]
+collection = "home"
+page = "https://grida.co/library/o/69083e76-d2f3-4d72-9c52-a9e62eb8476d"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/4cb7300e3679a971.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "4cb7300e3679a9712f00c3ac3f3aa9711449e462e6b74c9aeac2bc3b7acd473c"
+
+[sources.ec36ef84-8266-43de-921c-48e9531d96b1]
+collection = "home"
+page = "https://grida.co/library/o/ec36ef84-8266-43de-921c-48e9531d96b1"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/49e5823193c6df03.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "49e5823193c6df030d5b67abcb21741f23e67538425a97722cc5b43934d4338e"
+
+[sources.6b040e86-a7f4-4847-bf7e-dd542a58f40e]
+collection = "home"
+page = "https://grida.co/library/o/6b040e86-a7f4-4847-bf7e-dd542a58f40e"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/d1ad3c81358d2ee0.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "d1ad3c81358d2ee07257a75b6a47d08113224a0e3a41abd284a9939cab59b4f2"
+
+[sources.9e6eaf2a-fdb5-4235-b2c6-5aa9ba6f0160]
+collection = "home"
+page = "https://grida.co/library/o/9e6eaf2a-fdb5-4235-b2c6-5aa9ba6f0160"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/4a1daa3112a89a17.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "4a1daa3112a89a17687a45335d668c19d600c9563d7deaa4d4d9400f2796f71d"
+
+[sources.dce54a9f-c54c-4d65-ab0e-a99df3c95462]
+collection = "home"
+page = "https://grida.co/library/o/dce54a9f-c54c-4d65-ab0e-a99df3c95462"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/2b66506ce3de72a4.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "2b66506ce3de72a48ae1e20d1f01135e77cc49aff9e320da54fa686b7fe2c02c"
+
+[sources.25cb2f23-daae-430e-81b4-bf30b2a336ab]
+collection = "home"
+page = "https://grida.co/library/o/25cb2f23-daae-430e-81b4-bf30b2a336ab"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/4e970be905ec0779.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "4e970be905ec0779de9046140195167b9e562ae19e47295a6c830f45b79a8ceb"
+
+[sources.4e0a9076-f9d3-465b-bd1b-0ab1483ca1d9]
+collection = "home"
+page = "https://grida.co/library/o/4e0a9076-f9d3-465b-bd1b-0ab1483ca1d9"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/61188c2716fbd108.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "61188c2716fbd108ff56ecf4aa72e10b61be38350bc350cf48b6310aaf3972e3"
+
+[sources.86cc66c2-f78d-4142-9584-6244f520e396]
+collection = "home"
+page = "https://grida.co/library/o/86cc66c2-f78d-4142-9584-6244f520e396"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/ec14ab6836ed7f1a.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "ec14ab6836ed7f1a8e20728efdb2bc6847429c4b04c9d64ac73b178a2d5b0e97"
+
+[sources.55faa69a-e1f6-4815-b6f0-0e4e20b8cae0]
+collection = "home"
+page = "https://grida.co/library/o/55faa69a-e1f6-4815-b6f0-0e4e20b8cae0"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/74251fddca05f4f8.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "74251fddca05f4f80e36b3681859266db1eca99e3975ba6e7e458c0c0265048c"
+
+[sources.b95e551c-f7bf-44b9-bef5-fc1a584d8684]
+collection = "home"
+page = "https://grida.co/library/o/b95e551c-f7bf-44b9-bef5-fc1a584d8684"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/5be1627235e0262a.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "5be1627235e0262af55a8b763d75ca8a81bc82f8ac0b3e3a1c8b9494547473f7"
+
+[sources.0426d0d3-84df-4145-adef-2d0f48c6de49]
+collection = "home"
+page = "https://grida.co/library/o/0426d0d3-84df-4145-adef-2d0f48c6de49"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/dcb059d8733ffa68.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "dcb059d8733ffa6887dd8704100239c84264adc137f15c42e4a29631fd6bcf9e"
+
+[sources.b47fd9c7-390f-4917-b3ea-a24081b44662]
+collection = "home"
+page = "https://grida.co/library/o/b47fd9c7-390f-4917-b3ea-a24081b44662"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/67af1e7b6d133905.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "67af1e7b6d1339050448408f278acfc98c5452cebff034a4994533133a49446a"
+
+[sources.58e06e31-7747-4202-a7e9-732e93b04810]
+collection = "home"
+page = "https://grida.co/library/o/58e06e31-7747-4202-a7e9-732e93b04810"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/a8ce2ee46be18714.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "a8ce2ee46be1871465332ef73478a97d5d96dc68bdcea4fa58110aa1594550a7"
+
+[sources.2665c0c1-807d-4158-9d8a-48b2a559306a]
+collection = "home"
+page = "https://grida.co/library/o/2665c0c1-807d-4158-9d8a-48b2a559306a"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/b29fd6025e5c4906.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "b29fd6025e5c4906edfa8df2f615949d61e328babe3a7014dd8989ff61cc7c3d"
+
+[sources.f3c4f2f4-96ef-4879-8fb5-af957df040a5]
+collection = "home"
+page = "https://grida.co/library/o/f3c4f2f4-96ef-4879-8fb5-af957df040a5"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/home/6a1e81834e70f860.webp?download="
+license = "LicenseRef-GridaLibrary"
+author = "Grida"
+generator = "openai/gpt-image-2"
+source-sha256 = "6a1e81834e70f860362303d9b659aa5287a9388524413e99380e49380e2f15d7"
+
+[sources.ffa8705a-ac74-4348-8208-e139a9d95126]
+collection = "generated"
+page = "https://grida.co/library/o/ffa8705a-ac74-4348-8208-e139a9d95126"
+download = "https://mozagqllybnbytfcmvdh-all.supabase.co/storage/v1/object/public/library/generated/4b4a83e4-fa95-4bbb-97ca-f6fee533186c.png?download="
+license = "CC0-1.0"
+generator = "gpt-image-1"
+source-sha256 = "68e750b6874a567c3bd2bdcde964239089876e2165486a40fe3ec127a95b96bb"

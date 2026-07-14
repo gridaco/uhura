@@ -1725,6 +1725,7 @@ mod tests {
     #[test]
     fn media_and_browser_asset_content_types_are_preserved() {
         assert_eq!(content_type("mp4"), "video/mp4");
+        assert_eq!(content_type("webp"), "image/webp");
         assert_eq!(content_type("wasm"), "application/wasm");
         assert_eq!(content_type("woff2"), "font/woff2");
     }

@@ -1312,16 +1312,34 @@ fn load_snapshot_assets(
         };
         // Missing files retain the renderer's deterministic duotone fallback.
         if let Some(bytes) = files.resolve(&asset_dir.join(file))? {
+            let media_type = asset_media_type(file);
             out.insert(
                 id.clone(),
                 Asset {
-                    data_uri: format!("data:image/jpeg;base64,{}", base64(bytes)),
+                    data_uri: format!("data:{media_type};base64,{}", base64(bytes)),
                     alt: alt.to_string(),
                 },
             );
         }
     }
     Ok(out)
+}
+
+fn asset_media_type(file: &str) -> &'static str {
+    let extension = Path::new(file)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Standard base64 (padded) — 20 lines beats a dependency.
@@ -1363,8 +1381,8 @@ mod tests {
     use super::{
         EditorModelBuildFailure, ProjectSourceFiles, build_captured_snapshot, build_snapshot,
         capture_project_snapshot, capture_project_snapshot_with, failure_envelope,
-        project_indeterminate_path_blocks, project_path_blocks, project_scan_root,
-        snapshot_rel_path, snapshot_source_name,
+        load_snapshot_assets, project_indeterminate_path_blocks, project_path_blocks,
+        project_scan_root, snapshot_rel_path, snapshot_source_name,
     };
 
     fn corpus_root() -> PathBuf {
@@ -1467,6 +1485,24 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_assets_embed_the_media_type_from_their_file_extension() {
+        let mut files = ProjectSourceFiles::default();
+        files.insert(
+            PathBuf::from("fixtures/assets/manifest.toml"),
+            Arc::from(&b"[assets.photo]\nfile = \"photo.webp\"\nalt = \"A photo\"\n"[..]),
+        );
+        files.insert(
+            PathBuf::from("fixtures/assets/photo.webp"),
+            Arc::from(&b"webp"[..]),
+        );
+
+        let assets = load_snapshot_assets(&files, Some("fixtures/assets/manifest.toml"))
+            .expect("asset manifest");
+
+        assert_eq!(assets["photo"].data_uri, "data:image/webp;base64,d2VicA==");
+    }
+
+    #[test]
     fn normalized_manifest_and_asset_paths_build_the_same_instagram_model() {
         let root = corpus_root();
         let baseline = capture_project_snapshot(&root);
@@ -1500,8 +1536,8 @@ mod tests {
         )
         .expect("UTF-8 asset manifest")
         .replacen(
-            "file = \"avatar-mira.jpg\"",
-            "file = \"../assets/avatar-mira.jpg\"",
+            "file = \"avatar-mira.webp\"",
+            "file = \"../assets/avatar-mira.webp\"",
             1,
         );
         normalized.files.insert(
@@ -1535,8 +1571,8 @@ mod tests {
             Arc::from(manifest.into_bytes()),
         );
         let escaping_asset_manifest = asset_manifest.replace(
-            "file = \"../assets/avatar-mira.jpg\"",
-            "file = \"../../../outside.jpg\"",
+            "file = \"../assets/avatar-mira.webp\"",
+            "file = \"../../../outside.webp\"",
         );
         normalized.files.insert(
             PathBuf::from("fixtures/assets/manifest.toml"),

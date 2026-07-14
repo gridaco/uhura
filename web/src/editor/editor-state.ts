@@ -166,6 +166,7 @@ export interface PreviewProvenance {
 export interface EditorPreview {
   id: string;
   identity: PreviewIdentity;
+  sourceFile: string;
   default: boolean;
   pinned: boolean;
   derived: boolean;
@@ -709,7 +710,7 @@ const identity = (value: unknown, path: string): PreviewIdentity => {
 const preview = (value: unknown, path: string): EditorPreview => {
   const object = record(value, path);
   exact(object, path, [
-    "id", "identity", "default", "pinned", "derived", "inFlight", "from", "note",
+    "id", "identity", "sourceFile", "default", "pinned", "derived", "inFlight", "from", "note",
     "data", "interactions", "documentation", "provenance", "content",
   ]);
   const previewIdentity = identity(object["identity"], `${path}.identity`);
@@ -723,6 +724,7 @@ const preview = (value: unknown, path: string): EditorPreview => {
   return {
     id: string(object["id"], `${path}.id`),
     identity: previewIdentity,
+    sourceFile: canonicalSourcePath(object["sourceFile"], `${path}.sourceFile`),
     default: boolean(object["default"], `${path}.default`),
     pinned: boolean(object["pinned"], `${path}.pinned`),
     derived: boolean(object["derived"], `${path}.derived`),
