@@ -36,6 +36,7 @@
     from: string;
     default: string;
     inFlight: string;
+    replaySteps: string;
     previewNote: string;
   }
 
@@ -76,6 +77,16 @@
     readonly dataset: InteractionDataset;
   }
 
+  interface ConnectorDataset extends DOMStringMap {
+    sourceFrame: string;
+    targetFrame: string;
+    lane?: string;
+  }
+
+  interface ConnectorElement extends SVGGElement {
+    readonly dataset: ConnectorDataset;
+  }
+
   interface PreparedCanvas {
     context: CanvasRenderingContext2D;
     width: number;
@@ -101,6 +112,10 @@
 
   const viewport = requiredElement<HTMLElement>("viewport");
   const board = requiredElement<HTMLElement>("board");
+  const connectorLayer = requiredQuery<SVGSVGElement>("#workflow-connectors");
+  const connectors = Array.from(
+    connectorLayer.querySelectorAll<ConnectorElement>("[data-connector]"),
+  );
   const tools = requiredQuery<HTMLElement>(".canvas-tools");
   const cursorButton = requiredElement<HTMLButtonElement>("tool-cursor");
   const handButton = requiredElement<HTMLButtonElement>("tool-hand");
@@ -124,6 +139,8 @@
   const selectionOrigin = requiredElement<HTMLElement>("selection-origin");
   const selectionFromRow = requiredElement<HTMLElement>("selection-from-row");
   const selectionFrom = requiredElement<HTMLElement>("selection-from");
+  const selectionReplayRow = requiredElement<HTMLElement>("selection-replay-row");
+  const selectionReplay = requiredElement<HTMLElement>("selection-replay");
   const selectionStatus = requiredElement<HTMLElement>("selection-status");
   const selectionData = requiredElement<HTMLElement>("selection-data");
   const selectionNoData = requiredElement<HTMLElement>("selection-no-data");
@@ -148,6 +165,7 @@
   let pinch: PinchState | null = null;
   let suppressClickUntil = 0;
   let rulerFrame = 0;
+  let connectorFrame = 0;
   const touches = new Map<number, Point>();
 
   const storedBoolean = (key: string, fallback: boolean): boolean => {
@@ -256,8 +274,10 @@
     board.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     board.style.setProperty("--selection-stroke", `${2 / scale}px`);
     board.style.setProperty("--selection-offset", `${4 / scale}px`);
+    board.style.setProperty("--connector-stroke", `${1.5 / scale}px`);
     zoomOutput.textContent = `${Math.round(scale * 100)}%`;
     requestRulers();
+    requestConnectors();
   };
 
   const zoomAt = (nextScale: number, point: Point): void => {
@@ -319,6 +339,121 @@
     };
   };
 
+  const boardLocalRect = (element: Element): Rect => {
+    const elementRect = element.getBoundingClientRect();
+    const boardRect = board.getBoundingClientRect();
+    return {
+      x: (elementRect.left - boardRect.left) / scale,
+      y: (elementRect.top - boardRect.top) / scale,
+      width: elementRect.width / scale,
+      height: elementRect.height / scale,
+    };
+  };
+
+  const layoutConnectors = (): void => {
+    connectorFrame = 0;
+    const rows = Array.from(board.querySelectorAll<HTMLElement>("[data-preview-row]"));
+    const rowConnectors = new Map<HTMLElement, ConnectorElement[]>();
+
+    for (const row of rows) {
+      row.style.removeProperty("--workflow-rail-height");
+    }
+
+    for (const connector of connectors) {
+      const target = document.getElementById(connector.dataset.targetFrame);
+      const row = target?.closest<HTMLElement>("[data-preview-row]");
+      if (!row) continue;
+      const grouped = rowConnectors.get(row) || [];
+      grouped.push(connector);
+      rowConnectors.set(row, grouped);
+    }
+
+    for (const [row, grouped] of rowConnectors) {
+      const frameOrder = Array.from(row.querySelectorAll<FrameElement>("[data-frame]"));
+      const indexById = new Map(frameOrder.map((frame, index) => [frame.id, index]));
+      const lanes: Array<Array<{ start: number; end: number }>> = [];
+
+      for (const connector of grouped) {
+        const sourceIndex = indexById.get(connector.dataset.sourceFrame);
+        const targetIndex = indexById.get(connector.dataset.targetFrame);
+        if (sourceIndex === undefined || targetIndex === undefined) continue;
+        const interval = {
+          start: Math.min(sourceIndex, targetIndex),
+          end: Math.max(sourceIndex, targetIndex),
+        };
+        let lane = lanes.findIndex((used) => used.every(
+          (other) => interval.end < other.start || interval.start > other.end,
+        ));
+        if (lane < 0) {
+          lane = lanes.length;
+          lanes.push([]);
+        }
+        const laneIntervals = lanes[lane];
+        if (!laneIntervals) continue;
+        laneIntervals.push(interval);
+        connector.dataset.lane = String(lane);
+      }
+
+      row.style.setProperty("--workflow-rail-height", `${28 + lanes.length * 20}px`);
+    }
+
+    for (const connector of connectors) {
+      const source = document.getElementById(connector.dataset.sourceFrame);
+      const target = document.getElementById(connector.dataset.targetFrame);
+      const sourceShell = source?.querySelector<HTMLElement>(":scope > .shell");
+      const targetShell = target?.querySelector<HTMLElement>(":scope > .shell");
+      const path = connector.querySelector<SVGPathElement>("[data-connector-path]");
+      const arrow = connector.querySelector<SVGPathElement>("[data-connector-arrow]");
+      const origin = connector.querySelector<SVGCircleElement>("[data-connector-origin]");
+      const label = connector.querySelector<SVGTextElement>("[data-connector-label]");
+      if (!sourceShell || !targetShell || !path || !arrow || !origin || !label) continue;
+
+      const sourceRect = boardLocalRect(sourceShell);
+      const targetRect = boardLocalRect(targetShell);
+      const startX = sourceRect.x + sourceRect.width / 2;
+      const startY = sourceRect.y;
+      const endX = targetRect.x + targetRect.width / 2;
+      const endY = targetRect.y;
+      const lane = Number(connector.dataset.lane || 0);
+      const railY = Math.min(startY, endY) - 18 - lane * 20;
+
+      path.setAttribute(
+        "d",
+        `M ${startX} ${startY} L ${startX} ${railY} L ${endX} ${railY} L ${endX} ${endY}`,
+      );
+      arrow.setAttribute(
+        "d",
+        `M ${endX - 4} ${endY - 8} L ${endX} ${endY} L ${endX + 4} ${endY - 8} Z`,
+      );
+      origin.setAttribute("cx", String(startX));
+      origin.setAttribute("cy", String(startY));
+      label.setAttribute("x", String((startX + endX) / 2));
+      label.setAttribute("y", String(railY - 6));
+    }
+  };
+
+  const requestConnectors = (): void => {
+    if (!connectorFrame) connectorFrame = window.requestAnimationFrame(layoutConnectors);
+  };
+
+  const updateConnectorSelection = (frame: FrameElement | null): void => {
+    document.querySelectorAll<FrameElement>("[data-frame].is-related").forEach((related) => {
+      related.classList.remove("is-related");
+    });
+    connectorLayer.classList.toggle("has-selection", Boolean(frame));
+    for (const connector of connectors) {
+      const active = Boolean(frame) && (
+        connector.dataset.sourceFrame === frame?.id
+        || connector.dataset.targetFrame === frame?.id
+      );
+      connector.classList.toggle("is-active", active);
+      if (!active || !frame) continue;
+      for (const id of [connector.dataset.sourceFrame, connector.dataset.targetFrame]) {
+        if (id !== frame.id) document.getElementById(id)?.classList.add("is-related");
+      }
+    }
+  };
+
   const revealElement = (element: HTMLElement | null): void => {
     if (!element) return;
     const rect = frameWorldRect(element);
@@ -337,6 +472,7 @@
       selectedFrame.setAttribute("aria-pressed", "false");
     }
     selectedFrame = null;
+    updateConnectorSelection(null);
     document.querySelectorAll<NavigatorFrameButton>("[data-frame-target]").forEach((button) => {
       button.setAttribute("aria-pressed", "false");
       button.removeAttribute("aria-current");
@@ -353,6 +489,7 @@
     if (!frame) return;
     clearSelection();
     selectedFrame = frame;
+    updateConnectorSelection(frame);
     frame.classList.add("is-selected");
     frame.setAttribute("aria-pressed", "true");
     const navigatorButton = document.querySelector<NavigatorFrameButton>(
@@ -385,6 +522,9 @@
     const from = frame.dataset.from.trim();
     selectionFromRow.hidden = !from;
     selectionFrom.textContent = from;
+    const replaySteps = frame.dataset.replaySteps.trim();
+    selectionReplayRow.hidden = !replaySteps;
+    selectionReplay.textContent = replaySteps;
     const status: string[] = [];
     if (frame.dataset.default === "true") status.push("Default");
     const inFlight = Number(frame.dataset.inFlight || 0);
@@ -647,10 +787,19 @@
   });
 
   if (window.ResizeObserver) {
-    new ResizeObserver(requestRulers).observe(viewport);
+    const observer = new ResizeObserver(() => {
+      requestRulers();
+      requestConnectors();
+    });
+    observer.observe(viewport);
+    observer.observe(board);
   } else {
-    window.addEventListener("resize", requestRulers);
+    window.addEventListener("resize", () => {
+      requestRulers();
+      requestConnectors();
+    });
   }
+  window.addEventListener("load", requestConnectors);
   renderTools();
   apply();
 })();

@@ -393,12 +393,26 @@ fn every_derived_preview_replays_to_its_v_golden() {
         .find(|p| p.subject.name().as_str() == "feed" && p.example == "like-pending")
         .expect("feed like-pending");
     assert_eq!(like_pending.in_flight, 1, "one command in flight");
+    assert_eq!(
+        like_pending.replay_steps,
+        ["like-toggled"],
+        "the connector carries only this example's direct replay step"
+    );
 
     let appended = out
         .previews
         .iter()
         .find(|preview| preview.subject.name().as_str() == "feed" && preview.example == "appended")
         .expect("feed appended");
+    assert_eq!(
+        appended.replay_steps,
+        [
+            "feed-near-end",
+            "projection feed.feed-page",
+            "load-next-page.ok",
+        ],
+        "multi-step provenance stays ordered and does not repeat ancestor steps"
+    );
     let feed_page = appended
         .data
         .iter()

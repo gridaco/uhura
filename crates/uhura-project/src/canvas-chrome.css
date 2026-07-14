@@ -144,6 +144,29 @@ body.uhura-canvas [hidden] { display: none !important; }
 #viewport.panning { cursor: grabbing; user-select: none; }
 #viewport:focus-visible { outline: 2px solid var(--canvas-accent); outline-offset: -2px; }
 #board { position: absolute; transform-origin: 0 0; padding: 46px 40px 120px; }
+.workflow-connectors {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.workflow-connector { color: #657483; opacity: .72; transition: color .12s ease, opacity .12s ease; }
+.workflow-connector-path { fill: none; stroke: currentColor; stroke-width: var(--connector-stroke, 1.5px); stroke-linecap: round; stroke-linejoin: round; }
+.workflow-connector-arrow { fill: currentColor; }
+.workflow-connector-origin { fill: var(--canvas-stage); stroke: currentColor; stroke-width: var(--connector-stroke, 1.5px); }
+.workflow-connector-label {
+  fill: currentColor;
+  stroke: var(--canvas-stage);
+  stroke-width: 5px;
+  paint-order: stroke;
+  text-anchor: middle;
+  font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.workflow-connectors.has-selection .workflow-connector { opacity: .14; }
+.workflow-connectors.has-selection .workflow-connector.is-active { color: var(--canvas-accent); opacity: 1; }
 
 .canvas-tools {
   position: absolute;
@@ -186,12 +209,13 @@ body.uhura-canvas [hidden] { display: none !important; }
 .inspector-actions { display: inline-flex; align-items: center; color: inherit; }
 .inspector-actions:empty { display: none; }
 
-#board > [data-preview-row] { margin-block-end: 62px; }
+#board > [data-preview-row] { position: relative; z-index: 1; margin-block-end: 62px; }
 [data-preview-row] > .row-title { margin-block-end: 14px; color: #626b76; font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
-[data-preview-row] > .row-frames { display: flex; align-items: flex-start; gap: 32px; }
+[data-preview-row] > .row-frames { display: flex; align-items: flex-start; gap: 32px; padding-block-start: var(--workflow-rail-height, 0); }
 [data-preview-row] > .row-frames > [data-frame] { flex: none; color: var(--canvas-ink); }
 [data-frame].is-selected > .shell,
 [data-frame]:focus-visible > .shell { outline: var(--selection-stroke, 2px) solid var(--canvas-accent); outline-offset: var(--selection-offset, 4px); }
+[data-frame].is-related > .shell { outline: var(--connector-stroke, 1.5px) dashed rgb(13 153 255 / 72%); outline-offset: var(--selection-offset, 4px); }
 [data-frame]:focus-visible { outline: none; }
 [data-frame] > .shell { border: 1px solid rgb(26 35 47 / 16%); border-radius: 8px; box-shadow: none; }
 [data-frame] > .shell.device,

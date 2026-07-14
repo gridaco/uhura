@@ -102,7 +102,11 @@ cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
 Open <http://127.0.0.1:8787/>. This first editor surface deliberately exposes
 the deterministic, fixture-backed Canvas as a static, read-only projection.
 Its searchable navigator and artboards select previews; the details panel then
-shows that preview's metadata and declared interactions. The headerless editor
+shows that preview's metadata and declared interactions. Replay-derived
+previews are connected to their direct parent in a dedicated rail above each
+row; edge labels summarize the directly authored replay steps, and selection
+highlights immediate parent/child relationships. These are checked example
+provenance edges, not a second runtime state graph. The headerless editor
 uses a compact floating toolbar for Cursor, Hand, zoom, and centering. Press
 `Cmd+\` (`Ctrl+\` on Windows/Linux) to hide or restore all editor chrome;
 that preference is remembered in local browser storage. The wheel pans,

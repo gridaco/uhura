@@ -35,6 +35,9 @@ pub struct PreviewFrame {
     /// Commands unsettled at the end of a derived timeline (§6.2).
     pub in_flight: usize,
     pub from: Option<String>,
+    /// Steps authored directly on this example, used only to label the
+    /// checked replay-provenance connector from `from`.
+    pub replay_steps: Vec<String>,
     pub note: Option<String>,
     pub data: Vec<PreviewField>,
     pub content: FrameContent,
@@ -75,6 +78,15 @@ pub enum FrameContent {
 pub struct Asset {
     pub data_uri: String,
     pub alt: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreviewEdge {
+    source_frame: String,
+    target_frame: String,
+    source_example: String,
+    target_example: String,
+    replay_steps: Vec<String>,
 }
 
 /// Renders the whole board. Assets are embedded once each — only the ids
@@ -121,6 +133,7 @@ pub fn render_canvas(
 
     let mut body = String::new();
     let mut navigator = String::new();
+    let mut edges = Vec::new();
     let mut frame_index = 0usize;
     for (row_index, (row_key, kind_label, list)) in rows.iter().enumerate() {
         let row_id = format!("preview-row-{row_index}");
@@ -141,8 +154,20 @@ pub fn render_canvas(
             esc(subject),
             list.len(),
         );
+        let mut frames_by_example: BTreeMap<&str, String> = BTreeMap::new();
         for frame in list {
             let frame_id = format!("preview-frame-{frame_index}");
+            if let Some(from) = frame.from.as_deref()
+                && let Some(source_frame) = frames_by_example.get(from)
+            {
+                edges.push(PreviewEdge {
+                    source_frame: source_frame.clone(),
+                    target_frame: frame_id.clone(),
+                    source_example: from.to_string(),
+                    target_example: frame.example.clone(),
+                    replay_steps: frame.replay_steps.clone(),
+                });
+            }
             body.push_str(&render_frame(frame, &frame_id));
             let marker = if frame.derived {
                 "<span class=\"navigator-derived\" title=\"Replay-derived\">D</span>"
@@ -161,6 +186,7 @@ pub fn render_canvas(
                 esc(&frame.example),
                 esc(&frame.example),
             );
+            frames_by_example.insert(&frame.example, frame_id);
             frame_index += 1;
         }
         body.push_str("</div>\n</section>\n");
@@ -170,6 +196,7 @@ pub fn render_canvas(
     let derived_count = frames.iter().filter(|frame| frame.derived).count();
     let pinned_count = frames.iter().filter(|frame| frame.pinned).count();
     let default_count = frames.iter().filter(|frame| frame.is_default).count();
+    let connectors = render_connectors(&edges);
 
     format!(
         r#"<!doctype html>
@@ -229,6 +256,7 @@ pub fn render_canvas(
     </button>
   </div>
     <div id="board">
+{connectors}
 {body}
     </div>
   </div>
@@ -244,6 +272,7 @@ pub fn render_canvas(
       <div><dt>Defaults</dt><dd>{default_count}</dd></div>
       <div><dt>Derived</dt><dd>{derived_count}</dd></div>
       <div><dt>Pinned</dt><dd>{pinned_count}</dd></div>
+      <div><dt>Flows</dt><dd>{edge_count}</dd></div>
       <div><dt>Assets</dt><dd>{asset_count}</dd></div>
     </dl>
     <div class="inspector-callout"><strong>Read-only projection</strong><p>Edit the <code>.uhura</code> sources and restart Editor to regenerate these snapshots.</p></div>
@@ -256,6 +285,7 @@ pub fn render_canvas(
       <div><dt>Size</dt><dd id="selection-size"></dd></div>
       <div><dt>Origin</dt><dd id="selection-origin"></dd></div>
       <div id="selection-from-row" hidden><dt>From</dt><dd id="selection-from"></dd></div>
+      <div id="selection-replay-row" hidden><dt>Replay</dt><dd id="selection-replay"></dd></div>
       <div><dt>Status</dt><dd id="selection-status"></dd></div>
     </dl>
     <section class="inspector-block" aria-labelledby="selection-data-title">
@@ -285,10 +315,46 @@ pub fn render_canvas(
         default_count = default_count,
         derived_count = derived_count,
         pinned_count = pinned_count,
+        edge_count = edges.len(),
         asset_count = used_assets.len(),
         navigator = navigator,
+        connectors = connectors,
         body = body,
         chrome_js = CHROME_JS,
+    )
+}
+
+fn render_connectors(edges: &[PreviewEdge]) -> String {
+    let mut body = String::new();
+    for edge in edges {
+        let full_label = if edge.replay_steps.is_empty() {
+            "derived example".to_string()
+        } else {
+            edge.replay_steps.join(" → ")
+        };
+        let visible_label = match edge.replay_steps.as_slice() {
+            [] => "derived".to_string(),
+            [step] => step.clone(),
+            [first, rest @ ..] => format!("{first} +{}", rest.len()),
+        };
+        let _ = writeln!(
+            body,
+            "<g class=\"workflow-connector\" data-connector data-source-frame=\"{}\" data-target-frame=\"{}\">\
+             <title>Checked replay provenance: {} to {} via {}</title>\
+             <path class=\"workflow-connector-path\" data-connector-path></path>\
+             <path class=\"workflow-connector-arrow\" data-connector-arrow></path>\
+             <circle class=\"workflow-connector-origin\" data-connector-origin r=\"3\"></circle>\
+             <text class=\"workflow-connector-label\" data-connector-label>{}</text></g>",
+            esc(&edge.source_frame),
+            esc(&edge.target_frame),
+            esc(&edge.source_example),
+            esc(&edge.target_example),
+            esc(&full_label),
+            esc(&visible_label),
+        );
+    }
+    format!(
+        "<svg id=\"workflow-connectors\" class=\"workflow-connectors\" aria-hidden=\"true\">{body}</svg>"
     )
 }
 
@@ -348,9 +414,10 @@ fn render_frame(frame: &PreviewFrame, frame_id: &str) -> String {
         .unwrap_or_default();
     let note_data = frame.note.as_deref().unwrap_or_default();
     let from_data = frame.from.as_deref().unwrap_or_default();
+    let replay_steps = frame.replay_steps.join(" → ");
     let preview_data = render_preview_data(&frame.data);
     format!(
-        "<figure id=\"{frame_id}\" class=\"frame\" data-frame data-kind=\"{kind}\" data-subject=\"{subject}\" data-example=\"{example}\" data-provenance=\"{prov}\" data-default=\"{is_default}\" data-pinned=\"{pinned}\" data-derived=\"{derived}\" data-in-flight=\"{in_flight}\" data-from=\"{from_data}\" data-preview-note=\"{note_data}\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" aria-labelledby=\"{frame_id}-caption\">\n<div class=\"{frame_class}\">{content}</div>\n{preview_data}\
+        "<figure id=\"{frame_id}\" class=\"frame\" data-frame data-kind=\"{kind}\" data-subject=\"{subject}\" data-example=\"{example}\" data-provenance=\"{prov}\" data-default=\"{is_default}\" data-pinned=\"{pinned}\" data-derived=\"{derived}\" data-in-flight=\"{in_flight}\" data-from=\"{from_data}\" data-replay-steps=\"{replay_steps}\" data-preview-note=\"{note_data}\" role=\"button\" tabindex=\"0\" aria-pressed=\"false\" aria-labelledby=\"{frame_id}-caption\">\n<div class=\"{frame_class}\">{content}</div>\n{preview_data}\
          <figcaption id=\"{frame_id}-caption\"><span class=\"caption-title\">{subject} / {example}</span>{badges}\
          <span class=\"caption-prov\">{prov}</span>{note}</figcaption>\n</figure>\n",
         frame_id = frame_id,
@@ -364,6 +431,7 @@ fn render_frame(frame: &PreviewFrame, frame_id: &str) -> String {
         derived = frame.derived,
         in_flight = frame.in_flight,
         from_data = esc(from_data),
+        replay_steps = esc(&replay_steps),
         note_data = esc(note_data),
         preview_data = preview_data,
         badges = badges,
@@ -893,6 +961,7 @@ mod tests {
             derived: true,
             in_flight: 2,
             from: Some("base <state>".to_string()),
+            replay_steps: vec!["save-toggled".to_string()],
             note: Some("A checked & safe note".to_string()),
             data: Vec::new(),
             content: FrameContent::Fragment(Node {
@@ -920,6 +989,8 @@ mod tests {
         assert!(canvas.contains("id=\"ruler-y\""));
         assert!(canvas.contains("Read-only projection"));
         assert!(canvas.contains("id=\"selection-data-title\">Example data</h3>"));
+        assert!(canvas.contains("id=\"workflow-connectors\""));
+        assert!(canvas.contains("id=\"selection-replay-row\""));
         assert!(canvas.contains("Values used to build this preview."));
         assert!(canvas.contains("id=\"selection-announcement\""));
         assert!(canvas.contains("role=\"group\" aria-label=\"Canvas tools\""));
@@ -958,6 +1029,10 @@ mod tests {
         assert!(CHROME_TS.contains("lostpointercapture"));
         assert!(CHROME_TS.contains("const drawRulers"));
         assert!(CHROME_TS.contains("const selectFrame"));
+        assert!(CHROME_TS.contains("const layoutConnectors"));
+        assert!(CHROME_TS.contains("const updateConnectorSelection"));
+        assert!(CHROME_TS.contains("--workflow-rail-height"));
+        assert!(CHROME_TS.contains("interval.end < other.start"));
         assert!(CHROME_TS.contains(":scope > template[data-preview-data]"));
         assert!(CHROME_TS.contains("dataTemplate.content.cloneNode(true)"));
         assert!(CHROME_TS.contains("selectionData.replaceChildren"));
@@ -1076,6 +1151,34 @@ mod tests {
     }
 
     #[test]
+    fn replay_provenance_renders_one_labeled_connector_per_resolved_parent() {
+        let mut base = frame(FrameKind::Page, "Feed", "first-page");
+        base.from = None;
+        base.replay_steps.clear();
+        let mut pending = frame(FrameKind::Page, "Feed", "like-pending");
+        pending.from = Some("first-page".to_string());
+        pending.replay_steps = vec!["like-toggled".to_string()];
+        let mut refused = frame(FrameKind::Page, "Feed", "like-refused");
+        refused.from = Some("like-pending".to_string());
+        refused.replay_steps = vec!["like-post.err".to_string()];
+
+        let canvas = render_canvas("Demo", &[base, pending, refused], "", &BTreeMap::new());
+
+        assert_eq!(canvas.matches("data-connector ").count(), 2);
+        assert!(canvas.contains(
+            "data-source-frame=\"preview-frame-0\" data-target-frame=\"preview-frame-1\""
+        ));
+        assert!(canvas.contains(
+            "data-source-frame=\"preview-frame-1\" data-target-frame=\"preview-frame-2\""
+        ));
+        assert!(canvas.contains(">like-toggled</text>"));
+        assert!(canvas.contains(">like-post.err</text>"));
+        assert!(canvas.contains("Checked replay provenance: first-page to like-pending"));
+        assert!(canvas.contains("data-replay-steps=\"like-post.err\""));
+        assert!(canvas.contains("<dt>Flows</dt><dd>2</dd>"));
+    }
+
+    #[test]
     fn canvas_renders_a_video_as_an_inert_poster_without_embedding_its_source() {
         let props = BTreeMap::from([
             (
@@ -1104,6 +1207,7 @@ mod tests {
             derived: false,
             in_flight: 0,
             from: None,
+            replay_steps: Vec::new(),
             note: None,
             data: Vec::new(),
             content: FrameContent::Fragment(Node {

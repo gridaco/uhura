@@ -641,6 +641,15 @@ example-name`, provenance (`pinned` | `from X → events…`), in-flight
 commands, `note`. No examples ⇒ page renders initial state + info lint;
 component absent from canvas + same lint.
 
+A resolved `from` relationship renders as a directed replay-provenance
+connector in a reserved rail above that subject's frames. Its label summarizes
+only the child example's directly authored semantic events, projection
+updates, and outcomes; ancestor steps remain on their own edges. These edges
+explain how checked previews were derived and are not a separate runtime state
+graph. Rail lanes are allocated deterministically so connectors do not cross
+through preview frames, and selecting a preview highlights its immediate
+parents and children.
+
 ---
 
 ## 7. Core semantics

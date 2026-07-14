@@ -103,6 +103,7 @@ pub(crate) fn run_as(common: &CommonArgs, out_dir: Option<&str>, command: &str) 
             derived: preview.derived,
             in_flight: preview.in_flight,
             from: preview.from.clone(),
+            replay_steps: preview.replay_steps.clone(),
             note: preview.note.clone(),
             data: preview
                 .data

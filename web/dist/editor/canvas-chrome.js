@@ -15,6 +15,8 @@
 		const closestElement = (target, selector) => target instanceof Element ? target.closest(selector) : null;
 		const viewport = requiredElement("viewport");
 		const board = requiredElement("board");
+		const connectorLayer = requiredQuery("#workflow-connectors");
+		const connectors = Array.from(connectorLayer.querySelectorAll("[data-connector]"));
 		const tools = requiredQuery(".canvas-tools");
 		const cursorButton = requiredElement("tool-cursor");
 		const handButton = requiredElement("tool-hand");
@@ -38,6 +40,8 @@
 		const selectionOrigin = requiredElement("selection-origin");
 		const selectionFromRow = requiredElement("selection-from-row");
 		const selectionFrom = requiredElement("selection-from");
+		const selectionReplayRow = requiredElement("selection-replay-row");
+		const selectionReplay = requiredElement("selection-replay");
 		const selectionStatus = requiredElement("selection-status");
 		const selectionData = requiredElement("selection-data");
 		const selectionNoData = requiredElement("selection-no-data");
@@ -61,6 +65,7 @@
 		let pinch = null;
 		let suppressClickUntil = 0;
 		let rulerFrame = 0;
+		let connectorFrame = 0;
 		const touches = /* @__PURE__ */ new Map();
 		const storedBoolean = (key, fallback) => {
 			try {
@@ -160,8 +165,10 @@
 			board.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
 			board.style.setProperty("--selection-stroke", `${2 / scale}px`);
 			board.style.setProperty("--selection-offset", `${4 / scale}px`);
+			board.style.setProperty("--connector-stroke", `${1.5 / scale}px`);
 			zoomOutput.textContent = `${Math.round(scale * 100)}%`;
 			requestRulers();
+			requestConnectors();
 		};
 		const zoomAt = (nextScale, point) => {
 			nextScale = clampScale(nextScale);
@@ -220,6 +227,93 @@
 				height: frameRect.height / scale
 			};
 		};
+		const boardLocalRect = (element) => {
+			const elementRect = element.getBoundingClientRect();
+			const boardRect = board.getBoundingClientRect();
+			return {
+				x: (elementRect.left - boardRect.left) / scale,
+				y: (elementRect.top - boardRect.top) / scale,
+				width: elementRect.width / scale,
+				height: elementRect.height / scale
+			};
+		};
+		const layoutConnectors = () => {
+			connectorFrame = 0;
+			const rows = Array.from(board.querySelectorAll("[data-preview-row]"));
+			const rowConnectors = /* @__PURE__ */ new Map();
+			for (const row of rows) row.style.removeProperty("--workflow-rail-height");
+			for (const connector of connectors) {
+				const row = document.getElementById(connector.dataset.targetFrame)?.closest("[data-preview-row]");
+				if (!row) continue;
+				const grouped = rowConnectors.get(row) || [];
+				grouped.push(connector);
+				rowConnectors.set(row, grouped);
+			}
+			for (const [row, grouped] of rowConnectors) {
+				const frameOrder = Array.from(row.querySelectorAll("[data-frame]"));
+				const indexById = new Map(frameOrder.map((frame, index) => [frame.id, index]));
+				const lanes = [];
+				for (const connector of grouped) {
+					const sourceIndex = indexById.get(connector.dataset.sourceFrame);
+					const targetIndex = indexById.get(connector.dataset.targetFrame);
+					if (sourceIndex === void 0 || targetIndex === void 0) continue;
+					const interval = {
+						start: Math.min(sourceIndex, targetIndex),
+						end: Math.max(sourceIndex, targetIndex)
+					};
+					let lane = lanes.findIndex((used) => used.every((other) => interval.end < other.start || interval.start > other.end));
+					if (lane < 0) {
+						lane = lanes.length;
+						lanes.push([]);
+					}
+					const laneIntervals = lanes[lane];
+					if (!laneIntervals) continue;
+					laneIntervals.push(interval);
+					connector.dataset.lane = String(lane);
+				}
+				row.style.setProperty("--workflow-rail-height", `${28 + lanes.length * 20}px`);
+			}
+			for (const connector of connectors) {
+				const source = document.getElementById(connector.dataset.sourceFrame);
+				const target = document.getElementById(connector.dataset.targetFrame);
+				const sourceShell = source?.querySelector(":scope > .shell");
+				const targetShell = target?.querySelector(":scope > .shell");
+				const path = connector.querySelector("[data-connector-path]");
+				const arrow = connector.querySelector("[data-connector-arrow]");
+				const origin = connector.querySelector("[data-connector-origin]");
+				const label = connector.querySelector("[data-connector-label]");
+				if (!sourceShell || !targetShell || !path || !arrow || !origin || !label) continue;
+				const sourceRect = boardLocalRect(sourceShell);
+				const targetRect = boardLocalRect(targetShell);
+				const startX = sourceRect.x + sourceRect.width / 2;
+				const startY = sourceRect.y;
+				const endX = targetRect.x + targetRect.width / 2;
+				const endY = targetRect.y;
+				const lane = Number(connector.dataset.lane || 0);
+				const railY = Math.min(startY, endY) - 18 - lane * 20;
+				path.setAttribute("d", `M ${startX} ${startY} L ${startX} ${railY} L ${endX} ${railY} L ${endX} ${endY}`);
+				arrow.setAttribute("d", `M ${endX - 4} ${endY - 8} L ${endX} ${endY} L ${endX + 4} ${endY - 8} Z`);
+				origin.setAttribute("cx", String(startX));
+				origin.setAttribute("cy", String(startY));
+				label.setAttribute("x", String((startX + endX) / 2));
+				label.setAttribute("y", String(railY - 6));
+			}
+		};
+		const requestConnectors = () => {
+			if (!connectorFrame) connectorFrame = window.requestAnimationFrame(layoutConnectors);
+		};
+		const updateConnectorSelection = (frame) => {
+			document.querySelectorAll("[data-frame].is-related").forEach((related) => {
+				related.classList.remove("is-related");
+			});
+			connectorLayer.classList.toggle("has-selection", Boolean(frame));
+			for (const connector of connectors) {
+				const active = Boolean(frame) && (connector.dataset.sourceFrame === frame?.id || connector.dataset.targetFrame === frame?.id);
+				connector.classList.toggle("is-active", active);
+				if (!active || !frame) continue;
+				for (const id of [connector.dataset.sourceFrame, connector.dataset.targetFrame]) if (id !== frame.id) document.getElementById(id)?.classList.add("is-related");
+			}
+		};
 		const revealElement = (element) => {
 			if (!element) return;
 			const rect = frameWorldRect(element);
@@ -236,6 +330,7 @@
 				selectedFrame.setAttribute("aria-pressed", "false");
 			}
 			selectedFrame = null;
+			updateConnectorSelection(null);
 			document.querySelectorAll("[data-frame-target]").forEach((button) => {
 				button.setAttribute("aria-pressed", "false");
 				button.removeAttribute("aria-current");
@@ -251,6 +346,7 @@
 			if (!frame) return;
 			clearSelection();
 			selectedFrame = frame;
+			updateConnectorSelection(frame);
 			frame.classList.add("is-selected");
 			frame.setAttribute("aria-pressed", "true");
 			const navigatorButton = document.querySelector(`[data-frame-target="${CSS.escape(frame.id)}"]`);
@@ -273,6 +369,9 @@
 			const from = frame.dataset.from.trim();
 			selectionFromRow.hidden = !from;
 			selectionFrom.textContent = from;
+			const replaySteps = frame.dataset.replaySteps.trim();
+			selectionReplayRow.hidden = !replaySteps;
+			selectionReplay.textContent = replaySteps;
 			const status = [];
 			if (frame.dataset.default === "true") status.push("Default");
 			const inFlight = Number(frame.dataset.inFlight || 0);
@@ -477,8 +576,18 @@
 			pinch = null;
 			renderTools();
 		});
-		if (window.ResizeObserver) new ResizeObserver(requestRulers).observe(viewport);
-		else window.addEventListener("resize", requestRulers);
+		if (window.ResizeObserver) {
+			const observer = new ResizeObserver(() => {
+				requestRulers();
+				requestConnectors();
+			});
+			observer.observe(viewport);
+			observer.observe(board);
+		} else window.addEventListener("resize", () => {
+			requestRulers();
+			requestConnectors();
+		});
+		window.addEventListener("load", requestConnectors);
 		renderTools();
 		apply();
 	})();
