@@ -7,6 +7,7 @@ import {
   type JsonValue,
   type PreviewDataField,
   type PreviewIdentity,
+  type ReplayStep,
 } from "./editor-state.js";
 import {
   disposePreparedEditorModel,
@@ -126,6 +127,8 @@ interface EditorShell {
   selectionFrom: HTMLElement;
   selectionReplayRow: HTMLElement;
   selectionReplay: HTMLElement;
+  selectionWorkflowBlock: HTMLElement;
+  selectionWorkflow: HTMLOListElement;
   selectionStatus: HTMLElement;
   selectionData: HTMLElement;
   selectionNoData: HTMLElement;
@@ -207,6 +210,11 @@ const SHELL_HTML = `
         <div class="selection-replay-row" hidden><dt>Replay</dt><dd class="selection-replay"></dd></div>
         <div><dt>Status</dt><dd class="selection-status"></dd></div>
       </dl>
+      <section class="inspector-block selection-workflow-block" aria-labelledby="selection-workflow-title" hidden>
+        <h3 id="selection-workflow-title">Workflow trace</h3>
+        <p class="inspector-block-intro">Checked event payload, handler selection, guards, and committed effects.</p>
+        <ol class="workflow-step-list selection-workflow"></ol>
+      </section>
       <section class="inspector-block" aria-labelledby="selection-data-title">
         <h3 id="selection-data-title">Example data</h3>
         <p class="inspector-block-intro">Computed values and where they come from.</p>
@@ -288,6 +296,8 @@ const buildShell = (root: HTMLElement): EditorShell => {
     selectionFrom: required(shell, ".selection-from"),
     selectionReplayRow: required(shell, ".selection-replay-row"),
     selectionReplay: required(shell, ".selection-replay"),
+    selectionWorkflowBlock: required(shell, ".selection-workflow-block"),
+    selectionWorkflow: required(shell, ".selection-workflow"),
     selectionStatus: required(shell, ".selection-status"),
     selectionData: required(shell, ".selection-data"),
     selectionNoData: required(shell, ".selection-no-data"),
@@ -890,6 +900,89 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionNoData.hidden = preview.data.length > 0;
   };
 
+  const replayEffectGroups = (step: ReplayStep): Array<[string, JsonValue[]]> => {
+    const groups: Array<[string, JsonValue[]]> = [
+      ["State writes", step.effects.writes],
+      ["Commands", step.effects.commands],
+      ["Intents", step.effects.intents],
+      ["Structure", step.effects.structural],
+      ["Projection deliveries", step.effects.projections],
+    ];
+    return groups.filter(([, values]) => values.length > 0);
+  };
+
+  const renderWorkflow = (preview: EditorPreview): void => {
+    shell.selectionWorkflow.replaceChildren(...preview.replay.map((step, index) => {
+      const item = document.createElement("li");
+      item.className = "workflow-step";
+
+      const heading = document.createElement("div");
+      heading.className = "workflow-step-heading";
+      const ordinal = document.createElement("span");
+      ordinal.className = "workflow-step-ordinal";
+      ordinal.textContent = String(index + 1);
+      const title = document.createElement("strong");
+      title.textContent = step.label;
+      const kind = document.createElement("span");
+      kind.className = "workflow-step-kind";
+      kind.textContent = step.kind;
+      heading.append(ordinal, title, kind);
+      item.append(heading);
+
+      const payload = document.createElement("details");
+      payload.className = "workflow-detail";
+      const payloadSummary = document.createElement("summary");
+      payloadSummary.textContent = "Event payload";
+      const payloadValue = document.createElement("pre");
+      payloadValue.textContent = JSON.stringify(step.payload, null, 2);
+      payload.append(payloadSummary, payloadValue);
+      item.append(payload);
+
+      if (step.dispatch) {
+        const dispatch = document.createElement("div");
+        dispatch.className = "workflow-dispatch";
+        const selected = step.dispatch.selected === null
+          ? "no handler selected"
+          : `handler #${step.dispatch.selected}`;
+        dispatch.textContent = `${step.dispatch.definition} · ${selected} · on ${step.dispatch.on}`;
+        dispatch.title = `Scope: ${step.dispatch.scope}`;
+        item.append(dispatch);
+
+        if (step.dispatch.guards.length > 0) {
+          const guards = document.createElement("ul");
+          guards.className = "workflow-guards";
+          for (const guard of step.dispatch.guards) {
+            const guardNode = document.createElement("li");
+            guardNode.dataset.result = guard.result;
+            guardNode.textContent = `#${guard.handler} ${guard.result}`;
+            guards.append(guardNode);
+          }
+          item.append(guards);
+        }
+      }
+
+      const effectGroups = replayEffectGroups(step);
+      for (const [label, values] of effectGroups) {
+        const effects = document.createElement("details");
+        effects.className = "workflow-detail workflow-effects";
+        const summary = document.createElement("summary");
+        summary.textContent = `${label} · ${values.length}`;
+        const value = document.createElement("pre");
+        value.textContent = JSON.stringify(values, null, 2);
+        effects.append(summary, value);
+        item.append(effects);
+      }
+      if (effectGroups.length === 0) {
+        const noEffects = document.createElement("p");
+        noEffects.className = "workflow-no-effects";
+        noEffects.textContent = "No committed effects";
+        item.append(noEffects);
+      }
+      return item;
+    }));
+    shell.selectionWorkflowBlock.hidden = preview.replay.length === 0;
+  };
+
   const renderInspector = (preview: EditorPreview): void => {
     const focused = focusedPreviewId() === preview.id;
     shell.inspectorOverview.hidden = true;
@@ -916,6 +1009,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionFrom.textContent = preview.from ?? "";
     shell.selectionReplayRow.hidden = preview.replaySteps.length === 0;
     shell.selectionReplay.textContent = preview.replaySteps.join(" → ");
+    renderWorkflow(preview);
     const status = preview.default ? ["Default"] : [];
     status.push(preview.inFlight > 0 ? `${preview.inFlight} in flight` : "Settled");
     shell.selectionStatus.textContent = status.join(" · ");
@@ -966,6 +1060,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionDocumentation.replaceChildren();
     shell.selectionDocumentation.hidden = true;
     shell.selectionDocumentationBlock.hidden = true;
+    shell.selectionWorkflow.replaceChildren();
+    shell.selectionWorkflowBlock.hidden = true;
     shell.selectionAnnouncement.textContent = "";
   };
 

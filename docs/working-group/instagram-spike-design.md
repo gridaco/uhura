@@ -663,6 +663,15 @@ graph. Rail lanes are allocated deterministically so connectors do not cross
 through preview frames, and selecting a preview highlights its immediate
 parents and children.
 
+Selecting a derived preview also exposes a checked workflow trace for those
+same direct steps. Each record carries the authored event kind and payload,
+the runtime definition and absolute handler selected, every consulted guard's
+result, and only committed writes, commands, intents, structural operations,
+and projection deliveries. Page traces reuse `StepTrace`; standalone surface
+and component replay exposes the same dispatch record without inventing a
+second transition engine. The Inspector is therefore an explanation of the
+checked replay, not a best-effort reconstruction from rendered frames.
+
 ---
 
 ## 7. Core semantics

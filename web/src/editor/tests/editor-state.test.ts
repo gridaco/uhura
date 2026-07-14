@@ -107,7 +107,30 @@ const stateFixture = (): unknown => ({
       derived: false,
       inFlight: 0,
       from: null,
-      replaySteps: [],
+      replaySteps: ["opened"],
+      replay: [{
+        label: "opened",
+        kind: "semantic",
+        payload: { id: "post-1" },
+        dispatch: {
+          scope: "page:1",
+          definition: "feed",
+          on: "opened",
+          guards: [
+            { handler: 0, result: "unsatisfied" },
+            { handler: 1, result: "satisfied" },
+          ],
+          selected: 1,
+          aborted: null,
+        },
+        effects: {
+          writes: [{ field: "selected", value: "post-1" }],
+          commands: [],
+          intents: [],
+          structural: [],
+          projections: [],
+        },
+      }],
       note: null,
       data: [{
         group: "properties",
@@ -178,6 +201,11 @@ test("decodes the complete fixed EditorState contract", () => {
   assert.equal(state.render?.previews[0]?.data[0]?.source?.kind, "fixture");
   assert.equal(state.render?.previews[0]?.sourceFile, "app/feed/page.uhura");
   assert.deepEqual(state.render?.previews[0]?.interactions[0]?.payload, { id: "post-1" });
+  assert.equal(state.render?.previews[0]?.replay[0]?.dispatch?.selected, 1);
+  assert.deepEqual(state.render?.previews[0]?.replay[0]?.effects.writes[0], {
+    field: "selected",
+    value: "post-1",
+  });
   assert.equal(state.render?.icons["heart"]?.commands[0]?.kind, "path");
   assert.equal(state.render?.authoring.entries[1]?.class, "annotation");
   assert.deepEqual(state.render?.previews[0]?.provenance.occurrences[0]?.anchors[0], {
@@ -308,6 +336,18 @@ test("rejects unknown properties, malformed data variants, and content-kind drif
   };
   fragmentPage.render.previews[0]!["content"] = node;
   assert.throws(() => decodeEditorState(fragmentPage), /uhura-view\/0 snapshot/);
+
+  const invalidGuard = stateFixture() as {
+    render: { previews: Array<{ replay: Array<{ dispatch: { guards: Array<{ result: string }> } }> }> };
+  };
+  invalidGuard.render.previews[0]!.replay[0]!.dispatch.guards[0]!.result = "maybe";
+  assert.throws(() => decodeEditorState(invalidGuard), /"satisfied" or "unsatisfied" or "not-ready"/);
+
+  const mismatchedReplay = stateFixture() as {
+    render: { previews: Array<{ replaySteps: string[] }> };
+  };
+  mismatchedReplay.render.previews[0]!.replaySteps[0] = "other-event";
+  assert.throws(() => decodeEditorState(mismatchedReplay), /details matching replaySteps in order/);
 });
 
 test("enforces group references, identity matching, and unique IDs", () => {

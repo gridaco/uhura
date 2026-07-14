@@ -163,6 +163,36 @@ export interface PreviewProvenance {
   occurrences: TargetOccurrence[];
 }
 
+export interface ReplayGuard {
+  handler: number;
+  result: "satisfied" | "unsatisfied" | "not-ready";
+}
+
+export interface ReplayDispatch {
+  scope: string;
+  definition: string;
+  on: string;
+  guards: ReplayGuard[];
+  selected: number | null;
+  aborted: string | null;
+}
+
+export interface ReplayEffects {
+  writes: JsonValue[];
+  commands: JsonValue[];
+  intents: JsonValue[];
+  structural: JsonValue[];
+  projections: JsonValue[];
+}
+
+export interface ReplayStep {
+  label: string;
+  kind: "semantic" | "outcome" | "projection";
+  payload: JsonValue;
+  dispatch: ReplayDispatch | null;
+  effects: ReplayEffects;
+}
+
 export interface EditorPreview {
   id: string;
   identity: PreviewIdentity;
@@ -173,6 +203,7 @@ export interface EditorPreview {
   inFlight: number;
   from: string | null;
   replaySteps: string[];
+  replay: ReplayStep[];
   note: string | null;
   data: PreviewDataField[];
   interactions: PreviewInteraction[];
@@ -312,6 +343,9 @@ const nonNegativeInteger = (value: unknown, path: string): number => {
   }
   return value;
 };
+
+const nullableNonNegativeInteger = (value: unknown, path: string): number | null =>
+  value === null ? null : nonNegativeInteger(value, path);
 
 const oneOf = <T extends string>(
   value: unknown,
@@ -698,6 +732,54 @@ const interaction = (value: unknown, path: string): PreviewInteraction => {
   };
 };
 
+const replayDispatch = (value: unknown, path: string): ReplayDispatch | null => {
+  if (value === null) return null;
+  const object = record(value, path);
+  exact(object, path, ["scope", "definition", "on", "guards", "selected", "aborted"]);
+  return {
+    scope: string(object["scope"], `${path}.scope`),
+    definition: string(object["definition"], `${path}.definition`),
+    on: string(object["on"], `${path}.on`),
+    guards: array(object["guards"], `${path}.guards`).map((item, index) => {
+      const guardPath = `${path}.guards[${index}]`;
+      const guard = record(item, guardPath);
+      exact(guard, guardPath, ["handler", "result"]);
+      return {
+        handler: nonNegativeInteger(guard["handler"], `${guardPath}.handler`),
+        result: oneOf(guard["result"], `${guardPath}.result`, [
+          "satisfied", "unsatisfied", "not-ready",
+        ]),
+      };
+    }),
+    selected: nullableNonNegativeInteger(object["selected"], `${path}.selected`),
+    aborted: nullableString(object["aborted"], `${path}.aborted`),
+  };
+};
+
+const replayStep = (value: unknown, path: string): ReplayStep => {
+  const object = record(value, path);
+  exact(object, path, ["label", "kind", "payload", "dispatch", "effects"]);
+  const effectsPath = `${path}.effects`;
+  const effects = record(object["effects"], effectsPath);
+  exact(effects, effectsPath, ["writes", "commands", "intents", "structural", "projections"]);
+  const effectList = (name: keyof ReplayEffects): JsonValue[] =>
+    array(effects[name], `${effectsPath}.${name}`).map((item, index) =>
+      jsonValue(item, `${effectsPath}.${name}[${index}]`));
+  return {
+    label: string(object["label"], `${path}.label`),
+    kind: oneOf(object["kind"], `${path}.kind`, ["semantic", "outcome", "projection"]),
+    payload: jsonValue(object["payload"], `${path}.payload`),
+    dispatch: replayDispatch(object["dispatch"], `${path}.dispatch`),
+    effects: {
+      writes: effectList("writes"),
+      commands: effectList("commands"),
+      intents: effectList("intents"),
+      structural: effectList("structural"),
+      projections: effectList("projections"),
+    },
+  };
+};
+
 const identity = (value: unknown, path: string): PreviewIdentity => {
   const object = record(value, path);
   exact(object, path, ["kind", "subject", "example"]);
@@ -712,7 +794,7 @@ const preview = (value: unknown, path: string): EditorPreview => {
   const object = record(value, path);
   exact(object, path, [
     "id", "identity", "sourceFile", "default", "pinned", "derived", "inFlight", "from", "note",
-    "replaySteps", "data", "interactions", "documentation", "provenance", "content",
+    "replaySteps", "replay", "data", "interactions", "documentation", "provenance", "content",
   ]);
   const previewIdentity = identity(object["identity"], `${path}.identity`);
   const previewContent = content(object["content"], `${path}.content`);
@@ -721,6 +803,14 @@ const preview = (value: unknown, path: string): EditorPreview => {
       `${path}.content`,
       previewIdentity.kind === "page" ? "an uhura-view/0 snapshot" : "a fragment VNode",
     );
+  }
+  const replaySteps = array(object["replaySteps"], `${path}.replaySteps`).map((item, index) =>
+    string(item, `${path}.replaySteps[${index}]`));
+  const replay = array(object["replay"], `${path}.replay`).map((item, index) =>
+    replayStep(item, `${path}.replay[${index}]`));
+  if (replay.length !== replaySteps.length
+      || replay.some((step, index) => step.label !== replaySteps[index])) {
+    throw new EditorContractError(`${path}.replay`, "details matching replaySteps in order");
   }
   return {
     id: string(object["id"], `${path}.id`),
@@ -731,8 +821,8 @@ const preview = (value: unknown, path: string): EditorPreview => {
     derived: boolean(object["derived"], `${path}.derived`),
     inFlight: nonNegativeInteger(object["inFlight"], `${path}.inFlight`),
     from: nullableString(object["from"], `${path}.from`),
-    replaySteps: array(object["replaySteps"], `${path}.replaySteps`).map((item, index) =>
-      string(item, `${path}.replaySteps[${index}]`)),
+    replaySteps,
+    replay,
     note: nullableString(object["note"], `${path}.note`),
     data: array(object["data"], `${path}.data`).map((item, index) =>
       dataField(item, `${path}.data[${index}]`)),

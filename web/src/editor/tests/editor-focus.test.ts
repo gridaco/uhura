@@ -30,6 +30,7 @@ const preview = (id: string, previewIdentity: PreviewIdentity): EditorPreview =>
   inFlight: 0,
   from: null,
   replaySteps: [],
+  replay: [],
   note: null,
   data: [],
   interactions: [],

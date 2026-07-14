@@ -343,6 +343,7 @@ const render = (
     inFlight: 0,
     from: null,
     replaySteps: [],
+    replay: [],
     note: null,
     data: [],
     interactions: [],

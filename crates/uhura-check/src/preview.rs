@@ -46,6 +46,9 @@ pub struct ResolvedPreview {
     /// Steps authored directly on this example. Editor provenance edges use
     /// only these steps; inherited ancestor steps remain on their own edge.
     pub replay_steps: Vec<String>,
+    /// Runtime-backed detail for the same direct steps. The label list above
+    /// stays compact for canvas edges; this record powers Inspector detail.
+    pub replay: Vec<replay::ReplayStep>,
     pub note: Option<String>,
     /// Editor-only, read-only values and authored origins. This sidecar is
     /// deliberately excluded from ProgramIr: examples never affect runtime
@@ -235,7 +238,7 @@ fn resolve_file(
         let mut effective = Effective::default();
         let mut from: Option<String> = None;
         let mut note: Option<String> = None;
-        let replay_steps = example
+        let replay_steps: Vec<String> = example
             .clauses
             .iter()
             .filter_map(|clause| match clause {
@@ -376,7 +379,7 @@ fn resolve_file(
             }
         }
 
-        let (payload, in_flight) = if derived {
+        let (payload, in_flight, replay) = if derived {
             let replay_events: Vec<&ast::ExampleEvent> =
                 effective.events.iter().map(|event| event.node).collect();
             let input = replay::ReplayInput {
@@ -388,7 +391,15 @@ fn resolve_file(
                 span: example.span,
             };
             match replay::replay(program, resolved, env, fixture, input) {
-                Ok(outcome) => (outcome.payload, outcome.in_flight),
+                Ok(outcome) => {
+                    let direct_start = outcome
+                        .steps
+                        .len()
+                        .checked_sub(replay_steps.len())
+                        .expect("successful replay records every direct authored step");
+                    let direct_steps = outcome.steps.into_iter().skip(direct_start).collect();
+                    (outcome.payload, outcome.in_flight, direct_steps)
+                }
                 Err(e) => {
                     diags.push(Diagnostic::error(
                         codes::REPLAY_STEP.0,
@@ -402,7 +413,7 @@ fn resolve_file(
             }
         } else {
             match assemble_pinned(program, env, bindings, example.span, diags) {
-                Some(payload) => (payload, 0),
+                Some(payload) => (payload, 0, Vec::new()),
                 None => continue,
             }
         };
@@ -426,6 +437,7 @@ fn resolve_file(
             in_flight,
             from,
             replay_steps,
+            replay,
             note,
             data,
             declaration_doc_id,

@@ -420,6 +420,21 @@ export const EDITOR_STYLES = `
   .preview-data-value, .preview-data-state { display: block; font-weight: 600; line-height: 1.45; white-space: pre-wrap; }
   .preview-data-reason { display: block; margin-block-start: 2px; color: #7b4651; line-height: 1.4; }
   .preview-data-source { margin: 3px 0 0 !important; color: #68717d !important; line-height: 1.4; }
+  .workflow-step-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .workflow-step { padding: 9px; border: 1px solid #d9e4ec; border-radius: 8px; background: #f8fbfd; }
+  .workflow-step-heading { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 6px; color: #253343; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .workflow-step-heading strong { min-inline-size: 0; overflow-wrap: anywhere; }
+  .workflow-step-ordinal { display: grid; place-items: center; inline-size: 18px; block-size: 18px; border-radius: 999px; color: #fff; background: var(--accent); font-size: 9px; font-weight: 700; }
+  .workflow-step-kind { padding: 2px 5px; border-radius: 999px; color: #65717e; background: #e9eff4; font-size: 8px; text-transform: uppercase; }
+  .workflow-dispatch { margin-block-start: 8px; color: #34485b; font: 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+  .workflow-guards { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+  .workflow-guards li { padding: 2px 5px; border-radius: 999px; color: #6f4b14; background: #fff1c9; font: 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .workflow-guards li[data-result="satisfied"] { color: #24623c; background: #dff4e7; }
+  .workflow-guards li[data-result="not-ready"] { color: #7b4651; background: #fbe5e9; }
+  .workflow-detail { margin-block-start: 7px; border-block-start: 1px solid #e5ebef; padding-block-start: 6px; }
+  .workflow-detail summary { cursor: pointer; color: #596a79; font-size: 9px; font-weight: 650; }
+  .workflow-detail pre { max-block-size: 180px; margin: 6px 0 0; padding: 7px; overflow: auto; border-radius: 5px; color: #2e3a47; background: #eef3f6; font: 8px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .workflow-no-effects { margin: 7px 0 0 !important; color: #84909b !important; font-size: 9px !important; }
   .interaction-list { display: grid; gap: 6px; padding: 0; list-style: none; }
   .interaction-list li { padding: 8px 9px; border: 1px solid #d9e8f4; border-radius: 7px; color: #315a75; background: #f4faff; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
   .inspector-muted { color: var(--faint) !important; font-style: italic; }

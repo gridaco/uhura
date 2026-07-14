@@ -84,6 +84,7 @@ pub struct Preview {
     pub in_flight: usize,
     pub from: Option<String>,
     pub replay_steps: Vec<String>,
+    pub replay: Vec<serde_json::Value>,
     pub note: Option<String>,
     pub data: Vec<PreviewField>,
     pub interactions: Vec<Interaction>,
@@ -1405,6 +1406,7 @@ impl Preview {
             "inFlight": self.in_flight,
             "from": self.from,
             "replaySteps": self.replay_steps,
+            "replay": self.replay,
             "note": self.note,
             "data": self.data.iter().map(PreviewField::to_json).collect::<Vec<_>>(),
             "interactions": self.interactions.iter().map(Interaction::to_json).collect::<Vec<_>>(),
@@ -1932,6 +1934,7 @@ fn build_preview(
         in_flight: checked.in_flight,
         from: checked.from.clone(),
         replay_steps: checked.replay_steps.clone(),
+        replay: checked.replay.iter().map(|step| step.to_json()).collect(),
         note: checked.note.clone(),
         data: checked.data.iter().map(build_field).collect(),
         interactions,
@@ -2236,6 +2239,7 @@ mod tests {
                 in_flight: 0,
                 from: None,
                 replay_steps: Vec::new(),
+                replay: Vec::new(),
                 note: Some("Entry page".to_string()),
                 data: fields,
                 declaration_doc_id: None,
@@ -2259,6 +2263,7 @@ mod tests {
                 in_flight: 0,
                 from: None,
                 replay_steps: Vec::new(),
+                replay: Vec::new(),
                 note: None,
                 data: Vec::new(),
                 declaration_doc_id: None,
@@ -2281,6 +2286,23 @@ mod tests {
                 in_flight: 2,
                 from: None,
                 replay_steps: vec!["activated".to_string()],
+                replay: vec![uhura_check::replay::ReplayStep {
+                    label: "activated".to_string(),
+                    kind: uhura_check::replay::ReplayStepKind::Semantic,
+                    payload: serde_json::json!({}),
+                    dispatch: Some(uhura_check::replay::ReplayDispatch {
+                        scope: "fragment:0".to_string(),
+                        definition: "post-card".to_string(),
+                        on: "activated".to_string(),
+                        guards: vec![uhura_check::replay::ReplayGuard {
+                            handler: 0,
+                            result: "satisfied",
+                        }],
+                        selected: Some(0),
+                        aborted: None,
+                    }),
+                    effects: uhura_check::replay::ReplayEffects::default(),
+                }],
                 note: None,
                 data: Vec::new(),
                 declaration_doc_id: None,
@@ -2488,6 +2510,7 @@ mod tests {
                 .all(|preview| !preview.interactions.is_empty())
         );
         assert_eq!(render.previews[0].interactions[0].emit, "activated");
+        assert_eq!(render.previews[2].replay[0]["dispatch"]["selected"], 0);
     }
 
     #[test]

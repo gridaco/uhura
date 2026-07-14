@@ -20,9 +20,9 @@ use uhura_base::{Ident, Span, Value};
 use uhura_core::event::{Event, apply_failure, apply_updates};
 use uhura_core::state::{Projections, UiState, initial_state};
 use uhura_core::step::{FragmentError, FragmentMachine, FragmentNote, step_u};
-use uhura_core::trace::Disposition;
+use uhura_core::trace::{DispatchRecord, Disposition, GuardResult, StepTrace};
 use uhura_core::view::{Descriptor, DescriptorKind};
-use uhura_port::envelope::{OutcomeResult, ProjectionUpdate};
+use uhura_port::envelope::{CommandEnvelope, OutcomeResult, ProjectionUpdate};
 use uhura_syntax::ast;
 
 use crate::fixture::{FixtureData, decode_against_ty};
@@ -34,6 +34,166 @@ pub struct ReplayOutcome {
     /// Unsettled commands at the end of the timeline — the caption's
     /// "N command(s) in flight" (§6.2).
     pub in_flight: usize,
+    /// One runtime-backed record per authored timeline event, including
+    /// event payload, handler/guard selection, and committed effects.
+    pub steps: Vec<ReplayStep>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayStepKind {
+    Semantic,
+    Outcome,
+    Projection,
+}
+
+impl ReplayStepKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReplayStepKind::Semantic => "semantic",
+            ReplayStepKind::Outcome => "outcome",
+            ReplayStepKind::Projection => "projection",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayGuard {
+    pub handler: usize,
+    pub result: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayDispatch {
+    pub scope: String,
+    pub definition: String,
+    pub on: String,
+    pub guards: Vec<ReplayGuard>,
+    pub selected: Option<usize>,
+    pub aborted: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReplayEffects {
+    pub writes: Vec<serde_json::Value>,
+    pub commands: Vec<serde_json::Value>,
+    pub intents: Vec<serde_json::Value>,
+    pub structural: Vec<serde_json::Value>,
+    pub projections: Vec<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayStep {
+    pub label: String,
+    pub kind: ReplayStepKind,
+    pub payload: serde_json::Value,
+    pub dispatch: Option<ReplayDispatch>,
+    pub effects: ReplayEffects,
+}
+
+impl ReplayStep {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "label": self.label,
+            "kind": self.kind.as_str(),
+            "payload": self.payload,
+            "dispatch": self.dispatch.as_ref().map(|dispatch| serde_json::json!({
+                "scope": dispatch.scope,
+                "definition": dispatch.definition,
+                "on": dispatch.on,
+                "guards": dispatch.guards.iter().map(|guard| serde_json::json!({
+                    "handler": guard.handler,
+                    "result": guard.result,
+                })).collect::<Vec<_>>(),
+                "selected": dispatch.selected,
+                "aborted": dispatch.aborted,
+            })),
+            "effects": {
+                "writes": self.effects.writes,
+                "commands": self.effects.commands,
+                "intents": self.effects.intents,
+                "structural": self.effects.structural,
+                "projections": self.effects.projections,
+            },
+        })
+    }
+}
+
+fn replay_dispatch(record: &DispatchRecord) -> ReplayDispatch {
+    ReplayDispatch {
+        scope: record.scope.clone(),
+        definition: record.definition.to_string(),
+        on: record.on.clone(),
+        guards: record
+            .guards
+            .iter()
+            .map(|guard| ReplayGuard {
+                handler: guard.handler,
+                result: match guard.result {
+                    GuardResult::Satisfied => "satisfied",
+                    GuardResult::Unsatisfied => "unsatisfied",
+                    GuardResult::NotReady => "not-ready",
+                },
+            })
+            .collect(),
+        selected: record.selected,
+        aborted: record.aborted.clone(),
+    }
+}
+
+fn replay_step_from_trace(
+    label: String,
+    kind: ReplayStepKind,
+    payload: serde_json::Value,
+    trace: &StepTrace,
+    projections: Vec<serde_json::Value>,
+) -> ReplayStep {
+    let (dispatch, writes) = match &trace.disposition {
+        Disposition::Dispatched(record) => (Some(replay_dispatch(record)), record.writes.clone()),
+        _ => (None, Vec::new()),
+    };
+    ReplayStep {
+        label,
+        kind,
+        payload,
+        dispatch,
+        effects: ReplayEffects {
+            writes,
+            commands: trace.c.clone(),
+            intents: trace.i.clone(),
+            structural: trace.structural.clone(),
+            projections,
+        },
+    }
+}
+
+fn command_json(command: &CommandEnvelope) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "command",
+        "port": command.port.to_string(),
+        "command": command.command.to_string(),
+        "correlation": command.correlation,
+        "payload": command.payload,
+    })
+}
+
+fn replay_step_from_fragment(
+    label: String,
+    kind: ReplayStepKind,
+    payload: serde_json::Value,
+    dispatch: &DispatchRecord,
+    commands: &[CommandEnvelope],
+) -> ReplayStep {
+    ReplayStep {
+        label,
+        kind,
+        payload,
+        dispatch: Some(replay_dispatch(dispatch)),
+        effects: ReplayEffects {
+            writes: dispatch.writes.clone(),
+            commands: commands.iter().map(command_json).collect(),
+            ..ReplayEffects::default()
+        },
+    }
 }
 
 /// Attributes to the first failing step (§6.2).
@@ -88,6 +248,7 @@ fn replay_page(
 ) -> Result<ReplayOutcome, ReplayError> {
     let mut x = input.x;
     let mut revisions = RevisionCounter::default();
+    let mut steps = Vec::new();
 
     let boot = step_u(
         program,
@@ -119,6 +280,7 @@ fn replay_page(
                     let json = static_arg(&arg.value, fixture, *span)?;
                     payload.insert(arg.name.clone(), json);
                 }
+                let replay_payload = serde_json::Value::Object(payload.clone());
                 let scope = match u.nav.last() {
                     Some(entry) => format!("page:{}", entry.serial),
                     None => return fail(*span, "the machine has no mounted page"),
@@ -145,6 +307,13 @@ fn replay_page(
                 u = match result {
                     Ok(result) => {
                         inspect_disposition(name, &result.t.disposition, *span)?;
+                        steps.push(replay_step_from_trace(
+                            name.clone(),
+                            ReplayStepKind::Semantic,
+                            replay_payload,
+                            &result.t,
+                            Vec::new(),
+                        ));
                         result.u
                     }
                     Err(e) => return fail(*span, e.to_string()),
@@ -159,18 +328,33 @@ fn replay_page(
                     {
                         return fail(pin.span, e);
                     }
+                    let projection_effect = serde_json::json!({
+                        "port": port.to_string(),
+                        "projection": projection.to_string(),
+                        "key": key,
+                        "failed": reason,
+                    });
                     u = match step_u(
                         program,
                         u,
                         &x,
                         Event::ProjectionFailed {
-                            port,
-                            projection,
-                            key,
-                            reason,
+                            port: port.clone(),
+                            projection: projection.clone(),
+                            key: key.clone(),
+                            reason: reason.clone(),
                         },
                     ) {
-                        Ok(result) => result.u,
+                        Ok(result) => {
+                            steps.push(replay_step_from_trace(
+                                format!("projection {}.{}", pin.port, pin.projection),
+                                ReplayStepKind::Projection,
+                                projection_effect.clone(),
+                                &result.t,
+                                vec![projection_effect],
+                            ));
+                            result.u
+                        }
                         Err(e) => return fail(pin.span, e.to_string()),
                     };
                     continue;
@@ -179,6 +363,7 @@ fn replay_page(
                 if let Err(e) = apply_updates(program, &mut x, std::slice::from_ref(&update)) {
                     return fail(pin.span, e);
                 }
+                let projection_effect = update.to_json();
                 u = match step_u(
                     program,
                     u,
@@ -187,7 +372,16 @@ fn replay_page(
                         updates: vec![update],
                     },
                 ) {
-                    Ok(result) => result.u,
+                    Ok(result) => {
+                        steps.push(replay_step_from_trace(
+                            format!("projection {}.{}", pin.port, pin.projection),
+                            ReplayStepKind::Projection,
+                            projection_effect.clone(),
+                            &result.t,
+                            vec![projection_effect],
+                        ));
+                        result.u
+                    }
                     Err(e) => return fail(pin.span, e.to_string()),
                 };
             }
@@ -216,7 +410,15 @@ fn replay_page(
                     );
                 };
                 let result_kind = outcome_result(which, args, *span)?;
+                let outcome_name = format!(
+                    "{command}.{}",
+                    match which {
+                        ast::OutcomeKind::Ok => "ok",
+                        ast::OutcomeKind::Err => "err",
+                    }
+                );
                 let outcome_label = format!("{command} outcome");
+                let replay_payload = result_kind.to_json();
                 let result = step_u(
                     program,
                     u,
@@ -230,6 +432,13 @@ fn replay_page(
                 u = match result {
                     Ok(result) => {
                         inspect_disposition(&outcome_label, &result.t.disposition, *span)?;
+                        steps.push(replay_step_from_trace(
+                            outcome_name,
+                            ReplayStepKind::Outcome,
+                            replay_payload,
+                            &result.t,
+                            Vec::new(),
+                        ));
                         result.u
                     }
                     Err(e) => return fail(*span, e.to_string()),
@@ -249,6 +458,7 @@ fn replay_page(
             x,
         },
         in_flight,
+        steps,
     })
 }
 
@@ -325,7 +535,8 @@ fn replay_fragment(
     let mut revisions = RevisionCounter::default();
     let mut state = initial_state(def);
     state.extend(input.state_pins);
-    let mut machine = FragmentMachine::from_state(state);
+    let mut machine = FragmentMachine::from_state(name.clone(), state);
+    let mut steps = Vec::new();
 
     for event in input.events {
         match event {
@@ -363,6 +574,12 @@ fn replay_fragment(
                         return fail(*span, format!("`{event_name}` needs `{param}` here"));
                     }
                 }
+                let replay_payload = serde_json::Value::Object(
+                    payload
+                        .iter()
+                        .map(|(key, value)| (key.to_string(), value.to_json()))
+                        .collect(),
+                );
                 let note = machine.dispatch_semantic(
                     program,
                     def,
@@ -371,7 +588,14 @@ fn replay_fragment(
                     &event_ident,
                     &payload,
                 );
-                inspect_fragment_note(event_name, note, *span)?;
+                let (dispatch, commands) = accept_fragment_note(event_name, note, *span)?;
+                steps.push(replay_step_from_fragment(
+                    event_name.clone(),
+                    ReplayStepKind::Semantic,
+                    replay_payload,
+                    &dispatch,
+                    &commands,
+                ));
             }
             ast::ExampleEvent::Projection(pin) => {
                 if let Some(reason) = failed_delivery(pin, fixture)? {
@@ -381,12 +605,39 @@ fn replay_fragment(
                     {
                         return fail(pin.span, e);
                     }
+                    let effect = serde_json::json!({
+                        "port": port.to_string(),
+                        "projection": projection.to_string(),
+                        "key": key,
+                        "failed": reason,
+                    });
+                    steps.push(ReplayStep {
+                        label: format!("projection {}.{}", pin.port, pin.projection),
+                        kind: ReplayStepKind::Projection,
+                        payload: effect.clone(),
+                        dispatch: None,
+                        effects: ReplayEffects {
+                            projections: vec![effect],
+                            ..ReplayEffects::default()
+                        },
+                    });
                     continue;
                 }
                 let update = pin_update(pin, resolved, fixture, &mut revisions, &x)?;
                 if let Err(e) = apply_updates(program, &mut x, std::slice::from_ref(&update)) {
                     return fail(pin.span, e);
                 }
+                let effect = update.to_json();
+                steps.push(ReplayStep {
+                    label: format!("projection {}.{}", pin.port, pin.projection),
+                    kind: ReplayStepKind::Projection,
+                    payload: effect.clone(),
+                    dispatch: None,
+                    effects: ReplayEffects {
+                        projections: vec![effect],
+                        ..ReplayEffects::default()
+                    },
+                });
             }
             ast::ExampleEvent::Outcome {
                 command,
@@ -412,8 +663,24 @@ fn replay_fragment(
                     );
                 };
                 let result = outcome_result(which, args, *span)?;
+                let replay_payload = result.to_json();
+                let outcome_name = format!(
+                    "{command}.{}",
+                    match which {
+                        ast::OutcomeKind::Ok => "ok",
+                        ast::OutcomeKind::Err => "err",
+                    }
+                );
                 let note = machine.dispatch_outcome(program, def, &input.props, &x, tag, &result);
-                inspect_fragment_note(&format!("{command} outcome"), note, *span)?;
+                let (dispatch, commands) =
+                    accept_fragment_note(&format!("{command} outcome"), note, *span)?;
+                steps.push(replay_step_from_fragment(
+                    outcome_name,
+                    ReplayStepKind::Outcome,
+                    replay_payload,
+                    &dispatch,
+                    &commands,
+                ));
             }
         }
     }
@@ -428,24 +695,25 @@ fn replay_fragment(
             x,
         },
         in_flight,
+        steps,
     })
 }
 
-fn inspect_fragment_note(
+fn accept_fragment_note(
     label: &str,
     note: Result<FragmentNote, FragmentError>,
     span: Span,
-) -> Result<(), ReplayError> {
+) -> Result<(DispatchRecord, Vec<CommandEnvelope>), ReplayError> {
     match note {
-        Ok(FragmentNote::Committed { .. }) => Ok(()),
-        Ok(FragmentNote::NoHandler) => fail(
+        Ok(FragmentNote::Committed { dispatch, commands }) => Ok((dispatch, commands)),
+        Ok(FragmentNote::NoHandler { .. }) => fail(
             span,
             format!(
                 "no handler's guard accepts `{label}` at this point in the timeline — \
                  the machine drops it"
             ),
         ),
-        Ok(FragmentNote::NotReady) => fail(
+        Ok(FragmentNote::NotReady { .. }) => fail(
             span,
             format!(
                 "`{label}` aborts on an undelivered projection — deliver or pin it \

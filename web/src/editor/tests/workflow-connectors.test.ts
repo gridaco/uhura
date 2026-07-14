@@ -23,6 +23,7 @@ const preview = (
   inFlight: 0,
   from,
   replaySteps,
+  replay: [],
   note: null,
   data: [],
   interactions: [],
