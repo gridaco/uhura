@@ -9,6 +9,7 @@ From an Uhura checkout, build the app-owned Play provider once, then start the
 project with the published npm CLI:
 
 ```sh
+corepack pnpm@10.11.0 -C web install --frozen-lockfile
 corepack pnpm@10.11.0 -C web build:provider
 npx --yes spock@0.5.0 start examples/instagram
 ```
@@ -17,6 +18,7 @@ When Uhura is checked out as the Spock submodule, the equivalent parent-repo
 commands are:
 
 ```sh
+corepack pnpm@10.11.0 -C uhura/web install --frozen-lockfile
 corepack pnpm@10.11.0 -C uhura/web build:provider
 npx --yes spock@0.5.0 start uhura/examples/instagram
 
