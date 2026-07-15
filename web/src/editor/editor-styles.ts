@@ -376,7 +376,9 @@ export const EDITOR_STYLES = `
   .badge-pinned { color: #715d13; background: #fff7d6; }
   .badge-in-flight { color: #73510d; background: #fff0cc; }
   .badge-surface { color: #5b3fa7; background: #eee9ff; }
-  .badge-surface[data-direct="true"]::before { content: "↳ "; }
+  .badge-surface[data-relation="direct"]::before { content: "↳ "; }
+  .badge-surface[data-relation="inherited"]::before { content: "↪ "; }
+  .badge-surface[data-relation="mounted"]::before { content: "◇ "; }
 
   .inspector-section { padding: 16px 14px 24px; }
   .inspector-hero { display: flex; align-items: center; gap: 10px; padding-block-end: 16px; border-block-end: 1px solid var(--border); }

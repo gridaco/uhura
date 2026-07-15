@@ -6,7 +6,7 @@ export interface MountedSurface {
   definition: string;
   modality: string;
   stackIndex: number;
-  openedByDirectReplay: boolean;
+  relation: "direct" | "inherited" | "mounted";
 }
 
 export interface SurfaceHierarchy {
@@ -30,12 +30,17 @@ const mountedSurface = (
   surface: SurfaceView,
   stackIndex: number,
   directlyOpened: ReadonlySet<string>,
+  hasReplayParent: boolean,
 ): MountedSurface => ({
   key: surface.key,
   definition: surface.definition,
   modality: surface.modality,
   stackIndex,
-  openedByDirectReplay: directlyOpened.has(surface.key),
+  relation: directlyOpened.has(surface.key)
+    ? "direct"
+    : hasReplayParent
+      ? "inherited"
+      : "mounted",
 });
 
 export const surfaceHierarchy = (preview: EditorPreview): SurfaceHierarchy | null => {
@@ -44,9 +49,9 @@ export const surfaceHierarchy = (preview: EditorPreview): SurfaceHierarchy | nul
   return {
     page: preview.content.page.route,
     surfaces: preview.content.surfaces.map((surface, index) =>
-      mountedSurface(surface, index, directlyOpened)),
+      mountedSurface(surface, index, directlyOpened, preview.from !== null)),
   };
 };
 
 export const directlyOpenedSurfaces = (preview: EditorPreview): MountedSurface[] =>
-  surfaceHierarchy(preview)?.surfaces.filter((surface) => surface.openedByDirectReplay) ?? [];
+  surfaceHierarchy(preview)?.surfaces.filter((surface) => surface.relation === "direct") ?? [];

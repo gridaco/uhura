@@ -377,6 +377,7 @@ pub enum ValidationError {
         preview: String,
         parent: String,
     },
+    ReplayMetadataMismatch(String),
     DuplicateGroupId(String),
     UnknownGroupedPreview {
         group: String,
@@ -482,6 +483,10 @@ impl std::fmt::Display for ValidationError {
             ValidationError::UnknownPreviewParent { preview, parent } => write!(
                 f,
                 "preview `{preview}` refers to unknown parent example `{parent}`"
+            ),
+            ValidationError::ReplayMetadataMismatch(preview) => write!(
+                f,
+                "preview `{preview}` replay details do not match replay step labels"
             ),
             ValidationError::DuplicateGroupId(id) => {
                 write!(f, "preview group id `{id}` occurs more than once")
@@ -1221,6 +1226,18 @@ impl EditorRender {
             );
             if !content_matches {
                 return Err(ValidationError::ContentKindMismatch(preview.id.clone()));
+            }
+            let replay_matches = preview.replay.len() == preview.replay_steps.len()
+                && preview
+                    .replay
+                    .iter()
+                    .zip(&preview.replay_steps)
+                    .all(|(step, expected)| {
+                        step.get("label").and_then(serde_json::Value::as_str)
+                            == Some(expected.as_str())
+                    });
+            if !replay_matches {
+                return Err(ValidationError::ReplayMetadataMismatch(preview.id.clone()));
             }
             preview.validate_authoring(&authoring)?;
             by_id.insert(preview.id.clone(), preview);
@@ -2733,6 +2750,27 @@ mod tests {
                 preview: "page/home/default".to_string(),
                 parent: "missing".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn validation_rejects_replay_detail_and_label_drift() {
+        let mut render = build_render(3, &clean_output(), BTreeMap::new()).unwrap();
+        render.previews[2].replay_steps[0] = "different-label".to_string();
+        assert_eq!(
+            render.validate(),
+            Err(ValidationError::ReplayMetadataMismatch(
+                "component/post-card/liked".to_string(),
+            ))
+        );
+
+        let mut render = build_render(3, &clean_output(), BTreeMap::new()).unwrap();
+        render.previews[2].replay.clear();
+        assert_eq!(
+            render.validate(),
+            Err(ValidationError::ReplayMetadataMismatch(
+                "component/post-card/liked".to_string(),
+            ))
         );
     }
 

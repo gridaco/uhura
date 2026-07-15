@@ -118,6 +118,20 @@ impl ReplayStep {
     }
 }
 
+pub(crate) fn projection_step_label(port: &str, projection: &str) -> String {
+    format!("projection {port}.{projection}")
+}
+
+pub(crate) fn outcome_step_label(command: &str, which: &ast::OutcomeKind) -> String {
+    format!(
+        "{command}.{}",
+        match which {
+            ast::OutcomeKind::Ok => "ok",
+            ast::OutcomeKind::Err => "err",
+        }
+    )
+}
+
 fn replay_dispatch(record: &DispatchRecord) -> ReplayDispatch {
     ReplayDispatch {
         scope: record.scope.clone(),
@@ -347,7 +361,7 @@ fn replay_page(
                     ) {
                         Ok(result) => {
                             steps.push(replay_step_from_trace(
-                                format!("projection {}.{}", pin.port, pin.projection),
+                                projection_step_label(&pin.port, &pin.projection),
                                 ReplayStepKind::Projection,
                                 projection_effect.clone(),
                                 &result.t,
@@ -374,7 +388,7 @@ fn replay_page(
                 ) {
                     Ok(result) => {
                         steps.push(replay_step_from_trace(
-                            format!("projection {}.{}", pin.port, pin.projection),
+                            projection_step_label(&pin.port, &pin.projection),
                             ReplayStepKind::Projection,
                             projection_effect.clone(),
                             &result.t,
@@ -410,13 +424,7 @@ fn replay_page(
                     );
                 };
                 let result_kind = outcome_result(which, args, *span)?;
-                let outcome_name = format!(
-                    "{command}.{}",
-                    match which {
-                        ast::OutcomeKind::Ok => "ok",
-                        ast::OutcomeKind::Err => "err",
-                    }
-                );
+                let outcome_name = outcome_step_label(command.as_str(), which);
                 let outcome_label = format!("{command} outcome");
                 let replay_payload = result_kind.to_json();
                 let result = step_u(
@@ -612,7 +620,7 @@ fn replay_fragment(
                         "failed": reason,
                     });
                     steps.push(ReplayStep {
-                        label: format!("projection {}.{}", pin.port, pin.projection),
+                        label: projection_step_label(&pin.port, &pin.projection),
                         kind: ReplayStepKind::Projection,
                         payload: effect.clone(),
                         dispatch: None,
@@ -629,7 +637,7 @@ fn replay_fragment(
                 }
                 let effect = update.to_json();
                 steps.push(ReplayStep {
-                    label: format!("projection {}.{}", pin.port, pin.projection),
+                    label: projection_step_label(&pin.port, &pin.projection),
                     kind: ReplayStepKind::Projection,
                     payload: effect.clone(),
                     dispatch: None,
@@ -664,13 +672,7 @@ fn replay_fragment(
                 };
                 let result = outcome_result(which, args, *span)?;
                 let replay_payload = result.to_json();
-                let outcome_name = format!(
-                    "{command}.{}",
-                    match which {
-                        ast::OutcomeKind::Ok => "ok",
-                        ast::OutcomeKind::Err => "err",
-                    }
-                );
+                let outcome_name = outcome_step_label(command, which);
                 let note = machine.dispatch_outcome(program, def, &input.props, &x, tag, &result);
                 let (dispatch, commands) =
                     accept_fragment_note(&format!("{command} outcome"), note, *span)?;

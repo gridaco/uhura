@@ -228,10 +228,12 @@ const frame = (
         "badge-surface",
         `${surface.modality} ${surface.definition}`,
       );
-      surfaceBadge.title = surface.openedByDirectReplay
-        ? "Child surface opened by this replay edge"
-        : "Child surface inherited from replay ancestry";
-      if (surface.openedByDirectReplay) surfaceBadge.dataset.direct = "true";
+      surfaceBadge.dataset.relation = surface.relation;
+      surfaceBadge.title = {
+        direct: "Child surface opened by this replay edge",
+        inherited: "Child surface inherited from replay ancestry",
+        mounted: "Child surface mounted in this snapshot",
+      }[surface.relation];
       caption.append(surfaceBadge);
     }
   }

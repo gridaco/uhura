@@ -464,15 +464,11 @@ fn definition_address(subject: &SubjectKind) -> uhura_core::template::Definition
 fn replay_step_label(event: &ast::ExampleEvent) -> String {
     match event {
         ast::ExampleEvent::Semantic { name, .. } => name.clone(),
-        ast::ExampleEvent::Outcome { command, which, .. } => format!(
-            "{command}.{}",
-            match which {
-                ast::OutcomeKind::Ok => "ok",
-                ast::OutcomeKind::Err => "err",
-            }
-        ),
+        ast::ExampleEvent::Outcome { command, which, .. } => {
+            replay::outcome_step_label(command, which)
+        }
         ast::ExampleEvent::Projection(pin) => {
-            format!("projection {}.{}", pin.port, pin.projection)
+            replay::projection_step_label(&pin.port, &pin.projection)
         }
     }
 }

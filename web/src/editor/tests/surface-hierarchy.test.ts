@@ -19,7 +19,7 @@ const replay = (structural: ReplayStep["effects"]["structural"]): ReplayStep => 
   },
 });
 
-const page = (steps: ReplayStep[]): EditorPreview => ({
+const page = (steps: ReplayStep[], from: string | null = "first-page"): EditorPreview => ({
   id: "page/feed/comments-open",
   identity: { kind: "page", subject: "feed", example: "comments-open" },
   sourceFile: "pages/feed.uhura",
@@ -27,7 +27,7 @@ const page = (steps: ReplayStep[]): EditorPreview => ({
   pinned: false,
   derived: true,
   inFlight: 0,
-  from: "first-page",
+  from,
   replaySteps: steps.map((step) => step.label),
   replay: steps,
   note: null,
@@ -69,14 +69,24 @@ test("matches a direct open-surface effect to the mounted child by instance key"
       definition: "comments-sheet",
       modality: "sheet",
       stackIndex: 0,
-      openedByDirectReplay: true,
+      relation: "direct",
     }],
   });
   assert.equal(directlyOpenedSurfaces(preview)[0]?.definition, "comments-sheet");
 });
 
 test("does not infer direct parentage from a matching definition alone", () => {
-  const preview = page([]);
-  assert.equal(surfaceHierarchy(preview)?.surfaces[0]?.openedByDirectReplay, false);
+  const preview = page([replay([{
+    op: "open-surface",
+    opener: "page:1",
+    surface: "comments-sheet:2",
+  }])]);
+  assert.equal(surfaceHierarchy(preview)?.surfaces[0]?.relation, "inherited");
+  assert.deepEqual(directlyOpenedSurfaces(preview), []);
+});
+
+test("keeps parentless snapshot surfaces distinct from inherited replay children", () => {
+  const preview = page([], null);
+  assert.equal(surfaceHierarchy(preview)?.surfaces[0]?.relation, "mounted");
   assert.deepEqual(directlyOpenedSurfaces(preview), []);
 });

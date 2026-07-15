@@ -942,7 +942,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       const payload = document.createElement("details");
       payload.className = "workflow-detail";
       const payloadSummary = document.createElement("summary");
-      payloadSummary.textContent = "Event payload";
+      payloadSummary.textContent = "Step payload";
       const payloadValue = document.createElement("pre");
       payloadValue.textContent = JSON.stringify(step.payload, null, 2);
       payload.append(payloadSummary, payloadValue);
@@ -1010,9 +1010,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       const label = document.createElement("strong");
       label.textContent = `${surface.modality} ${surface.definition}`;
       const relation = document.createElement("span");
-      relation.textContent = surface.openedByDirectReplay
-        ? "opened by this replay"
-        : "inherited mounted child";
+      relation.textContent = {
+        direct: "opened by this replay",
+        inherited: "inherited mounted child",
+        mounted: "mounted in this snapshot",
+      }[surface.relation];
       child.append(label, relation);
       children.append(child);
     }
