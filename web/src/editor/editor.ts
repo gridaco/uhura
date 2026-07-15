@@ -25,7 +25,10 @@ import {
   validateAnnotationRealizations,
 } from "./annotation-overlay.js";
 import { EDITOR_STYLES } from "./editor-styles.js";
-import { surfaceHierarchy } from "./surface-hierarchy.js";
+import {
+  surfaceHierarchy,
+  type SurfaceHierarchyNode,
+} from "./surface-hierarchy.js";
 import {
   routeWorkflowConnector,
   workflowRailHeight,
@@ -999,30 +1002,38 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   const renderSurfaceHierarchy = (preview: EditorPreview): void => {
-    const hierarchy = surfaceHierarchy(preview);
+    const hierarchy = surfaceHierarchy(preview, model.render?.previews ?? [preview]);
     if (!hierarchy || hierarchy.surfaces.length === 0) {
       shell.selectionHierarchy.replaceChildren();
       shell.selectionHierarchyBlock.hidden = true;
       return;
     }
+    const renderNode = (node: SurfaceHierarchyNode): HTMLLIElement => {
+      const child = document.createElement("li");
+      child.className = "surface-hierarchy-child";
+      child.dataset.surfaceKey = node.surface.key;
+      if (node.opener !== null) child.dataset.opener = node.opener;
+      const label = document.createElement("strong");
+      label.textContent = `${node.surface.modality} ${node.surface.definition}`;
+      const relation = document.createElement("span");
+      relation.textContent = {
+        direct: "opened by this replay",
+        inherited: "inherited from replay ancestry",
+        mounted: "mounted in this snapshot",
+      }[node.surface.relation];
+      child.append(label, relation);
+      if (node.children.length > 0) {
+        const descendants = document.createElement("ul");
+        descendants.append(...node.children.map(renderNode));
+        child.append(descendants);
+      }
+      return child;
+    };
     const root = document.createElement("li");
     root.className = "surface-hierarchy-root";
     root.textContent = `page ${hierarchy.page}`;
     const children = document.createElement("ul");
-    for (const surface of hierarchy.surfaces) {
-      const child = document.createElement("li");
-      child.className = "surface-hierarchy-child";
-      const label = document.createElement("strong");
-      label.textContent = `${surface.modality} ${surface.definition}`;
-      const relation = document.createElement("span");
-      relation.textContent = {
-        direct: "opened by this replay",
-        inherited: "inherited mounted child",
-        mounted: "mounted in this snapshot",
-      }[surface.relation];
-      child.append(label, relation);
-      children.append(child);
-    }
+    children.append(...hierarchy.roots.map(renderNode));
     root.append(children);
     shell.selectionHierarchy.replaceChildren(root);
     shell.selectionHierarchyBlock.hidden = false;

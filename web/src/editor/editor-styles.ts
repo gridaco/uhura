@@ -445,6 +445,7 @@ export const EDITOR_STYLES = `
   .surface-hierarchy-root > ul { display: grid; gap: 5px; margin-block-start: 7px; padding-inline-start: 17px; }
   .surface-hierarchy-child { position: relative; display: flex; flex-direction: column; gap: 1px; padding: 6px 7px; border: 1px solid #ddd5f7; border-radius: 6px; color: #4c378c; background: #f7f4ff; }
   .surface-hierarchy-child::before { content: ""; position: absolute; inset: 50% 100% auto auto; inline-size: 13px; border-block-start: 1px solid #9a86d2; }
+  .surface-hierarchy-child > ul { display: grid; gap: 5px; margin-block-start: 5px; padding-inline-start: 17px; }
   .surface-hierarchy-child strong { font-size: 9px; }
   .surface-hierarchy-child span { color: #7866aa; font-size: 8px; }
   .interaction-list { display: grid; gap: 6px; padding: 0; list-style: none; }

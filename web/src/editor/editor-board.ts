@@ -222,7 +222,7 @@ const frame = (
   if (preview.inFlight > 0) {
     caption.append(badge(document, "badge-in-flight", `${preview.inFlight} in flight`));
   }
-  const hierarchy = surfaceHierarchy(preview);
+  const hierarchy = surfaceHierarchy(preview, render.previews);
   if (hierarchy && hierarchy.surfaces.length > 0) {
     figure.dataset.surfaceCount = String(hierarchy.surfaces.length);
     for (const surface of hierarchy.surfaces) {

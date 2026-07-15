@@ -677,10 +677,14 @@ checked replay, not a best-effort reconstruction from rendered frames.
 When a direct replay step emits `open-surface`, Editor matches that structural
 effect's mounted instance key to the target snapshot's surface stack. The edge
 is then labeled as opening a child surface, the target caption and Inspector
-show `page → modality definition`, and the in-frame overlays receive explicit
-back-to-front stack indices. A standalone surface example is not treated as
-the child of a page merely because its definition name matches: only the
-checked mounted instance establishes that parent-child relationship.
+show its modality and definition, and the in-frame overlays receive explicit
+back-to-front stack indices. For a derived preview, Editor follows the checked
+`from` lineage and joins every still-mounted instance to its recorded opener
+scope. The Inspector therefore renders `page → surface → surface` recursively
+instead of flattening nested sheets, dialogs, or popovers. A standalone surface
+example is not treated as the child of a page merely because its definition
+name matches: only checked instance keys and opener scopes establish that
+parent-child relationship.
 
 ---
 
