@@ -5,24 +5,17 @@ discovers [`spock.toml`](spock.toml), materializes and seeds the Spock authority
 loads the Uhura client, and serves Editor, Play, GraphQL, RPC, and storage from
 one process and one port.
 
-From an Uhura checkout, build the app-owned Play provider once, then start the
-project with the published npm CLI:
+> **RFD 0024 companion prototype — experimental, unstable, and
+> non-normative.** This branch's backend uses proposed Spock `error`
+> declarations. It requires the matching Spock feature branch, does not parse
+> with published `spock@0.5.0`, and is not independently mergeable.
 
-```sh
-corepack pnpm@10.11.0 -C web install --frozen-lockfile
-corepack pnpm@10.11.0 -C web build:provider
-npx --yes spock@0.5.0 start examples/instagram
-```
-
-When Uhura is checked out as the Spock submodule, the equivalent parent-repo
-commands are:
+Check out this branch as the Spock submodule, build the app-owned Play provider
+once, then start the project with the parent workspace's source CLI:
 
 ```sh
 corepack pnpm@10.11.0 -C uhura/web install --frozen-lockfile
 corepack pnpm@10.11.0 -C uhura/web build:provider
-npx --yes spock@0.5.0 start uhura/examples/instagram
-
-# Or exercise the current Spock workspace binary.
 cargo run --locked -p spock-cli -- start uhura/examples/instagram
 ```
 

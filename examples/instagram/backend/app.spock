@@ -1,5 +1,9 @@
 //! instagram — the Spock authority in the canonical full-stack framework example.
 //!
+//! PROSPECTIVE RFD 0024 BRANCH PROTOTYPE — EXPERIMENTAL, UNSTABLE, AND
+//! NON-NORMATIVE. The top-level `error` declarations in this file are branch
+//! evidence, not supported v0.
+//!
 //! This program is the live authority behind the sibling Uhura client. Its
 //! tables and seed mirror the demo's
 //! standard fixture (fixtures/standard.toml), with the fixture's generated
@@ -22,6 +26,22 @@
 //! remain private viewer state and are never presented as public engagement.
 //! The 162-row demo seed exercises 9 actors, 23 posts, 12 story frames, and the
 //! three stored-media shapes: image, carousel, and playable video plus poster.
+
+// ---------------------------------------------------------------------------
+// errors — authored product refusals
+// ---------------------------------------------------------------------------
+
+/// The current actor is absent or is not permitted to perform the operation.
+error not_authorized
+
+/// A person cannot follow themselves.
+error cannot_follow_self
+
+/// The uploaded image is not ready to be attached to a post.
+error image_not_ready
+
+/// The uploaded object is not a supported image type.
+error unsupported_media_type
 
 // ---------------------------------------------------------------------------
 // rules
