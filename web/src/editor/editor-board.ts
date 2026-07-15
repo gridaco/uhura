@@ -20,6 +20,7 @@ import {
 import {
   buildWorkflowConnectors,
   type WorkflowConnector,
+  workflowRailHeight,
   workflowConnectorDescription,
   workflowConnectorLabel,
 } from "./workflow-connectors.js";
@@ -76,6 +77,8 @@ const prepareWorkflowConnector = (
   group.dataset.sourcePreviewId = connector.sourceId;
   group.dataset.targetPreviewId = connector.targetId;
   group.dataset.lane = String(connector.lane);
+  group.dataset.sourcePort = `${connector.sourcePort.slot + 1}/${connector.sourcePort.count}`;
+  group.dataset.targetPort = `${connector.targetPort.slot + 1}/${connector.targetPort.count}`;
   if (connector.openedSurfaces.length > 0) {
     group.classList.add("opens-surface");
     group.dataset.openedSurfaces = connector.openedSurfaces
@@ -219,7 +222,7 @@ const frame = (
   if (preview.inFlight > 0) {
     caption.append(badge(document, "badge-in-flight", `${preview.inFlight} in flight`));
   }
-  const hierarchy = surfaceHierarchy(preview);
+  const hierarchy = surfaceHierarchy(preview, render.previews);
   if (hierarchy && hierarchy.surfaces.length > 0) {
     figure.dataset.surfaceCount = String(hierarchy.surfaces.length);
     for (const surface of hierarchy.surfaces) {
@@ -380,7 +383,7 @@ export const prepareEditorModel = (
         0,
       );
       if (laneCount > 0) {
-        frames.style.setProperty("--workflow-rail-height", `${28 + laneCount * 20}px`);
+        frames.style.setProperty("--workflow-rail-height", `${workflowRailHeight(laneCount)}px`);
       }
       for (const preview of typedPreviews) {
         const resources = new RealizationResources();

@@ -25,7 +25,14 @@ import {
   validateAnnotationRealizations,
 } from "./annotation-overlay.js";
 import { EDITOR_STYLES } from "./editor-styles.js";
-import { surfaceHierarchy } from "./surface-hierarchy.js";
+import {
+  surfaceHierarchy,
+  type SurfaceHierarchyNode,
+} from "./surface-hierarchy.js";
+import {
+  routeWorkflowConnector,
+  workflowRailHeight,
+} from "./workflow-connectors.js";
 import {
   enterPreviewFocus,
   exitPreviewFocus,
@@ -496,23 +503,17 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
     const source = boardLocalRect(sourceShell);
     const target = boardLocalRect(targetShell);
-    const startX = source.x + source.width / 2;
-    const startY = source.y;
-    const endX = target.x + target.width / 2;
-    const endY = target.y;
-    const railY = Math.min(startY, endY) - 18 - connector.lane * 20;
-    path.setAttribute(
-      "d",
-      `M ${startX} ${startY} L ${startX} ${railY} L ${endX} ${railY} L ${endX} ${endY}`,
-    );
-    arrow.setAttribute(
-      "d",
-      `M ${endX - 4} ${endY - 8} L ${endX} ${endY} L ${endX + 4} ${endY - 8} Z`,
-    );
-    origin.setAttribute("cx", String(startX));
-    origin.setAttribute("cy", String(startY));
-    label.setAttribute("x", String((startX + endX) / 2));
-    label.setAttribute("y", String(railY - 6));
+    const row = sourceShell.closest<HTMLElement>(".preview-row");
+    const obstacles = row
+      ? [...row.querySelectorAll<HTMLElement>(".preview-shell")].map(boardLocalRect)
+      : [source, target];
+    const route = routeWorkflowConnector(connector, source, target, obstacles);
+    path.setAttribute("d", route.path);
+    arrow.setAttribute("d", route.arrow);
+    origin.setAttribute("cx", String(route.origin.x));
+    origin.setAttribute("cy", String(route.origin.y));
+    label.setAttribute("x", String(route.label.x));
+    label.setAttribute("y", String(route.label.y));
   };
 
   const layoutConnectors = (): void => {
@@ -838,7 +839,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const minX = Math.min(...rects.map((rect) => rect.x));
     const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
     const frameTop = Math.min(...rects.map((rect) => rect.y));
-    const minY = frameTop - 30 - Math.max(...active.map((connector) => connector.lane + 1)) * 20;
+    const laneCount = Math.max(...active.map((connector) => connector.lane + 1));
+    const minY = frameTop - workflowRailHeight(laneCount);
     const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
@@ -1000,30 +1002,38 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   const renderSurfaceHierarchy = (preview: EditorPreview): void => {
-    const hierarchy = surfaceHierarchy(preview);
+    const hierarchy = surfaceHierarchy(preview, model.render?.previews ?? [preview]);
     if (!hierarchy || hierarchy.surfaces.length === 0) {
       shell.selectionHierarchy.replaceChildren();
       shell.selectionHierarchyBlock.hidden = true;
       return;
     }
+    const renderNode = (node: SurfaceHierarchyNode): HTMLLIElement => {
+      const child = document.createElement("li");
+      child.className = "surface-hierarchy-child";
+      child.dataset.surfaceKey = node.surface.key;
+      if (node.opener !== null) child.dataset.opener = node.opener;
+      const label = document.createElement("strong");
+      label.textContent = `${node.surface.modality} ${node.surface.definition}`;
+      const relation = document.createElement("span");
+      relation.textContent = {
+        direct: "opened by this replay",
+        inherited: "inherited from replay ancestry",
+        mounted: "mounted in this snapshot",
+      }[node.surface.relation];
+      child.append(label, relation);
+      if (node.children.length > 0) {
+        const descendants = document.createElement("ul");
+        descendants.append(...node.children.map(renderNode));
+        child.append(descendants);
+      }
+      return child;
+    };
     const root = document.createElement("li");
     root.className = "surface-hierarchy-root";
     root.textContent = `page ${hierarchy.page}`;
     const children = document.createElement("ul");
-    for (const surface of hierarchy.surfaces) {
-      const child = document.createElement("li");
-      child.className = "surface-hierarchy-child";
-      const label = document.createElement("strong");
-      label.textContent = `${surface.modality} ${surface.definition}`;
-      const relation = document.createElement("span");
-      relation.textContent = {
-        direct: "opened by this replay",
-        inherited: "inherited mounted child",
-        mounted: "mounted in this snapshot",
-      }[surface.relation];
-      child.append(label, relation);
-      children.append(child);
-    }
+    children.append(...hierarchy.roots.map(renderNode));
     root.append(children);
     shell.selectionHierarchy.replaceChildren(root);
     shell.selectionHierarchyBlock.hidden = false;
