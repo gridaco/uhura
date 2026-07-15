@@ -1,4 +1,6 @@
-export type SourceShortcutAction = "open-source" | "toggle-workflow-connectors";
+export type SourceShortcutAction =
+  | "open-source"
+  | "toggle-annotation-layer";
 
 export interface SourceShortcutInput {
   code: string;
@@ -9,14 +11,13 @@ export interface SourceShortcutInput {
   altKey: boolean;
 }
 
-/** Resolves Source and workflow shortcuts without taking over text editing or OS chords. */
+/** Resolves Source and canvas-overlay shortcuts without taking over text editing or OS chords. */
 export const sourceShortcutAction = (
   input: SourceShortcutInput,
   textEntryActive: boolean,
 ): SourceShortcutAction | null => {
   if (
-    input.code !== "KeyY"
-    || input.repeat
+    input.repeat
     || textEntryActive
     || input.metaKey
     || input.ctrlKey
@@ -24,5 +25,8 @@ export const sourceShortcutAction = (
   ) {
     return null;
   }
-  return input.shiftKey ? "toggle-workflow-connectors" : "open-source";
+  if (input.code === "KeyY") {
+    return input.shiftKey ? "toggle-annotation-layer" : "open-source";
+  }
+  return null;
 };

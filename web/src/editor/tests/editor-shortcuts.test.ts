@@ -13,11 +13,11 @@ const key = (overrides: Partial<Parameters<typeof sourceShortcutAction>[0]> = {}
   ...overrides,
 });
 
-test("Y opens Source and Shift+Y toggles workflow connectors", () => {
+test("Y opens Source and Shift+Y toggles the annotation layer", () => {
   assert.equal(sourceShortcutAction(key(), false), "open-source");
   assert.equal(
     sourceShortcutAction(key({ shiftKey: true }), false),
-    "toggle-workflow-connectors",
+    "toggle-annotation-layer",
   );
 });
 
