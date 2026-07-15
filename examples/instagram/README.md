@@ -5,18 +5,20 @@ discovers [`spock.toml`](spock.toml), materializes and seeds the Spock authority
 loads the Uhura client, and serves Editor, Play, GraphQL, RPC, and storage from
 one process and one port.
 
-> **RFD 0024 companion prototype — experimental, unstable, and
-> non-normative.** This branch's backend uses proposed Spock `error`
-> declarations. It requires the matching Spock feature branch, does not parse
-> with published `spock@0.5.0`, and is not independently mergeable.
+> **RFD 0024 implementation preview — experimental, unstable, and
+> non-normative.** The backend uses proposed Spock `error` declarations that
+> the `0.5.2` toolchain accepts as implementation evidence. RFD 0024 remains
+> draft; this inclusion is not language acceptance or a compatibility promise.
+> Published `spock@0.5.0` and `spock@0.5.1` cannot parse these declarations.
 
-Check out this branch as the Spock submodule, build the app-owned Play provider
-once, then start the project with the parent workspace's source CLI:
+Install the exact preview CLI, build the app-owned Play provider once, then
+start the project from this repository root:
 
 ```sh
-corepack pnpm@10.11.0 -C uhura/web install --frozen-lockfile
-corepack pnpm@10.11.0 -C uhura/web build:provider
-cargo run --locked -p spock-cli -- start uhura/examples/instagram
+npm install --global spock@0.5.2
+corepack pnpm@10.11.0 -C web install --frozen-lockfile
+corepack pnpm@10.11.0 -C web build:provider
+spock start examples/instagram
 ```
 
 Open <http://127.0.0.1:4000/> for Uhura Editor and use **Play** to enter the

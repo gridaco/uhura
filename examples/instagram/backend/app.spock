@@ -1,8 +1,9 @@
 //! instagram — the Spock authority in the canonical full-stack framework example.
 //!
-//! PROSPECTIVE RFD 0024 BRANCH PROTOTYPE — EXPERIMENTAL, UNSTABLE, AND
-//! NON-NORMATIVE. The top-level `error` declarations in this file are branch
-//! evidence, not supported v0.
+//! RFD 0024 IMPLEMENTATION PREVIEW — EXPERIMENTAL, UNSTABLE, AND
+//! NON-NORMATIVE. The `0.5.2` toolchain accepts the top-level `error`
+//! declarations in this file as implementation evidence, not accepted v0 or a
+//! compatibility promise.
 //!
 //! This program is the live authority behind the sibling Uhura client. Its
 //! tables and seed mirror the demo's
