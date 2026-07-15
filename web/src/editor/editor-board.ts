@@ -12,10 +12,21 @@ import {
   type RealizationOwner,
 } from "./editor-realization.js";
 import { preparePreviewStylesheet } from "./editor-styles.js";
+import { surfaceHierarchy } from "./surface-hierarchy.js";
 import {
   reusablePreviewFrameIds,
   reusablePreviewIds,
 } from "./editor-updates.js";
+import {
+  buildWorkflowConnectors,
+  type WorkflowConnector,
+  workflowConnectorDescription,
+  workflowConnectorLabel,
+} from "./workflow-connectors.js";
+
+export interface PreparedWorkflowConnector extends WorkflowConnector {
+  element: SVGGElement;
+}
 
 export interface PreparedEditorModel {
   board: HTMLElement;
@@ -27,6 +38,8 @@ export interface PreparedEditorModel {
   previewById: Map<string, EditorPreview>;
   previewIdByIdentity: Map<string, string>;
   authoring: PreparedAuthoring;
+  connectorLayer: SVGSVGElement;
+  connectors: PreparedWorkflowConnector[];
   render: EditorRender | null;
   stylesheet: CSSStyleSheet | null;
   reusableRealizationIds: ReadonlySet<string>;
@@ -43,6 +56,43 @@ const element = <K extends keyof HTMLElementTagNameMap>(
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+};
+
+const svgElement = <K extends keyof SVGElementTagNameMap>(
+  document: Document,
+  tag: K,
+  className?: string,
+): SVGElementTagNameMap[K] => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  if (className) node.setAttribute("class", className);
+  return node;
+};
+
+const prepareWorkflowConnector = (
+  document: Document,
+  connector: WorkflowConnector,
+): PreparedWorkflowConnector => {
+  const group = svgElement(document, "g", "workflow-connector");
+  group.dataset.sourcePreviewId = connector.sourceId;
+  group.dataset.targetPreviewId = connector.targetId;
+  group.dataset.lane = String(connector.lane);
+  if (connector.openedSurfaces.length > 0) {
+    group.classList.add("opens-surface");
+    group.dataset.openedSurfaces = connector.openedSurfaces
+      .map((surface) => surface.definition)
+      .join(" ");
+  }
+
+  const title = svgElement(document, "title");
+  title.textContent = `Checked replay provenance via ${workflowConnectorDescription(connector)}`;
+  const path = svgElement(document, "path", "workflow-connector-path");
+  const arrow = svgElement(document, "path", "workflow-connector-arrow");
+  const origin = svgElement(document, "circle", "workflow-connector-origin");
+  origin.setAttribute("r", "3");
+  const label = svgElement(document, "text", "workflow-connector-label");
+  label.textContent = workflowConnectorLabel(connector.steps, connector.openedSurfaces);
+  group.append(title, path, arrow, origin, label);
+  return { ...connector, element: group };
 };
 
 const isSnapshot = (content: Snapshot | VNode): content is Snapshot =>
@@ -82,8 +132,12 @@ const realizePreview = (
       parentIsList: false,
       observe: (realization) => resources.register(realization),
     });
-    for (const surface of preview.content.surfaces) {
+    for (const [index, surface] of preview.content.surfaces.entries()) {
       const overlay = element(document, "div", "uh-surface-overlay");
+      overlay.dataset.surfaceDefinition = surface.definition;
+      overlay.dataset.surfaceModality = surface.modality;
+      overlay.dataset.surfaceStackIndex = String(index);
+      overlay.style.zIndex = String(index + 1);
       const scrim = element(document, "div", "uh-scrim");
       const surfaceHost = element(
         document,
@@ -92,6 +146,7 @@ const realizePreview = (
       );
       surfaceHost.setAttribute("role", "dialog");
       surfaceHost.setAttribute("aria-modal", "true");
+      surfaceHost.dataset.surfaceDefinition = surface.definition;
       renderer.realizeRoot(surfaceHost, surface.root, {
         root: { kind: "surface", key: surface.key },
         scope: `${preview.id}:surface:${surface.key}`,
@@ -164,6 +219,24 @@ const frame = (
   if (preview.inFlight > 0) {
     caption.append(badge(document, "badge-in-flight", `${preview.inFlight} in flight`));
   }
+  const hierarchy = surfaceHierarchy(preview);
+  if (hierarchy && hierarchy.surfaces.length > 0) {
+    figure.dataset.surfaceCount = String(hierarchy.surfaces.length);
+    for (const surface of hierarchy.surfaces) {
+      const surfaceBadge = badge(
+        document,
+        "badge-surface",
+        `${surface.modality} ${surface.definition}`,
+      );
+      surfaceBadge.dataset.relation = surface.relation;
+      surfaceBadge.title = {
+        direct: "Child surface opened by this replay edge",
+        inherited: "Child surface inherited from replay ancestry",
+        mounted: "Child surface mounted in this snapshot",
+      }[surface.relation];
+      caption.append(surfaceBadge);
+    }
+  }
   caption.append(element(document, "span", "caption-prov", provenance(preview)));
   if (preview.note) caption.append(element(document, "p", "caption-note", preview.note));
   figure.append(shell, caption);
@@ -233,6 +306,10 @@ export const prepareEditorModel = (
   const previewById = new Map<string, EditorPreview>();
   const previewIdByIdentity = new Map<string, string>();
   const authoring = prepareAuthoring(render);
+  const connectorLayer = svgElement(document, "svg", "workflow-connectors");
+  connectorLayer.setAttribute("aria-hidden", "true");
+  const connectors: PreparedWorkflowConnector[] = [];
+  board.append(connectorLayer);
 
   if (!render) {
     const empty = element(document, "section", "empty-board");
@@ -251,6 +328,8 @@ export const prepareEditorModel = (
       previewById,
       previewIdByIdentity,
       authoring,
+      connectorLayer,
+      connectors,
       render,
       stylesheet: null,
       reusableRealizationIds: new Set(),
@@ -283,6 +362,10 @@ export const prepareEditorModel = (
         throw new Error(`Editor group ${group.id} refers to an unknown preview`);
       }
       const typedPreviews = previews as EditorPreview[];
+      const groupConnectors = buildWorkflowConnectors(group.id, typedPreviews).map((connector) =>
+        prepareWorkflowConnector(document, connector));
+      connectors.push(...groupConnectors);
+      connectorLayer.append(...groupConnectors.map((connector) => connector.element));
       const row = element(document, "section", "preview-row");
       row.dataset.groupId = group.id;
       row.append(element(
@@ -292,6 +375,13 @@ export const prepareEditorModel = (
         `${group.kind} ${group.subject}`,
       ));
       const frames = element(document, "div", "row-frames");
+      const laneCount = groupConnectors.reduce(
+        (count, connector) => Math.max(count, connector.lane + 1),
+        0,
+      );
+      if (laneCount > 0) {
+        frames.style.setProperty("--workflow-rail-height", `${28 + laneCount * 20}px`);
+      }
       for (const preview of typedPreviews) {
         const resources = new RealizationResources();
         resources.claim(resourceOwner);
@@ -327,6 +417,8 @@ export const prepareEditorModel = (
     previewById,
     previewIdByIdentity,
     authoring,
+    connectorLayer,
+    connectors,
     render,
     stylesheet,
     reusableRealizationIds,

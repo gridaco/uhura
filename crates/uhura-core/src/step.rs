@@ -1102,8 +1102,9 @@ enum StagedOp {
 /// structure — a structural statement in a fragment replay has nowhere to
 /// act and surfaces as an error the checker turns into "pin this state
 /// instead".
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct FragmentMachine {
+    definition: Ident,
     pub state: BTreeMap<Ident, Value>,
     pub pending: BTreeMap<u64, PendingCommand>,
     pub counters: Counters,
@@ -1112,9 +1113,16 @@ pub struct FragmentMachine {
 /// What one fragment dispatch did (the caller owns trace presentation).
 #[derive(Clone, Debug)]
 pub enum FragmentNote {
-    Committed { commands: Vec<CommandEnvelope> },
-    NoHandler,
-    NotReady,
+    Committed {
+        dispatch: DispatchRecord,
+        commands: Vec<CommandEnvelope>,
+    },
+    NoHandler {
+        dispatch: DispatchRecord,
+    },
+    NotReady {
+        dispatch: DispatchRecord,
+    },
 }
 
 pub const FRAGMENT_SCOPE: &str = "fragment:0";
@@ -1124,6 +1132,13 @@ pub enum FragmentError {
     /// The handler ran a structural statement — not replayable standalone.
     Structural(&'static str),
     Invariant(String),
+}
+
+struct FragmentDispatchContext<'a> {
+    program: &'a ProgramIr,
+    definition: &'a DefIr,
+    props: &'a BTreeMap<Ident, Value>,
+    projections: &'a Projections,
 }
 
 impl std::fmt::Display for FragmentError {
@@ -1138,8 +1153,9 @@ impl std::fmt::Display for FragmentError {
 }
 
 impl FragmentMachine {
-    pub fn from_state(state: BTreeMap<Ident, Value>) -> FragmentMachine {
+    pub fn from_state(definition: Ident, state: BTreeMap<Ident, Value>) -> FragmentMachine {
         FragmentMachine {
+            definition,
             state,
             pending: BTreeMap::new(),
             counters: Counters::default(),
@@ -1157,10 +1173,13 @@ impl FragmentMachine {
         payload: &BTreeMap<Ident, Value>,
     ) -> Result<FragmentNote, FragmentError> {
         self.dispatch(
-            p,
-            def,
-            props,
-            x,
+            FragmentDispatchContext {
+                program: p,
+                definition: def,
+                props,
+                projections: x,
+            },
+            event.to_string(),
             |h| matches!(&h.on, ir::EventKeyIr::Semantic { event: e } if e == event),
             &BindSpec::Named(payload),
         )
@@ -1196,10 +1215,20 @@ impl FragmentMachine {
             positional.push(Value::Text(refusal.clone()));
         }
         self.dispatch(
-            p,
-            def,
-            props,
-            x,
+            FragmentDispatchContext {
+                program: p,
+                definition: def,
+                props,
+                projections: x,
+            },
+            format!(
+                "{}.{}",
+                pending.command,
+                match which {
+                    ir::OutcomeKindIr::Ok => "ok",
+                    ir::OutcomeKindIr::Err => "err",
+                }
+            ),
             |h| {
                 matches!(&h.on, ir::EventKeyIr::Outcome { command, which: w }
                     if *command == pending.command && *w == which)
@@ -1210,58 +1239,84 @@ impl FragmentMachine {
 
     fn dispatch(
         &mut self,
-        p: &ProgramIr,
-        def: &DefIr,
-        props: &BTreeMap<Ident, Value>,
-        x: &Projections,
+        context: FragmentDispatchContext<'_>,
+        on_label: String,
         matches_handler: impl Fn(&ir::HandlerIr) -> bool,
         bind: &BindSpec<'_>,
     ) -> Result<FragmentNote, FragmentError> {
         let params = BTreeMap::new();
+        let mut dispatch = DispatchRecord {
+            scope: FRAGMENT_SCOPE.to_string(),
+            definition: self.definition.clone(),
+            on: on_label,
+            guards: Vec::new(),
+            selected: None,
+            writes: Vec::new(),
+            aborted: None,
+        };
         let mut selected = None;
-        for handler in def.handlers.iter().filter(|h| matches_handler(h)) {
+        for (index, handler) in context.definition.handlers.iter().enumerate() {
+            if !matches_handler(handler) {
+                continue;
+            }
             let bindings = bind.bind(&handler.params);
-            let satisfied = match &handler.guard {
-                None => true,
+            let result = match &handler.guard {
+                None => GuardResult::Satisfied,
                 Some(guard) => {
                     let frame = Frame {
-                        program: p,
-                        x,
+                        program: context.program,
+                        x: context.projections,
                         scope: FRAGMENT_SCOPE.to_string(),
                         state: &self.state,
-                        props: props.clone(),
+                        props: context.props.clone(),
                         params: params.clone(),
                         bindings: bindings.clone(),
                         emits: EmitEnv::Machine,
                     };
                     match frame.eval_expr(guard) {
-                        Ok(Value::Bool(b)) => b,
+                        Ok(Value::Bool(true)) => GuardResult::Satisfied,
+                        Ok(Value::Bool(false)) => GuardResult::Unsatisfied,
                         Ok(other) => {
                             return Err(FragmentError::Invariant(format!("guard was {other:?}")));
                         }
-                        Err(Stop::NotReady(_)) => false,
+                        Err(Stop::NotReady(_)) => GuardResult::NotReady,
                         Err(Stop::Internal(msg)) => return Err(FragmentError::Invariant(msg)),
                     }
                 }
             };
-            if satisfied {
-                selected = Some((handler, bindings));
+            dispatch.guards.push(GuardNote {
+                handler: index,
+                result,
+            });
+            if result == GuardResult::Satisfied {
+                selected = Some((index, handler, bindings));
                 break;
             }
         }
-        let Some((handler, mut bindings)) = selected else {
-            return Ok(FragmentNote::NoHandler);
+        let Some((index, handler, mut bindings)) = selected else {
+            return Ok(FragmentNote::NoHandler { dispatch });
         };
+        dispatch.selected = Some(index);
 
         // The same staged transaction as `step_u`, structural ops refused.
         let mut state = self.state.clone();
         let mut counters = self.counters;
         let mut pending_add = Vec::new();
         let mut commands = Vec::new();
+        let mut writes = Vec::new();
         for stmt in &handler.body {
             let eval =
                 |e: &ir::ExprIr, state: &BTreeMap<Ident, Value>, bindings: &[(Ident, Value)]| {
-                    eval_staged(p, x, FRAGMENT_SCOPE, state, props, &params, bindings, e)
+                    eval_staged(
+                        context.program,
+                        context.projections,
+                        FRAGMENT_SCOPE,
+                        state,
+                        context.props,
+                        &params,
+                        bindings,
+                        e,
+                    )
                 };
             let result: Result<(), Stop> = (|| match stmt {
                 ir::StmtIr::Set { field, key, value } => {
@@ -1272,6 +1327,10 @@ impl FragmentMachine {
                     let value = eval(value, &state, &bindings)?;
                     match key_value {
                         None => {
+                            writes.push(serde_json::json!({
+                                "field": field.to_string(),
+                                "value": value.to_json(),
+                            }));
                             state.insert(field.clone(), value);
                         }
                         Some(key_value) => {
@@ -1281,6 +1340,11 @@ impl FragmentMachine {
                             let Some(Value::Map(map)) = state.get_mut(field) else {
                                 return Err(Stop::Internal(format!("`{field}` is not a map")));
                             };
+                            writes.push(serde_json::json!({
+                                "field": field.to_string(),
+                                "key": key_str,
+                                "value": value.to_json(),
+                            }));
                             if value == Value::None {
                                 map.remove(&key_str);
                             } else {
@@ -1332,7 +1396,10 @@ impl FragmentMachine {
             })();
             match result {
                 Ok(()) => {}
-                Err(Stop::NotReady(_)) => return Ok(FragmentNote::NotReady),
+                Err(Stop::NotReady(_)) => {
+                    dispatch.aborted = Some("projection-not-ready".to_string());
+                    return Ok(FragmentNote::NotReady { dispatch });
+                }
                 Err(Stop::Internal(msg))
                     if matches!(
                         stmt,
@@ -1361,6 +1428,7 @@ impl FragmentMachine {
         self.state = state;
         self.counters = counters;
         self.pending.extend(pending_add);
-        Ok(FragmentNote::Committed { commands })
+        dispatch.writes = writes;
+        Ok(FragmentNote::Committed { dispatch, commands })
     }
 }

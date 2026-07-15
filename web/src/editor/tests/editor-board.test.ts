@@ -342,6 +342,8 @@ const render = (
     derived: false,
     inFlight: 0,
     from: null,
+    replaySteps: [],
+    replay: [],
     note: null,
     data: [],
     interactions: [],
@@ -702,6 +704,13 @@ test("Source targets and canvas markers expose one direct annotation selection p
   assert.notEqual(show, copy, "canvas selection and source copying remain separate actions");
   show.click();
   assert.deepEqual(selectedTargets, [target.id]);
+
+  renderSourcePanel(asElement(sourcePanel), model.authoring, false);
+  assert.equal(
+    classElements(sourcePanel, "source-target-select").length,
+    0,
+    "Source omits canvas annotation actions when the Editor does not mount that feature",
+  );
 
   overlay.dispose();
   disposePreparedEditorModel(model);

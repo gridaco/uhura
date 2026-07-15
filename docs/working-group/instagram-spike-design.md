@@ -654,6 +654,32 @@ example-name`, provenance (`pinned` | `from X → events…`), in-flight
 commands, `note`. No examples ⇒ page renders initial state + info lint;
 component absent from the Editor board + same lint.
 
+A resolved `from` relationship renders as a directed replay-provenance
+connector in a reserved rail above that subject's frames. Its label summarizes
+only the child example's directly authored semantic events, projection
+updates, and outcomes; ancestor steps remain on their own edges. These edges
+explain how checked previews were derived and are not a separate runtime state
+graph. Rail lanes are allocated deterministically so connectors do not cross
+through preview frames, and selecting a preview highlights its immediate
+parents and children.
+
+Selecting a derived preview also exposes a checked workflow trace for those
+same direct steps. Each record carries the authored event kind and payload,
+the runtime definition and absolute handler selected, every consulted guard's
+result, and only committed writes, commands, intents, structural operations,
+and projection deliveries. Page traces reuse `StepTrace`; standalone surface
+and component replay exposes the same dispatch record without inventing a
+second transition engine. The Inspector is therefore an explanation of the
+checked replay, not a best-effort reconstruction from rendered frames.
+
+When a direct replay step emits `open-surface`, Editor matches that structural
+effect's mounted instance key to the target snapshot's surface stack. The edge
+is then labeled as opening a child surface, the target caption and Inspector
+show `page → modality definition`, and the in-frame overlays receive explicit
+back-to-front stack indices. A standalone surface example is not treated as
+the child of a page merely because its definition name matches: only the
+checked mounted instance establishes that parent-child relationship.
+
 ---
 
 ## 7. Core semantics

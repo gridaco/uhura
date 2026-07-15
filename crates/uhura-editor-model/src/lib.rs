@@ -83,6 +83,8 @@ pub struct Preview {
     pub derived: bool,
     pub in_flight: usize,
     pub from: Option<String>,
+    pub replay_steps: Vec<String>,
+    pub replay: Vec<serde_json::Value>,
     pub note: Option<String>,
     pub data: Vec<PreviewField>,
     pub interactions: Vec<Interaction>,
@@ -371,6 +373,11 @@ pub enum ValidationError {
         expected: String,
         actual: String,
     },
+    UnknownPreviewParent {
+        preview: String,
+        parent: String,
+    },
+    ReplayMetadataMismatch(String),
     DuplicateGroupId(String),
     UnknownGroupedPreview {
         group: String,
@@ -472,6 +479,14 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidPreviewId { expected, actual } => write!(
                 f,
                 "preview id `{actual}` does not match its stable identity id `{expected}`"
+            ),
+            ValidationError::UnknownPreviewParent { preview, parent } => write!(
+                f,
+                "preview `{preview}` refers to unknown parent example `{parent}`"
+            ),
+            ValidationError::ReplayMetadataMismatch(preview) => write!(
+                f,
+                "preview `{preview}` replay details do not match replay step labels"
             ),
             ValidationError::DuplicateGroupId(id) => {
                 write!(f, "preview group id `{id}` occurs more than once")
@@ -1212,8 +1227,37 @@ impl EditorRender {
             if !content_matches {
                 return Err(ValidationError::ContentKindMismatch(preview.id.clone()));
             }
+            let replay_matches = preview.replay.len() == preview.replay_steps.len()
+                && preview
+                    .replay
+                    .iter()
+                    .zip(&preview.replay_steps)
+                    .all(|(step, expected)| {
+                        step.get("label").and_then(serde_json::Value::as_str)
+                            == Some(expected.as_str())
+                    });
+            if !replay_matches {
+                return Err(ValidationError::ReplayMetadataMismatch(preview.id.clone()));
+            }
             preview.validate_authoring(&authoring)?;
             by_id.insert(preview.id.clone(), preview);
+        }
+
+        for preview in &self.previews {
+            let Some(parent) = &preview.from else {
+                continue;
+            };
+            let parent_id = stable_preview_id(&PreviewIdentity {
+                kind: preview.identity.kind,
+                subject: preview.identity.subject.clone(),
+                example: parent.clone(),
+            });
+            if !by_id.contains_key(&parent_id) {
+                return Err(ValidationError::UnknownPreviewParent {
+                    preview: preview.id.clone(),
+                    parent: parent.clone(),
+                });
+            }
         }
 
         let mut group_ids = BTreeSet::new();
@@ -1378,6 +1422,8 @@ impl Preview {
             "derived": self.derived,
             "inFlight": self.in_flight,
             "from": self.from,
+            "replaySteps": self.replay_steps,
+            "replay": self.replay,
             "note": self.note,
             "data": self.data.iter().map(PreviewField::to_json).collect::<Vec<_>>(),
             "interactions": self.interactions.iter().map(Interaction::to_json).collect::<Vec<_>>(),
@@ -1904,6 +1950,8 @@ fn build_preview(
         derived: checked.derived,
         in_flight: checked.in_flight,
         from: checked.from.clone(),
+        replay_steps: checked.replay_steps.clone(),
+        replay: checked.replay.iter().map(|step| step.to_json()).collect(),
         note: checked.note.clone(),
         data: checked.data.iter().map(build_field).collect(),
         interactions,
@@ -2207,6 +2255,8 @@ mod tests {
                 derived: false,
                 in_flight: 0,
                 from: None,
+                replay_steps: Vec::new(),
+                replay: Vec::new(),
                 note: Some("Entry page".to_string()),
                 data: fields,
                 declaration_doc_id: None,
@@ -2229,6 +2279,8 @@ mod tests {
                 derived: false,
                 in_flight: 0,
                 from: None,
+                replay_steps: Vec::new(),
+                replay: Vec::new(),
                 note: None,
                 data: Vec::new(),
                 declaration_doc_id: None,
@@ -2249,7 +2301,25 @@ mod tests {
                 pinned: false,
                 derived: true,
                 in_flight: 2,
-                from: Some("default".to_string()),
+                from: None,
+                replay_steps: vec!["activated".to_string()],
+                replay: vec![uhura_check::replay::ReplayStep {
+                    label: "activated".to_string(),
+                    kind: uhura_check::replay::ReplayStepKind::Semantic,
+                    payload: serde_json::json!({}),
+                    dispatch: Some(uhura_check::replay::ReplayDispatch {
+                        scope: "fragment:0".to_string(),
+                        definition: "post-card".to_string(),
+                        on: "activated".to_string(),
+                        guards: vec![uhura_check::replay::ReplayGuard {
+                            handler: 0,
+                            result: "satisfied",
+                        }],
+                        selected: Some(0),
+                        aborted: None,
+                    }),
+                    effects: uhura_check::replay::ReplayEffects::default(),
+                }],
                 note: None,
                 data: Vec::new(),
                 declaration_doc_id: None,
@@ -2457,6 +2527,7 @@ mod tests {
                 .all(|preview| !preview.interactions.is_empty())
         );
         assert_eq!(render.previews[0].interactions[0].emit, "activated");
+        assert_eq!(render.previews[2].replay[0]["dispatch"]["selected"], 0);
     }
 
     #[test]
@@ -2667,6 +2738,40 @@ mod tests {
                 "expected invalid kind `{kind}`"
             );
         }
+    }
+
+    #[test]
+    fn validation_rejects_a_replay_parent_outside_the_same_subject() {
+        let mut render = build_render(3, &clean_output(), BTreeMap::new()).unwrap();
+        render.previews[0].from = Some("missing".to_string());
+        assert_eq!(
+            render.validate(),
+            Err(ValidationError::UnknownPreviewParent {
+                preview: "page/home/default".to_string(),
+                parent: "missing".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn validation_rejects_replay_detail_and_label_drift() {
+        let mut render = build_render(3, &clean_output(), BTreeMap::new()).unwrap();
+        render.previews[2].replay_steps[0] = "different-label".to_string();
+        assert_eq!(
+            render.validate(),
+            Err(ValidationError::ReplayMetadataMismatch(
+                "component/post-card/liked".to_string(),
+            ))
+        );
+
+        let mut render = build_render(3, &clean_output(), BTreeMap::new()).unwrap();
+        render.previews[2].replay.clear();
+        assert_eq!(
+            render.validate(),
+            Err(ValidationError::ReplayMetadataMismatch(
+                "component/post-card/liked".to_string(),
+            ))
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
-export type CommentShortcutAction = "open-source" | "toggle-canvas-comments";
+export type SourceShortcutAction = "open-source" | "toggle-workflow-connectors";
 
-export interface CommentShortcutInput {
+export interface SourceShortcutInput {
   code: string;
   repeat: boolean;
   shiftKey: boolean;
@@ -9,11 +9,11 @@ export interface CommentShortcutInput {
   altKey: boolean;
 }
 
-/** Resolves the comments shortcuts without taking over text editing or OS chords. */
-export const commentShortcutAction = (
-  input: CommentShortcutInput,
+/** Resolves Source and workflow shortcuts without taking over text editing or OS chords. */
+export const sourceShortcutAction = (
+  input: SourceShortcutInput,
   textEntryActive: boolean,
-): CommentShortcutAction | null => {
+): SourceShortcutAction | null => {
   if (
     input.code !== "KeyY"
     || input.repeat
@@ -24,5 +24,5 @@ export const commentShortcutAction = (
   ) {
     return null;
   }
-  return input.shiftKey ? "toggle-canvas-comments" : "open-source";
+  return input.shiftKey ? "toggle-workflow-connectors" : "open-source";
 };

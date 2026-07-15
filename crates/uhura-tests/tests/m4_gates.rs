@@ -393,12 +393,73 @@ fn every_derived_preview_replays_to_its_v_golden() {
         .find(|p| p.subject.name().as_str() == "feed" && p.example == "like-pending")
         .expect("feed like-pending");
     assert_eq!(like_pending.in_flight, 1, "one command in flight");
+    assert_eq!(
+        like_pending.replay_steps,
+        ["like-toggled"],
+        "the connector carries only this example's direct replay step"
+    );
+    assert_eq!(like_pending.replay.len(), 1);
+    let like_trace = &like_pending.replay[0];
+    assert_eq!(like_trace.label, "like-toggled");
+    assert_eq!(
+        like_trace.kind,
+        uhura_check::replay::ReplayStepKind::Semantic
+    );
+    assert_eq!(like_trace.payload["post"], "post-lena-glaze");
+    let like_dispatch = like_trace.dispatch.as_ref().expect("handler dispatch");
+    assert!(like_dispatch.selected.is_some());
+    assert_eq!(
+        like_dispatch.guards.last().map(|guard| guard.result),
+        Some("satisfied")
+    );
+    assert!(!like_trace.effects.writes.is_empty());
+    assert_eq!(like_trace.effects.commands.len(), 1);
 
     let appended = out
         .previews
         .iter()
         .find(|preview| preview.subject.name().as_str() == "feed" && preview.example == "appended")
         .expect("feed appended");
+    assert_eq!(
+        appended.replay_steps,
+        [
+            "feed-near-end",
+            "projection feed.feed-page",
+            "load-next-page.ok",
+        ],
+        "multi-step provenance stays ordered and does not repeat ancestor steps"
+    );
+    assert_eq!(appended.replay.len(), 3);
+    assert_eq!(
+        appended
+            .replay
+            .iter()
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        [
+            uhura_check::replay::ReplayStepKind::Semantic,
+            uhura_check::replay::ReplayStepKind::Projection,
+            uhura_check::replay::ReplayStepKind::Outcome,
+        ]
+    );
+    assert_eq!(appended.replay[1].effects.projections.len(), 1);
+    assert!(appended.replay[2].dispatch.is_some());
+
+    let composing = out
+        .previews
+        .iter()
+        .find(|preview| {
+            preview.subject.name().as_str() == "comments-sheet" && preview.example == "composing"
+        })
+        .expect("surface composing preview");
+    assert_eq!(composing.replay.len(), 1);
+    let surface_dispatch = composing.replay[0]
+        .dispatch
+        .as_ref()
+        .expect("standalone surface dispatch trace");
+    assert_eq!(surface_dispatch.definition, "comments-sheet");
+    assert_eq!(surface_dispatch.selected, Some(0));
+    assert_eq!(composing.replay[0].effects.writes[0]["field"], "draft");
     let feed_page = appended
         .data
         .iter()
