@@ -53,6 +53,9 @@ pub struct EditorRender {
     pub stylesheet: String,
     pub icons: BTreeMap<String, icons::Icon>,
     pub assets: BTreeMap<String, Asset>,
+    /// The app's static interaction structure (`uhura-interaction-graph/0`),
+    /// projected from the same checked program as the previews.
+    pub interaction_graph: interaction_graph::InteractionGraph,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -606,6 +609,23 @@ pub fn build_current_state(
     EditorState::current(source_revision, diagnostics, render).map_err(BuildError::InvalidState)
 }
 
+/// Adapts the checker's lowered span table to the interaction-graph span
+/// lookup without making the projection crate depend on checker internals.
+struct LoweredSpans<'a>(&'a BTreeMap<String, uhura_check::lower::SpanEntry>);
+
+impl interaction_graph::SpanLookup for LoweredSpans<'_> {
+    fn source_ref(&self, ir_path: &str) -> Option<interaction_graph::SourceRef> {
+        self.0
+            .get(ir_path)
+            .map(|span| interaction_graph::SourceRef {
+                file: span.file.clone(),
+                start: span.start,
+                end: span.end,
+                ir_path: ir_path.to_string(),
+            })
+    }
+}
+
 /// Evaluates all previews but does not choose current/stale envelope status.
 /// Hosts use this when retaining a last-renderable payload across rejected
 /// source revisions.
@@ -672,6 +692,10 @@ pub fn build_render(
         stylesheet: output.stylesheet.clone(),
         icons: icons::table(),
         assets,
+        interaction_graph: interaction_graph::build_interaction_graph_with_spans(
+            program,
+            &LoweredSpans(&lowered.spans),
+        ),
     };
     let state = EditorState {
         protocol: EDITOR_STATE_PROTOCOL.to_string(),
@@ -1308,6 +1332,8 @@ impl EditorRender {
             "assets": self.assets.iter().map(|(id, asset)| {
                 (id.clone(), asset.to_json())
             }).collect::<serde_json::Map<_, _>>(),
+            "interactionGraph": serde_json::to_value(&self.interaction_graph)
+                .expect("checked interaction graphs serialize"),
         })
     }
 }
@@ -2071,8 +2097,8 @@ mod tests {
     };
     use uhura_check::preview::{PreviewData, PreviewSource};
     use uhura_core::ir::{
-        CatalogPin, DefIr, ElementEventBindingIr, ElementEventIr, ElementIr, EventKindIr, NodeIr,
-        ProgramIr,
+        CatalogPin, DefIr, ElementEventBindingIr, ElementEventIr, ElementIr, EventKeyIr,
+        EventKindIr, HandlerIr, NodeIr, ProgramIr, StmtIr,
     };
     use uhura_core::state::{Counters, NavEntry, Projections, UiState};
 
@@ -2529,6 +2555,61 @@ mod tests {
         );
         assert_eq!(render.previews[0].interactions[0].emit, "activated");
         assert_eq!(render.previews[2].replay[0]["dispatch"]["selected"], 0);
+    }
+
+    #[test]
+    fn builder_embeds_the_interaction_graph_of_the_same_checked_program() {
+        let mut output = clean_output();
+        let program = &mut output.lowered.as_mut().unwrap().program;
+        let home = program.pages.get_mut(&ident("home")).unwrap();
+        home.handlers.push(HandlerIr {
+            on: EventKeyIr::Semantic {
+                event: ident("comments-requested"),
+            },
+            params: Vec::new(),
+            guard: None,
+            body: vec![
+                StmtIr::OpenSurface {
+                    surface: ident("comments-sheet"),
+                    args: Vec::new(),
+                },
+                StmtIr::Navigate {
+                    route: ident("home"),
+                    args: Vec::new(),
+                },
+            ],
+        });
+
+        let state = build_current_state(3, &output, BTreeMap::new()).unwrap();
+        let graph = &state.to_json()["render"]["interactionGraph"];
+        assert_eq!(
+            graph["protocol"],
+            interaction_graph::INTERACTION_GRAPH_PROTOCOL
+        );
+        assert_eq!(graph["app"], "model-test");
+        assert_eq!(graph["entry"], "page:home");
+        let nodes = graph["nodes"].as_array().unwrap();
+        assert_eq!(
+            nodes
+                .iter()
+                .map(|node| node["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "dynamic:opener",
+                "dynamic:previous-page",
+                "page:home",
+                "surface:comments-sheet",
+            ],
+        );
+        let edges = graph["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0]["kind"], "present");
+        assert_eq!(edges[0]["from"], "page:home");
+        assert_eq!(edges[0]["to"], "surface:comments-sheet");
+        assert_eq!(edges[0]["event"], "comments-requested");
+        assert_eq!(edges[1]["kind"], "navigate");
+        assert_eq!(edges[1]["from"], "page:home");
+        assert_eq!(edges[1]["to"], "page:home");
     }
 
     #[test]

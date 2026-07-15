@@ -316,6 +316,12 @@ export const EDITOR_STYLES = `
     text-anchor: middle;
     font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  .structure-connector { transition: opacity .12s ease; }
+  .structure-connector.structure-navigate { color: #0f8a5f; }
+  .structure-connector.structure-present { color: #0e8f86; }
+  .structure-connector.structure-present .workflow-connector-path { stroke-dasharray: 6 4; }
+  .workflow-connectors.has-selection .structure-connector { opacity: .16; }
+  .workflow-connectors.has-selection .structure-connector.is-active { opacity: 1; }
 
   .canvas-tools {
     position: absolute;

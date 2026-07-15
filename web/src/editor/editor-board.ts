@@ -24,8 +24,18 @@ import {
   workflowConnectorDescription,
   workflowConnectorLabel,
 } from "./workflow-connectors.js";
+import {
+  buildStructureConnectors,
+  type StructureConnector,
+  structureConnectorDescription,
+  structureConnectorLabel,
+} from "./structure-connectors.js";
 
 export interface PreparedWorkflowConnector extends WorkflowConnector {
+  element: SVGGElement;
+}
+
+export interface PreparedStructureConnector extends StructureConnector {
   element: SVGGElement;
 }
 
@@ -41,6 +51,7 @@ export interface PreparedEditorModel {
   authoring: PreparedAuthoring;
   connectorLayer: SVGSVGElement;
   connectors: PreparedWorkflowConnector[];
+  structureConnectors: PreparedStructureConnector[];
   render: EditorRender | null;
   stylesheet: CSSStyleSheet | null;
   reusableRealizationIds: ReadonlySet<string>;
@@ -94,6 +105,33 @@ const prepareWorkflowConnector = (
   origin.setAttribute("r", "3");
   const label = svgElement(document, "text", "workflow-connector-label");
   label.textContent = workflowConnectorLabel(connector.steps, connector.openedSurfaces);
+  group.append(title, path, arrow, origin, label);
+  return { ...connector, element: group };
+};
+
+const prepareStructureConnector = (
+  document: Document,
+  connector: StructureConnector,
+): PreparedStructureConnector => {
+  const group = svgElement(
+    document,
+    "g",
+    `structure-connector structure-${connector.kind}`,
+  );
+  group.dataset.sourcePreviewId = connector.sourceId;
+  group.dataset.targetPreviewId = connector.targetId;
+  group.dataset.structureKind = connector.kind;
+  group.dataset.event = connector.event;
+  group.dataset.lane = String(connector.lane);
+
+  const title = svgElement(document, "title");
+  title.textContent = `App structure: ${structureConnectorDescription(connector)}`;
+  const path = svgElement(document, "path", "workflow-connector-path");
+  const arrow = svgElement(document, "path", "workflow-connector-arrow");
+  const origin = svgElement(document, "circle", "workflow-connector-origin");
+  origin.setAttribute("r", "3");
+  const label = svgElement(document, "text", "workflow-connector-label");
+  label.textContent = structureConnectorLabel(connector);
   group.append(title, path, arrow, origin, label);
   return { ...connector, element: group };
 };
@@ -312,6 +350,7 @@ export const prepareEditorModel = (
   const connectorLayer = svgElement(document, "svg", "workflow-connectors");
   connectorLayer.setAttribute("aria-hidden", "true");
   const connectors: PreparedWorkflowConnector[] = [];
+  const structureConnectors: PreparedStructureConnector[] = [];
   board.append(connectorLayer);
 
   if (!render) {
@@ -333,6 +372,7 @@ export const prepareEditorModel = (
       authoring,
       connectorLayer,
       connectors,
+      structureConnectors,
       render,
       stylesheet: null,
       reusableRealizationIds: new Set(),
@@ -405,6 +445,18 @@ export const prepareEditorModel = (
       board.append(row);
       navigator.append(navigatorGroup(document, group, typedPreviews));
     }
+    // Structural rails stack above every replay-provenance rail so the two
+    // connector families never share a lane over the same frames.
+    const replayLaneCount = connectors.reduce(
+      (count, connector) => Math.max(count, connector.lane + 1),
+      0,
+    );
+    structureConnectors.push(...buildStructureConnectors(
+      render.interactionGraph,
+      render.previews,
+      replayLaneCount,
+    ).map((connector) => prepareStructureConnector(document, connector)));
+    connectorLayer.append(...structureConnectors.map((connector) => connector.element));
   } catch (error) {
     for (const resources of resourcesByPreviewId.values()) resources.release(resourceOwner);
     throw error;
@@ -422,6 +474,7 @@ export const prepareEditorModel = (
     authoring,
     connectorLayer,
     connectors,
+    structureConnectors,
     render,
     stylesheet,
     reusableRealizationIds,

@@ -16,6 +16,7 @@ import {
   reconcilePreparedEditorModel,
   watchPreparedEditorModel,
   type PreparedEditorModel,
+  type PreparedStructureConnector,
   type PreparedWorkflowConnector,
 } from "./editor-board.js";
 import {
@@ -490,7 +491,10 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     };
   };
 
-  const layoutConnector = (connector: PreparedWorkflowConnector): void => {
+  const layoutConnector = (
+    connector: PreparedWorkflowConnector | PreparedStructureConnector,
+    boardObstacles: readonly Rect[] | null,
+  ): void => {
     const sourceShell = model.frameById.get(connector.sourceId)
       ?.querySelector<HTMLElement>(":scope > .preview-shell");
     const targetShell = model.frameById.get(connector.targetId)
@@ -503,10 +507,12 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
     const source = boardLocalRect(sourceShell);
     const target = boardLocalRect(targetShell);
-    const row = sourceShell.closest<HTMLElement>(".preview-row");
-    const obstacles = row
+    // Replay connectors stay inside one subject row; structural connectors
+    // cross rows and clear every frame on the board instead.
+    const row = boardObstacles ? null : sourceShell.closest<HTMLElement>(".preview-row");
+    const obstacles = boardObstacles ?? (row
       ? [...row.querySelectorAll<HTMLElement>(".preview-shell")].map(boardLocalRect)
-      : [source, target];
+      : [source, target]);
     const route = routeWorkflowConnector(connector, source, target, obstacles);
     path.setAttribute("d", route.path);
     arrow.setAttribute("d", route.arrow);
@@ -521,7 +527,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const boardRect = shell.board.getBoundingClientRect();
     model.connectorLayer.setAttribute("width", String(boardRect.width / scale));
     model.connectorLayer.setAttribute("height", String(boardRect.height / scale));
-    for (const connector of model.connectors) layoutConnector(connector);
+    for (const connector of model.connectors) layoutConnector(connector, null);
+    if (model.structureConnectors.length === 0) return;
+    const boardObstacles = [
+      ...shell.board.querySelectorAll<HTMLElement>(".preview-shell"),
+    ].map(boardLocalRect);
+    for (const connector of model.structureConnectors) {
+      layoutConnector(connector, boardObstacles);
+    }
   };
 
   const requestConnectors = (): void => {
@@ -861,7 +874,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       frame.setAttribute("aria-pressed", "false");
     }
     model.connectorLayer.classList.remove("has-selection");
-    for (const connector of model.connectors) {
+    for (const connector of [...model.connectors, ...model.structureConnectors]) {
       connector.element.classList.remove("is-active");
     }
     shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]").forEach((button) => {
@@ -1134,7 +1147,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     frame.classList.add("is-selected");
     frame.setAttribute("aria-pressed", "true");
     model.connectorLayer.classList.add("has-selection");
-    for (const connector of model.connectors) {
+    for (const connector of [...model.connectors, ...model.structureConnectors]) {
       const active = connector.sourceId === previewId || connector.targetId === previewId;
       connector.element.classList.toggle("is-active", active);
       if (!active) continue;

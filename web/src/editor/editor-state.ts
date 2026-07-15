@@ -1,5 +1,6 @@
 import type {
   Descriptor,
+  InteractionGraph,
   Snapshot,
   SurfaceView,
   VNode,
@@ -8,6 +9,7 @@ import type {
 
 export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/1" as const;
 export const EDITOR_EVENT_PROTOCOL = "uhura-editor-event/0" as const;
+export const INTERACTION_GRAPH_PROTOCOL = "uhura-interaction-graph/0" as const;
 
 export type PreviewKind = "page" | "surface" | "component";
 export type PreviewFreshness = "current" | "stale";
@@ -255,6 +257,7 @@ export interface EditorRender {
   stylesheet: string;
   icons: Record<string, EditorIcon>;
   assets: Record<string, EditorAsset>;
+  interactionGraph: InteractionGraph;
 }
 
 export interface EditorState {
@@ -1148,12 +1151,53 @@ const validateReferences = (groups: PreviewGroup[], previews: EditorPreview[]): 
   }
 };
 
+const interactionGraphNodeKinds = ["page", "surface", "command", "dynamic"] as const;
+
+const interactionGraphEdgeKinds = [
+  "navigate", "navigate-back", "present", "dismiss", "state-change", "send-command",
+  "receive-outcome",
+] as const;
+
+/**
+ * Decodes the fields the board draws. Unlike the render envelope this is
+ * deliberately lenient about extra keys: the native graph carries analysis
+ * detail (guards, commands, source spans) the editor does not mirror.
+ */
+const interactionGraph = (value: unknown, path: string): InteractionGraph => {
+  const object = record(value, path);
+  if (object["protocol"] !== INTERACTION_GRAPH_PROTOCOL) {
+    throw new EditorContractError(`${path}.protocol`, JSON.stringify(INTERACTION_GRAPH_PROTOCOL));
+  }
+  return {
+    protocol: INTERACTION_GRAPH_PROTOCOL,
+    nodes: array(object["nodes"], `${path}.nodes`).map((item, index) => {
+      const nodePath = `${path}.nodes[${index}]`;
+      const node = record(item, nodePath);
+      return {
+        id: string(node["id"], `${nodePath}.id`),
+        kind: oneOf(node["kind"], `${nodePath}.kind`, interactionGraphNodeKinds),
+        label: string(node["label"], `${nodePath}.label`),
+      };
+    }),
+    edges: array(object["edges"], `${path}.edges`).map((item, index) => {
+      const edgePath = `${path}.edges[${index}]`;
+      const edge = record(item, edgePath);
+      return {
+        kind: oneOf(edge["kind"], `${edgePath}.kind`, interactionGraphEdgeKinds),
+        from: string(edge["from"], `${edgePath}.from`),
+        to: string(edge["to"], `${edgePath}.to`),
+        event: string(edge["event"], `${edgePath}.event`),
+      };
+    }),
+  };
+};
+
 const render = (value: unknown, path: string, sourceRevision: number): EditorRender | null => {
   if (value === null) return null;
   const object = record(value, path);
   exact(object, path, [
     "revision", "freshness", "application", "authoring", "groups", "previews", "stylesheet",
-    "icons", "assets",
+    "icons", "assets", "interactionGraph",
   ]);
   const revision = positiveRevision(object["revision"], `${path}.revision`);
   const freshness = oneOf(object["freshness"], `${path}.freshness`, ["current", "stale"]);
@@ -1188,6 +1232,7 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
     stylesheet: string(object["stylesheet"], `${path}.stylesheet`, true),
     icons,
     assets,
+    interactionGraph: interactionGraph(object["interactionGraph"], `${path}.interactionGraph`),
   };
 };
 

@@ -48,6 +48,77 @@ export const workflowRailHeight = (laneCount: number): number =>
 const intervalsOverlap = (left: Interval, right: Interval): boolean =>
   left.start <= right.end && right.start <= left.end;
 
+/** A routed edge between two board frames, whatever it means semantically. */
+export interface ConnectorEnds {
+  sourceId: string;
+  targetId: string;
+  sourcePort: ConnectorPort;
+  targetPort: ConnectorPort;
+}
+
+/**
+ * Packs connectors first-fit into rail lanes so overlapping horizontal frame
+ * spans never share a lane. Returns one lane per connector, in input order,
+ * shifted by `laneOffset` so independent connector families can stack.
+ */
+export const assignConnectorLanes = (
+  connectors: readonly Pick<ConnectorEnds, "sourceId" | "targetId">[],
+  frameIndex: ReadonlyMap<string, number>,
+  laneOffset = 0,
+): number[] => {
+  const lanes: Interval[][] = [];
+  return connectors.map((connector) => {
+    const sourceIndex = frameIndex.get(connector.sourceId) ?? 0;
+    const targetIndex = frameIndex.get(connector.targetId) ?? 0;
+    const interval = {
+      start: Math.min(sourceIndex, targetIndex),
+      end: Math.max(sourceIndex, targetIndex),
+    };
+    let lane = lanes.findIndex((used) =>
+      used.every((other) => !intervalsOverlap(interval, other)));
+    if (lane < 0) {
+      lane = lanes.length;
+      lanes.push([]);
+    }
+    lanes[lane]!.push(interval);
+    return laneOffset + lane;
+  });
+};
+
+/**
+ * Fans connectors sharing a frame endpoint across deterministic ports so
+ * siblings never overlap the same vertical segment. Assigns the nearest
+ * rightward opposite to the rightmost source port so deeper stems remain
+ * left of shallower rails. Writes the ports onto the given connectors.
+ */
+export const assignConnectorPorts = (
+  connectors: readonly ConnectorEnds[],
+  frameIndex: ReadonlyMap<string, number>,
+): void => {
+  const assign = (
+    endpoint: "sourceId" | "targetId",
+    port: "sourcePort" | "targetPort",
+    opposite: "sourceId" | "targetId",
+    order: 1 | -1,
+  ): void => {
+    const byEndpoint = new Map<string, ConnectorEnds[]>();
+    for (const connector of connectors) {
+      const group = byEndpoint.get(connector[endpoint]) ?? [];
+      group.push(connector);
+      byEndpoint.set(connector[endpoint], group);
+    }
+    for (const group of byEndpoint.values()) {
+      group.sort((left, right) =>
+        order * ((frameIndex.get(left[opposite]) ?? 0) - (frameIndex.get(right[opposite]) ?? 0)));
+      group.forEach((connector, slot) => {
+        connector[port] = { slot, count: group.length };
+      });
+    }
+  };
+  assign("sourceId", "sourcePort", "targetId", -1);
+  assign("targetId", "targetPort", "sourceId", 1);
+};
+
 /**
  * Builds checked replay-provenance edges for one subject group.
  * Parents must precede their children, matching the checker invariant.
@@ -63,61 +134,30 @@ export const buildWorkflowConnectors = (
     frameIndex.set(preview.id, index);
   });
 
-  const lanes: Interval[][] = [];
-  const connectors = previews.flatMap((preview): WorkflowConnector[] => {
+  const unplaced = previews.flatMap((preview): WorkflowConnector[] => {
     if (!preview.from) return [];
     const sourceId = idByExample.get(preview.from);
-    const sourceIndex = sourceId === undefined ? undefined : frameIndex.get(sourceId);
-    const targetIndex = frameIndex.get(preview.id);
-    if (sourceId === undefined || sourceIndex === undefined || targetIndex === undefined) return [];
-
-    const interval = {
-      start: Math.min(sourceIndex, targetIndex),
-      end: Math.max(sourceIndex, targetIndex),
-    };
-    let lane = lanes.findIndex((used) =>
-      used.every((other) => !intervalsOverlap(interval, other)));
-    if (lane < 0) {
-      lane = lanes.length;
-      lanes.push([]);
+    if (sourceId === undefined || !frameIndex.has(sourceId) || !frameIndex.has(preview.id)) {
+      return [];
     }
-    lanes[lane]!.push(interval);
     return [{
       groupId,
       sourceId,
       targetId: preview.id,
       steps: [...preview.replaySteps],
       openedSurfaces: directlyOpenedSurfaces(preview),
-      lane,
+      lane: 0,
       sourcePort: { slot: 0, count: 1 },
       targetPort: { slot: 0, count: 1 },
     }];
   });
 
-  const assignPorts = (
-    endpoint: "sourceId" | "targetId",
-    port: "sourcePort" | "targetPort",
-    opposite: "sourceId" | "targetId",
-    order: 1 | -1,
-  ): void => {
-    const byEndpoint = new Map<string, WorkflowConnector[]>();
-    for (const connector of connectors) {
-      const group = byEndpoint.get(connector[endpoint]) ?? [];
-      group.push(connector);
-      byEndpoint.set(connector[endpoint], group);
-    }
-    for (const group of byEndpoint.values()) {
-      group.sort((left, right) =>
-        order * ((frameIndex.get(left[opposite]) ?? 0) - (frameIndex.get(right[opposite]) ?? 0)));
-      group.forEach((connector, slot) => {
-        connector[port] = { slot, count: group.length };
-      });
-    }
-  };
-  // Parents precede children. Assign the nearest rightward child to the
-  // rightmost source port so deeper stems remain left of shallower rails.
-  assignPorts("sourceId", "sourcePort", "targetId", -1);
-  assignPorts("targetId", "targetPort", "sourceId", 1);
+  const lanes = assignConnectorLanes(unplaced, frameIndex);
+  const connectors = unplaced.map((connector, index) => ({
+    ...connector,
+    lane: lanes[index]!,
+  }));
+  assignConnectorPorts(connectors, frameIndex);
   return connectors;
 };
 

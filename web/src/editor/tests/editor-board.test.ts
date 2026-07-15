@@ -364,6 +364,7 @@ const render = (
   stylesheet: ":root { --accent: blue; } body { color: black; }",
   icons: {},
   assets: {},
+  interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
 });
 
 const annotationText = (model: PreparedEditorModel): string | undefined =>
