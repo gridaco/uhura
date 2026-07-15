@@ -7,9 +7,12 @@ import type { EditorPreview, PreviewKind } from "../editor-state.js";
 import {
   buildStructureConnectors,
   layoutStructureConnectors,
+  routeStructureConnector,
   structureConnectorDescription,
   structureConnectorLabel,
   visibleStructureConnectors,
+  type StructureConnectorPlacement,
+  type StructureRect,
 } from "../structure-connectors.js";
 
 const preview = (
@@ -50,6 +53,7 @@ const graph = (edges: InteractionGraphEdge[]): InteractionGraph => ({
   nodes: [
     { id: "page:feed", kind: "page", label: "feed" },
     { id: "page:profile", kind: "page", label: "profile" },
+    { id: "page:settings", kind: "page", label: "settings" },
     { id: "surface:comments-sheet", kind: "surface", label: "comments-sheet" },
     { id: "command:posts.like", kind: "command", label: "posts.like" },
     { id: "dynamic:opener", kind: "dynamic", label: "surface opener" },
@@ -62,11 +66,8 @@ const boardPreviews = [
   preview("page", "feed", "extra"),
   preview("page", "profile", "default"),
   preview("surface", "comments-sheet", "open"),
+  preview("page", "settings", "default"),
 ];
-
-const frameIndex = new Map(
-  boardPreviews.map((preview, index) => [preview.id, index] as const),
-);
 
 test("builds only navigate and present candidates between mapped frames", () => {
   const connectors = buildStructureConnectors(graph([
@@ -87,9 +88,6 @@ test("builds only navigate and present candidates between mapped frames", () => 
     targetId: "page/profile/default",
     event: "profile-opened",
     extraCount: 0,
-    lane: 0,
-    sourcePort: { slot: 0, count: 1 },
-    targetPort: { slot: 0, count: 1 },
   }, {
     kind: "present",
     sourceNode: "page:feed",
@@ -98,9 +96,6 @@ test("builds only navigate and present candidates between mapped frames", () => 
     targetId: "surface/comments-sheet/open",
     event: "comments-requested",
     extraCount: 0,
-    lane: 0,
-    sourcePort: { slot: 0, count: 1 },
-    targetPort: { slot: 0, count: 1 },
   }]);
 });
 
@@ -211,44 +206,232 @@ test("empty or unrelated selection hides every structural connector", () => {
   );
 });
 
-test("packs lanes over the visible subset only, above the replay lanes", () => {
-  const all = buildStructureConnectors(fullGraph, boardPreviews);
-  const feed = layoutStructureConnectors(
-    visibleStructureConnectors(all, { kind: "page", subject: "feed" }),
-    frameIndex,
-    3,
+const feedSelection = { node: "page:feed", previewId: "page/feed/extra" };
+
+const fanGraph = graph([
+  { kind: "navigate", from: "page:feed", to: "page:profile", event: "profile-opened" },
+  { kind: "navigate", from: "page:feed", to: "page:settings", event: "settings-opened" },
+  { kind: "navigate", from: "page:profile", to: "page:feed", event: "home-requested" },
+  { kind: "navigate", from: "page:settings", to: "page:feed", event: "home-from-settings" },
+  { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
+]);
+
+test("anchors every placement at the clicked frame, not the definition's first frame", () => {
+  const visible = visibleStructureConnectors(
+    buildStructureConnectors(fanGraph, boardPreviews),
+    { kind: "page", subject: "feed" },
   );
+  const laid = layoutStructureConnectors(visible, feedSelection);
 
-  // All three visible spans overlap the feed frame, so each takes its own
-  // lane starting right after the three replay lanes.
-  assert.deepEqual(feed.map((connector) => connector.lane), [3, 4, 5]);
-
-  const sheet = layoutStructureConnectors(
-    visibleStructureConnectors(all, { kind: "surface", subject: "comments-sheet" }),
-    frameIndex,
-    3,
+  assert.ok(laid.length > 0);
+  assert.ok(
+    laid.every((connector) => connector.placement.selectedId === "page/feed/extra"),
+    "the near end anchors at the clicked feed frame, not page/feed/base",
   );
   assert.deepEqual(
-    sheet.map((connector) => connector.lane),
-    [3, 4],
-    "the hidden connectors never deepen the visible subset's rails",
+    laid.map((connector) => connector.placement.farId).sort(),
+    [
+      "page/profile/default",
+      "page/profile/default",
+      "page/settings/default",
+      "page/settings/default",
+      "surface/comments-sheet/open",
+    ],
+    "far ends still anchor at the far definition's first frame",
   );
 });
 
-test("fans out ports over the visible subset and keeps inputs unchanged", () => {
-  const all = buildStructureConnectors(fullGraph, boardPreviews);
-  const visible = visibleStructureConnectors(all, { kind: "page", subject: "feed" });
-  const laid = layoutStructureConnectors(visible, frameIndex, 2);
+test("classifies direction and fans slots per selected edge", () => {
+  const visible = visibleStructureConnectors(
+    buildStructureConnectors(fanGraph, boardPreviews),
+    { kind: "page", subject: "feed" },
+  );
+  const laid = layoutStructureConnectors(visible, feedSelection);
 
-  const outgoing = laid.filter((connector) => connector.sourceNode === "page:feed");
   assert.deepEqual(
-    outgoing.map((connector) => connector.sourcePort),
-    [{ slot: 1, count: 2 }, { slot: 0, count: 2 }],
-    "feed's two visible outgoing arrows share its two source ports",
+    laid.map(({ event, placement }) => [
+      event,
+      placement.direction,
+      placement.side,
+      placement.slot,
+      placement.slotCount,
+    ]),
+    [
+      ["home-requested", "incoming", "left", 0, 2],
+      ["home-from-settings", "incoming", "left", 1, 2],
+      ["profile-opened", "outgoing", "right", 0, 2],
+      ["settings-opened", "outgoing", "right", 1, 2],
+      ["comments-requested", "outgoing", "bottom", 0, 1],
+    ],
+    "outgoing navigate fans on the right, incoming on the left, present below",
+  );
+});
+
+test("a selected surface receives incoming presents at its top edge", () => {
+  const visible = visibleStructureConnectors(
+    buildStructureConnectors(fullGraph, boardPreviews),
+    { kind: "surface", subject: "comments-sheet" },
+  );
+  const laid = layoutStructureConnectors(visible, {
+    node: "surface:comments-sheet",
+    previewId: "surface/comments-sheet/open",
+  });
+
+  assert.deepEqual(
+    laid.map(({ placement }) => [
+      placement.direction,
+      placement.side,
+      placement.slot,
+      placement.slotCount,
+      placement.farId,
+    ]),
+    [
+      ["incoming", "top", 0, 2, "page/feed/base"],
+      ["incoming", "top", 1, 2, "page/profile/default"],
+    ],
+  );
+});
+
+test("fan layout is deterministic and never mutates its inputs", () => {
+  const visible = visibleStructureConnectors(
+    buildStructureConnectors(fanGraph, boardPreviews),
+    { kind: "page", subject: "feed" },
+  );
+  const laid = layoutStructureConnectors(visible, feedSelection);
+
+  assert.deepEqual(
+    layoutStructureConnectors([...visible].reverse(), feedSelection),
+    laid,
+    "slot assignment ignores input order",
+  );
+  assert.ok(laid.every((connector) => visible.every((input) => input !== connector)));
+  assert.ok(visible.every((connector) => !("placement" in connector)));
+});
+
+const placement = (
+  overrides: Partial<StructureConnectorPlacement>,
+): StructureConnectorPlacement => ({
+  direction: "outgoing",
+  side: "right",
+  slot: 0,
+  slotCount: 1,
+  selectedId: "selected",
+  farId: "far",
+  ...overrides,
+});
+
+const selectedRect: StructureRect = { x: 0, y: 0, width: 100, height: 200 };
+
+test("outgoing navigate exits the right edge into a rightward target's left edge", () => {
+  const far: StructureRect = { x: 300, y: 40, width: 100, height: 100 };
+  const route = routeStructureConnector(placement({}), selectedRect, far);
+
+  assert.equal(route.path, "M 100 100 L 200 100 L 200 90 L 300 90");
+  assert.deepEqual(route.origin, { x: 100, y: 100 });
+  assert.ok(route.arrow.includes("L 300 90"), "arrowhead tip sits at the target's left edge");
+  assert.deepEqual(route.label, { x: 108, y: 100, anchor: "start" });
+});
+
+test("outgoing navigate to a non-rightward target enters its top edge", () => {
+  const far: StructureRect = { x: -400, y: 400, width: 100, height: 100 };
+  const route = routeStructureConnector(placement({}), selectedRect, far);
+
+  assert.equal(route.path, "M 100 100 L 128 100 L 128 372 L -350 372 L -350 400");
+  assert.ok(route.arrow.includes("L -350 400"), "arrowhead tip sits at the target's top edge");
+  assert.deepEqual(route.label, { x: 108, y: 100, anchor: "start" });
+});
+
+test("right-edge exits fan evenly down the edge from the top", () => {
+  const far: StructureRect = { x: 300, y: 0, width: 100, height: 100 };
+  const first = routeStructureConnector(
+    placement({ slot: 0, slotCount: 3 }),
+    selectedRect,
+    far,
+  );
+  const second = routeStructureConnector(
+    placement({ slot: 1, slotCount: 3 }),
+    selectedRect,
+    far,
+  );
+  const third = routeStructureConnector(
+    placement({ slot: 2, slotCount: 3 }),
+    selectedRect,
+    far,
   );
 
-  assert.ok(laid.every((connector, index) => connector !== visible[index]));
-  assert.ok(visible.every((connector) => connector.lane === 0
-    && connector.sourcePort.slot === 0
-    && connector.sourcePort.count === 1));
+  assert.deepEqual(
+    [first.origin, second.origin, third.origin],
+    [{ x: 100, y: 50 }, { x: 100, y: 100 }, { x: 100, y: 150 }],
+  );
+  assert.deepEqual(
+    [first.label.y, second.label.y, third.label.y],
+    [50, 100, 150],
+    "labels stack along the fan so up to a dozen never collide",
+  );
+});
+
+test("incoming navigate arrives at the selected left edge, label anchored end", () => {
+  const far: StructureRect = { x: -300, y: 0, width: 100, height: 100 };
+  const route = routeStructureConnector(
+    placement({ direction: "incoming", side: "left" }),
+    selectedRect,
+    far,
+  );
+
+  assert.equal(route.path, "M -200 50 L -100 50 L -100 100 L 0 100");
+  assert.deepEqual(route.origin, { x: -200, y: 50 }, "the dot departs the source frame");
+  assert.ok(route.arrow.includes("L 0 100"), "arrowhead tip sits on the selected left edge");
+  assert.deepEqual(route.label, { x: -8, y: 100, anchor: "end" });
+});
+
+test("outgoing present drops from the bottom edge to the surface's top edge", () => {
+  const far: StructureRect = { x: 0, y: 400, width: 100, height: 100 };
+  const route = routeStructureConnector(
+    placement({ side: "bottom" }),
+    selectedRect,
+    far,
+  );
+
+  assert.equal(route.path, "M 50 200 L 50 300 L 50 400");
+  assert.ok(route.arrow.includes("L 50 400"), "arrowhead tip sits at the surface's top edge");
+  assert.deepEqual(route.label, { x: 56, y: 210, anchor: "start" });
+});
+
+test("bottom-edge labels stack downward per slot", () => {
+  const far: StructureRect = { x: 0, y: 400, width: 100, height: 100 };
+  const first = routeStructureConnector(
+    placement({ side: "bottom", slot: 0, slotCount: 2 }),
+    selectedRect,
+    far,
+  );
+  const second = routeStructureConnector(
+    placement({ side: "bottom", slot: 1, slotCount: 2 }),
+    selectedRect,
+    far,
+  );
+
+  assert.ok(second.label.y > first.label.y);
+  assert.ok(second.label.x > first.label.x, "each slot exits further along the bottom edge");
+});
+
+test("incoming present arrives at the selected surface's top edge", () => {
+  const surfaceRect: StructureRect = { x: 0, y: 0, width: 100, height: 100 };
+  const far: StructureRect = { x: 0, y: -300, width: 100, height: 100 };
+  const route = routeStructureConnector(
+    placement({ direction: "incoming", side: "top" }),
+    surfaceRect,
+    far,
+  );
+
+  assert.equal(route.path, "M 50 -200 L 50 -100 L 50 0");
+  assert.ok(route.arrow.includes("L 50 0"), "arrowhead tip sits on the selected top edge");
+  assert.deepEqual(route.label, { x: 56, y: -10, anchor: "start" });
+});
+
+test("marker scale grows label offsets for low-zoom readability", () => {
+  const far: StructureRect = { x: 300, y: 40, width: 100, height: 100 };
+  const route = routeStructureConnector(placement({}), selectedRect, far, 4);
+
+  assert.equal(route.path, "M 100 100 L 200 100 L 200 90 L 300 90", "geometry stays put");
+  assert.deepEqual(route.label, { x: 132, y: 100, anchor: "start" });
 });

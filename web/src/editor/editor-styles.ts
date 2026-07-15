@@ -317,12 +317,24 @@ export const EDITOR_STYLES = `
     font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   /* Structural arrows are selection-scoped (Figma prototype-arrow behavior):
-     hidden until a frame is selected, then only its definition's edges draw. */
+     hidden until a frame is selected, then only its definition's edges draw.
+     Incoming edges are muted so the selection's outgoing arrows dominate. */
   .structure-connector { display: none; }
   .structure-connector.is-active { display: inline; }
   .structure-connector.structure-navigate { color: #0f8a5f; }
   .structure-connector.structure-present { color: #0e8f86; }
   .structure-connector.structure-present .workflow-connector-path { stroke-dasharray: 6 4; }
+  .structure-connector.is-incoming { opacity: .45; }
+  .structure-connector .workflow-connector-label {
+    stroke: none;
+    paint-order: normal;
+    dominant-baseline: central;
+  }
+  .structure-connector-label-bg {
+    fill: rgb(255 255 255 / 95%);
+    stroke: currentcolor;
+    stroke-width: calc(var(--connector-stroke, 1.5px) * .667);
+  }
 
   .canvas-tools {
     position: absolute;

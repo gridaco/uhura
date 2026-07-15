@@ -131,9 +131,12 @@ const prepareStructureConnector = (
   const arrow = svgElement(document, "path", "workflow-connector-arrow");
   const origin = svgElement(document, "circle", "workflow-connector-origin");
   origin.setAttribute("r", "3");
+  // The label pill: a rounded rect sized to the text at layout time so the
+  // event name stays readable over frames and connectors at any zoom.
+  const labelBackground = svgElement(document, "rect", "structure-connector-label-bg");
   const label = svgElement(document, "text", "workflow-connector-label");
   label.textContent = structureConnectorLabel(connector);
-  group.append(title, path, arrow, origin, label);
+  group.append(title, path, arrow, origin, labelBackground, label);
   return { ...connector, element: group };
 };
 

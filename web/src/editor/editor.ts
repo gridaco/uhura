@@ -43,8 +43,10 @@ import {
 } from "./editor-focus.js";
 import {
   layoutStructureConnectors,
+  routeStructureConnector,
   structureDefinitionNode,
   visibleStructureConnectors,
+  type PlacedStructureConnector,
 } from "./structure-connectors.js";
 import { sourceShortcutAction } from "./editor-shortcuts.js";
 import {
@@ -64,6 +66,12 @@ const ZOOM_STEP = 1.2;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 
 type Tool = "cursor" | "hand";
+
+type ActiveStructureConnector = PlacedStructureConnector<PreparedStructureConnector>;
+
+/** Font size of structure labels in marker units (constant on-screen size). */
+const STRUCTURE_LABEL_FONT = 11;
+const STRUCTURE_MARKER_SCALE_MAX = 8;
 
 interface Point {
   x: number;
@@ -447,9 +455,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let focusState: PreviewFocusState | null = null;
   let focusFrameObserver: ResizeObserver | null = null;
   let connectorFrame = 0;
-  // The selection-scoped structural subset, re-laned over the visible
-  // connectors only. Empty whenever nothing is selected (Figma behavior).
-  let activeStructureConnectors: PreparedStructureConnector[] = [];
+  // The selection-scoped structural subset, fanned around the clicked frame
+  // only. Empty whenever nothing is selected (Figma behavior).
+  let activeStructureConnectors: ActiveStructureConnector[] = [];
   let annotationLayerVisible = true;
   let destroyed = false;
   let retryTimer: number | undefined;
@@ -499,10 +507,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     };
   };
 
-  const layoutConnector = (
-    connector: PreparedWorkflowConnector | PreparedStructureConnector,
-    boardObstacles: readonly Rect[] | null,
-  ): void => {
+  const layoutConnector = (connector: PreparedWorkflowConnector): void => {
     const sourceShell = model.frameById.get(connector.sourceId)
       ?.querySelector<HTMLElement>(":scope > .preview-shell");
     const targetShell = model.frameById.get(connector.targetId)
@@ -515,12 +520,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
     const source = boardLocalRect(sourceShell);
     const target = boardLocalRect(targetShell);
-    // Replay connectors stay inside one subject row; structural connectors
-    // cross rows and clear every frame on the board instead.
-    const row = boardObstacles ? null : sourceShell.closest<HTMLElement>(".preview-row");
-    const obstacles = boardObstacles ?? (row
+    // Replay connectors stay inside one subject row.
+    const row = sourceShell.closest<HTMLElement>(".preview-row");
+    const obstacles = row
       ? [...row.querySelectorAll<HTMLElement>(".preview-shell")].map(boardLocalRect)
-      : [source, target]);
+      : [source, target];
     const route = routeWorkflowConnector(connector, source, target, obstacles);
     path.setAttribute("d", route.path);
     arrow.setAttribute("d", route.arrow);
@@ -530,18 +534,61 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     label.setAttribute("y", String(route.label.y));
   };
 
+  // Structural connectors anchor at the frame the user clicked and route
+  // direction-aware edges to the far definition's first frame. Markers and
+  // labels counter-scale with zoom so they stay legible on a zoomed-out map.
+  const layoutStructureConnector = (
+    connector: ActiveStructureConnector,
+    markerScale: number,
+  ): void => {
+    const selectedShell = model.frameById.get(connector.placement.selectedId)
+      ?.querySelector<HTMLElement>(":scope > .preview-shell");
+    const farShell = model.frameById.get(connector.placement.farId)
+      ?.querySelector<HTMLElement>(":scope > .preview-shell");
+    const path = connector.element.querySelector<SVGPathElement>(".workflow-connector-path");
+    const arrow = connector.element.querySelector<SVGPathElement>(".workflow-connector-arrow");
+    const origin = connector.element.querySelector<SVGCircleElement>(".workflow-connector-origin");
+    const label = connector.element.querySelector<SVGTextElement>(".workflow-connector-label");
+    const labelBackground = connector.element
+      .querySelector<SVGRectElement>(".structure-connector-label-bg");
+    if (!selectedShell || !farShell || !path || !arrow || !origin || !label || !labelBackground) {
+      return;
+    }
+
+    const route = routeStructureConnector(
+      connector.placement,
+      boardLocalRect(selectedShell),
+      boardLocalRect(farShell),
+      markerScale,
+    );
+    path.setAttribute("d", route.path);
+    arrow.setAttribute("d", route.arrow);
+    origin.setAttribute("cx", String(route.origin.x));
+    origin.setAttribute("cy", String(route.origin.y));
+    origin.setAttribute("r", String(3 * markerScale));
+    label.setAttribute("x", String(route.label.x));
+    label.setAttribute("y", String(route.label.y));
+    label.style.textAnchor = route.label.anchor;
+    label.style.fontSize = `${STRUCTURE_LABEL_FONT * markerScale}px`;
+    const box = label.getBBox();
+    const paddingX = 4 * markerScale;
+    const paddingY = 2 * markerScale;
+    labelBackground.setAttribute("x", String(box.x - paddingX));
+    labelBackground.setAttribute("y", String(box.y - paddingY));
+    labelBackground.setAttribute("width", String(box.width + paddingX * 2));
+    labelBackground.setAttribute("height", String(box.height + paddingY * 2));
+    labelBackground.setAttribute("rx", String(4 * markerScale));
+  };
+
   const layoutConnectors = (): void => {
     connectorFrame = 0;
     const boardRect = shell.board.getBoundingClientRect();
     model.connectorLayer.setAttribute("width", String(boardRect.width / scale));
     model.connectorLayer.setAttribute("height", String(boardRect.height / scale));
-    for (const connector of model.connectors) layoutConnector(connector, null);
-    if (activeStructureConnectors.length === 0) return;
-    const boardObstacles = [
-      ...shell.board.querySelectorAll<HTMLElement>(".preview-shell"),
-    ].map(boardLocalRect);
+    for (const connector of model.connectors) layoutConnector(connector);
+    const markerScale = Math.min(Math.max(1 / scale, 1), STRUCTURE_MARKER_SCALE_MAX);
     for (const connector of activeStructureConnectors) {
-      layoutConnector(connector, boardObstacles);
+      layoutStructureConnector(connector, markerScale);
     }
   };
 
@@ -883,7 +930,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     }
     model.connectorLayer.classList.remove("has-selection");
     for (const connector of [...model.connectors, ...model.structureConnectors]) {
-      connector.element.classList.remove("is-active");
+      connector.element.classList.remove("is-active", "is-incoming");
     }
     activeStructureConnectors = [];
     shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]").forEach((button) => {
@@ -1166,29 +1213,25 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       model.frameById.get(relatedId)?.classList.add("is-related");
     }
     // Structural connectors are selection-scoped: only the arrows entering
-    // or leaving the selected preview's definition draw, and their lanes are
-    // packed over that subset so the rails stay shallow. They still stack
-    // above every replay rail via the lane offset.
-    const frameIndex = new Map(
-      [...model.previewById.keys()].map((id, index) => [id, index] as const),
-    );
-    const replayLaneCount = model.connectors.reduce(
-      (count, connector) => Math.max(count, connector.lane + 1),
-      0,
-    );
+    // or leaving the selected preview's definition draw, anchored at the
+    // frame the user actually clicked. Outgoing navigation fans down the
+    // right edge, incoming arrives muted at the left edge, and presents
+    // leave the bottom edge (or arrive at a selected surface's top edge).
     activeStructureConnectors = layoutStructureConnectors(
       visibleStructureConnectors(model.structureConnectors, preview.identity),
-      frameIndex,
-      replayLaneCount,
+      { node: structureDefinitionNode(preview.identity), previewId },
     );
-    const selectedNode = structureDefinitionNode(preview.identity);
     for (const connector of activeStructureConnectors) {
       connector.element.classList.add("is-active");
-      connector.element.dataset.lane = String(connector.lane);
-      const relatedId = connector.sourceNode === selectedNode
-        ? connector.targetId
-        : connector.sourceId;
-      model.frameById.get(relatedId)?.classList.add("is-related");
+      connector.element.classList.toggle(
+        "is-incoming",
+        connector.placement.direction === "incoming",
+      );
+      connector.element.dataset.direction = connector.placement.direction;
+      connector.element.dataset.edge = connector.placement.side;
+      connector.element.dataset.slot =
+        `${connector.placement.slot + 1}/${connector.placement.slotCount}`;
+      model.frameById.get(connector.placement.farId)?.classList.add("is-related");
     }
     requestConnectors();
     const navigatorButton = Array.from(
