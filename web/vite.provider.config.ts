@@ -4,7 +4,7 @@ import { defineConfig, type Plugin } from "vite";
 
 const providerRoot = path.resolve(
   import.meta.dirname,
-  "../examples/instagram-uhura/providers",
+  "../examples/instagram/client/providers",
 );
 
 const assertSingleProviderChunk = (): Plugin => ({

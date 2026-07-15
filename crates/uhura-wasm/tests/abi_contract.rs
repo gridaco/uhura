@@ -175,7 +175,7 @@ fn carried_data_is_typed_by_the_descriptor() {
 // ── layer 2: pump parity against the native trace harness ──────────────────
 
 fn corpus_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/instagram-uhura")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/instagram/client")
 }
 
 fn checked_program() -> uhura_core::ir::ProgramIr {

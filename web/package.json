@@ -17,7 +17,7 @@
     "build:provider": "vite build --config vite.provider.config.ts",
     "lint": "pnpm run lint:web && pnpm run lint:provider",
     "lint:web": "oxlint --deny-warnings src *.config.ts",
-    "lint:provider": "cd .. && web/node_modules/.bin/oxlint --deny-warnings -c web/.oxlintrc.json examples/instagram-uhura/providers/*.ts",
+    "lint:provider": "cd .. && web/node_modules/.bin/oxlint --deny-warnings -c web/.oxlintrc.json examples/instagram/client/providers/*.ts",
     "test": "vitest run",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run build && pnpm run test"
   },

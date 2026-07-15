@@ -1939,7 +1939,7 @@ mod tests {
 
     #[test]
     fn play_inspection_artifact_is_coherent_with_checked_ir_and_spans() {
-        let root = tool_root().join("examples/instagram-uhura");
+        let root = tool_root().join("examples/instagram/client");
         let snapshot = crate::source::capture_project_snapshot(&root);
         let good = recheck_play(&snapshot.files).expect("canonical example checks");
         let inspection: serde_json::Value =
@@ -2272,7 +2272,7 @@ mod tests {
 
     #[test]
     fn host_publication_is_coherent_and_keeps_event_streams_stable() {
-        let root = tool_root().join("examples/instagram-uhura");
+        let root = tool_root().join("examples/instagram/client");
         let snapshot = crate::source::capture_project_snapshot(&root);
         let candidate = super::build_candidate(&snapshot, 1);
         let (host, first) = super::Host::new(test_web_assets(), candidate).unwrap();
@@ -2335,7 +2335,7 @@ mod tests {
 
     #[test]
     fn candidate_exposes_listenerless_diagnostics_and_source_identity() {
-        let root = tool_root().join("examples/instagram-uhura");
+        let root = tool_root().join("examples/instagram/client");
         let snapshot = crate::source::capture_project_snapshot(&root);
         let first = super::build_candidate(&snapshot, 1);
         let second = super::build_candidate(&snapshot, 9);

@@ -19,8 +19,9 @@ layout and presentation; providers own authoritative data and operations.
 - A Play mode for running the experience against a provider.
 - Native and Wasm runtimes with conformance tests.
 
-The Instagram project in [`examples/instagram-uhura/`](examples/instagram-uhura/)
-exercises the complete workflow.
+The full-stack Instagram project in
+[`examples/instagram/`](examples/instagram/) exercises the complete workflow;
+its Uhura source remains an independently checkable project under `client/`.
 
 ## Uhura and Spock
 
@@ -45,23 +46,27 @@ cd ..
 scripts/build-wasm.sh
 ```
 
-Start the Instagram example:
+Start the complete framework example with the npm-distributed Spock CLI:
 
 ```sh
-cargo run --locked -p uhura-cli -- examples/instagram-uhura
+npx --yes spock@0.5.0 start examples/instagram
 ```
 
-The Editor opens at <http://127.0.0.1:8787/>. Use its Play action or open
-<http://127.0.0.1:8787/play> to run the experience.
+The Editor opens at <http://127.0.0.1:4000/>. Use its Play action or open
+<http://127.0.0.1:4000/play> to run the experience against the seeded Spock
+authority on the same origin.
 
 Useful commands:
 
 ```sh
 # Check a project
-cargo run --locked -p uhura-cli -- check examples/instagram-uhura
+cargo run --locked -p uhura-cli -- check examples/instagram/client
+
+# Run Uhura Editor without the Spock authority
+cargo run --locked -p uhura-cli -- editor examples/instagram/client
 
 # Run a deterministic interaction trace
-cargo run --locked -p uhura-cli -- trace examples/instagram-uhura \
+cargo run --locked -p uhura-cli -- trace examples/instagram/client \
   --script=like-refused --expanded
 
 # Test the Rust workspace
@@ -75,7 +80,7 @@ cargo test --workspace
 
 - [`crates/`](crates/) — checker, runtime, Wasm bindings, and CLI.
 - [`web/`](web/) — Editor and Play browser application.
-- [`examples/instagram-uhura/`](examples/instagram-uhura/) — end-to-end example.
+- [`examples/instagram/`](examples/instagram/) — full-stack Spock framework example.
 - [`docs/spec/`](docs/spec/) — living language specification.
 - [`docs/rfcs/`](docs/rfcs/) — accepted design decisions.
 - [`docs/working-group/`](docs/working-group/) — active design notes.

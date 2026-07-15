@@ -6,12 +6,12 @@ use uhura_check::catalog::{ChildrenModel, ElementClass, load_catalog};
 use uhura_check::manifest::load_manifest;
 use uhura_port::load_port_contract;
 
-const CATALOG: &str = include_str!("../../../examples/instagram-uhura/catalog/base.toml");
-const FEED: &str = include_str!("../../../examples/instagram-uhura/ports/feed.port.toml");
-const COMMENTS: &str = include_str!("../../../examples/instagram-uhura/ports/comments.port.toml");
-const PROFILE: &str = include_str!("../../../examples/instagram-uhura/ports/profile.port.toml");
-const CREATE: &str = include_str!("../../../examples/instagram-uhura/ports/create.port.toml");
-const MANIFEST: &str = include_str!("../../../examples/instagram-uhura/uhura.toml");
+const CATALOG: &str = include_str!("../../../examples/instagram/client/catalog/base.toml");
+const FEED: &str = include_str!("../../../examples/instagram/client/ports/feed.port.toml");
+const COMMENTS: &str = include_str!("../../../examples/instagram/client/ports/comments.port.toml");
+const PROFILE: &str = include_str!("../../../examples/instagram/client/ports/profile.port.toml");
+const CREATE: &str = include_str!("../../../examples/instagram/client/ports/create.port.toml");
+const MANIFEST: &str = include_str!("../../../examples/instagram/client/uhura.toml");
 
 #[test]
 fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {

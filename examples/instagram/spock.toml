@@ -1,0 +1,11 @@
+version = 1
+
+[project]
+name = "instagram"
+
+[backend]
+root = "backend"
+entry = "app.spock"
+
+[client]
+root = "client"

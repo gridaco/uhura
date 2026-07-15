@@ -9,7 +9,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "web/src/**/*.test.ts",
-      "examples/instagram-uhura/providers/*.test.ts",
+      "examples/instagram/client/providers/*.test.ts",
     ],
   },
   resolve: {
