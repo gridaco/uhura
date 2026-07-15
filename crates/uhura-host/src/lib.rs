@@ -465,11 +465,16 @@ impl Host {
         let mut play = PlayState::default();
         apply_play(&mut play, candidate.play);
         let report = publication_report(&play, summary);
+        let event_admission = Arc::new(EventAdmission::new(MAX_EVENT_STREAMS_PER_HOST));
         Ok((
             Self {
                 state: RwLock::new(DevState { play, editor }),
-                play_clients: Arc::new(Mutex::new(ClientRegistry::default())),
-                editor_clients: Arc::new(Mutex::new(ClientRegistry::default())),
+                play_clients: Arc::new(Mutex::new(ClientRegistry::with_admission(Arc::clone(
+                    &event_admission,
+                )))),
+                editor_clients: Arc::new(Mutex::new(ClientRegistry::with_admission(
+                    event_admission,
+                ))),
                 web: Arc::new(web),
             },
             report,
@@ -524,10 +529,75 @@ fn publication_report(play: &PlayState, summary: CandidateSummary) -> Publicatio
 // subscriber therefore has a one-frame queue. If it is stalled, the already
 // queued frame remains a sufficient invalidation and later publications are
 // intentionally coalesced instead of growing memory without bound.
-#[derive(Default)]
+const BLOCKING_EVENT_STREAM_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
+// `tiny_http` writes unknown-length HTTP/1.1 bodies through an 8 KiB chunk
+// encoder that does not flush partial chunks. A keepalive must cross that
+// boundary so every timeout reaches the socket instead of accumulating in the
+// encoder while a disconnected client continues occupying its worker.
+const BLOCKING_EVENT_STREAM_WRITE_BOUNDARY: usize = 8 * 1024;
+// Editor and Play share this host-session budget. Keeping admission below the
+// HTTP adapters means every listener implementation gets the same bound and a
+// disconnected response releases capacity when its `EventStream` is dropped.
+const MAX_EVENT_STREAMS_PER_HOST: usize = 4;
+
+struct EventAdmission {
+    active: Mutex<usize>,
+    limit: usize,
+}
+
+impl EventAdmission {
+    fn new(limit: usize) -> Self {
+        Self {
+            active: Mutex::new(0),
+            limit,
+        }
+    }
+
+    fn try_acquire(self: &Arc<Self>) -> Option<EventStreamPermit> {
+        let mut active = self.active.lock().expect("event admission lock");
+        if *active >= self.limit {
+            return None;
+        }
+        *active += 1;
+        Some(EventStreamPermit {
+            admission: Arc::clone(self),
+        })
+    }
+}
+
+struct EventStreamPermit {
+    admission: Arc<EventAdmission>,
+}
+
+impl Drop for EventStreamPermit {
+    fn drop(&mut self) {
+        let mut active = self.admission.active.lock().expect("event admission lock");
+        *active = (*active)
+            .checked_sub(1)
+            .expect("event admission count underflow");
+    }
+}
+
 struct ClientRegistry {
     next_id: u64,
     clients: BTreeMap<u64, SyncSender<String>>,
+    admission: Arc<EventAdmission>,
+}
+
+impl ClientRegistry {
+    fn with_admission(admission: Arc<EventAdmission>) -> Self {
+        Self {
+            next_id: 0,
+            clients: BTreeMap::new(),
+            admission,
+        }
+    }
+}
+
+impl Default for ClientRegistry {
+    fn default() -> Self {
+        Self::with_admission(Arc::new(EventAdmission::new(MAX_EVENT_STREAMS_PER_HOST)))
+    }
 }
 
 type Clients = Arc<Mutex<ClientRegistry>>;
@@ -576,6 +646,8 @@ pub struct EventStream {
     offset: usize,
     subscription_id: u64,
     clients: Weak<Mutex<ClientRegistry>>,
+    blocking_keepalive_interval: Duration,
+    _admission_permit: Option<EventStreamPermit>,
 }
 
 /// One bounded wait on a host-session event stream.
@@ -625,14 +697,29 @@ impl Drop for EventStream {
 
 impl Read for EventStream {
     fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
         if self.offset >= self.buffer.len() {
-            match self.receiver.recv() {
+            match self.receiver.recv_timeout(self.blocking_keepalive_interval) {
                 Ok(frame) => {
                     self.buffer = frame.into_bytes();
-                    self.offset = 0;
                 }
-                Err(_) => return Ok(0),
+                Err(RecvTimeoutError::Timeout) => {
+                    // The blocking `Read` adapter cannot otherwise observe a
+                    // quiet client disconnect: its next operation would remain
+                    // parked on the event channel. An SSE comment is invisible
+                    // to EventSource while giving the HTTP writer a bounded
+                    // opportunity to discover a closed socket.
+                    self.buffer.clear();
+                    self.buffer.push(b':');
+                    self.buffer
+                        .resize(BLOCKING_EVENT_STREAM_WRITE_BOUNDARY + 1, b' ');
+                    self.buffer.extend_from_slice(b"\n\n");
+                }
+                Err(RecvTimeoutError::Disconnected) => return Ok(0),
             }
+            self.offset = 0;
         }
         let count = (self.buffer.len() - self.offset).min(output.len());
         output[..count].copy_from_slice(&self.buffer[self.offset..self.offset + count]);
@@ -641,7 +728,17 @@ impl Read for EventStream {
     }
 }
 
-fn subscribe(clients: &Clients, hello: impl FnOnce() -> String) -> EventStream {
+fn subscribe(clients: &Clients, hello: impl FnOnce() -> String) -> Option<EventStream> {
+    subscribe_with_blocking_keepalive(clients, hello, BLOCKING_EVENT_STREAM_KEEPALIVE_INTERVAL)
+}
+
+fn subscribe_with_blocking_keepalive(
+    clients: &Clients,
+    hello: impl FnOnce() -> String,
+    blocking_keepalive_interval: Duration,
+) -> Option<EventStream> {
+    let admission = Arc::clone(&clients.lock().expect("clients lock").admission);
+    let admission_permit = admission.try_acquire()?;
     let (sender, receiver) = sync_channel::<String>(1);
     let subscription_id = {
         // Registration and snapshot share the broadcast lock: an update can
@@ -656,13 +753,15 @@ fn subscribe(clients: &Clients, hello: impl FnOnce() -> String) -> EventStream {
         clients.clients.insert(subscription_id, sender);
         subscription_id
     };
-    EventStream {
+    Some(EventStream {
         receiver,
         buffer: Vec::new(),
         offset: 0,
         subscription_id,
         clients: Arc::downgrade(clients),
-    }
+        blocking_keepalive_interval,
+        _admission_permit: Some(admission_permit),
+    })
 }
 
 // ── one web application and namespaced transport ───────────────────────────
@@ -870,86 +969,213 @@ fn index_asset_references(index: &str) -> Result<BTreeSet<String>, String> {
     let mut references = BTreeSet::new();
     let mut cursor = 0;
     while cursor < bytes.len() {
-        if !bytes[cursor].is_ascii_alphabetic() {
-            cursor += 1;
+        let Some(offset) = bytes[cursor..].iter().position(|byte| *byte == b'<') else {
+            break;
+        };
+        let tag_start = cursor + offset;
+        if bytes[tag_start..].starts_with(b"<!--") {
+            cursor = bytes[tag_start + 4..]
+                .windows(3)
+                .position(|window| window == b"-->")
+                .map_or(bytes.len(), |offset| tag_start + 4 + offset + 3);
             continue;
         }
-        let name_start = cursor;
+
+        let name_start = tag_start + 1;
+        let Some(first) = bytes.get(name_start) else {
+            break;
+        };
+        if matches!(first, b'/' | b'!' | b'?') {
+            cursor = html_tag_end(bytes, name_start).map_or(bytes.len(), |tag_end| tag_end + 1);
+            continue;
+        }
+        if !first.is_ascii_alphabetic() {
+            cursor = name_start;
+            continue;
+        }
+
+        let mut name_end = name_start;
+        while bytes
+            .get(name_end)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+        {
+            name_end += 1;
+        }
+        let Some(tag_end) = html_tag_end(bytes, name_end) else {
+            break;
+        };
+        collect_index_asset_attributes(index, name_end, tag_end, &mut references)?;
+        cursor = tag_end + 1;
+
+        let name = &index[name_start..name_end];
+        if is_html_raw_text_element(name) {
+            cursor = skip_html_raw_text(index, cursor, name);
+        }
+    }
+    Ok(references)
+}
+
+fn html_tag_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut quote = None;
+    for (offset, byte) in bytes[start..].iter().copied().enumerate() {
+        if let Some(expected) = quote {
+            if byte == expected {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'>' => return Some(start + offset),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn collect_index_asset_attributes(
+    index: &str,
+    start: usize,
+    end: usize,
+    references: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let bytes = index.as_bytes();
+    let mut cursor = start;
+    while cursor < end {
         while bytes
             .get(cursor)
-            .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+            .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b'/')
         {
             cursor += 1;
         }
-        let name = &index[name_start..cursor];
-        if !name.eq_ignore_ascii_case("src") && !name.eq_ignore_ascii_case("href") {
+        if cursor >= end {
+            break;
+        }
+
+        let name_start = cursor;
+        while bytes.get(cursor).is_some_and(|byte| {
+            !byte.is_ascii_whitespace()
+                && !matches!(byte, b'\0' | b'\'' | b'"' | b'/' | b'=' | b'>')
+        }) {
+            cursor += 1;
+        }
+        if cursor == name_start {
+            cursor += 1;
             continue;
         }
+        let name = &index[name_start..cursor];
+
         while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
             cursor += 1;
         }
-        if bytes.get(cursor) != Some(&b'=') {
+        if cursor >= end || bytes[cursor] != b'=' {
             continue;
         }
         cursor += 1;
         while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
             cursor += 1;
         }
-        let Some(first) = bytes.get(cursor).copied() else {
+        if cursor >= end {
             break;
-        };
-        let (value_start, value_end) = if matches!(first, b'\'' | b'"') {
+        }
+
+        let (value_start, value_end) = if matches!(bytes[cursor], b'\'' | b'"') {
+            let quote = bytes[cursor];
             cursor += 1;
-            let start = cursor;
-            while bytes.get(cursor).is_some_and(|byte| *byte != first) {
+            let value_start = cursor;
+            while cursor < end && bytes[cursor] != quote {
                 cursor += 1;
             }
-            let end = cursor;
-            if cursor < bytes.len() {
+            let value_end = cursor;
+            if cursor < end {
                 cursor += 1;
             }
-            (start, end)
+            (value_start, value_end)
         } else {
-            let start = cursor;
-            while bytes
-                .get(cursor)
-                .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b'>')
-            {
+            let value_start = cursor;
+            while cursor < end && !bytes[cursor].is_ascii_whitespace() {
                 cursor += 1;
             }
-            (start, cursor)
+            (value_start, cursor)
         };
-        let value = &index[value_start..value_end];
-        let path_end = value.find(['?', '#']).unwrap_or(value.len());
-        let path = &value[..path_end];
-        let lowercase = path.to_ascii_lowercase();
-        if !lowercase.ends_with(".js")
-            && !lowercase.ends_with(".mjs")
-            && !lowercase.ends_with(".css")
-        {
-            continue;
+
+        if name.eq_ignore_ascii_case("src") || name.eq_ignore_ascii_case("href") {
+            record_index_asset_reference(&index[value_start..value_end], references)?;
         }
-        if path.starts_with("//")
-            || path
-                .find(':')
-                .is_some_and(|colon| path.find('/').is_none_or(|slash| colon < slash))
-        {
-            continue;
-        }
-        let relative = path.strip_prefix('/').unwrap_or(path);
-        if relative.contains('\\')
-            || relative
-                .split('/')
-                .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-            || Path::new(relative).is_absolute()
-        {
-            return Err(format!(
-                "index.html contains an unsafe local application asset reference: {value}"
-            ));
-        }
-        references.insert(relative.to_string());
     }
-    Ok(references)
+    Ok(())
+}
+
+fn record_index_asset_reference(
+    value: &str,
+    references: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let path_end = value.find(['?', '#']).unwrap_or(value.len());
+    let path = &value[..path_end];
+    let lowercase = path.to_ascii_lowercase();
+    if !lowercase.ends_with(".js") && !lowercase.ends_with(".mjs") && !lowercase.ends_with(".css") {
+        return Ok(());
+    }
+    if path.starts_with("//")
+        || path
+            .find(':')
+            .is_some_and(|colon| path.find('/').is_none_or(|slash| colon < slash))
+    {
+        return Ok(());
+    }
+    let relative = path.strip_prefix('/').unwrap_or(path);
+    if relative.contains('\\')
+        || relative
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        || Path::new(relative).is_absolute()
+    {
+        return Err(format!(
+            "index.html contains an unsafe local application asset reference: {value}"
+        ));
+    }
+    references.insert(relative.to_string());
+    Ok(())
+}
+
+fn is_html_raw_text_element(name: &str) -> bool {
+    [
+        "script",
+        "style",
+        "textarea",
+        "title",
+        "xmp",
+        "iframe",
+        "noembed",
+        "noframes",
+        "plaintext",
+    ]
+    .into_iter()
+    .any(|element| name.eq_ignore_ascii_case(element))
+}
+
+fn skip_html_raw_text(index: &str, mut cursor: usize, name: &str) -> usize {
+    let bytes = index.as_bytes();
+    while cursor < bytes.len() {
+        let Some(offset) = bytes[cursor..].iter().position(|byte| *byte == b'<') else {
+            return bytes.len();
+        };
+        let tag_start = cursor + offset;
+        let close_name_start = tag_start + 2;
+        let close_name_end = close_name_start + name.len();
+        let closes_element = bytes.get(tag_start + 1) == Some(&b'/')
+            && bytes
+                .get(close_name_start..close_name_end)
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name.as_bytes()))
+            && bytes
+                .get(close_name_end)
+                .is_some_and(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>'));
+        if closes_element {
+            return html_tag_end(bytes, close_name_end).map_or(bytes.len(), |tag_end| tag_end + 1);
+        }
+        cursor = tag_start + 1;
+    }
+    bytes.len()
 }
 
 fn normalized_web_bundle_path(root: &Path, path: &Path) -> Result<String, String> {
@@ -1100,6 +1326,11 @@ impl Read for RouteBody {
 impl Host {
     /// Resolve one HTTP-like request without owning a listener or server loop.
     pub fn route(&self, request: RouteRequest<'_>) -> RouteResponse {
+        let method = request.method;
+        finalize_route_response(method, self.route_unfinalized(request))
+    }
+
+    fn route_unfinalized(&self, request: RouteRequest<'_>) -> RouteResponse {
         let (path, query) = split_request_url(request.url);
         if request.method == RequestMethod::Other {
             return byte_response(
@@ -1117,16 +1348,18 @@ impl Host {
                 if request.method != RequestMethod::Get {
                     return event_method_error(path);
                 }
-                let stream = subscribe(&self.play_clients, || {
+                let Some(stream) = subscribe(&self.play_clients, || {
                     play_sse_payload(&self.state.read().expect("state lock").play)
-                });
+                }) else {
+                    return event_capacity_error();
+                };
                 return event_response(stream);
             }
             Some(ApiRoute::EditorEvents) => {
                 if request.method != RequestMethod::Get {
                     return event_method_error(path);
                 }
-                let stream = subscribe(&self.editor_clients, || {
+                let Some(stream) = subscribe(&self.editor_clients, || {
                     let revision = self
                         .state
                         .read()
@@ -1134,7 +1367,9 @@ impl Host {
                         .editor
                         .source_revision;
                     editor_sse_payload(revision)
-                });
+                }) else {
+                    return event_capacity_error();
+                };
                 return event_response(stream);
             }
             _ => {}
@@ -1160,16 +1395,23 @@ impl Host {
             Some(ApiRoute::Unknown) => Err((404, format!("no such API endpoint: {path}"))),
             None => application_path(&self.web, path),
         };
-        served_response(request.method, outcome)
+        served_response(outcome)
     }
 }
 
-fn served_response(method: RequestMethod, outcome: Served) -> RouteResponse {
+fn finalize_route_response(method: RequestMethod, mut response: RouteResponse) -> RouteResponse {
+    if method == RequestMethod::Head
+        && let RouteBody::Bytes(bytes) = &mut response.body
+    {
+        bytes.get_mut().clear();
+        bytes.set_position(0);
+    }
+    response
+}
+
+fn served_response(outcome: Served) -> RouteResponse {
     match outcome {
-        Ok((content_type, mut bytes, generation)) => {
-            if method == RequestMethod::Head {
-                bytes.clear();
-            }
+        Ok((content_type, bytes, generation)) => {
             let mut headers = Vec::new();
             if let Some(generation) = generation {
                 headers.push(("X-Uhura-Generation".to_string(), generation.to_string()));
@@ -1191,6 +1433,7 @@ fn byte_response(
     bytes: Vec<u8>,
     mut headers: Vec<(String, String)>,
 ) -> RouteResponse {
+    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     headers.push(("Content-Type".to_string(), content_type.to_string()));
     headers.push(("Cache-Control".to_string(), "no-store".to_string()));
     RouteResponse {
@@ -1220,6 +1463,15 @@ fn event_method_error(path: &str) -> RouteResponse {
         "text/plain; charset=utf-8",
         format!("{path} requires GET").into_bytes(),
         vec![("Allow".to_string(), "GET".to_string())],
+    )
+}
+
+fn event_capacity_error() -> RouteResponse {
+    byte_response(
+        503,
+        "text/plain; charset=utf-8",
+        b"too many active Uhura event streams; retry shortly".to_vec(),
+        vec![("Retry-After".to_string(), "1".to_string())],
     )
 }
 
@@ -1300,17 +1552,21 @@ fn app_document(web: &WebAssets) -> Served {
 }
 
 fn application_path(web: &WebAssets, path: &str) -> Served {
-    let Some(relative) = path.strip_prefix('/') else {
+    let Some(encoded_relative) = path.strip_prefix('/') else {
         return app_document(web);
     };
+    if encoded_relative.is_empty() {
+        return app_document(web);
+    }
+    let relative = decode_asset_path(encoded_relative, "bad application asset path")?;
     if relative == "assets" {
         return Err((404, "no such application asset".to_string()));
     }
-    if web.files.contains_key(relative) {
-        return serve_web_file(web, relative);
+    if web.files.contains_key(&relative) {
+        return serve_web_file(web, &relative);
     }
     if relative.starts_with("assets/") {
-        return serve_web_file(web, relative);
+        return serve_web_file(web, &relative);
     }
     if relative == "favicon.ico" {
         return favicon(web);
@@ -1319,14 +1575,6 @@ fn application_path(web: &WebAssets, path: &str) -> Served {
 }
 
 fn serve_web_file(web: &WebAssets, relative: &str) -> Served {
-    if relative.contains('\\')
-        || relative
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-        || Path::new(relative).is_absolute()
-    {
-        return Err((400, "bad application asset path".to_string()));
-    }
     let file = web
         .files
         .get(relative)
@@ -1369,6 +1617,10 @@ fn captured_play_asset(assets: &BTreeMap<String, Arc<[u8]>>, encoded_relative: &
 /// interpretation. Asset identities may contain spaces and safe nested `/`
 /// separators, but the decoded result must remain a lexical relative path.
 fn decode_play_asset_path(encoded: &str) -> Result<String, (u16, String)> {
+    decode_asset_path(encoded, "bad asset path")
+}
+
+fn decode_asset_path(encoded: &str, error_prefix: &str) -> Result<String, (u16, String)> {
     let bytes = encoded.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -1380,17 +1632,17 @@ fn decode_play_asset_path(encoded: &str) -> Result<String, (u16, String)> {
         }
 
         let Some(high) = bytes.get(index + 1).and_then(|byte| hex_value(*byte)) else {
-            return Err((400, "bad asset path: malformed percent escape".to_string()));
+            return Err((400, format!("{error_prefix}: malformed percent escape")));
         };
         let Some(low) = bytes.get(index + 2).and_then(|byte| hex_value(*byte)) else {
-            return Err((400, "bad asset path: malformed percent escape".to_string()));
+            return Err((400, format!("{error_prefix}: malformed percent escape")));
         };
         decoded.push((high << 4) | low);
         index += 3;
     }
 
     let decoded = String::from_utf8(decoded)
-        .map_err(|_| (400, "bad asset path: decoded path is not UTF-8".to_string()))?;
+        .map_err(|_| (400, format!("{error_prefix}: decoded path is not UTF-8")))?;
     let path = Path::new(&decoded);
     if decoded.contains(['\\', '\0'])
         || decoded
@@ -1401,7 +1653,7 @@ fn decode_play_asset_path(encoded: &str) -> Result<String, (u16, String)> {
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
     {
-        return Err((400, "bad asset path".to_string()));
+        return Err((400, error_prefix.to_string()));
     }
     Ok(decoded)
 }
@@ -1415,17 +1667,10 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn serve_file_map(files: &BTreeMap<String, WebFile>, relative: &str) -> Served {
-    if relative
-        .split('/')
-        .any(|segment| segment == "." || segment == ".." || segment.is_empty())
-        || relative.contains('\\')
-        || Path::new(relative).is_absolute()
-    {
-        return Err((400, "bad path".to_string()));
-    }
+fn serve_file_map(files: &BTreeMap<String, WebFile>, encoded_relative: &str) -> Served {
+    let relative = decode_asset_path(encoded_relative, "bad path")?;
     let file = files
-        .get(relative)
+        .get(&relative)
         .ok_or_else(|| (404, format!("no such bundled file: {relative}")))?;
     Ok((file.content_type.clone(), file.bytes.as_ref().clone(), None))
 }
@@ -1452,10 +1697,11 @@ fn content_type(extension: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::io::Read;
-    use std::sync::{Arc, Mutex};
+    use std::sync::mpsc::sync_channel;
+    use std::sync::{Arc, Mutex, Weak};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use uhura_base::to_canonical_json;
@@ -1464,11 +1710,13 @@ mod tests {
     use crate::source::EditorModelArtifact;
 
     use super::{
-        ApiRoute, ClientRegistry, EditorHostState, EventStream, EventStreamPoll, PlayArtifact,
-        RequestMethod, RouteBody, RouteRequest, WebAssets, api_route, app_document,
-        application_path, broadcast, captured_play_asset, content_type, decode_play_asset_path,
-        editor_sse_payload, load_web_app_from, recheck_play, serve_file_map, split_request_url,
-        subscribe, tool_root,
+        ApiRoute, BLOCKING_EVENT_STREAM_WRITE_BOUNDARY, ClientCandidate, ClientRegistry,
+        EditorHostState, EventStream, EventStreamPoll, Host, MAX_EVENT_STREAMS_PER_HOST,
+        PlayArtifact, ProjectSourceFingerprint, RequestMethod, RouteBody, RouteRequest,
+        RouteResponse, WebAssets, WebFile, api_route, app_document, application_path, broadcast,
+        captured_play_asset, content_type, decode_play_asset_path, editor_sse_payload,
+        index_asset_references, load_web_app_from, recheck_play, serve_file_map, split_request_url,
+        subscribe, subscribe_with_blocking_keepalive, tool_root,
     };
 
     fn render(revision: u64, name: &str) -> EditorRender {
@@ -1512,6 +1760,22 @@ mod tests {
 
     fn state_json(state: &EditorHostState) -> serde_json::Value {
         serde_json::from_str(&state.state_json).expect("state JSON")
+    }
+
+    fn test_host(web: WebAssets) -> Host {
+        let candidate = ClientCandidate {
+            revision: 1,
+            source_fingerprint: ProjectSourceFingerprint::default(),
+            editor: Ok(artifact(1, "test")),
+            play: Err(diagnostics("no Play build")),
+        };
+        Host::new(web, candidate).unwrap().0
+    }
+
+    fn response_bytes(mut response: RouteResponse) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        response.body.read_to_end(&mut bytes).unwrap();
+        bytes
     }
 
     #[test]
@@ -1625,6 +1889,55 @@ mod tests {
     }
 
     #[test]
+    fn head_strips_every_byte_response_without_changing_get_metadata() {
+        let host = test_host(test_web_assets());
+        for (url, expected_status) in [
+            ("/api/editor/state", 200),
+            ("/api/nope", 404),
+            ("/api/play/ir.json", 503),
+        ] {
+            let get = host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url,
+            });
+            let head = host.route(RouteRequest {
+                method: RequestMethod::Head,
+                url,
+            });
+
+            assert_eq!(get.status, expected_status, "GET {url}");
+            assert_eq!(head.status, get.status, "HEAD {url}");
+            assert_eq!(head.headers, get.headers, "HEAD {url}");
+            let content_length = get
+                .headers
+                .iter()
+                .find_map(|(name, value)| {
+                    (name == "Content-Length").then(|| value.parse::<usize>().unwrap())
+                })
+                .expect("byte responses report their GET representation length");
+            assert_eq!(response_bytes(get).len(), content_length, "GET {url}");
+            assert!(content_length > 0, "GET {url}");
+            assert!(response_bytes(head).is_empty(), "HEAD {url}");
+        }
+
+        for url in ["/api/editor/events", "/api/play/events"] {
+            let response = host.route(RouteRequest {
+                method: RequestMethod::Head,
+                url,
+            });
+            assert_eq!(response.status, 405, "HEAD {url}");
+            assert!(
+                response
+                    .headers
+                    .iter()
+                    .any(|(name, value)| name == "Allow" && value == "GET"),
+                "HEAD {url}",
+            );
+            assert!(response_bytes(response).is_empty(), "HEAD {url}");
+        }
+    }
+
+    #[test]
     fn play_inspection_artifact_is_coherent_with_checked_ir_and_spans() {
         let root = tool_root().join("examples/instagram-uhura");
         let snapshot = crate::source::capture_project_snapshot(&root);
@@ -1705,6 +2018,84 @@ mod tests {
         assert_eq!(error.0, 404);
     }
 
+    #[test]
+    fn application_and_wasm_assets_decode_once_and_reject_unsafe_paths() {
+        let files = BTreeMap::from([
+            (
+                "assets/summer day.js".to_string(),
+                WebFile {
+                    bytes: Arc::new(b"application".to_vec()),
+                    content_type: content_type("js"),
+                },
+            ),
+            (
+                "assets/%2e%2e/literal.js".to_string(),
+                WebFile {
+                    bytes: Arc::new(b"literal application percent escapes".to_vec()),
+                    content_type: content_type("js"),
+                },
+            ),
+        ]);
+        let wasm_files = BTreeMap::from([
+            (
+                "runtime glue.js".to_string(),
+                WebFile {
+                    bytes: Arc::new(b"wasm glue".to_vec()),
+                    content_type: content_type("js"),
+                },
+            ),
+            (
+                "%2e%2e/literal.wasm".to_string(),
+                WebFile {
+                    bytes: Arc::new(b"literal wasm percent escapes".to_vec()),
+                    content_type: content_type("wasm"),
+                },
+            ),
+        ]);
+        let host = test_host(WebAssets {
+            files: Arc::new(files),
+            index: Arc::new(b"<!doctype html><main>Uhura</main>".to_vec()),
+            wasm_files: Arc::new(wasm_files),
+        });
+
+        for (url, expected) in [
+            ("/assets/summer%20day.js", b"application".as_slice()),
+            ("/assets%2Fsummer%20day.js", b"application".as_slice()),
+            ("/api/play/wasm/runtime%20glue.js", b"wasm glue".as_slice()),
+            (
+                "/assets/%252e%252e/literal.js",
+                b"literal application percent escapes".as_slice(),
+            ),
+            (
+                "/api/play/wasm/%252e%252e%2Fliteral.wasm",
+                b"literal wasm percent escapes".as_slice(),
+            ),
+        ] {
+            let response = host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url,
+            });
+            assert_eq!(response.status, 200, "GET {url}");
+            assert_eq!(response_bytes(response), expected, "GET {url}");
+        }
+
+        for url in [
+            "/assets/%2e%2e/secret.js",
+            "/assets%2F%2e%2e%2Fsecret.js",
+            "/assets/%5Csecret.js",
+            "/assets/%GG.js",
+            "/api/play/wasm/%2e%2e/secret.wasm",
+            "/api/play/wasm/%5Csecret.wasm",
+            "/api/play/wasm/%GG.wasm",
+        ] {
+            let response = host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url,
+            });
+            assert_eq!(response.status, 400, "GET {url}");
+        }
+    }
+
     fn test_web_assets() -> WebAssets {
         WebAssets {
             files: Arc::new(BTreeMap::new()),
@@ -1729,7 +2120,7 @@ mod tests {
     #[test]
     fn stalled_event_subscriber_keeps_only_one_invalidation() {
         let clients = Arc::new(Mutex::new(ClientRegistry::default()));
-        let stream = subscribe(&clients, || editor_sse_payload(1));
+        let stream = subscribe(&clients, || editor_sse_payload(1)).expect("event stream admission");
 
         for revision in 2..=128 {
             broadcast(&clients, &editor_sse_payload(revision));
@@ -1749,14 +2140,134 @@ mod tests {
     }
 
     #[test]
+    fn blocking_event_stream_keepalive_crosses_the_http_chunk_boundary() {
+        let (_sender, receiver) = sync_channel(1);
+        let mut stream = EventStream {
+            receiver,
+            buffer: Vec::new(),
+            offset: 0,
+            subscription_id: 0,
+            clients: Weak::new(),
+            blocking_keepalive_interval: Duration::ZERO,
+            _admission_permit: None,
+        };
+
+        let mut output = vec![0; BLOCKING_EVENT_STREAM_WRITE_BOUNDARY + 16];
+        let count = stream.read(&mut output).expect("keepalive read");
+        assert_eq!(count, BLOCKING_EVENT_STREAM_WRITE_BOUNDARY + 3);
+        assert_eq!(output[0], b':');
+        assert!(
+            output[1..BLOCKING_EVENT_STREAM_WRITE_BOUNDARY + 1]
+                .iter()
+                .all(|byte| *byte == b' ')
+        );
+        assert_eq!(
+            &output[BLOCKING_EVENT_STREAM_WRITE_BOUNDARY + 1..count],
+            b"\n\n"
+        );
+    }
+
+    #[test]
+    fn framed_event_stream_poll_does_not_synthesize_keepalives() {
+        let clients = Arc::new(Mutex::new(ClientRegistry::default()));
+        let stream =
+            subscribe_with_blocking_keepalive(&clients, || editor_sse_payload(1), Duration::ZERO)
+                .expect("event stream admission");
+
+        assert_eq!(next_event(&stream)["sourceRevision"], 1);
+        assert_eq!(stream.try_next_frame(), EventStreamPoll::Timeout);
+    }
+
+    #[test]
     fn dropping_event_stream_unregisters_immediately() {
         let clients = Arc::new(Mutex::new(ClientRegistry::default()));
-        let stream = subscribe(&clients, || editor_sse_payload(1));
+        let stream = subscribe(&clients, || editor_sse_payload(1)).expect("event stream admission");
         assert_eq!(clients.lock().expect("clients lock").clients.len(), 1);
 
         drop(stream);
 
         assert!(clients.lock().expect("clients lock").clients.is_empty());
+    }
+
+    #[test]
+    fn host_event_admission_is_shared_bounded_and_reusable() {
+        let host = test_host(test_web_assets());
+        let admission = Arc::clone(&host.editor_clients.lock().expect("clients lock").admission);
+        let active_subscribers = || {
+            host.editor_clients
+                .lock()
+                .expect("clients lock")
+                .clients
+                .len()
+                + host
+                    .play_clients
+                    .lock()
+                    .expect("clients lock")
+                    .clients
+                    .len()
+        };
+        let open_stream = |url| {
+            let response = host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url,
+            });
+            assert_eq!(response.status, 200, "GET {url}");
+            match response.body {
+                RouteBody::Events(stream) => stream,
+                RouteBody::Bytes(_) => panic!("GET {url} should return an event stream"),
+            }
+        };
+
+        let mut streams = (0..MAX_EVENT_STREAMS_PER_HOST)
+            .map(|index| {
+                open_stream(if index % 2 == 0 {
+                    "/api/editor/events"
+                } else {
+                    "/api/play/events"
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(active_subscribers(), MAX_EVENT_STREAMS_PER_HOST);
+        assert_eq!(
+            *admission.active.lock().expect("event admission lock"),
+            MAX_EVENT_STREAMS_PER_HOST
+        );
+
+        let saturated = host.route(RouteRequest {
+            method: RequestMethod::Get,
+            url: "/api/editor/events?retry=1",
+        });
+        assert_eq!(saturated.status, 503);
+        assert!(
+            saturated
+                .headers
+                .iter()
+                .any(|(name, value)| { name == "Retry-After" && value == "1" })
+        );
+        assert!(
+            String::from_utf8(response_bytes(saturated))
+                .unwrap()
+                .contains("too many active Uhura event streams")
+        );
+        assert_eq!(active_subscribers(), MAX_EVENT_STREAMS_PER_HOST);
+
+        drop(streams.pop().expect("one admitted stream"));
+        assert_eq!(active_subscribers(), MAX_EVENT_STREAMS_PER_HOST - 1);
+        streams.push(open_stream("/api/play/events"));
+        assert_eq!(active_subscribers(), MAX_EVENT_STREAMS_PER_HOST);
+
+        drop(streams);
+        assert_eq!(active_subscribers(), 0, "registries remove dropped streams");
+        assert_eq!(
+            *admission.active.lock().expect("event admission lock"),
+            0,
+            "dropped streams return all permits"
+        );
+
+        let fresh = open_stream("/api/editor/events");
+        assert_eq!(active_subscribers(), 1);
+        drop(fresh);
+        assert_eq!(active_subscribers(), 0);
     }
 
     #[test]
@@ -1903,6 +2414,34 @@ mod tests {
         assert!(web.files.contains_key("assets/app.js"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frontend_asset_discovery_reads_only_start_tag_attributes() {
+        let references = index_asset_references(
+            r#"
+                <!doctype html>
+                <!-- src="/assets/comment.js" href="/assets/comment.css" -->
+                <script>
+                    const src = "/assets/inline.js";
+                    const href = "/assets/inline.css";
+                    const markup = '<link href="/assets/string.css">';
+                </script>
+                <style>.example { content: 'src="/assets/style.js"'; }</style>
+                <div
+                    data-code='src="/assets/attribute-value.js"'
+                    data-href="/assets/data.css"
+                ></div>
+                <LINK rel=stylesheet HREF = "/assets/app.css?v=1">
+                <script type=module SRC='/assets/app.js#entry'></script>
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            references,
+            BTreeSet::from(["assets/app.css".to_string(), "assets/app.js".to_string(),])
+        );
     }
 
     #[test]
