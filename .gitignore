@@ -4,5 +4,5 @@
 /crates/uhura-wasm/pkg
 /web/node_modules
 /web/dist
-/examples/instagram-uhura/providers/dist
+/examples/instagram/client/providers/dist
 .DS_Store

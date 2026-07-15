@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn path_and_flags_are_arguments_to_the_default_editor() {
         assert_eq!(
-            select_command(Some("examples/instagram-uhura")),
+            select_command(Some("examples/instagram/client")),
             Ok((CliCommand::Editor, false))
         );
         assert_eq!(

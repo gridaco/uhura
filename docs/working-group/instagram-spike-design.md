@@ -122,7 +122,7 @@ maps, network, or geometry.
 catalog; route names against the closed route table derived from `app/`.
 
 ```
-examples/instagram/
+examples/instagram/client/
   uhura.toml                          # manifest: entry route, catalog pin,
                                       #   play profiles (fixture + script)
   app/
@@ -143,7 +143,7 @@ examples/instagram/
     scripts/                          # canonical script list (§11.4):
       demo.toml  like-ok.toml  like-refused.toml  comment-ok.toml
       paginate.toml  feed-failed.toml  feed-empty.toml
-    assets/                           # ~37 local JPEGs + manifest.toml (id → file, alt)
+    assets/                           # local fixture media + manifest.toml (id → file, alt)
   styles/
     theme.css                         # design tokens as custom properties + app styles
   catalog/base.toml                   # semantic element catalog DATA (pinned)
@@ -1376,7 +1376,7 @@ historical; the v3 topology describes the maintained end state.)
 
 ## 13. Acceptance criteria
 
-1. `uhura check examples/instagram` is clean; each documented rejection
+1. `uhura check examples/instagram/client` is clean; each documented rejection
    produces its exact diagnostic.
 2. Like emits exactly one typed command per press; the optimistic view
    (heart *and* computed count) precedes the outcome; refusal rolls the

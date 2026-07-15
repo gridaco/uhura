@@ -6,7 +6,7 @@
 # metadata-free, encoded at quality 82, and pinned by SHA-256. Grida Library terms:
 # https://grida.co/library/license
 #
-# `cargo run -p uhura-cli --bin gen-assets -- examples/instagram-uhura`
+# `cargo run -p uhura-cli --bin gen-assets -- examples/instagram/client`
 # validates and preserves sourced files; it only renders legacy motif entries.
 
 [assets.avatar-mira]

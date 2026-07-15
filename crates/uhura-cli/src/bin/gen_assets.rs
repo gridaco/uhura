@@ -10,7 +10,7 @@ fn main() -> ExitCode {
     let root = std::env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("examples/instagram-uhura"));
+        .unwrap_or_else(|| PathBuf::from("examples/instagram/client"));
     let manifest_path = root.join("fixtures/assets/manifest.toml");
     let out_dir = root.join("fixtures/assets");
 
