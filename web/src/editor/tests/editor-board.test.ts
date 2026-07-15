@@ -636,6 +636,7 @@ test("Source targets and canvas markers expose one direct annotation selection p
   let focusedPreviewId: string | null = null;
   let focusedAnchors: readonly HTMLElement[] | undefined;
   const focusedSourceIds: string[] = [];
+  const canvasVisibilityChanges: boolean[] = [];
   const overlay = new AnnotationOverlay({
     viewport: asElement(document.createElement("div")),
     root: asElement(overlayRoot),
@@ -644,6 +645,7 @@ test("Source targets and canvas markers expose one direct annotation selection p
       focusedAnchors = anchors;
     },
     focusSourceTarget: (targetId) => { focusedSourceIds.push(targetId); },
+    onCanvasVisibilityChange: (visible) => { canvasVisibilityChanges.push(visible); },
   });
   const model = prepareEditorModel(asDocument(document), render(1, "current", "Navigate me"));
   install(root, overlay, null, model);
@@ -683,7 +685,11 @@ test("Source targets and canvas markers expose one direct annotation selection p
   overlay.toggleCanvasVisibility();
   assert.equal(marker.hidden, true);
   assert.equal(card.hidden, true);
+  assert.equal(overlay.canvasVisible, false);
+  assert.deepEqual(canvasVisibilityChanges, [false]);
   overlay.toggleCanvasVisibility();
+  assert.equal(overlay.canvasVisible, true);
+  assert.deepEqual(canvasVisibilityChanges, [false, true]);
 
   const sourcePanel = document.createElement("div");
   const selectedTargets: string[] = [];

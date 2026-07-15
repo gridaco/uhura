@@ -455,6 +455,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       ).find((candidate) => candidate.dataset.sourceTargetId === targetId);
       target?.scrollIntoView({ block: "nearest" });
     },
+    onCanvasVisibilityChange: (visible) => {
+      model.connectorLayer.style.display = visible ? "" : "none";
+    },
   });
 
   const listen = <T extends EventTarget>(
@@ -1330,6 +1333,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.board = nextModel.board;
     shell.navigatorResults.replaceChildren(nextModel.navigator);
     model = nextModel;
+    model.connectorLayer.style.display = annotationOverlay.canvasVisible ? "" : "none";
     disposePreparedEditorModel(previousModel);
     annotationOverlay.install({
       render: nextModel.render,

@@ -55,6 +55,7 @@ export interface AnnotationOverlayOptions {
   chrome?: readonly HTMLElement[];
   focusPreview(previewId: string, anchors?: readonly HTMLElement[]): void;
   focusSourceTarget?(targetId: string): void;
+  onCanvasVisibilityChange?(visible: boolean): void;
 }
 
 const element = <K extends keyof HTMLElementTagNameMap>(
@@ -318,6 +319,7 @@ export class AnnotationOverlay {
     anchors?: readonly HTMLElement[],
   ) => void;
   readonly #focusSourceTarget: ((targetId: string) => void) | undefined;
+  readonly #onCanvasVisibilityChange: ((visible: boolean) => void) | undefined;
   readonly #chrome: readonly HTMLElement[];
   #canvasVisible = true;
   #focusedPreviewId: string | null = null;
@@ -357,6 +359,7 @@ export class AnnotationOverlay {
     this.#window = window;
     this.#focusPreview = options.focusPreview;
     this.#focusSourceTarget = options.focusSourceTarget;
+    this.#onCanvasVisibilityChange = options.onCanvasVisibilityChange;
     this.#chrome = options.chrome ?? [];
     this.#pinToViewport();
     this.#viewport.addEventListener("scroll", this.#onViewportScroll, { passive: true });
@@ -470,7 +473,13 @@ export class AnnotationOverlay {
       }
     }
     this.#syncStateClasses();
+    this.#onCanvasVisibilityChange?.(visible);
     this.invalidate();
+  }
+
+  /** Whether canvas annotation affordances are currently visible. */
+  get canvasVisible(): boolean {
+    return this.#canvasVisible;
   }
 
   /** Toggles all canvas annotation affordances. They are on by default. */
