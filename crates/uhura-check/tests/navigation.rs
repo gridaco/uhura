@@ -6,7 +6,7 @@ use uhura_check::{CheckInput, SourceInput, check};
 use uhura_core::ir::{ExprIr, StmtIr};
 use uhura_syntax::SourceKind;
 
-const CATALOG: &str = include_str!("../../../examples/instagram-uhura/catalog/base.toml");
+const CATALOG: &str = include_str!("../../../examples/instagram/client/catalog/base.toml");
 
 fn ident(value: &str) -> Ident {
     Ident::new(value).unwrap()

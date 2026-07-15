@@ -2,7 +2,7 @@
 // not its own test target (same trick as uhura-syntax's normative sources).
 
 fn corpus_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/instagram-uhura")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/instagram/client")
 }
 
 /// Assembles the pipeline input exactly the way the CLI does, with an

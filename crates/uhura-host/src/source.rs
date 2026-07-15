@@ -1438,7 +1438,7 @@ mod tests {
     fn corpus_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join("examples/instagram-uhura")
+            .join("examples/instagram/client")
     }
 
     fn temp_root(label: &str) -> PathBuf {

@@ -7,7 +7,7 @@
     }
   },
   "include": [
-    "../examples/instagram-uhura/providers/spock.ts",
-    "../examples/instagram-uhura/providers/spock.test.ts"
+    "../examples/instagram/client/providers/spock.ts",
+    "../examples/instagram/client/providers/spock.test.ts"
   ]
 }

@@ -28,7 +28,7 @@ Build Wasm and start the native host from the Uhura repository root:
 
 ```sh
 ./scripts/build-wasm.sh
-cargo run --locked -p uhura-cli -- editor examples/instagram-uhura --port 8787
+cargo run --locked -p uhura-cli -- editor examples/instagram/client --port 8787
 ```
 
 The source checkout needs a built web application before a browser command can
@@ -54,7 +54,7 @@ Spock provider. It is independent of the application dev server.
 `corepack pnpm build` creates two generated products:
 
 - `dist/`: one Vite application build for both Editor and Play;
-- `../examples/instagram-uhura/providers/dist/spock.js`: the configured
+- `../examples/instagram/client/providers/dist/spock.js`: the configured
   Instagram Play provider.
 
 Both outputs are ignored by Git. `web/src/` and the provider TypeScript are the

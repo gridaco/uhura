@@ -42,9 +42,12 @@ jobs:
         run: cargo test --locked --workspace --all-targets
       - name: CLI project gates
         run: |
-          cargo run --locked -p uhura-cli -- fmt --check examples/instagram-uhura
-          cargo run --locked -p uhura-cli -- check examples/instagram-uhura --deny-warnings
-          cargo run --locked -p uhura-cli -- trace examples/instagram-uhura --script=demo > /dev/null
+          cargo run --locked -p uhura-cli -- fmt --check examples/instagram/client
+          cargo run --locked -p uhura-cli -- check examples/instagram/client --deny-warnings
+          cargo run --locked -p uhura-cli -- trace examples/instagram/client --script=demo > /dev/null
+
+      - name: Check the complete framework example with the published CLI
+        run: npx --yes spock@0.5.0 check examples/instagram
 
       - name: Install the lockfile-exact wasm-bindgen CLI
         shell: bash
@@ -95,7 +98,7 @@ jobs:
             cd "$runtime"
             exec env -i HOME="$runtime" PATH=/uhura-no-runtime-tools \
               "$UHURA_PACKAGE/bin/uhura" editor \
-              "$GITHUB_WORKSPACE/examples/instagram-uhura" \
+              "$GITHUB_WORKSPACE/examples/instagram/client" \
               --port "$port"
           ) >"$log" 2>&1 &
           server_pid=$!

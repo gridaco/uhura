@@ -1,0 +1,800 @@
+//! instagram — the Spock authority in the canonical full-stack framework example.
+//!
+//! This program is the live authority behind the sibling Uhura client. Its
+//! tables and seed mirror the demo's
+//! standard fixture (fixtures/standard.toml), with the fixture's generated
+//! images materialized as Spock storage objects. Its fns satisfy the feed,
+//! comments, profile, people, story, saved-library, and create port contracts.
+//! The client-owned Play provider assembles projection shapes from Spock GraphQL,
+//! signs storage downloads, and maps port commands onto `POST /rest/v1/rpc/*`.
+//!
+//! Identity is the v0 dev seam (RFD 0014): the driver acts as Mira by sending
+//! `X-Spock-Actor: 10000000-0000-4000-8000-000000000001` — user keys are
+//! literal uuids in the seed, so ids are stable across restarts.
+//!
+//! Image and video file columns are `storage_object` references. Existing demo
+//! JPEGs and MP4s enter through `file("./seed/…")`; uploaded bytes enter through
+//! Spock's signed storage protocol and can be attached with `create_image_post`.
+//!
+//! Counts are intentionally absent from the stored model. Posts, likes,
+//! comments, follows, saves, and story views are source rows; the Play provider
+//! derives every number and label shown by Uhura from a GraphQL snapshot. Saves
+//! remain private viewer state and are never presented as public engagement.
+//! The 162-row demo seed exercises 9 actors, 23 posts, 12 story frames, and the
+//! three stored-media shapes: image, carousel, and playable video plus poster.
+
+// ---------------------------------------------------------------------------
+// rules
+// ---------------------------------------------------------------------------
+
+/// A comment body must contain something other than spaces, tabs, or line
+/// breaks (RFD 0013 validator; derives `comment_body_invalid` on the whole
+/// floor, fn escapes included).
+fn nonempty(s: text) -> bool {
+  unchecked sql("SELECT length(trim(:s, ' ' || char(9, 10, 13))) > 0")
+}
+
+// ---------------------------------------------------------------------------
+// people
+// ---------------------------------------------------------------------------
+
+/// A demo person. The identity anchor: `user.id` is what `X-Spock-Actor`
+/// carries and `spock_actor()` returns. Profile counts are derived from post
+/// and follow rows instead of being stored here as decorative labels.
+auth table user {
+  key id: uuid = auto
+  /// The unique handle, e.g. "mira.santos".
+  username: text unique
+  /// Full display name, e.g. "Mira Santos".
+  display_name: text
+  /// The avatar image stored in Spock's byte plane.
+  avatar: storage_object
+  /// Alt text for the avatar.
+  avatar_alt: text
+  /// Profile bio.
+  bio: text
+}
+
+// ---------------------------------------------------------------------------
+// social graph and stories
+// ---------------------------------------------------------------------------
+
+/// A directed follower edge. Profile follower/following counts and people
+/// lists are computed from these rows.
+table follow {
+  key (follower, followed)
+  /// The person doing the following.
+  follower: user on delete cascade
+  /// The person being followed.
+  followed: user on delete cascade
+  /// When the relationship began.
+  at: timestamp = now
+}
+
+/// One active story frame. Authors can own a sequence of frames; position is
+/// unique within that active sequence so playback order is deterministic.
+table story {
+  key id: uuid = auto
+  /// Who published the frame.
+  author: user on delete cascade
+  /// Position within the author's current story, 1-based.
+  position: int
+  /// Story image stored in Spock's byte plane.
+  media_file: storage_object
+  /// Accessible alternative text.
+  media_alt: text
+  /// Optional overlay caption.
+  caption: text?
+  /// Real publication instant; the provider formats relative time.
+  published_at: timestamp = now
+  unique (author, position)
+}
+
+/// A viewer has seen a specific story frame. Ring state is derived: an
+/// author's ring is unseen when at least one current frame lacks this edge.
+table story_view {
+  key (viewer, story)
+  /// Who viewed the frame.
+  viewer: user on delete cascade
+  /// Which frame was viewed.
+  story: story on delete cascade
+  /// When it was viewed.
+  at: timestamp = now
+}
+
+// ---------------------------------------------------------------------------
+// posts and engagement
+// ---------------------------------------------------------------------------
+
+/// A published post. `media_kind` selects the port's media union variant: an
+/// `image` row carries `media_file`/`media_alt`; a `video` row additionally
+/// carries playable `video_file` bytes while retaining `media_file` as its
+/// poster; a `carousel` row leaves those fields absent and owns
+/// `carousel_slide` rows instead.
+table post {
+  key id: uuid = auto
+  /// The author.
+  author: user
+  /// Caption text. An empty string means the author published without one.
+  caption: text
+  /// Real publication instant; the provider derives age labels and ordering.
+  published_at: timestamp = now
+  /// Whether this post participates in the home feed. Older profile posts
+  /// remain first-class posts but do not flood the short demo feed.
+  show_in_feed: bool = true
+  /// Which media union variant this post renders as.
+  media_kind: "image" | "carousel" | "video"
+  /// Image or video-poster object; absent for carousels.
+  media_file: storage_object?
+  /// Playable video bytes; present only for video posts.
+  video_file: storage_object?
+  /// Alt text for `media_file`; absent for carousels.
+  media_alt: text?
+}
+
+/// A person tagged in a published post. The composite key prevents duplicate
+/// tags while keeping the post itself as the single media/caption authority
+/// used by feed, profile-grid, tagged-grid, and post-detail projections. A tag
+/// disappears with either endpoint: deleting a post cannot leave a dangling
+/// profile tile, and deleting a person removes references to that identity.
+table post_tag {
+  key (post, person)
+  /// The post carrying the tag.
+  post: post on delete cascade
+  /// The person tagged in that post.
+  person: user on delete cascade
+}
+
+/// One slide of a carousel post, in slide order.
+table carousel_slide {
+  key id: uuid = auto
+  /// The carousel post this slide belongs to.
+  post: post on delete cascade
+  /// Slide order, 1-based.
+  position: int
+  /// The slide image stored in Spock's byte plane.
+  file: storage_object
+  /// Alt text for the slide.
+  alt: text
+}
+
+/// A comment on a post. Thread order and age labels derive from `created_at`.
+table comment {
+  key id: uuid = auto
+  /// The post commented on.
+  post: post on delete cascade
+  /// Who wrote it.
+  author: user
+  /// The comment text (non-empty).
+  body: text check nonempty
+  /// Real creation instant.
+  created_at: timestamp = now
+}
+
+/// A like edge. The composite key makes a like at-most-once per (user, post)
+/// by construction — no separate `unique` needed.
+table like {
+  key (user, post)
+  /// Who liked.
+  user: user
+  /// The liked post.
+  post: post on delete cascade
+  /// When the like landed.
+  at: timestamp = now
+}
+
+/// A post saved to one user's private library. The composite key makes saving
+/// idempotent. Unlike a like, this edge is viewer-private state: it produces no
+/// notification and has no public count.
+table save {
+  key (user, post)
+  /// The user who saved the post. RPCs always stamp the current actor.
+  user: user on delete cascade
+  /// The saved post.
+  post: post on delete cascade
+  /// When the post was saved.
+  at: timestamp = now
+}
+
+// ---------------------------------------------------------------------------
+// commands — the port write surface
+// ---------------------------------------------------------------------------
+
+/// Like a post as the current actor (`X-Spock-Actor`). Idempotent: liking a
+/// post you already like returns the existing like row and does not touch
+/// any counter because the displayed count is derived from like rows. Refuses
+/// `not_authorized` when anonymous and answers `not_found` when the post does
+/// not exist (the returning SELECT finds no row, so the transaction rolls back).
+mut fn like_post(
+  /// The post to like.
+  post: post,
+) -> like ! not_authorized | not_found {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    INSERT INTO "like" ("user", post)
+    SELECT spock_actor(), p.id FROM post p WHERE p.id = :post
+    ON CONFLICT ("user", post) DO NOTHING
+  """)
+  unchecked sql("""
+    SELECT * FROM "like" WHERE post = :post AND "user" = spock_actor()
+  """)
+}
+
+/// Remove the actor's like. Idempotent: unliking a post you don't like (or
+/// a post that doesn't exist) returns null and changes nothing.
+mut fn unlike_post(
+  /// The post to unlike.
+  post: post,
+) -> like? ! not_authorized {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    DELETE FROM "like" WHERE post = :post AND "user" = spock_actor()
+    RETURNING *
+  """)
+}
+
+/// Save a post to the current actor's private library. Idempotent: saving an
+/// already-saved post returns the existing edge without refreshing its time.
+mut fn save_post(
+  /// The post to save.
+  post: post,
+) -> save ! not_authorized | not_found {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    INSERT INTO save ("user", post)
+    SELECT spock_actor(), p.id FROM post p WHERE p.id = :post
+    ON CONFLICT ("user", post) DO NOTHING
+  """)
+  unchecked sql("""
+    SELECT * FROM save WHERE post = :post AND "user" = spock_actor()
+  """)
+}
+
+/// Remove a post from the current actor's private library. Idempotent: an
+/// absent save edge returns null and changes nothing.
+mut fn unsave_post(
+  /// The post to remove from saved posts.
+  post: post,
+) -> save? ! not_authorized {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    DELETE FROM save WHERE post = :post AND "user" = spock_actor()
+    RETURNING *
+  """)
+}
+
+/// Comment on a post as the current actor, returning the authority's echo of
+/// the new row — including its minted UUIDv7 `id` and real `created_at`.
+/// An empty or whitespace-only body trips the `comment_body_invalid` check; a
+/// missing post is `not_found` (the answering INSERT..SELECT inserts nothing).
+mut fn add_comment(
+  /// The post to comment on.
+  post: post,
+  /// The comment text (non-empty).
+  body: text,
+) -> comment ! not_authorized | comment_body_invalid | not_found {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    INSERT INTO comment (post, author, body)
+    SELECT p.id, spock_actor(), :body
+    FROM post p WHERE p.id = :post
+    RETURNING *
+  """)
+}
+
+/// Follow another person. Idempotent; a repeated follow returns the existing
+/// edge. Counts and lists update automatically because they derive from rows.
+mut fn follow_user(
+  /// The person to follow.
+  target: user,
+) -> follow ! not_authorized | cannot_follow_self | not_found {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    SELECT spock_refuse('cannot_follow_self') WHERE spock_actor() = :target
+  """)
+  unchecked sql("""
+    INSERT INTO follow (follower, followed)
+    SELECT spock_actor(), u.id FROM "user" u WHERE u.id = :target
+    ON CONFLICT (follower, followed) DO NOTHING
+  """)
+  unchecked sql("""
+    SELECT * FROM follow
+    WHERE follower = spock_actor() AND followed = :target
+  """)
+}
+
+/// Stop following another person. Idempotent; an absent edge returns null.
+mut fn unfollow_user(
+  /// The person to stop following.
+  target: user,
+) -> follow? ! not_authorized {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    DELETE FROM follow
+    WHERE follower = spock_actor() AND followed = :target
+    RETURNING *
+  """)
+}
+
+/// Mark one story frame as viewed. Idempotent; the resulting ring state is
+/// computed by comparing all story rows with the viewer's view edges.
+mut fn mark_story_viewed(
+  /// The story frame that became visible.
+  story: story,
+) -> story_view ! not_authorized | not_found {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    INSERT INTO story_view (viewer, story)
+    SELECT spock_actor(), s.id FROM story s WHERE s.id = :story
+    ON CONFLICT (viewer, story) DO NOTHING
+  """)
+  unchecked sql("""
+    SELECT * FROM story_view
+    WHERE viewer = spock_actor() AND story = :story
+  """)
+}
+
+/// Publish one uploaded image as a new feed post. The caller first mints a
+/// signed upload URL, PUTs the bytes, then passes the returned storage-object
+/// id here. Only a committed JPEG, PNG, or WebP object owned by the current
+/// actor may be attached; seed objects deliberately have no owner and cannot
+/// be claimed. Storage v0 records the upload's Content-Type header; byte-level
+/// image decoding/sniffing is deliberately beyond this local-dev PoC.
+/// Retrying the same object is idempotent: the first published post is returned.
+mut fn create_image_post(
+  /// A committed image object minted by the current actor.
+  image: storage_object,
+  /// The new post's caption; empty publishes without a caption.
+  caption: text,
+  /// Accessible alternative text for the image; empty is accepted when the
+  /// author does not provide one.
+  alt: text,
+) -> post ! not_authorized | image_not_ready | unsupported_media_type {
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized') WHERE spock_actor() IS NULL
+  """)
+  unchecked sql("""
+    SELECT spock_refuse('image_not_ready')
+    WHERE NOT EXISTS (
+      SELECT 1 FROM storage_object
+      WHERE id = :image AND state = 'committed'
+    )
+  """)
+  unchecked sql("""
+    SELECT spock_refuse('not_authorized')
+    WHERE NOT EXISTS (
+      SELECT 1 FROM storage_object
+      WHERE id = :image AND owner = spock_actor()
+    )
+  """)
+  unchecked sql("""
+    SELECT spock_refuse('unsupported_media_type')
+    WHERE NOT EXISTS (
+      SELECT 1 FROM storage_object
+      WHERE id = :image
+        AND content_type IN ('image/jpeg', 'image/png', 'image/webp')
+    )
+  """)
+  unchecked sql("""
+    INSERT INTO post (
+      author, caption, media_kind, media_file, media_alt
+    )
+    SELECT spock_actor(), :caption, 'image', :image, :alt
+    WHERE NOT EXISTS (
+      SELECT 1 FROM post AS existing WHERE existing.media_file = :image
+    )
+  """)
+  unchecked sql("""
+    SELECT * FROM post
+    WHERE author = spock_actor() AND media_file = :image
+    ORDER BY published_at
+    LIMIT 1
+  """)
+}
+
+// ---------------------------------------------------------------------------
+// seed — coherent social rows backed by stored JPEG and MP4 bytes
+// ---------------------------------------------------------------------------
+
+seed {
+  // People use stable ids because the Play provider's actor header is Mira's
+  // UUID. Every person has a complete profile; no profile count is seeded.
+  mira = user { id: "10000000-0000-4000-8000-000000000001",
+                username: "mira.santos", display_name: "Mira Santos",
+                avatar: file("./seed/avatar-mira.jpg"), avatar_alt: "Mira Santos",
+                bio: "Food and travel photographer in Lisbon. Usually awake before the trams." }
+  lena = user { id: "10000000-0000-4000-8000-000000000002",
+                username: "lena.holt", display_name: "Lena Holt",
+                avatar: file("./seed/avatar-lena.jpg"), avatar_alt: "Lena Holt",
+                bio: "Ceramics and slow mornings. Small-batch studio work from Portland." }
+  marco = user { id: "10000000-0000-4000-8000-000000000003",
+                 username: "marco.reyes", display_name: "Marco Reyes",
+                 avatar: file("./seed/avatar-marco.jpg"), avatar_alt: "Marco Reyes",
+                 bio: "Surf photographer, road-trip cook, and reluctant morning person." }
+  nils = user { id: "10000000-0000-4000-8000-000000000004",
+                username: "nils.bergman", display_name: "Nils Bergman",
+                avatar: file("./seed/avatar-nils.jpg"), avatar_alt: "Nils Bergman",
+                bio: "Night skies and northern water, filmed around Tromsø." }
+  priya = user { id: "10000000-0000-4000-8000-000000000005",
+                 username: "priya.raman", display_name: "Priya Raman",
+                 avatar: file("./seed/avatar-priya.jpg"), avatar_alt: "Priya Raman",
+                 bio: "Bread notebook, tiny kitchen, stubborn sourdough starter." }
+  ayla = user { id: "10000000-0000-4000-8000-000000000006",
+                username: "ayla.demir", display_name: "Ayla Demir",
+                avatar: file("./seed/avatar-ayla.jpg"), avatar_alt: "Ayla Demir",
+                bio: "Istanbul by ferry. Architecture, tea, and ordinary light." }
+  june = user { id: "10000000-0000-4000-8000-000000000007",
+                username: "june.park", display_name: "June Park",
+                avatar: file("./seed/avatar-june.jpg"), avatar_alt: "June Park",
+                bio: "Natural-fiber clothes made in a very crowded studio." }
+  theo = user { id: "10000000-0000-4000-8000-000000000008",
+                username: "theo.okafor", display_name: "Theo Okafor",
+                avatar: file("./seed/avatar-theo.jpg"), avatar_alt: "Theo Okafor",
+                bio: "Murals, community courts, and an unreliable jump shot." }
+  kenji = user { id: "10000000-0000-4000-8000-000000000009",
+                 username: "kenji.rides", display_name: "Kenji Tanaka",
+                 avatar: file("./seed/avatar-kenji.jpg"), avatar_alt: "Kenji Tanaka",
+                 bio: "Long climbs, quiet roads, and coffee at the turnaround." }
+
+  // Directed relationships: every Followers/Following count and list comes
+  // from these edges. Mira follows six people and has four followers.
+  follow { follower: mira, followed: lena }
+  follow { follower: mira, followed: marco }
+  follow { follower: mira, followed: priya }
+  follow { follower: mira, followed: ayla }
+  follow { follower: mira, followed: june }
+  follow { follower: mira, followed: kenji }
+  follow { follower: lena, followed: mira }
+  follow { follower: lena, followed: marco }
+  follow { follower: lena, followed: priya }
+  follow { follower: lena, followed: june }
+  follow { follower: lena, followed: theo }
+  follow { follower: marco, followed: lena }
+  follow { follower: marco, followed: nils }
+  follow { follower: marco, followed: ayla }
+  follow { follower: marco, followed: kenji }
+  follow { follower: nils, followed: lena }
+  follow { follower: nils, followed: marco }
+  follow { follower: nils, followed: theo }
+  follow { follower: priya, followed: mira }
+  follow { follower: priya, followed: lena }
+  follow { follower: priya, followed: ayla }
+  follow { follower: priya, followed: june }
+  follow { follower: ayla, followed: lena }
+  follow { follower: ayla, followed: priya }
+  follow { follower: ayla, followed: june }
+  follow { follower: june, followed: mira }
+  follow { follower: june, followed: lena }
+  follow { follower: june, followed: ayla }
+  follow { follower: june, followed: theo }
+  follow { follower: theo, followed: mira }
+  follow { follower: theo, followed: lena }
+  follow { follower: theo, followed: june }
+  follow { follower: kenji, followed: lena }
+  follow { follower: kenji, followed: marco }
+  follow { follower: kenji, followed: nils }
+  follow { follower: kenji, followed: priya }
+
+  // Twelve active frames across six tray authors. Mira, Lena, and Marco each
+  // carry a three-frame sequence so the story player exercises progress and
+  // next/previous navigation. Story-view rows below make Lena, Marco, and June
+  // unseen to Mira while Priya and Kenji are already seen.
+  mira_story = story {
+    id: "30000000-0000-4000-8000-000000000001", author: mira, position: 1,
+    media_file: file("./seed/thumb-mira-1.jpg"),
+    media_alt: "Pastéis de nata cooling on a marble counter",
+    caption: "Breakfast before the first tram",
+    published_at: "2026-07-13T15:10:00Z" }
+  mira_story_tram = story {
+    id: "30000000-0000-4000-8000-000000000008", author: mira, position: 2,
+    media_file: file("./seed/thumb-mira-2.jpg"),
+    media_alt: "Tram rails catching the first light in Lisbon",
+    caption: "Then the city wakes",
+    published_at: "2026-07-13T15:22:00Z" }
+  mira_story_market = story {
+    id: "30000000-0000-4000-8000-000000000009", author: mira, position: 3,
+    media_file: file("./seed/thumb-mira-3.jpg"),
+    media_alt: "Crates of citrus stacked at the morning market",
+    caption: "Saturday palette",
+    published_at: "2026-07-13T15:38:00Z" }
+  lena_story = story {
+    id: "30000000-0000-4000-8000-000000000002", author: lena, position: 1,
+    media_file: file("./seed/thumb-lena-7.jpg"),
+    media_alt: "Lena throwing a tall clay cylinder",
+    caption: "One pull, no edits",
+    published_at: "2026-07-13T14:55:00Z" }
+  lena_story_glazes = story {
+    id: "30000000-0000-4000-8000-000000000010", author: lena, position: 2,
+    media_file: file("./seed/thumb-lena-8.jpg"),
+    media_alt: "Rows of glaze buckets labelled by firing cone",
+    caption: "The unglamorous half of studio day",
+    published_at: "2026-07-13T15:08:00Z" }
+  lena_story_studio = story {
+    id: "30000000-0000-4000-8000-000000000011", author: lena, position: 3,
+    media_file: file("./seed/thumb-lena-9.jpg"),
+    media_alt: "Morning light crossing a clean ceramics workbench",
+    caption: "Reset for tomorrow",
+    published_at: "2026-07-13T15:24:00Z" }
+  marco_story = story {
+    id: "30000000-0000-4000-8000-000000000004", author: marco, position: 1,
+    media_file: file("./seed/media-marco-baja-2.jpg"),
+    media_alt: "Campfire on a bluff above the break",
+    caption: "Last night at camp",
+    published_at: "2026-07-13T14:40:00Z" }
+  marco_story_swell = story {
+    id: "30000000-0000-4000-8000-000000000012", author: marco, position: 2,
+    media_file: file("./seed/media-marco-baja-1.jpg"),
+    media_alt: "Long left-hand wave peeling along a desert point",
+    caption: "It finally arrived",
+    published_at: "2026-07-13T14:52:00Z" }
+  marco_story_dawn = story {
+    id: "30000000-0000-4000-8000-000000000013", author: marco, position: 3,
+    media_file: file("./seed/media-marco-baja-3.jpg"),
+    media_alt: "Surfboard fins silhouetted against a Baja sunrise",
+    caption: "Pack up before the wind",
+    published_at: "2026-07-13T15:04:00Z" }
+  priya_story = story {
+    id: "30000000-0000-4000-8000-000000000005", author: priya, position: 1,
+    media_file: file("./seed/media-priya-starter.jpg"),
+    media_alt: "Freshly sliced sourdough loaf",
+    caption: "Still warm",
+    published_at: "2026-07-13T14:20:00Z" }
+  june_story = story {
+    id: "30000000-0000-4000-8000-000000000006", author: june, position: 1,
+    media_file: file("./seed/media-june-lookbook.jpg"),
+    media_alt: "Linen garments arranged by shade",
+    caption: "Fitting day",
+    published_at: "2026-07-13T13:50:00Z" }
+  kenji_story = story {
+    id: "30000000-0000-4000-8000-000000000007", author: kenji, position: 1,
+    media_file: file("./seed/media-kenji-copper.jpg"),
+    media_alt: "Road bike at Copper Pass",
+    caption: "Worth the climb",
+    published_at: "2026-07-13T13:15:00Z" }
+  story_view { viewer: mira, story: mira_story }
+  story_view { viewer: mira, story: mira_story_tram }
+  story_view { viewer: mira, story: mira_story_market }
+  story_view { viewer: mira, story: priya_story }
+  story_view { viewer: mira, story: kenji_story }
+
+  // Eight current home-feed posts. Their engagement totals below are exactly
+  // the number of real like/comment rows, not seeded headline numbers.
+  lena_glaze = post {
+    id: "20000000-0000-4000-8000-000000000001", author: lena,
+    caption: "New copper-red test tiles out of the kiln. Cone 10, heavy reduction — the speckle finally behaved.",
+    published_at: "2026-07-13T13:00:00Z",
+    media_kind: "image", media_file: file("./seed/media-lena-glaze.jpg"),
+    media_alt: "Grid of copper-red glaze test tiles on a maple bench" }
+  marco_baja = post {
+    id: "20000000-0000-4000-8000-000000000002", author: marco,
+    caption: "Three days down the Baja coast. Swell arrived on the last morning, as it always does.",
+    published_at: "2026-07-13T10:00:00Z", media_kind: "carousel" }
+  nils_aurora = post {
+    id: "20000000-0000-4000-8000-000000000003", author: nils,
+    caption: "Aurora over the fjord last night — the whole sky was breathing.",
+    published_at: "2026-07-13T06:00:00Z", media_kind: "video",
+    media_file: file("./seed/media-nils-aurora-poster.jpg"),
+    video_file: file("./seed/media-nils-aurora.mp4"),
+    media_alt: "Green aurora curtains over a dark fjord" }
+  priya_starter = post {
+    id: "20000000-0000-4000-8000-000000000004", author: priya,
+    caption: "Day 400 of the starter. She's earned a name: Clint Yeastwood.",
+    published_at: "2026-07-12T23:00:00Z", media_kind: "image",
+    media_file: file("./seed/media-priya-starter.jpg"),
+    media_alt: "Open crumb of a sourdough loaf, sliced on a flour-dusted board" }
+  ayla_ferry = post {
+    id: "20000000-0000-4000-8000-000000000005", author: ayla,
+    caption: "Morning ferry across the Bosphorus. Tea, gulls, and nowhere to be until noon.",
+    published_at: "2026-07-12T16:00:00Z", media_kind: "image",
+    media_file: file("./seed/media-ayla-ferry.jpg"),
+    media_alt: "Ferry deck railing over blue water, city skyline behind" }
+  june_lookbook = post {
+    id: "20000000-0000-4000-8000-000000000006", author: june,
+    caption: "Studio lookbook, page one. Linen in every weight we could mill.",
+    published_at: "2026-07-12T10:00:00Z", media_kind: "image",
+    media_file: file("./seed/media-june-lookbook.jpg"),
+    media_alt: "Folded linen garments stacked by shade on a workbench" }
+  theo_court = post {
+    id: "20000000-0000-4000-8000-000000000007", author: theo,
+    caption: "Finished the mural at the 9th street court. Paint holds up better than my jumper.",
+    published_at: "2026-07-11T17:00:00Z", media_kind: "video",
+    media_file: file("./seed/media-theo-court.jpg"),
+    video_file: file("./seed/media-theo-court.mp4"),
+    media_alt: "Basketball court painted with bold geometric shapes" }
+  kenji_copper = post {
+    id: "20000000-0000-4000-8000-000000000008", author: kenji,
+    caption: "120km of switchbacks and one very smug goat. Copper Pass, you were worth it.",
+    published_at: "2026-07-11T11:00:00Z", media_kind: "image",
+    media_file: file("./seed/media-kenji-copper.jpg"),
+    media_alt: "Road bike leaning on a stone wall at a mountain pass" }
+
+  // Lena's and Mira's former decorative thumbnails are now genuine posts.
+  // They appear in profile grids and can open the same post-detail design as
+  // feed posts; show_in_feed keeps this history out of the compact home feed.
+  lena_bowls = post { id: "21000000-0000-4000-8000-000000000001", author: lena,
+    caption: "Copper glaze in close-up, before the wax cooled.",
+    published_at: "2026-07-10T14:00:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-1.jpg"), media_alt: "Copper-red glaze tiles" }
+  lena_greenware = post { id: "21000000-0000-4000-8000-000000000002", author: lena,
+    caption: "A quiet stack of bowls waiting for bisque firing.",
+    published_at: "2026-07-08T16:00:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-2.jpg"), media_alt: "Stack of unglazed bowls" }
+  lena_kiln = post { id: "21000000-0000-4000-8000-000000000003", author: lena,
+    caption: "Kiln Tetris, level thirty-seven.",
+    published_at: "2026-07-05T11:30:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-3.jpg"), media_alt: "Kiln shelf mid-load" }
+  lena_celadon = post { id: "21000000-0000-4000-8000-000000000004", author: lena,
+    caption: "Celadon tests after a slower cool-down.",
+    published_at: "2026-07-02T09:15:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-4.jpg"), media_alt: "Celadon test cups" }
+  lena_clay = post { id: "21000000-0000-4000-8000-000000000005", author: lena,
+    caption: "Fresh reclaim, wedged and ready for tomorrow.",
+    published_at: "2026-06-28T18:40:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-5.jpg"), media_alt: "Wedging table with fresh clay" }
+  lena_plates = post { id: "21000000-0000-4000-8000-000000000006", author: lena,
+    caption: "Dinner plates with just enough iron speckle.",
+    published_at: "2026-06-24T13:00:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-6.jpg"), media_alt: "Iron-speckled dinner plates" }
+  lena_throwing = post { id: "21000000-0000-4000-8000-000000000007", author: lena,
+    caption: "Pulling one tall cylinder before lunch.",
+    published_at: "2026-06-19T16:20:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-7.jpg"), media_alt: "Throwing a tall cylinder" }
+  lena_buckets = post { id: "21000000-0000-4000-8000-000000000008", author: lena,
+    caption: "Labelling day. Future me will be grateful.",
+    published_at: "2026-06-12T10:10:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-8.jpg"), media_alt: "Glaze buckets labelled by cone" }
+  lena_morning = post { id: "21000000-0000-4000-8000-000000000009", author: lena,
+    caption: "Seven o'clock light across the clean bench.",
+    published_at: "2026-06-03T14:05:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-lena-9.jpg"), media_alt: "Morning light across the studio bench" }
+
+  mira_pasteis = post { id: "22000000-0000-4000-8000-000000000001", author: mira,
+    caption: "The batch that vanished before I finished the coffee.",
+    published_at: "2026-07-09T07:30:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-mira-1.jpg"), media_alt: "Pastéis de nata on a marble counter" }
+  mira_tram = post { id: "22000000-0000-4000-8000-000000000002", author: mira,
+    caption: "Rails holding the first light on Rua da Conceição.",
+    published_at: "2026-07-04T05:45:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-mira-2.jpg"), media_alt: "Tram rails catching dawn light" }
+  mira_citrus = post { id: "22000000-0000-4000-8000-000000000003", author: mira,
+    caption: "Saturday citrus, arranged better than any still life.",
+    published_at: "2026-06-29T08:20:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-mira-3.jpg"), media_alt: "Market citrus stacked in crates" }
+  mira_tiles = post { id: "22000000-0000-4000-8000-000000000004", author: mira,
+    caption: "Blue after blue after blue.",
+    published_at: "2026-06-21T15:10:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-mira-4.jpg"), media_alt: "Tiled facade in alternating blues" }
+  mira_sardines = post { id: "22000000-0000-4000-8000-000000000005", author: mira,
+    caption: "Sardines, smoke, lemon. Nothing else needed.",
+    published_at: "2026-06-13T20:15:00Z", show_in_feed: false,
+    media_kind: "image", media_file: file("./seed/thumb-mira-5.jpg"), media_alt: "Grilled sardines over coals" }
+  mira_ferry = post { id: "22000000-0000-4000-8000-000000000006", author: mira,
+    caption: "The last ferry left a gold line all the way home.",
+    published_at: "2026-06-01T19:50:00Z", show_in_feed: false,
+    media_kind: "video", media_file: file("./seed/thumb-mira-6.jpg"),
+    video_file: file("./seed/media-mira-ferry.mp4"), media_alt: "Ferry wake at golden hour" }
+
+  // Real tag edges. Tagged grids reuse these posts and their media rather than
+  // carrying separate decorative thumbnails. Mira's tagged post is Marco's
+  // Baja carousel; its first slide is therefore her tagged-grid thumbnail.
+  post_tag { post: marco_baja, person: mira }
+  post_tag { post: june_lookbook, person: ayla }
+  post_tag { post: theo_court, person: june }
+  post_tag { post: priya_starter, person: lena }
+  post_tag { post: kenji_copper, person: marco }
+  post_tag { post: lena_glaze, person: theo }
+
+  // Marco's carousel, in slide order.
+  carousel_slide { post: marco_baja, position: 1, file: file("./seed/media-marco-baja-1.jpg"),
+                   alt: "Long left-hand wave peeling along a desert point" }
+  carousel_slide { post: marco_baja, position: 2, file: file("./seed/media-marco-baja-2.jpg"),
+                   alt: "Campfire on the bluff above the break at dusk" }
+  carousel_slide { post: marco_baja, position: 3, file: file("./seed/media-marco-baja-3.jpg"),
+                   alt: "Board fins silhouetted against the sunrise" }
+
+  // Real comment rows. Feed cards and details count these rows.
+  comment { post: lena_glaze, author: kenji, created_at: "2026-07-13T13:28:00Z",
+            body: "That copper red is unreal. What cone are you firing to?" }
+  comment { post: lena_glaze, author: priya, created_at: "2026-07-13T13:35:00Z",
+            body: "The third tile down — that speckle! Saving this for glaze inspiration." }
+  comment { post: lena_glaze, author: june, created_at: "2026-07-13T13:42:00Z",
+            body: "Would buy the whole batch honestly. Seconds sale when?" }
+  comment { post: lena_glaze, author: theo, created_at: "2026-07-13T13:51:00Z",
+            body: "These would look wild as a court-side mosaic. Collab?" }
+  comment { post: marco_baja, author: kenji, created_at: "2026-07-13T10:18:00Z",
+            body: "That road looks nearly as good as the wave." }
+  comment { post: marco_baja, author: ayla, created_at: "2026-07-13T10:26:00Z",
+            body: "Frame two belongs on a wall." }
+  comment { post: nils_aurora, author: mira, created_at: "2026-07-13T06:22:00Z",
+            body: "The reflection makes this. Beautiful." }
+  comment { post: priya_starter, author: lena, created_at: "2026-07-13T12:40:00Z",
+            body: "Clint looks extremely healthy." }
+  comment { post: priya_starter, author: theo, created_at: "2026-07-13T13:05:00Z",
+            body: "I volunteer for quality control." }
+  comment { post: ayla_ferry, author: mira, created_at: "2026-07-13T06:00:00Z",
+            body: "That blue is perfect." }
+  comment { post: june_lookbook, author: ayla, created_at: "2026-07-12T22:35:00Z",
+            body: "The warm grey set, please." }
+  comment { post: theo_court, author: june, created_at: "2026-07-12T06:10:00Z",
+            body: "This completely changes the block." }
+  comment { post: kenji_copper, author: marco, created_at: "2026-07-12T00:20:00Z",
+            body: "Goat photo or it did not happen." }
+
+  // Real like edges. Mira has already liked Kenji's post; like toggles change
+  // the row set and therefore the displayed count with no synchronization job.
+  like { user: marco, post: lena_glaze }
+  like { user: nils, post: lena_glaze }
+  like { user: priya, post: lena_glaze }
+  like { user: ayla, post: lena_glaze }
+  like { user: june, post: lena_glaze }
+  like { user: theo, post: lena_glaze }
+  like { user: kenji, post: lena_glaze }
+  like { user: lena, post: marco_baja }
+  like { user: nils, post: marco_baja }
+  like { user: priya, post: marco_baja }
+  like { user: ayla, post: marco_baja }
+  like { user: kenji, post: marco_baja }
+  like { user: lena, post: nils_aurora }
+  like { user: marco, post: nils_aurora }
+  like { user: priya, post: nils_aurora }
+  like { user: ayla, post: nils_aurora }
+  like { user: june, post: nils_aurora }
+  like { user: lena, post: priya_starter }
+  like { user: marco, post: priya_starter }
+  like { user: nils, post: priya_starter }
+  like { user: ayla, post: priya_starter }
+  like { user: june, post: priya_starter }
+  like { user: theo, post: priya_starter }
+  like { user: kenji, post: priya_starter }
+  like { user: lena, post: ayla_ferry }
+  like { user: marco, post: ayla_ferry }
+  like { user: priya, post: ayla_ferry }
+  like { user: june, post: ayla_ferry }
+  like { user: lena, post: june_lookbook }
+  like { user: priya, post: june_lookbook }
+  like { user: ayla, post: june_lookbook }
+  like { user: theo, post: june_lookbook }
+  like { user: marco, post: theo_court }
+  like { user: ayla, post: theo_court }
+  like { user: june, post: theo_court }
+  like { user: kenji, post: theo_court }
+  like { user: mira, post: kenji_copper }
+  like { user: lena, post: kenji_copper }
+  like { user: marco, post: kenji_copper }
+  like { user: nils, post: kenji_copper }
+  like { user: priya, post: kenji_copper }
+  like { user: ayla, post: kenji_copper }
+  like { user: june, post: kenji_copper }
+  like { user: theo, post: kenji_copper }
+  like { user: mira, post: lena_bowls }
+  like { user: priya, post: lena_bowls }
+  like { user: june, post: lena_greenware }
+  like { user: theo, post: lena_kiln }
+  like { user: lena, post: mira_pasteis }
+  like { user: priya, post: mira_pasteis }
+  like { user: june, post: mira_tram }
+  like { user: kenji, post: mira_ferry }
+
+  // Private saved-library state. Mira's two rows make the default actor's
+  // Saved view useful immediately; Priya's row proves actor switching does not
+  // leak one person's library into another's. No public count derives from it.
+  save { user: mira, post: marco_baja }
+  save { user: mira, post: nils_aurora }
+  save { user: priya, post: lena_glaze }
+}
