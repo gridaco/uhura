@@ -19,7 +19,6 @@ import {
   type PreparedWorkflowConnector,
 } from "./editor-board.js";
 import {
-  AnnotationOverlay,
   renderPreviewDocumentation,
   renderSourcePanel,
   validateAnnotationRealizations,
@@ -33,7 +32,7 @@ import {
   retainPreviewFocus,
   type PreviewFocusState,
 } from "./editor-focus.js";
-import { commentShortcutAction } from "./editor-shortcuts.js";
+import { sourceShortcutAction } from "./editor-shortcuts.js";
 import {
   EditorUpdateSession,
   retainPreviewSelection,
@@ -93,7 +92,6 @@ interface EditorShell {
   navigatorEmpty: HTMLElement;
   viewport: HTMLElement;
   board: HTMLElement;
-  annotationOverlay: HTMLElement;
   rulerX: HTMLCanvasElement;
   rulerY: HTMLCanvasElement;
   tools: HTMLElement;
@@ -191,7 +189,6 @@ const SHELL_HTML = `
         <button class="canvas-tool stroke source-drawer-toggle" type="button" aria-label="Open Source documentation" aria-controls="editor-source-drawer" aria-expanded="false" aria-keyshortcuts="Y" title="Source documentation (Y)"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.5h7.5L13 5v8.5H3zM10.5 2.5V5H13M5.5 8h5M5.5 10.5h5"></path></svg></button>
       </div>
       <div class="editor-board"><section class="empty-board"><h2>Starting Editor</h2><p>Loading static previews…</p></section></div>
-      <div class="annotation-overlay" aria-label="Canvas annotations"></div>
     </div>
   </main>
   <aside class="editor-inspector" aria-label="Preview details">
@@ -269,7 +266,6 @@ const buildShell = (root: HTMLElement): EditorShell => {
     navigatorEmpty: required(shell, ".navigator-empty"),
     viewport: required(shell, ".editor-viewport"),
     board: required(shell, ".editor-board"),
-    annotationOverlay: required(shell, ".annotation-overlay"),
     rulerX: required(shell, ".ruler-x"),
     rulerY: required(shell, ".ruler-y"),
     tools: required(shell, ".canvas-tools"),
@@ -434,28 +430,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let focusState: PreviewFocusState | null = null;
   let focusFrameObserver: ResizeObserver | null = null;
   let connectorFrame = 0;
+  let workflowConnectorsVisible = true;
   let destroyed = false;
   let retryTimer: number | undefined;
   const touches = new Map<number, Point>();
   const disposers: Array<() => void> = [];
-  const annotationOverlay = new AnnotationOverlay({
-    viewport: shell.viewport,
-    root: shell.annotationOverlay,
-    chrome: [shell.tools, shell.sourceDrawer, shell.status],
-    focusPreview: (previewId, anchors) => {
-      navigatePreview(previewId, true);
-      const anchor = anchors?.find(anchorVisibleInViewport) ?? anchors?.[0] ?? null;
-      if (anchor) scrollAnchorWithinPreview(anchor, model.frameById.get(previewId) ?? null);
-      revealElement(anchor);
-    },
-    focusSourceTarget: (targetId) => {
-      setSourceDrawer(true, false);
-      const target = Array.from(
-        shell.sourcePanel.querySelectorAll<HTMLElement>("[data-source-target-id]"),
-      ).find((candidate) => candidate.dataset.sourceTargetId === targetId);
-      target?.scrollIntoView({ block: "nearest" });
-    },
-  });
 
   const listen = <T extends EventTarget>(
     target: T,
@@ -526,6 +505,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (!connectorFrame) connectorFrame = window.requestAnimationFrame(layoutConnectors);
   };
 
+  const setWorkflowConnectorsVisible = (visible: boolean): void => {
+    workflowConnectorsVisible = visible;
+    model.connectorLayer.style.display = visible ? "" : "none";
+  };
+
   const applyCamera = (): void => {
     shell.board.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     shell.board.style.setProperty("--selection-stroke", `${2 / scale}px`);
@@ -533,7 +517,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.board.style.setProperty("--connector-stroke", `${1.5 / scale}px`);
     shell.zoomOutput.textContent = `${Math.round(scale * 100)}%`;
     requestRulers();
-    annotationOverlay.invalidate();
     requestConnectors();
   };
 
@@ -663,62 +646,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       height: frameRect.height / scale,
     };
   };
-  const composedElementParent = (element: HTMLElement): HTMLElement | null => {
-    if (element.parentElement) return element.parentElement;
-    const root = element.getRootNode();
-    return root instanceof ShadowRoot && root.host instanceof HTMLElement ? root.host : null;
-  };
-  const intersectRects = (left: DOMRect, right: DOMRect): Rect | null => {
-    const x = Math.max(left.left, right.left);
-    const y = Math.max(left.top, right.top);
-    const farX = Math.min(left.right, right.right);
-    const farY = Math.min(left.bottom, right.bottom);
-    return farX > x && farY > y
-      ? { x, y, width: farX - x, height: farY - y }
-      : null;
-  };
-  const clipsContent = (element: HTMLElement): boolean => {
-    const style = window.getComputedStyle(element);
-    return /(?:auto|scroll|hidden|clip)/.test(
-      `${style.overflow} ${style.overflowX} ${style.overflowY}`,
-    );
-  };
-  const anchorVisibleInViewport = (anchor: HTMLElement): boolean => {
-    const anchorRect = anchor.getBoundingClientRect();
-    if (!intersectRects(anchorRect, shell.viewport.getBoundingClientRect())) return false;
-    let ancestor = composedElementParent(anchor);
-    while (ancestor && ancestor !== shell.viewport) {
-      if (clipsContent(ancestor) && !intersectRects(anchorRect, ancestor.getBoundingClientRect())) {
-        return false;
-      }
-      ancestor = composedElementParent(ancestor);
-    }
-    return true;
-  };
-  const scrollAnchorWithinPreview = (
-    anchor: HTMLElement,
-    frame: HTMLElement | null,
-  ): void => {
-    let ancestor = composedElementParent(anchor);
-    while (ancestor && ancestor !== frame && ancestor !== shell.viewport) {
-      const style = window.getComputedStyle(ancestor);
-      const overflow = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
-      const scrolls = /(?:auto|scroll)/.test(overflow);
-      if (scrolls) {
-        const target = anchor.getBoundingClientRect();
-        const viewport = ancestor.getBoundingClientRect();
-        if (ancestor.scrollHeight > ancestor.clientHeight) {
-          ancestor.scrollTop += target.top + target.height / 2
-            - (viewport.top + viewport.height / 2);
-        }
-        if (ancestor.scrollWidth > ancestor.clientWidth) {
-          ancestor.scrollLeft += target.left + target.width / 2
-            - (viewport.left + viewport.width / 2);
-        }
-      }
-      ancestor = composedElementParent(ancestor);
-    }
-  };
   const revealElement = (element: HTMLElement | null): void => {
     if (!element) return;
     const rect = frameWorldRect(element);
@@ -790,8 +717,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       active ? "Fit focused preview" : "Center selected preview",
     );
     shell.focusSelectionButton.title = active ? "Fit focused preview" : "Center selected preview";
-    annotationOverlay.setFocusedPreview(active ? previewId : null);
-
     if (!active || !focusedPreview || !frame || !previewId) {
       observeFocusedFrame(null);
       return;
@@ -1085,7 +1010,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   const clearSelection = (): void => {
     clearSelectionDom();
     selectedIdentity = null;
-    annotationOverlay.activatePreviewOccurrences(null);
     const previewId = focusedPreviewId();
     const focusedPreview = previewId ? model.previewById.get(previewId) : null;
     if (focusedPreview) {
@@ -1114,7 +1038,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (!preview || !frame) return;
     clearSelectionDom();
     selectedIdentity = preview.identity;
-    annotationOverlay.activatePreviewOccurrences(previewId);
     frame.classList.add("is-selected");
     frame.setAttribute("aria-pressed", "true");
     model.connectorLayer.classList.add("has-selection");
@@ -1234,7 +1157,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       return item;
     }));
     shell.status.hidden = false;
-    annotationOverlay.invalidate();
   };
 
   const showStateStatus = (nextState: EditorState): void => {
@@ -1263,7 +1185,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     } else {
       shell.status.hidden = true;
       shell.statusDiagnostics.replaceChildren();
-      annotationOverlay.invalidate();
     }
   };
 
@@ -1282,9 +1203,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       shell.sourcePanel,
       model.authoring,
       nextState.render?.freshness === "stale",
-      (targetId) => {
-        annotationOverlay.selectSourceTarget(targetId);
-      },
     );
     applySearch();
     syncFocusPresentation();
@@ -1330,15 +1248,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.board = nextModel.board;
     shell.navigatorResults.replaceChildren(nextModel.navigator);
     model = nextModel;
+    model.connectorLayer.style.display = workflowConnectorsVisible ? "" : "none";
     disposePreparedEditorModel(previousModel);
-    annotationOverlay.install({
-      render: nextModel.render,
-      authoring: nextModel.authoring,
-      resourcesByPreviewId: nextModel.resourcesByPreviewId,
-    });
-    watchPreparedEditorModel(nextModel, window, annotationOverlay.invalidate);
+    watchPreparedEditorModel(nextModel, window, requestConnectors);
     void document.fonts?.ready.then(() => {
-      if (model === nextModel) annotationOverlay.invalidate();
+      if (model === nextModel) requestConnectors();
     });
     finishStateInstall(nextState);
     const reboundKeyboardFocusId = previewIdForIdentity(model, keyboardFocusedIdentity);
@@ -1346,7 +1260,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       model.frameById.get(reboundKeyboardFocusId)?.focus({ preventScroll: true });
     }
     requestRulers();
-    annotationOverlay.invalidate();
     requestConnectors();
   };
 
@@ -1405,13 +1318,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.shell.classList.toggle("ui-hidden", !visible);
     if (persist) storeUiVisible(window.localStorage, visible);
     requestRulers();
-    annotationOverlay.invalidate();
   };
   const setSourceDrawer = (open: boolean, focusClose = false): void => {
     shell.sourceDrawer.hidden = !open;
     shell.sourceDrawerButton.setAttribute("aria-expanded", String(open));
     if (open && focusClose) shell.sourceDrawerClose.focus({ preventScroll: true });
-    annotationOverlay.invalidate();
   };
   setUiVisible(storedUiVisible(window.localStorage), false);
 
@@ -1444,7 +1355,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   });
   listen(shell.statusDismiss, "click", () => {
     shell.status.hidden = true;
-    annotationOverlay.invalidate();
   });
   listen(shell.tools, "pointerdown", (event) => event.stopPropagation());
 
@@ -1529,14 +1439,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   listen(shell.viewport, "pointerdown", (rawEvent) => {
     const event = rawEvent as PointerEvent;
     const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
-    const commentControl = closest<HTMLElement>(
-      event.target,
-      ".annotation-marker, .annotation-card",
-    );
     const canvasTool = closest<HTMLElement>(event.target, ".canvas-tools");
-    if (event.button === 0 && !frame && !commentControl && !canvasTool) {
+    if (event.button === 0 && !frame && !canvasTool) {
       clearSelection();
-      annotationOverlay.dismissCards();
       setSourceDrawer(false);
     }
     if (event.pointerType === "touch") {
@@ -1626,14 +1531,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       return;
     }
     const target = keyboardTarget(event);
-    const commentAction = commentShortcutAction(event, isTextEntry(target));
-    if (commentAction === "open-source") {
+    const sourceAction = sourceShortcutAction(event, isTextEntry(target));
+    if (sourceAction === "open-source") {
       setSourceDrawer(true);
       event.preventDefault();
       return;
     }
-    if (commentAction === "toggle-canvas-comments") {
-      annotationOverlay.toggleCanvasVisibility();
+    if (sourceAction === "toggle-workflow-connectors") {
+      setWorkflowConnectorsVisible(!workflowConnectorsVisible);
       event.preventDefault();
       return;
     }
@@ -1690,7 +1595,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   if (window.ResizeObserver) {
     resizeObserver = new window.ResizeObserver(() => {
       requestRulers();
-      annotationOverlay.invalidate();
       scheduleFocusFit();
       requestConnectors();
     });
@@ -1698,7 +1602,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   } else {
     listen(window, "resize", () => {
       requestRulers();
-      annotationOverlay.invalidate();
       scheduleFocusFit();
       requestConnectors();
     });
@@ -1737,7 +1640,6 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (destroyed) return;
     destroyed = true;
     events.close();
-    annotationOverlay.dispose();
     disposePreparedEditorModel(model);
     resizeObserver?.disconnect();
     focusFrameObserver?.disconnect();

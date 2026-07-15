@@ -277,7 +277,7 @@ export const renderSourcePanel = (
       const heading = element(document, "div", "source-entry-heading");
       const actions = element(document, "div", "source-entry-actions");
       const annotations = entries.filter((entry) => entry.class === "annotation");
-      if (annotations.length > 0) {
+      if (annotations.length > 0 && selectTarget) {
         actions.append(sourceTargetAction(document, target, occurrences, selectTarget));
       }
       actions.append(sourceAction(document, target, stale));

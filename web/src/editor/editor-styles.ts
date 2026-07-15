@@ -214,58 +214,7 @@ export const EDITOR_STYLES = `
   .editor-board.is-focus-mode > .preview-row.is-focus-row { margin-block-end: 0; }
   .editor-board.is-focus-mode > .preview-row.is-focus-row > .row-title { display: none; }
 
-  .annotation-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 40;
-    overflow: hidden;
-    pointer-events: none;
-  }
-  .annotation-leaders, .annotation-controls { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; pointer-events: none; }
-  .annotation-leaders { overflow: visible; }
-  .annotation-leaders line { stroke: rgb(77 61 145 / 65%); stroke-width: 1.25; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-  .annotation-leaders line.is-active { stroke: #4c3cb3; stroke-width: 1.75; }
-  .annotation-highlight { fill: rgb(101 84 192 / 10%); stroke: #6554c0; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-  .annotation-highlight.is-preview-active { fill: rgb(101 84 192 / 15%); stroke-width: 2; }
-  .annotation-highlight.is-active { fill: rgb(76 60 179 / 20%); stroke: #4c3cb3; stroke-width: 2.5; }
-  .annotation-marker, .annotation-card { position: absolute; inset: 0 auto auto 0; }
-  .annotation-marker {
-    inline-size: 22px;
-    block-size: 22px;
-    margin: -11px 0 0 -11px;
-    padding: 0;
-    border: 2px solid #fff;
-    border-radius: 999px;
-    color: #fff;
-    background: #6554c0;
-    box-shadow: 0 2px 8px rgb(30 27 75 / 32%);
-    font-size: 10px;
-    font-weight: 750;
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .annotation-marker:focus-visible { outline: 2px solid #312e81; outline-offset: 2px; }
-  .annotation-marker.is-preview-active { box-shadow: 0 0 0 3px rgb(101 84 192 / 28%), 0 2px 8px rgb(30 27 75 / 38%); }
-  .annotation-marker.is-active { background: #4c3cb3; box-shadow: 0 0 0 4px rgb(101 84 192 / 38%), 0 3px 10px rgb(30 27 75 / 44%); }
-  .annotation-card {
-    inline-size: 260px;
-    max-block-size: min(320px, calc(100% - 24px));
-    overflow: auto;
-    padding: 11px;
-    border: 1px solid #d8d2f2;
-    border-radius: 9px;
-    color: #312e46;
-    background: rgb(255 255 255 / 98%);
-    box-shadow: 0 10px 28px rgb(30 27 75 / 18%);
-    pointer-events: none;
-    user-select: none;
-  }
-  .annotation-card button { pointer-events: auto; }
-  .annotation-card.is-gutter { border-color: #bbb2e7; }
-  .annotation-card.is-revealed { border-color: #a99ee0; }
-  .annotation-card-heading, .source-entry-heading, .source-drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-  .annotation-card-heading strong { flex: 1; min-inline-size: 0; color: #706985; font-size: 9px; font-weight: 650; overflow-wrap: anywhere; }
-  .annotation-card-heading .source-location { flex: 0 1 150px; max-inline-size: 150px; }
+  .source-entry-heading, .source-drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
   .annotation-entry-list { display: grid; gap: 8px; margin: 9px 0 0; padding: 0; list-style: none; }
   .annotation-entry { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 7px; }
   .annotation-kind { padding: 2px 5px; border-radius: 999px; color: #5543a5; background: #eeebff; font: 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -280,9 +229,6 @@ export const EDITOR_STYLES = `
   .source-location:not(:disabled):is(:hover, :focus-visible)::after { opacity: 1; }
   .source-location:disabled { color: #9a93a8; background: #f4f2f6; cursor: not-allowed; }
   .source-target-select:disabled { color: #9a93a8; background: #f4f2f6; cursor: not-allowed; }
-  .annotation-overlay.is-stale .annotation-marker { background: #756c82; }
-  .annotation-overlay.is-stale .annotation-card { border-style: dashed; filter: saturate(.65); }
-
   .workflow-connectors {
     position: absolute;
     inset: 0;
@@ -513,7 +459,6 @@ export const EDITOR_STYLES = `
   .uhura-editor.ui-hidden .editor-source-drawer,
   .uhura-editor.ui-hidden .focus-header,
   .uhura-editor.ui-hidden .canvas-tools,
-  .uhura-editor.ui-hidden .annotation-overlay,
   .uhura-editor.ui-hidden .ruler-corner,
   .uhura-editor.ui-hidden .canvas-ruler { display: none; }
   .uhura-editor.ui-hidden .editor-stage { inset-inline: 0; }

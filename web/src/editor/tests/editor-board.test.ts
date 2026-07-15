@@ -705,6 +705,13 @@ test("Source targets and canvas markers expose one direct annotation selection p
   show.click();
   assert.deepEqual(selectedTargets, [target.id]);
 
+  renderSourcePanel(asElement(sourcePanel), model.authoring, false);
+  assert.equal(
+    classElements(sourcePanel, "source-target-select").length,
+    0,
+    "Source omits canvas annotation actions when the Editor does not mount that feature",
+  );
+
   overlay.dispose();
   disposePreparedEditorModel(model);
 });
