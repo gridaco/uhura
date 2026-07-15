@@ -41,6 +41,11 @@ import {
   retainPreviewFocus,
   type PreviewFocusState,
 } from "./editor-focus.js";
+import {
+  layoutStructureConnectors,
+  structureDefinitionNode,
+  visibleStructureConnectors,
+} from "./structure-connectors.js";
 import { sourceShortcutAction } from "./editor-shortcuts.js";
 import {
   EditorUpdateSession,
@@ -442,6 +447,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let focusState: PreviewFocusState | null = null;
   let focusFrameObserver: ResizeObserver | null = null;
   let connectorFrame = 0;
+  // The selection-scoped structural subset, re-laned over the visible
+  // connectors only. Empty whenever nothing is selected (Figma behavior).
+  let activeStructureConnectors: PreparedStructureConnector[] = [];
   let annotationLayerVisible = true;
   let destroyed = false;
   let retryTimer: number | undefined;
@@ -528,11 +536,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     model.connectorLayer.setAttribute("width", String(boardRect.width / scale));
     model.connectorLayer.setAttribute("height", String(boardRect.height / scale));
     for (const connector of model.connectors) layoutConnector(connector, null);
-    if (model.structureConnectors.length === 0) return;
+    if (activeStructureConnectors.length === 0) return;
     const boardObstacles = [
       ...shell.board.querySelectorAll<HTMLElement>(".preview-shell"),
     ].map(boardLocalRect);
-    for (const connector of model.structureConnectors) {
+    for (const connector of activeStructureConnectors) {
       layoutConnector(connector, boardObstacles);
     }
   };
@@ -877,6 +885,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     for (const connector of [...model.connectors, ...model.structureConnectors]) {
       connector.element.classList.remove("is-active");
     }
+    activeStructureConnectors = [];
     shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]").forEach((button) => {
       button.setAttribute("aria-pressed", "false");
       button.removeAttribute("aria-current");
@@ -1147,7 +1156,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     frame.classList.add("is-selected");
     frame.setAttribute("aria-pressed", "true");
     model.connectorLayer.classList.add("has-selection");
-    for (const connector of [...model.connectors, ...model.structureConnectors]) {
+    for (const connector of model.connectors) {
       const active = connector.sourceId === previewId || connector.targetId === previewId;
       connector.element.classList.toggle("is-active", active);
       if (!active) continue;
@@ -1156,6 +1165,32 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         : connector.sourceId;
       model.frameById.get(relatedId)?.classList.add("is-related");
     }
+    // Structural connectors are selection-scoped: only the arrows entering
+    // or leaving the selected preview's definition draw, and their lanes are
+    // packed over that subset so the rails stay shallow. They still stack
+    // above every replay rail via the lane offset.
+    const frameIndex = new Map(
+      [...model.previewById.keys()].map((id, index) => [id, index] as const),
+    );
+    const replayLaneCount = model.connectors.reduce(
+      (count, connector) => Math.max(count, connector.lane + 1),
+      0,
+    );
+    activeStructureConnectors = layoutStructureConnectors(
+      visibleStructureConnectors(model.structureConnectors, preview.identity),
+      frameIndex,
+      replayLaneCount,
+    );
+    const selectedNode = structureDefinitionNode(preview.identity);
+    for (const connector of activeStructureConnectors) {
+      connector.element.classList.add("is-active");
+      connector.element.dataset.lane = String(connector.lane);
+      const relatedId = connector.sourceNode === selectedNode
+        ? connector.targetId
+        : connector.sourceId;
+      model.frameById.get(relatedId)?.classList.add("is-related");
+    }
+    requestConnectors();
     const navigatorButton = Array.from(
       shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]"),
     ).find((button) => button.dataset.previewId === previewId);

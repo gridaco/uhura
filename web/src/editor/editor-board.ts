@@ -120,9 +120,10 @@ const prepareStructureConnector = (
   );
   group.dataset.sourcePreviewId = connector.sourceId;
   group.dataset.targetPreviewId = connector.targetId;
+  group.dataset.sourceNode = connector.sourceNode;
+  group.dataset.targetNode = connector.targetNode;
   group.dataset.structureKind = connector.kind;
   group.dataset.event = connector.event;
-  group.dataset.lane = String(connector.lane);
 
   const title = svgElement(document, "title");
   title.textContent = `App structure: ${structureConnectorDescription(connector)}`;
@@ -445,16 +446,12 @@ export const prepareEditorModel = (
       board.append(row);
       navigator.append(navigatorGroup(document, group, typedPreviews));
     }
-    // Structural rails stack above every replay-provenance rail so the two
-    // connector families never share a lane over the same frames.
-    const replayLaneCount = connectors.reduce(
-      (count, connector) => Math.max(count, connector.lane + 1),
-      0,
-    );
+    // Every structural candidate is prepared once but stays hidden: the
+    // editor scopes them to the current selection (Figma prototype-arrow
+    // behavior) and packs lanes over that visible subset only.
     structureConnectors.push(...buildStructureConnectors(
       render.interactionGraph,
       render.previews,
-      replayLaneCount,
     ).map((connector) => prepareStructureConnector(document, connector)));
     connectorLayer.append(...structureConnectors.map((connector) => connector.element));
   } catch (error) {

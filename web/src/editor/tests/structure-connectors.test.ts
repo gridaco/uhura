@@ -6,8 +6,10 @@ import type { InteractionGraph, InteractionGraphEdge } from "../../protocol/type
 import type { EditorPreview, PreviewKind } from "../editor-state.js";
 import {
   buildStructureConnectors,
+  layoutStructureConnectors,
   structureConnectorDescription,
   structureConnectorLabel,
+  visibleStructureConnectors,
 } from "../structure-connectors.js";
 
 const preview = (
@@ -62,7 +64,11 @@ const boardPreviews = [
   preview("surface", "comments-sheet", "open"),
 ];
 
-test("draws only navigate and present edges between mapped frames", () => {
+const frameIndex = new Map(
+  boardPreviews.map((preview, index) => [preview.id, index] as const),
+);
+
+test("builds only navigate and present candidates between mapped frames", () => {
   const connectors = buildStructureConnectors(graph([
     { kind: "navigate", from: "page:feed", to: "page:profile", event: "profile-opened" },
     { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
@@ -75,21 +81,25 @@ test("draws only navigate and present edges between mapped frames", () => {
 
   assert.deepEqual(connectors, [{
     kind: "navigate",
+    sourceNode: "page:feed",
+    targetNode: "page:profile",
     sourceId: "page/feed/base",
     targetId: "page/profile/default",
     event: "profile-opened",
     extraCount: 0,
     lane: 0,
-    sourcePort: { slot: 1, count: 2 },
+    sourcePort: { slot: 0, count: 1 },
     targetPort: { slot: 0, count: 1 },
   }, {
     kind: "present",
+    sourceNode: "page:feed",
+    targetNode: "surface:comments-sheet",
     sourceId: "page/feed/base",
     targetId: "surface/comments-sheet/open",
     event: "comments-requested",
     extraCount: 0,
-    lane: 1,
-    sourcePort: { slot: 0, count: 2 },
+    lane: 0,
+    sourcePort: { slot: 0, count: 1 },
     targetPort: { slot: 0, count: 1 },
   }]);
 });
@@ -132,7 +142,7 @@ test("dedupes edges sharing endpoints and kind into one labeled connector", () =
   );
 });
 
-test("orders connectors deterministically regardless of edge input order", () => {
+test("orders candidates deterministically regardless of edge input order", () => {
   const edges: InteractionGraphEdge[] = [
     { kind: "navigate", from: "page:feed", to: "page:profile", event: "profile-opened" },
     { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
@@ -145,11 +155,100 @@ test("orders connectors deterministically regardless of edge input order", () =>
   );
 });
 
-test("stacks structural lanes above the replay lanes via the lane offset", () => {
-  const connectors = buildStructureConnectors(graph([
-    { kind: "navigate", from: "page:feed", to: "page:profile", event: "profile-opened" },
-    { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
-  ]), boardPreviews, 3);
+const fullGraph = graph([
+  { kind: "navigate", from: "page:feed", to: "page:profile", event: "profile-opened" },
+  { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
+  { kind: "navigate", from: "page:profile", to: "page:feed", event: "home-requested" },
+  { kind: "present", from: "page:profile", to: "surface:comments-sheet", event: "profile-comments" },
+]);
 
-  assert.deepEqual(connectors.map((connector) => connector.lane), [3, 4]);
+test("scopes visibility to the selected definition, incoming and outgoing", () => {
+  const all = buildStructureConnectors(fullGraph, boardPreviews);
+
+  const feed = visibleStructureConnectors(all, { kind: "page", subject: "feed" });
+  assert.deepEqual(
+    feed.map(({ sourceNode, targetNode }) => [sourceNode, targetNode]),
+    [
+      ["page:feed", "page:profile"],
+      ["page:feed", "surface:comments-sheet"],
+      ["page:profile", "page:feed"],
+    ],
+    "feed keeps its outgoing arrows and the incoming one from profile",
+  );
+
+  const sheet = visibleStructureConnectors(all, {
+    kind: "surface",
+    subject: "comments-sheet",
+  });
+  assert.deepEqual(
+    sheet.map(({ sourceNode, targetNode }) => [sourceNode, targetNode]),
+    [
+      ["page:feed", "surface:comments-sheet"],
+      ["page:profile", "surface:comments-sheet"],
+    ],
+  );
+});
+
+test("selection scoping matches kind and subject, never subject alone", () => {
+  const all = buildStructureConnectors(fullGraph, boardPreviews);
+  assert.deepEqual(
+    visibleStructureConnectors(all, { kind: "surface", subject: "feed" }),
+    [],
+    "a surface named like a page must not adopt the page's arrows",
+  );
+  assert.deepEqual(
+    visibleStructureConnectors(all, { kind: "component", subject: "feed" }),
+    [],
+  );
+});
+
+test("empty or unrelated selection hides every structural connector", () => {
+  const all = buildStructureConnectors(fullGraph, boardPreviews);
+  assert.deepEqual(visibleStructureConnectors(all, null), []);
+  assert.deepEqual(
+    visibleStructureConnectors(all, { kind: "page", subject: "settings" }),
+    [],
+  );
+});
+
+test("packs lanes over the visible subset only, above the replay lanes", () => {
+  const all = buildStructureConnectors(fullGraph, boardPreviews);
+  const feed = layoutStructureConnectors(
+    visibleStructureConnectors(all, { kind: "page", subject: "feed" }),
+    frameIndex,
+    3,
+  );
+
+  // All three visible spans overlap the feed frame, so each takes its own
+  // lane starting right after the three replay lanes.
+  assert.deepEqual(feed.map((connector) => connector.lane), [3, 4, 5]);
+
+  const sheet = layoutStructureConnectors(
+    visibleStructureConnectors(all, { kind: "surface", subject: "comments-sheet" }),
+    frameIndex,
+    3,
+  );
+  assert.deepEqual(
+    sheet.map((connector) => connector.lane),
+    [3, 4],
+    "the hidden connectors never deepen the visible subset's rails",
+  );
+});
+
+test("fans out ports over the visible subset and keeps inputs unchanged", () => {
+  const all = buildStructureConnectors(fullGraph, boardPreviews);
+  const visible = visibleStructureConnectors(all, { kind: "page", subject: "feed" });
+  const laid = layoutStructureConnectors(visible, frameIndex, 2);
+
+  const outgoing = laid.filter((connector) => connector.sourceNode === "page:feed");
+  assert.deepEqual(
+    outgoing.map((connector) => connector.sourcePort),
+    [{ slot: 1, count: 2 }, { slot: 0, count: 2 }],
+    "feed's two visible outgoing arrows share its two source ports",
+  );
+
+  assert.ok(laid.every((connector, index) => connector !== visible[index]));
+  assert.ok(visible.every((connector) => connector.lane === 0
+    && connector.sourcePort.slot === 0
+    && connector.sourcePort.count === 1));
 });

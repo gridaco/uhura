@@ -13,9 +13,18 @@ import {
  */
 export type StructureConnectorKind = "navigate" | "present";
 
+/** The page/surface definition behind a board selection. */
+export interface StructureDefinition {
+  kind: string;
+  subject: string;
+}
+
 /** One deduplicated structural edge between two board frames. */
 export interface StructureConnector {
   kind: StructureConnectorKind;
+  /** The `page:<name>`/`surface:<name>` graph node behind each endpoint. */
+  sourceNode: string;
+  targetNode: string;
   sourceId: string;
   targetId: string;
   /** The firing event of the first deduplicated edge, in sorted order. */
@@ -54,18 +63,17 @@ const compareStrings = (left: readonly string[], right: readonly string[]): numb
 };
 
 /**
- * Projects the app's checked interaction graph onto the board: one connector
- * per distinct (source frame, target frame, kind), labeled with its firing
- * event. Lanes continue after `laneOffset` so structural rails stack above
- * the replay-provenance rails instead of colliding with them.
+ * Projects the app's checked interaction graph onto the board: one candidate
+ * connector per distinct (source frame, target frame, kind), labeled with its
+ * firing event. Candidates carry no lane geometry yet — the board shows only
+ * the selection-scoped subset, and `layoutStructureConnectors` packs lanes
+ * over that subset so rails stay shallow.
  */
 export const buildStructureConnectors = (
   graph: InteractionGraph,
   previews: readonly EditorPreview[],
-  laneOffset = 0,
 ): StructureConnector[] => {
   const frames = frameIdByGraphNode(previews);
-  const frameIndex = new Map(previews.map((preview, index) => [preview.id, index] as const));
 
   const structural = graph.edges
     .flatMap((edge) => {
@@ -73,7 +81,14 @@ export const buildStructureConnectors = (
       const sourceId = frames.get(edge.from);
       const targetId = frames.get(edge.to);
       if (sourceId === undefined || targetId === undefined || sourceId === targetId) return [];
-      return [{ kind: edge.kind, sourceId, targetId, event: edge.event }];
+      return [{
+        kind: edge.kind,
+        sourceNode: edge.from,
+        targetNode: edge.to,
+        sourceId,
+        targetId,
+        event: edge.event,
+      }];
     })
     .sort((left, right) => compareStrings(
       [left.sourceId, left.targetId, left.kind, left.event],
@@ -99,14 +114,48 @@ export const buildStructureConnectors = (
     byKey.set(key, connector);
     deduped.push(connector);
   }
+  return deduped;
+};
 
-  const lanes = assignConnectorLanes(deduped, frameIndex, laneOffset);
-  const connectors = deduped.map((connector, index) => ({
+/** The graph node a selected preview's definition resolves to. */
+export const structureDefinitionNode = (definition: StructureDefinition): string =>
+  `${definition.kind}:${definition.subject}`;
+
+/**
+ * Figma-style selection scoping: with no selection nothing structural draws;
+ * with a selected preview only the connectors entering or leaving that
+ * preview's definition (kind + subject) remain.
+ */
+export const visibleStructureConnectors = <T extends StructureConnector>(
+  connectors: readonly T[],
+  selected: StructureDefinition | null,
+): T[] => {
+  if (!selected) return [];
+  const node = structureDefinitionNode(selected);
+  return connectors.filter((connector) =>
+    connector.sourceNode === node || connector.targetNode === node);
+};
+
+/**
+ * Packs lanes and fan-out ports over the visible subset only, so a selected
+ * page's handful of arrows never inherits the deep rail tower the full graph
+ * would need. Lanes continue after `laneOffset` so structural rails stack
+ * above the replay-provenance rails instead of colliding with them.
+ */
+export const layoutStructureConnectors = <T extends StructureConnector>(
+  connectors: readonly T[],
+  frameIndex: ReadonlyMap<string, number>,
+  laneOffset = 0,
+): T[] => {
+  const lanes = assignConnectorLanes(connectors, frameIndex, laneOffset);
+  const laid = connectors.map((connector, index) => ({
     ...connector,
     lane: lanes[index]!,
+    sourcePort: { slot: 0, count: 1 },
+    targetPort: { slot: 0, count: 1 },
   }));
-  assignConnectorPorts(connectors, frameIndex);
-  return connectors;
+  assignConnectorPorts(laid, frameIndex);
+  return laid;
 };
 
 export const structureConnectorLabel = (
