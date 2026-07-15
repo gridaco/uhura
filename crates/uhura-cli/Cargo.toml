@@ -27,6 +27,7 @@ uhura-port = { workspace = true, features = ["toml"] }
 uhura-core = { workspace = true }
 uhura-fixture = { workspace = true }
 uhura-host = { workspace = true }
+uhura-editor-model = { workspace = true }
 serde_json = { workspace = true }
 tiny_http = { workspace = true }
 toml = { workspace = true }

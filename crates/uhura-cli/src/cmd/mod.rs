@@ -2,6 +2,7 @@ pub mod check;
 pub mod dev;
 pub mod editor;
 pub mod fmt;
+pub mod graph;
 pub mod trace;
 
 use std::path::Path;

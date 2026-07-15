@@ -1,4 +1,4 @@
-//! The `uhura` CLI: check | fmt | editor | play | trace. With no command it
+//! The `uhura` CLI: check | fmt | editor | play | trace | graph. With no command it
 //! opens the read-only editor for the current directory. `dev` remains a
 //! compatibility alias for Play. Thin argument
 //! parsing over the library crate (`uhura_cli::cmd`) — the same code the gate
@@ -16,6 +16,7 @@ enum CliCommand {
     Editor,
     Play,
     Trace,
+    Graph,
 }
 
 impl CliCommand {
@@ -26,6 +27,7 @@ impl CliCommand {
             "editor" => Some(Self::Editor),
             "play" | "dev" => Some(Self::Play),
             "trace" => Some(Self::Trace),
+            "graph" => Some(Self::Graph),
             _ => None,
         }
     }
@@ -75,6 +77,7 @@ fn main() -> ExitCode {
     let mut check_only = false;
     let mut emit_ir = false;
     let mut script: Option<String> = None;
+    let mut out: Option<String> = None;
     let mut expanded = false;
     let mut port: u16 = 8787;
 
@@ -105,6 +108,17 @@ fn main() -> ExitCode {
             other if other.starts_with("--script=") => {
                 script = Some(other["--script=".len()..].to_string());
             }
+            other if other.starts_with("--out=") => {
+                out = Some(other["--out=".len()..].to_string());
+            }
+            // Space-separated `--out <file>` consumes its value, like --format.
+            "--out" => match args.next() {
+                Some(v) => out = Some(v),
+                None => {
+                    eprintln!("--out takes a file path");
+                    return ExitCode::from(2);
+                }
+            },
             "--expanded" => expanded = true,
             // Space-separated `--port <n>` consumes its value, like --format.
             "--port" => match args.next().as_deref().map(str::parse) {
@@ -143,12 +157,13 @@ fn main() -> ExitCode {
         CliCommand::Editor => cmd::editor::run(&common, port),
         CliCommand::Trace => cmd::trace::run(&common, script.as_deref(), expanded),
         CliCommand::Play => cmd::dev::run(&common, port),
+        CliCommand::Graph => cmd::graph::run(&common, out.as_deref()),
     }
 }
 
 fn print_usage() {
     eprintln!("usage: uhura [path] [--port <n>]");
-    eprintln!("       uhura <check|fmt|editor|play|trace> [path] [flags]");
+    eprintln!("       uhura <check|fmt|editor|play|trace|graph> [path] [flags]");
     eprintln!("       no command selects the editor (path defaults to the current directory)");
     eprintln!("       compatibility alias: dev (play)");
 }

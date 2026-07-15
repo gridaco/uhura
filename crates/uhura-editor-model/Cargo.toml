@@ -11,4 +11,5 @@ workspace = true
 uhura-base = { workspace = true }
 uhura-check = { workspace = true }
 uhura-core = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
