@@ -27,6 +27,10 @@ import {
 import { EDITOR_STYLES } from "./editor-styles.js";
 import { surfaceHierarchy } from "./surface-hierarchy.js";
 import {
+  routeWorkflowConnector,
+  workflowRailHeight,
+} from "./workflow-connectors.js";
+import {
   enterPreviewFocus,
   exitPreviewFocus,
   fitPreviewCamera,
@@ -496,23 +500,17 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
     const source = boardLocalRect(sourceShell);
     const target = boardLocalRect(targetShell);
-    const startX = source.x + source.width / 2;
-    const startY = source.y;
-    const endX = target.x + target.width / 2;
-    const endY = target.y;
-    const railY = Math.min(startY, endY) - 18 - connector.lane * 20;
-    path.setAttribute(
-      "d",
-      `M ${startX} ${startY} L ${startX} ${railY} L ${endX} ${railY} L ${endX} ${endY}`,
-    );
-    arrow.setAttribute(
-      "d",
-      `M ${endX - 4} ${endY - 8} L ${endX} ${endY} L ${endX + 4} ${endY - 8} Z`,
-    );
-    origin.setAttribute("cx", String(startX));
-    origin.setAttribute("cy", String(startY));
-    label.setAttribute("x", String((startX + endX) / 2));
-    label.setAttribute("y", String(railY - 6));
+    const row = sourceShell.closest<HTMLElement>(".preview-row");
+    const obstacles = row
+      ? [...row.querySelectorAll<HTMLElement>(".preview-shell")].map(boardLocalRect)
+      : [source, target];
+    const route = routeWorkflowConnector(connector, source, target, obstacles);
+    path.setAttribute("d", route.path);
+    arrow.setAttribute("d", route.arrow);
+    origin.setAttribute("cx", String(route.origin.x));
+    origin.setAttribute("cy", String(route.origin.y));
+    label.setAttribute("x", String(route.label.x));
+    label.setAttribute("y", String(route.label.y));
   };
 
   const layoutConnectors = (): void => {
@@ -838,7 +836,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const minX = Math.min(...rects.map((rect) => rect.x));
     const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
     const frameTop = Math.min(...rects.map((rect) => rect.y));
-    const minY = frameTop - 30 - Math.max(...active.map((connector) => connector.lane + 1)) * 20;
+    const laneCount = Math.max(...active.map((connector) => connector.lane + 1));
+    const minY = frameTop - workflowRailHeight(laneCount);
     const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);

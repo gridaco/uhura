@@ -660,8 +660,10 @@ only the child example's directly authored semantic events, projection
 updates, and outcomes; ancestor steps remain on their own edges. These edges
 explain how checked previews were derived and are not a separate runtime state
 graph. Rail lanes are allocated deterministically so connectors do not cross
-through preview frames, and selecting a preview highlights its immediate
-parents and children.
+through preview frames. Shared endpoints fan out across deterministic top-edge
+ports instead of collapsing sibling edges onto one stem, and the orthogonal
+route clears the measured bounds of every intervening frame. Selecting a
+preview highlights its immediate parents and children.
 
 Selecting a derived preview also exposes a checked workflow trace for those
 same direct steps. Each record carries the authored event kind and payload,
