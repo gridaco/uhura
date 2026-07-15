@@ -1,4 +1,4 @@
-//! Coherent source capture and Editor read-model construction. Filesystem
+//! Coherent Uhura source capture and Editor read-model construction. Filesystem
 //! bytes are captured once, then checking, example replay, and evaluation use
 //! that immutable revision. Browser presentation lives entirely in `web/`.
 
@@ -63,6 +63,23 @@ impl ProjectSourceFiles {
         }
         Ok(found)
     }
+
+    pub(crate) fn subtree(&self, prefix: &Path) -> BTreeMap<String, Arc<[u8]>> {
+        self.entries
+            .iter()
+            .filter_map(|(path, bytes)| {
+                let relative = path.strip_prefix(prefix).ok()?;
+                if relative.as_os_str().is_empty() {
+                    return None;
+                }
+                let parts = relative
+                    .components()
+                    .map(|component| component.as_os_str().to_str())
+                    .collect::<Option<Vec<_>>>()?;
+                Some((parts.join("/"), Arc::clone(bytes)))
+            })
+            .collect()
+    }
 }
 
 fn normalize_corpus_path(path: &Path) -> Result<PathBuf, String> {
@@ -102,7 +119,7 @@ fn case_key(path: &Path) -> Option<Vec<String>> {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ProjectSourceFingerprint {
+pub struct ProjectSourceFingerprint {
     entries: BTreeMap<PathBuf, String>,
     case_insensitive: bool,
 }
@@ -121,6 +138,57 @@ impl DerefMut for ProjectSourceFingerprint {
     }
 }
 
+impl ProjectSourceFingerprint {
+    /// Deterministic content identity for this complete observation.
+    ///
+    /// The digest includes filesystem case behavior plus length-prefixed raw
+    /// path identities and values for every entry. It is suitable for host
+    /// generation comparisons without relying on `Debug` formatting.
+    pub fn stable_id(&self) -> String {
+        let mut bytes = b"uhura-project-source-fingerprint/1\0".to_vec();
+        bytes.push(u8::from(self.case_insensitive));
+        bytes.extend_from_slice(&(self.entries.len() as u64).to_be_bytes());
+        for (path, value) in &self.entries {
+            let path = fingerprint_path_bytes(path);
+            append_fingerprint_field(&mut bytes, &path);
+            append_fingerprint_field(&mut bytes, value.as_bytes());
+        }
+        uhura_base::sha256_hex(&bytes)
+    }
+}
+
+fn append_fingerprint_field(bytes: &mut Vec<u8>, field: &[u8]) {
+    bytes.extend_from_slice(&(field.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(field);
+}
+
+#[cfg(unix)]
+fn fingerprint_path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut bytes = b"unix\0".to_vec();
+    bytes.extend_from_slice(path.as_os_str().as_bytes());
+    bytes
+}
+
+#[cfg(windows)]
+fn fingerprint_path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut bytes = b"windows-utf16le\0".to_vec();
+    for unit in path.as_os_str().encode_wide() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(not(any(unix, windows)))]
+fn fingerprint_path_bytes(path: &Path) -> Vec<u8> {
+    let mut bytes = b"unicode-lossy\0".to_vec();
+    bytes.extend_from_slice(path.to_string_lossy().as_bytes());
+    bytes
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ProjectCaptureFailure {
     path: PathBuf,
@@ -130,10 +198,17 @@ pub(crate) struct ProjectCaptureFailure {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ProjectSourceSnapshot {
+pub struct ProjectSourceSnapshot {
     pub(crate) files: ProjectSourceFiles,
     pub(crate) fingerprint: ProjectSourceFingerprint,
     failures: Vec<ProjectCaptureFailure>,
+}
+
+impl ProjectSourceSnapshot {
+    /// Content identity of every captured project input.
+    pub fn fingerprint(&self) -> &ProjectSourceFingerprint {
+        &self.fingerprint
+    }
 }
 
 /// One completely checked, browser-neutral Editor model held in memory.
@@ -232,7 +307,7 @@ pub(crate) fn build_captured_snapshot_at(
 /// fingerprinted and consumed by the builder, so an attempt cannot mix file
 /// revisions. Safe in-project symlinks retain logical identity; broad output
 /// exclusions are overridden only for exact declared dependencies.
-pub(crate) fn capture_project_snapshot(root: &Path) -> ProjectSourceSnapshot {
+pub fn capture_project_snapshot(root: &Path) -> ProjectSourceSnapshot {
     capture_project_snapshot_with(root, &mut |path: &Path| std::fs::read(path))
 }
 
@@ -1021,49 +1096,23 @@ fn detect_case_insensitive_filesystem(root: &Path) -> bool {
         if alias_is_distinct_entry {
             return false;
         }
-        let actual = match std::fs::metadata(&actual) {
-            Ok(metadata) => metadata,
+        match std::fs::metadata(&actual) {
+            Ok(_) => {}
             Err(_) => continue,
-        };
-        let alias = match std::fs::metadata(&alias) {
-            Ok(metadata) => metadata,
+        }
+        match std::fs::metadata(&alias) {
+            Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return false,
             Err(_) => continue,
-        };
-        return same_file_identity(&actual, &alias);
+        }
+        // Keep both identities live while comparing them. This is portable
+        // to stable Windows, where std's by-handle metadata IDs are unstable.
+        match same_file::is_same_file(&actual, &alias) {
+            Ok(same_file) => return same_file,
+            Err(_) => continue,
+        }
     }
     false
-}
-
-#[cfg(unix)]
-fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    left.dev() == right.dev() && left.ino() == right.ino()
-}
-
-#[cfg(windows)]
-fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    match (
-        left.volume_serial_number(),
-        left.file_index(),
-        right.volume_serial_number(),
-        right.file_index(),
-    ) {
-        (Some(left_volume), Some(left_index), Some(right_volume), Some(right_index)) => {
-            left_volume == right_volume && left_index == right_index
-        }
-        _ => false,
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
-    left.len() == right.len()
-        && left.modified().ok() == right.modified().ok()
-        && left.created().ok() == right.created().ok()
 }
 
 fn toggle_ascii_case(name: &std::ffi::OsStr) -> Option<OsString> {
@@ -1379,10 +1428,11 @@ mod tests {
     use uhura_base::{Diagnostic, SourceMap, Span};
 
     use super::{
-        EditorModelBuildFailure, ProjectSourceFiles, build_captured_snapshot, build_snapshot,
-        capture_project_snapshot, capture_project_snapshot_with, failure_envelope,
-        load_snapshot_assets, project_indeterminate_path_blocks, project_path_blocks,
-        project_scan_root, snapshot_rel_path, snapshot_source_name,
+        EditorModelBuildFailure, ProjectSourceFiles, ProjectSourceFingerprint,
+        build_captured_snapshot, build_snapshot, capture_project_snapshot,
+        capture_project_snapshot_with, failure_envelope, load_snapshot_assets,
+        project_indeterminate_path_blocks, project_path_blocks, project_scan_root,
+        snapshot_rel_path, snapshot_source_name,
     };
 
     fn corpus_root() -> PathBuf {
@@ -1410,6 +1460,31 @@ mod tests {
                 std::fs::copy(entry.path(), destination).expect("copy file");
             }
         }
+    }
+
+    #[test]
+    fn fingerprint_stable_id_covers_case_behavior_paths_and_values() {
+        let mut first = ProjectSourceFingerprint::default();
+        first.insert(PathBuf::from("app/a.uhura"), "one".to_string());
+        first.insert(PathBuf::from("app/b.uhura"), "two".to_string());
+
+        let mut reordered = ProjectSourceFingerprint::default();
+        reordered.insert(PathBuf::from("app/b.uhura"), "two".to_string());
+        reordered.insert(PathBuf::from("app/a.uhura"), "one".to_string());
+        assert_eq!(first.stable_id(), reordered.stable_id());
+
+        let mut changed_value = first.clone();
+        changed_value.insert(PathBuf::from("app/a.uhura"), "changed".to_string());
+        assert_ne!(first.stable_id(), changed_value.stable_id());
+
+        let mut changed_path = first.clone();
+        let value = changed_path.remove(Path::new("app/a.uhura")).unwrap();
+        changed_path.insert(PathBuf::from("app/c.uhura"), value);
+        assert_ne!(first.stable_id(), changed_path.stable_id());
+
+        let mut changed_case_behavior = first.clone();
+        changed_case_behavior.case_insensitive = true;
+        assert_ne!(first.stable_id(), changed_case_behavior.stable_id());
     }
 
     #[test]

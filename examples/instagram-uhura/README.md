@@ -26,7 +26,23 @@ Core. Browser `File` values stay between the play shell and the provider;
 Uhura Core sees only the resulting storage-object id plus serializable display
 metadata such as the filename—never the file object or its bytes.
 
-## Run the Editor with live Play
+When Play is served by the combined framework host, the provider first reads
+the strictly versioned `spock-host-environment/1` document from
+`/~project/environment`. Valid authority paths are same-origin capabilities
+and win over `uhura.toml`; the absolute URLs in `uhura.toml` are a standalone
+fallback only when discovery is unavailable, invalid, or does not answer
+within two seconds. A valid environment may advertise `graphql_path: null`.
+That means GraphQL is deliberately absent: storage and RPC paths remain the
+integrated capabilities, and the first snapshot query reports the missing
+GraphQL capability instead of silently contacting a configured fallback host.
+
+## Run the current split checkout (transition path)
+
+Canonical framework projects use `spock dev` or `spock start` to own one
+project, origin, port, and lifecycle. This repository's Instagram dogfood still
+keeps its Spock authority and Uhura client in separate example roots, so the
+two-process composition runner remains the in-place transition and comparison
+oracle.
 
 From the Spock repository root, use the general Spock–Uhura composition runner
 with this example's two inputs. It starts the authority, waits for it, launches
@@ -43,7 +59,8 @@ panel to enter the live prototype at `/play`. The runner builds the frontend,
 provider, and Wasm artifacts, then serves them without a Node process at
 runtime.
 
-For low-level development, the equivalent two-terminal commands are:
+For low-level development of this split example, the equivalent standalone
+two-terminal commands are:
 
 From the Spock repository root, start the authority and the Uhura Editor server
 in separate terminals:
@@ -63,7 +80,7 @@ Open <http://127.0.0.1:8787/> and click **Play**. The Play toolbar can restart
 the UI session, switch between the 390 × 844 Mobile and 1280 × 800 Desktop
 frames, and select any seeded Spock actor. The app runs exclusively against the
 configured Spock provider; live play defaults to Mira and to the endpoints in
-`uhura.toml`.
+`uhura.toml` only when no valid integrated host environment was discovered.
 The Mobile/Desktop frame is Play-chrome preference state persisted in browser
 local storage. Actor selection is tab-local session-storage state. Play never
 reads or rewrites the application's query parameters for any

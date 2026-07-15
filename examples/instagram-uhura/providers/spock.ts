@@ -105,11 +105,11 @@ const COMMAND_REFUSALS: Readonly<Record<string, readonly string[]>> = {
 };
 
 export interface SpockDriverConfig {
-  /** Full Spock `/graphql/v1` endpoint. */
+  /** Standalone fallback for the full Spock `/graphql/v1` endpoint. */
   graphql_url: string;
-  /** Spock `/rest/v1/rpc` prefix. */
+  /** Standalone fallback for the Spock `/rest/v1/rpc` prefix. */
   rpc_url: string;
-  /** Spock `/storage/v1` prefix. */
+  /** Standalone fallback for the Spock `/storage/v1` prefix. */
   storage_url: string;
   /** Seeded user UUID or unique username. */
   actor: string;
@@ -164,6 +164,113 @@ const AUTHORITY_COMMANDS = new Set([
 ]);
 
 const AUTHORITY_REQUEST_TIMEOUT_MS = 15_000;
+const HOST_ENVIRONMENT_TIMEOUT_MS = 2_000;
+const HOST_ENVIRONMENT_PATH = "/~project/environment";
+const HOST_ENVIRONMENT_PROTOCOL = "spock-host-environment/1";
+
+interface AuthorityEndpoints {
+  graphqlUrl: string | null;
+  rpcUrl: string;
+  storageUrl: string;
+  whoamiUrl: string;
+}
+
+function exactObject(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+  );
+}
+
+function authorityPath(value: unknown): string | null {
+  if (
+    typeof value !== "string" ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value === "/" ||
+    value.endsWith("/")
+  ) {
+    return null;
+  }
+  try {
+    const parsed = new URL(value, "https://spock.invalid/");
+    if (
+      parsed.origin !== "https://spock.invalid" ||
+      parsed.pathname !== value ||
+      parsed.search.length > 0 ||
+      parsed.hash.length > 0
+    ) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return value;
+}
+
+function integratedAuthority(value: unknown): AuthorityEndpoints | null {
+  if (
+    !exactObject(value, [
+      "protocol",
+      "mode",
+      "project_generation_id",
+      "backend_generation_id",
+      "authority",
+    ]) ||
+    value.protocol !== HOST_ENVIRONMENT_PROTOCOL ||
+    (value.mode !== "start" && value.mode !== "dev") ||
+    !Number.isSafeInteger(value.project_generation_id) ||
+    (value.project_generation_id as number) < 1 ||
+    !Number.isSafeInteger(value.backend_generation_id) ||
+    (value.backend_generation_id as number) < 1 ||
+    !exactObject(value.authority, [
+      "graphql_path",
+      "rpc_path",
+      "storage_path",
+    ])
+  ) {
+    return null;
+  }
+
+  const graphqlPath = value.authority.graphql_path;
+  // `null` is an explicit capability absence in the integrated environment,
+  // not invalid metadata and never a reason to contact the standalone host.
+  const graphqlUrl = graphqlPath === null ? null : authorityPath(graphqlPath);
+  const rpcUrl = authorityPath(value.authority.rpc_path);
+  const storageUrl = authorityPath(value.authority.storage_path);
+  if (
+    (graphqlPath !== null && graphqlUrl === null) ||
+    rpcUrl === null ||
+    storageUrl === null
+  ) {
+    return null;
+  }
+
+  return {
+    graphqlUrl,
+    rpcUrl,
+    storageUrl,
+    whoamiUrl: "/~whoami",
+  };
+}
+
+function resolveFromEndpoint(reference: string, endpoint: string): string {
+  try {
+    return new URL(reference, endpoint).toString();
+  } catch {
+    const sameOrigin = "https://spock.invalid";
+    const resolved = new URL(reference, `${sameOrigin}${endpoint}`);
+    return resolved.origin === sameOrigin
+      ? `${resolved.pathname}${resolved.search}${resolved.hash}`
+      : resolved.toString();
+  }
+}
 
 function enqueueAuthorityWork(work: () => Promise<void>): Promise<void> {
   const queued = authorityTail.then(work, work);
@@ -486,7 +593,12 @@ export function createDriver(
   if (storageUrl.length === 0) {
     throw new Error("Spock provider needs `storage_url`");
   }
-  const whoamiUrl = new URL("/~whoami", graphqlUrl).toString();
+  const configuredAuthority: AuthorityEndpoints = {
+    graphqlUrl,
+    rpcUrl,
+    storageUrl,
+    whoamiUrl: new URL("/~whoami", graphqlUrl).toString(),
+  };
 
   const outbox: string[] = [];
   let inflight = 0;
@@ -497,6 +609,7 @@ export function createDriver(
   const uploadedFileNames = new Map<string, string>();
   const cancellable = new AbortController();
   let disposed = host.signal.aborted;
+  let authorityResolution: Promise<AuthorityEndpoints> | undefined;
 
   function dispose(): void {
     if (disposed) return;
@@ -515,6 +628,42 @@ export function createDriver(
   function assertLive(): void {
     if (!disposed) return;
     throw new DOMException("Uhura Play provider was disposed", "AbortError");
+  }
+
+  function authorityEndpoints(): Promise<AuthorityEndpoints> {
+    authorityResolution ??= (async () => {
+      // Discovery is opportunistic for standalone Uhura sessions. Bound it so
+      // a same-origin route that accepts but never answers cannot stall boot.
+      const discovery = new AbortController();
+      const abortDiscovery = (): void => discovery.abort();
+      if (cancellable.signal.aborted) abortDiscovery();
+      else {
+        cancellable.signal.addEventListener("abort", abortDiscovery, {
+          once: true,
+        });
+      }
+      const timeout = setTimeout(abortDiscovery, HOST_ENVIRONMENT_TIMEOUT_MS);
+      try {
+        const response = await fetch(HOST_ENVIRONMENT_PATH, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          signal: discovery.signal,
+        });
+        assertLive();
+        if (!response.ok) return configuredAuthority;
+        const body = await response.text();
+        assertLive();
+        const environment = integratedAuthority(JSON.parse(body));
+        return environment ?? configuredAuthority;
+      } catch (error) {
+        if (disposed || cancellable.signal.aborted) throw error;
+        return configuredAuthority;
+      } finally {
+        clearTimeout(timeout);
+        cancellable.signal.removeEventListener("abort", abortDiscovery);
+      }
+    })();
+    return authorityResolution;
   }
 
   const revisions = new Map<string, number>();
@@ -585,6 +734,12 @@ export function createDriver(
    * @returns {Promise<SnapshotData>}
    */
   async function fetchSnapshot(): Promise<SnapshotData> {
+    const { graphqlUrl } = await authorityEndpoints();
+    if (graphqlUrl === null) {
+      throw new Error(
+        "integrated Spock host does not advertise a GraphQL capability",
+      );
+    }
     const response = await fetch(graphqlUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -625,6 +780,7 @@ export function createDriver(
    */
   async function verifyViewer(): Promise<void> {
     const expected = viewerId();
+    const { whoamiUrl } = await authorityEndpoints();
     const response = await fetch(whoamiUrl, {
       headers: { "x-spock-actor": expected },
       signal: cancellable.signal,
@@ -650,6 +806,7 @@ export function createDriver(
     fn: string,
     payload: Record<string, unknown>,
   ): Promise<RpcReply> {
+    const { rpcUrl } = await authorityEndpoints();
     const timeout = new AbortController();
     const timeoutId = setTimeout(
       () => timeout.abort(),
@@ -703,6 +860,7 @@ export function createDriver(
     if (current) return current;
 
     const signing = (async () => {
+      const { storageUrl } = await authorityEndpoints();
       const response = await fetch(
         `${storageUrl}/object/sign/${encodeURIComponent(asset)}`,
         {
@@ -721,8 +879,10 @@ export function createDriver(
       if (typeof envelope.url !== "string") {
         throw new Error("Spock storage signing returned no URL");
       }
-      const absolute = new URL(envelope.url, storageUrl).toString();
-      const expiry = Number(new URL(absolute).searchParams.get("exp"));
+      const absolute = resolveFromEndpoint(envelope.url, storageUrl);
+      const expiry = Number(
+        new URL(absolute, "https://spock.invalid/").searchParams.get("exp"),
+      );
       const refreshAt = Number.isFinite(expiry)
         ? Math.max(Date.now(), expiry * 1000 - 30_000)
         : Date.now();
@@ -750,6 +910,7 @@ export function createDriver(
       throw new Error("Choose an image file (JPEG, PNG, or WebP)");
     }
 
+    const { storageUrl } = await authorityEndpoints();
     const mintResponse = await fetch(`${storageUrl}/object/upload/sign`, {
       method: "POST",
       headers: { "x-spock-actor": viewerId() },
@@ -766,7 +927,7 @@ export function createDriver(
       throw new Error("Spock storage upload signing returned no object id or URL");
     }
 
-    const putUrl = new URL(mint.url, storageUrl).toString();
+    const putUrl = resolveFromEndpoint(mint.url, storageUrl);
     const putResponse = await fetch(putUrl, {
       method: "PUT",
       headers: { "content-type": contentType },

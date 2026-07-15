@@ -1,7 +1,6 @@
 pub mod check;
 pub mod dev;
 pub mod editor;
-pub mod editor_model;
 pub mod fmt;
 pub mod trace;
 

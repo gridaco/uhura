@@ -1,23 +1,11 @@
 [package]
-name = "uhura-cli"
+name = "uhura-host"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-# Two binaries live here (`uhura` + the asset generator); bare `cargo run`
-# means the CLI.
-default-run = "uhura"
 
 [lints]
 workspace = true
-
-[[bin]]
-name = "uhura"
-path = "src/main.rs"
-
-# Validates materialized fixture assets and renders legacy seeded motifs.
-[[bin]]
-name = "gen-assets"
-path = "src/bin/gen_assets.rs"
 
 [dependencies]
 uhura-base = { workspace = true }
@@ -26,8 +14,7 @@ uhura-check = { workspace = true }
 uhura-port = { workspace = true, features = ["toml"] }
 uhura-core = { workspace = true }
 uhura-fixture = { workspace = true }
-uhura-host = { workspace = true }
+uhura-editor-model = { workspace = true }
 serde_json = { workspace = true }
-tiny_http = { workspace = true }
 toml = { workspace = true }
-image = { workspace = true }
+same-file = { workspace = true }
