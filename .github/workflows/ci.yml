@@ -47,7 +47,7 @@ jobs:
           cargo run --locked -p uhura-cli -- trace examples/instagram/client --script=demo > /dev/null
 
       - name: Check the complete framework example with the published CLI
-        run: npx --yes spock@0.5.0 check examples/instagram
+        run: npx --yes spock@0.5.2 check examples/instagram
 
       - name: Install the lockfile-exact wasm-bindgen CLI
         shell: bash
