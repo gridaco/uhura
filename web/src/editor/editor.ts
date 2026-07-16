@@ -45,6 +45,7 @@ import {
 import {
   layoutStructureConnectors,
   routeStructureConnector,
+  structureConnectorLabel,
   structureDefinitionNode,
   visibleStructureConnectors,
   type PlacedStructureConnector,
@@ -1261,6 +1262,15 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       connector.element.dataset.edge = connector.placement.side;
       connector.element.dataset.slot =
         `${connector.placement.slot + 1}/${connector.placement.slotCount}`;
+      // The pill names the far endpoint relative to the selection: the same
+      // connector reads `event → target` from its source frame and
+      // `event ← source` from its target frame.
+      const connectorLabel = connector.element
+        .querySelector<SVGTextElement>(".workflow-connector-label");
+      if (connectorLabel) {
+        connectorLabel.textContent =
+          structureConnectorLabel(connector, connector.placement.direction);
+      }
       model.frameById.get(connector.placement.farId)?.classList.add("is-related");
     }
     requestConnectors();

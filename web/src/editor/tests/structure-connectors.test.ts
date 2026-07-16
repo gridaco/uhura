@@ -125,8 +125,12 @@ test("dedupes edges sharing endpoints and kind into one labeled connector", () =
   assert.equal(connectors.length, 2);
   assert.equal(connectors[0]?.event, "a-event");
   assert.equal(connectors[0]?.extraCount, 2);
-  assert.equal(structureConnectorLabel(connectors[0]!), "a-event +2");
-  assert.equal(structureConnectorLabel(connectors[1]!), "open-comments");
+  assert.equal(
+    structureConnectorLabel(connectors[0]!),
+    "a-event → profile +2",
+    "the dedup suffix stays at the end, after the far endpoint",
+  );
+  assert.equal(structureConnectorLabel(connectors[1]!), "open-comments → comments-sheet");
   assert.equal(
     structureConnectorDescription(connectors[0]!),
     "navigates on a-event (+2 more)",
@@ -134,6 +138,31 @@ test("dedupes edges sharing endpoints and kind into one labeled connector", () =
   assert.equal(
     structureConnectorDescription(connectors[1]!),
     "presents on open-comments",
+  );
+});
+
+test("labels name the far endpoint per direction: → target, ← source", () => {
+  const connector = {
+    event: "author-tapped",
+    extraCount: 0,
+    sourceNode: "page:feed",
+    targetNode: "page:profile",
+  };
+
+  assert.equal(structureConnectorLabel(connector, "outgoing"), "author-tapped → profile");
+  assert.equal(structureConnectorLabel(connector, "incoming"), "author-tapped ← feed");
+  assert.equal(
+    structureConnectorLabel({ ...connector, extraCount: 2 }, "incoming"),
+    "author-tapped ← feed +2",
+    "the +N dedup suffix follows the far endpoint",
+  );
+  assert.equal(
+    structureConnectorLabel({
+      ...connector,
+      targetNode: "surface:comments-sheet",
+    }, "outgoing"),
+    "author-tapped → comments-sheet",
+    "surface: prefixes strip like page: prefixes",
   );
 });
 

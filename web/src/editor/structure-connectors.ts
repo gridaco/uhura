@@ -512,11 +512,28 @@ export const routeStructureConnector = (
   };
 };
 
+/** The human name behind a `page:`/`surface:` graph node id. */
+const structureNodeName = (node: string): string =>
+  node.replace(/^(?:page|surface):/, "");
+
+/**
+ * The pill text names the firing event AND the far endpoint, so a frame with
+ * several outgoing edges on the same event never shows identical pills:
+ * outgoing reads `event → target`, incoming reads `event ← source`, and the
+ * dedup suffix stays at the end (`author-tapped ← feed +2`).
+ */
 export const structureConnectorLabel = (
-  connector: Pick<StructureConnector, "event" | "extraCount">,
-): string => connector.extraCount > 0
-  ? `${connector.event} +${connector.extraCount}`
-  : connector.event;
+  connector: Pick<
+    StructureConnector,
+    "event" | "extraCount" | "sourceNode" | "targetNode"
+  >,
+  direction: StructureConnectorDirection = "outgoing",
+): string => {
+  const core = direction === "outgoing"
+    ? `${connector.event} → ${structureNodeName(connector.targetNode)}`
+    : `${connector.event} ← ${structureNodeName(connector.sourceNode)}`;
+  return connector.extraCount > 0 ? `${core} +${connector.extraCount}` : core;
+};
 
 export const structureConnectorDescription = (
   connector: Pick<StructureConnector, "kind" | "event" | "extraCount">,
