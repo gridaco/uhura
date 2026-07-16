@@ -5,14 +5,17 @@ import { test } from "vitest";
 import type { InteractionGraph, InteractionGraphEdge } from "../../protocol/types.js";
 import type { EditorPreview, PreviewKind } from "../editor-state.js";
 import {
+  GLOBAL_NAV_MIN_SOURCES,
   buildStructureConnectors,
   incomingLeftLabelShift,
   layoutMapStructureConnectors,
   layoutStructureConnectors,
   routeStructureConnector,
+  splitGlobalNavConnectors,
   structureConnectorDescription,
   structureConnectorLabel,
   visibleStructureConnectors,
+  type StructureConnector,
   type StructureConnectorPlacement,
   type StructureRect,
 } from "../structure-connectors.js";
@@ -873,4 +876,107 @@ test("map layout fans slots per source frame edge, deterministically", () => {
     ["page:feed", "surface:comments-sheet", "bottom", "1/1"],
     ["page:profile", "page:feed", "right", "1/1"],
   ], "sorted by source frame, kind, far node, event; slots count per edge");
+});
+
+const navConnector = (
+  sourceNode: string,
+  targetNode: string,
+  event: string,
+  kind: "navigate" | "present" = "navigate",
+): StructureConnector => ({
+  kind,
+  sourceNode,
+  targetNode,
+  sourceId: `id:${sourceNode}`,
+  targetId: `id:${targetNode}`,
+  event,
+  extraCount: 0,
+});
+
+test("edges sharing (event, target) from 3+ distinct pages classify as global nav", () => {
+  const connectors = [
+    navConnector("page:feed", "page:search", "tab-selected"),
+    navConnector("page:profile", "page:search", "tab-selected"),
+    navConnector("page:reels", "page:search", "tab-selected"),
+    navConnector("page:feed", "page:profile", "author-tapped"),
+  ];
+  const { flow, globalNav } = splitGlobalNavConnectors(connectors);
+
+  assert.deepEqual(
+    globalNav.map((connector) => connector.sourceNode),
+    ["page:feed", "page:profile", "page:reels"],
+    "every member of the 3-source (event, target) group collapses",
+  );
+  assert.deepEqual(
+    flow.map((connector) => [connector.sourceNode, connector.event]),
+    [["page:feed", "author-tapped"]],
+    "the lone real flow edge stays",
+  );
+});
+
+test("2 distinct page sources are below the global-nav threshold", () => {
+  const connectors = [
+    navConnector("page:feed", "page:search", "tab-selected"),
+    navConnector("page:profile", "page:search", "tab-selected"),
+  ];
+  const { flow, globalNav } = splitGlobalNavConnectors(connectors);
+
+  assert.deepEqual(globalNav, [], "two sources are a coincidence, not chrome");
+  assert.equal(flow.length, 2);
+  assert.equal(GLOBAL_NAV_MIN_SOURCES, 3, "the documented threshold is three sources");
+});
+
+test("surface sources never count toward or join a global-nav group", () => {
+  const connectors = [
+    navConnector("page:feed", "page:search", "tab-selected"),
+    navConnector("page:profile", "page:search", "tab-selected"),
+    navConnector("surface:menu", "page:search", "tab-selected"),
+    navConnector("page:reels", "page:search", "tab-selected"),
+  ];
+  const { flow, globalNav } = splitGlobalNavConnectors(connectors);
+
+  assert.deepEqual(
+    globalNav.map((connector) => connector.sourceNode),
+    ["page:feed", "page:profile", "page:reels"],
+    "three page sources qualify the group",
+  );
+  assert.deepEqual(
+    flow.map((connector) => connector.sourceNode),
+    ["surface:menu"],
+    "a surface-sourced edge is never global chrome itself",
+  );
+});
+
+test("global-nav groups key on event AND target, and preserve input order and objects", () => {
+  const connectors = [
+    navConnector("page:a", "page:t", "tab-selected"),
+    navConnector("page:b", "page:t", "other-event"),
+    navConnector("page:b", "page:t", "tab-selected"),
+    navConnector("page:c", "page:u", "tab-selected"),
+    navConnector("page:c", "page:t", "tab-selected"),
+  ];
+  const { flow, globalNav } = splitGlobalNavConnectors(connectors);
+
+  assert.deepEqual(
+    globalNav,
+    [connectors[0], connectors[2], connectors[4]],
+    "only the (tab-selected, page:t) trio collapses, in input order, same objects",
+  );
+  assert.deepEqual(
+    flow,
+    [connectors[1], connectors[3]],
+    "different event or different target stays out of the group",
+  );
+});
+
+test("present edges converging from 3+ pages collapse like navigation chrome", () => {
+  const connectors = [
+    navConnector("page:feed", "surface:comments-sheet", "comments-requested", "present"),
+    navConnector("page:post", "surface:comments-sheet", "comments-requested", "present"),
+    navConnector("page:reels", "surface:comments-sheet", "comments-requested", "present"),
+  ];
+  const { flow, globalNav } = splitGlobalNavConnectors(connectors);
+
+  assert.equal(globalNav.length, 3);
+  assert.deepEqual(flow, []);
 });

@@ -48,6 +48,7 @@ import {
   layoutMapStructureConnectors,
   layoutStructureConnectors,
   routeStructureConnector,
+  splitGlobalNavConnectors,
   structureDefinitionNode,
   visibleStructureConnectors,
   type PlacedStructureConnector,
@@ -147,6 +148,7 @@ interface EditorShell {
   zoomInButton: HTMLButtonElement;
   focusSelectionButton: HTMLButtonElement;
   mapToggleButton: HTMLButtonElement;
+  navToggleButton: HTMLButtonElement;
   sourceDrawerButton: HTMLButtonElement;
   focusHeader: HTMLElement;
   exitFocusButton: HTMLButtonElement;
@@ -233,6 +235,7 @@ const SHELL_HTML = `
         <span class="tool-divider" aria-hidden="true"></span>
         <button class="canvas-tool stroke focus-selection" type="button" aria-label="Center selected preview" title="Center selected preview" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"></path></svg></button>
         <button class="canvas-tool stroke map-toggle" type="button" aria-label="Toggle map view" aria-pressed="false" title="Map view: one node per page, arranged by app flow" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M1.75 3.9 5.9 2.4l4.2 1.5 4.15-1.5v9.7L10.1 13.6l-4.2-1.5-4.15 1.5zM5.9 2.4v9.7M10.1 3.9v9.7"></path></svg><span class="map-toggle-label">Map</span></button>
+        <button class="canvas-tool stroke nav-toggle" type="button" aria-label="Show tab-bar navigation edges" aria-pressed="false" title="Show tab-bar navigation edges" hidden><svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="10.5" width="12" height="3" rx="1"></rect><path d="M5 8.5v2M8 6.5v4M11 8.5v2"></path></svg><span class="nav-toggle-label">Nav</span></button>
         <button class="canvas-tool stroke source-drawer-toggle" type="button" aria-label="Open Source documentation" aria-controls="editor-source-drawer" aria-expanded="false" aria-keyshortcuts="Y" title="Source documentation (Y)"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.5h7.5L13 5v8.5H3zM10.5 2.5V5H13M5.5 8h5M5.5 10.5h5"></path></svg></button>
       </div>
       <div class="editor-board"><section class="empty-board"><h2>Starting Editor</h2><p>Loading static previews…</p></section></div>
@@ -325,6 +328,7 @@ const buildShell = (root: HTMLElement): EditorShell => {
     zoomInButton: required(shell, ".zoom-in"),
     focusSelectionButton: required(shell, ".focus-selection"),
     mapToggleButton: required(shell, ".map-toggle"),
+    navToggleButton: required(shell, ".nav-toggle"),
     sourceDrawerButton: required(shell, ".source-drawer-toggle"),
     focusHeader: required(shell, ".focus-header"),
     exitFocusButton: required(shell, ".focus-exit"),
@@ -497,6 +501,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let mapNodeFrameIds = new Set<string>();
   let mapPreviewIdByNode = new Map<string, string>();
   let mapStructureConnectors: ActiveStructureConnector[] = [];
+  // Global-nav plumbing (tab-bar edges repeated from most pages), collapsed
+  // out of the default map and revealed by the Nav sub-toggle as faint
+  // dashed hairlines. Visibility resets to hidden on every map entry.
+  let mapNavConnectors: ActiveStructureConnector[] = [];
+  let mapNavVisible = false;
   let annotationLayerVisible = true;
   let destroyed = false;
   let retryTimer: number | undefined;
@@ -1102,10 +1111,16 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       frame.style.removeProperty("top");
     }
     for (const placeholder of mapPlaceholderByNode.values()) placeholder.remove();
+    for (const connector of model.structureConnectors) {
+      connector.element.classList.remove("is-global-nav");
+    }
     mapPlaceholderByNode = new Map();
     mapNodeFrameIds = new Set();
     mapPreviewIdByNode = new Map();
     mapStructureConnectors = [];
+    mapNavConnectors = [];
+    mapNavVisible = false;
+    syncNavToggle();
   };
 
   const applyMapLayout = (): void => {
@@ -1158,7 +1173,24 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     // explicit extents keep hit-testing and layer sizing over every node.
     shell.board.style.width = `${width}px`;
     shell.board.style.height = `${height}px`;
-    mapStructureConnectors = layoutMapStructureConnectors(model.structureConnectors);
+    // Global-nav plumbing is fanned separately from the flow edges so the
+    // default (nav hidden) map keeps compact slot fans with no gaps.
+    const { flow, globalNav } = splitGlobalNavConnectors(model.structureConnectors);
+    mapStructureConnectors = layoutMapStructureConnectors(flow);
+    mapNavConnectors = layoutMapStructureConnectors(globalNav);
+    for (const connector of model.structureConnectors) {
+      connector.element.classList.remove("is-global-nav");
+    }
+    for (const connector of mapNavConnectors) {
+      connector.element.classList.add("is-global-nav");
+    }
+    syncNavToggle();
+  };
+
+  /** The Nav sub-toggle exists only on a map that actually collapsed edges. */
+  const syncNavToggle = (): void => {
+    shell.navToggleButton.hidden = !mapMode || mapNavConnectors.length === 0;
+    shell.navToggleButton.setAttribute("aria-pressed", String(mapNavVisible));
   };
 
   /** Every visible map node's shell, as routing obstacles for the arrows. */
@@ -1177,17 +1209,27 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   /**
-   * Re-arms the full structural set after any selection pass: in map mode
-   * every arrow stays up (selection only dims unrelated ones), and every
-   * pill reads source-relative (`event → target`).
+   * Re-arms the structural set after any selection pass: in map mode every
+   * flow arrow stays up (selection only dims unrelated ones), global-nav
+   * plumbing joins only while the Nav sub-toggle is on, and every pill reads
+   * source-relative (`event → target`).
    */
   const activateMapStructureConnectors = (): void => {
-    activeStructureConnectors = mapStructureConnectors;
-    if (mapStructureConnectors.length === 0) return;
+    for (const connector of mapNavConnectors) {
+      connector.element.classList.toggle("is-active", mapNavVisible);
+    }
+    activeStructureConnectors = mapNavVisible
+      ? [...mapStructureConnectors, ...mapNavConnectors]
+      : mapStructureConnectors;
+    if (activeStructureConnectors.length === 0) return;
     model.connectorLayer.classList.add("has-structure");
-    for (const connector of mapStructureConnectors) {
+    for (const connector of activeStructureConnectors) {
       connector.element.classList.add("is-active");
-      connector.element.classList.remove("is-incoming", "is-map-dimmed");
+      connector.element.classList.remove(
+        "is-incoming",
+        "is-map-dimmed",
+        "is-map-emphasized",
+      );
       connector.element.dataset.direction = "outgoing";
       connector.element.dataset.edge = connector.placement.side;
       connector.element.dataset.slot =
@@ -1196,6 +1238,21 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         .querySelector<SVGTextElement>(".workflow-connector-label");
       if (label) renderStructureConnectorLabel(label, connector, "outgoing");
     }
+  };
+
+  /**
+   * The Nav sub-toggle: reveals or re-collapses the global-nav plumbing
+   * without touching selection. Re-selecting the current preview reuses the
+   * one selection pipeline so spotlight dimming stays consistent.
+   */
+  const setMapNavVisible = (next: boolean): void => {
+    if (!mapMode || next === mapNavVisible) return;
+    mapNavVisible = next;
+    syncNavToggle();
+    const selectedId = previewIdForIdentity(model, selectedIdentity);
+    if (selectedId) selectPreview(selectedId, false);
+    else activateMapStructureConnectors();
+    requestConnectors();
   };
 
   /** Fits the camera around every map node, measured in world coordinates. */
@@ -1286,6 +1343,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         "is-drawing",
         "is-hovered",
         "is-map-dimmed",
+        "is-map-emphasized",
       );
     }
     hoveredStructureConnector = null;
@@ -1578,14 +1636,17 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     }
     if (mapMode) {
       // Map mode keeps every structural arrow up (re-armed by the clear pass
-      // above) and spotlights the clicked definition: its arrows keep full
-      // strength while unrelated ones fade back with their frames.
+      // above) and spotlights the clicked definition: its arrows regain
+      // their label pills and full strength (is-map-emphasized) while
+      // unrelated ones fade back with their frames. Global-nav plumbing
+      // stays uniform background chrome either way.
       const selectedNode = structureDefinitionNode(preview.identity);
       let relatedCount = 0;
       for (const connector of mapStructureConnectors) {
         const related = connector.sourceNode === selectedNode
           || connector.targetNode === selectedNode;
         connector.element.classList.toggle("is-map-dimmed", !related);
+        connector.element.classList.toggle("is-map-emphasized", related);
         if (!related) continue;
         relatedCount += 1;
         const farId = connector.sourceNode === selectedNode
@@ -1983,6 +2044,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (selectedId) revealPreviewFlow(selectedId);
   });
   listen(shell.mapToggleButton, "click", () => setMapMode(!mapMode));
+  listen(shell.navToggleButton, "click", () => setMapNavVisible(!mapNavVisible));
   listen(shell.exitFocusButton, "click", () => leavePreviewFocus());
   listen(shell.sourceDrawerButton, "click", () => {
     setSourceDrawer(shell.sourceDrawer.hasAttribute("hidden"), true);

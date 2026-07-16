@@ -73,6 +73,36 @@ test("map mode hides non-map frames and selection styling can never reveal them"
   assert.ok(!spotlight.includes("display"), "spotlight must never set display");
 });
 
+test("map mode hides label pills by visibility only, restoring them on demand", () => {
+  assert.ok(
+    EDITOR_STYLES.includes(
+      ".workflow-connectors.is-map-mode .structure-connector .structure-connector-pill {\n    visibility: hidden;\n  }",
+    ),
+    "the map default hides every pill",
+  );
+  assert.ok(
+    EDITOR_STYLES.includes(
+      ".workflow-connectors.is-map-mode .structure-connector:is(:hover, .is-hovered, .is-map-emphasized) .structure-connector-pill {\n    visibility: visible;\n  }",
+    ),
+    "hover and selection emphasis restore the pill",
+  );
+  const mapRules = EDITOR_STYLES.slice(EDITOR_STYLES.indexOf(".workflow-connectors.is-map-mode"));
+  assert.ok(
+    !mapRules.includes(".structure-connector-pill {\n    display"),
+    "pills must hide via visibility, never display, so getBBox keeps measuring them",
+  );
+  const navRule = EDITOR_STYLES.lastIndexOf(
+    ".workflow-connectors.is-map-mode .structure-connector.is-global-nav .structure-connector-pill",
+  );
+  const emphasisRule = EDITOR_STYLES.indexOf(
+    ".workflow-connectors.is-map-mode .structure-connector:is(:hover, .is-hovered, .is-map-emphasized) .structure-connector-pill",
+  );
+  assert.ok(
+    navRule > emphasisRule && emphasisRule >= 0,
+    "the global-nav pill suppression must follow (and so outrank) the on-demand rule",
+  );
+});
+
 test("the map toggle carries a visible text label affordance", () => {
   assert.ok(
     EDITOR_STYLES.includes(".canvas-tool.map-toggle"),

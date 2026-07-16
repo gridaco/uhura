@@ -108,6 +108,51 @@ export const structureDefinitionNode = (definition: StructureDefinition): string
   `${definition.kind}:${definition.subject}`;
 
 /**
+ * Minimum distinct page sources for one (event, target) connector group to
+ * read as global chrome (tab bars, ubiquitous shortcuts) rather than flow.
+ */
+export const GLOBAL_NAV_MIN_SOURCES = 3;
+
+export interface GlobalNavSplit<T extends StructureConnector> {
+  /** The app's real flow: everything that is not global chrome. */
+  flow: T[];
+  /** Global-nav plumbing, collapsed by default in map mode. */
+  globalNav: T[];
+}
+
+/**
+ * Partitions connectors into real flow and global-nav plumbing. A connector
+ * is global nav when it leaves a page and its (event, target) group is fired
+ * from at least GLOBAL_NAV_MIN_SOURCES distinct page sources — the signature
+ * of app-wide chrome like a tab bar, which repeats the same edge from every
+ * page and drowns the map. Deterministic in the connector list alone; both
+ * partitions preserve input order and share the input's objects.
+ */
+export const splitGlobalNavConnectors = <T extends StructureConnector>(
+  connectors: readonly T[],
+): GlobalNavSplit<T> => {
+  const isPageSource = (connector: StructureConnector): boolean =>
+    connector.sourceNode.startsWith("page:");
+  const groupKey = (connector: StructureConnector): string =>
+    JSON.stringify([connector.event, connector.targetNode]);
+  const pageSourcesByGroup = new Map<string, Set<string>>();
+  for (const connector of connectors) {
+    if (!isPageSource(connector)) continue;
+    const key = groupKey(connector);
+    const sources = pageSourcesByGroup.get(key) ?? new Set<string>();
+    sources.add(connector.sourceNode);
+    pageSourcesByGroup.set(key, sources);
+  }
+  const isGlobalNav = (connector: T): boolean =>
+    isPageSource(connector)
+    && (pageSourcesByGroup.get(groupKey(connector))?.size ?? 0) >= GLOBAL_NAV_MIN_SOURCES;
+  return {
+    flow: connectors.filter((connector) => !isGlobalNav(connector)),
+    globalNav: connectors.filter(isGlobalNav),
+  };
+};
+
+/**
  * Figma-style selection scoping: with no selection nothing structural draws;
  * with a selected preview only the connectors entering or leaving that
  * preview's definition (kind + subject) remain.

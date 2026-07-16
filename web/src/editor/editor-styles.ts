@@ -391,6 +391,36 @@ export const EDITOR_STYLES = `
   .editor-board.is-map-mode .editor-frame:not(.is-map-node) { display: none; }
   .workflow-connectors.is-map-mode .workflow-connector { display: none; }
   .workflow-connectors.is-map-mode .structure-connector.is-map-dimmed { opacity: .35; }
+  /* Map information design: every edge draws as a thin, label-less line by
+     default (~1px on screen; --connector-stroke is already zoom-inverse) so
+     the graph reads as a clean line drawing. Pills and a heavier stroke
+     return on demand only: hovering that edge, or selecting a node (its
+     in/out edges carry is-map-emphasized). visibility — never display —
+     keeps getBBox measuring hidden pills, exactly like annotations-hidden. */
+  .workflow-connectors.is-map-mode .structure-connector .workflow-connector-path {
+    stroke-width: calc(var(--connector-stroke, 1.5px) * .667);
+  }
+  .workflow-connectors.is-map-mode .structure-connector .structure-connector-pill {
+    visibility: hidden;
+  }
+  .workflow-connectors.is-map-mode .structure-connector:is(:hover, .is-hovered, .is-map-emphasized) .workflow-connector-path {
+    stroke-width: calc(var(--connector-stroke, 1.5px) * 1.667);
+  }
+  .workflow-connectors.is-map-mode .structure-connector:is(:hover, .is-hovered, .is-map-emphasized) .structure-connector-pill {
+    visibility: visible;
+  }
+  /* Collapsed global-nav plumbing (tab-bar edges repeated from most pages):
+     absent from the default map, revealed by the Nav sub-toggle as faint
+     dashed hairlines. Never a pill, even hovered or emphasized — these rules
+     tie the on-demand specificity and win by order. */
+  .workflow-connectors.is-map-mode .structure-connector.is-global-nav { opacity: .3; }
+  .workflow-connectors.is-map-mode .structure-connector.is-global-nav .workflow-connector-path {
+    stroke-width: calc(var(--connector-stroke, 1.5px) * .5);
+    stroke-dasharray: calc(var(--connector-stroke, 1.5px) * 4) calc(var(--connector-stroke, 1.5px) * 3);
+  }
+  .workflow-connectors.is-map-mode .structure-connector.is-global-nav .structure-connector-pill {
+    visibility: hidden;
+  }
   .map-placeholder .map-card {
     inline-size: 300px;
     block-size: 180px;
@@ -464,9 +494,10 @@ export const EDITOR_STYLES = `
   .canvas-tool svg path[fill="none"], .canvas-tool.stroke svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
   .canvas-zoom { min-inline-size: 46px; padding-inline: 6px; color: #555e69; font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
   /* The map toggle carries a visible text label: the icon alone read as a
-     generic "share" glyph and the mode was undiscoverable. */
-  .canvas-tool.map-toggle { inline-size: auto; grid-auto-flow: column; column-gap: 5px; padding-inline: 8px; }
-  .map-toggle-label { font-size: 11px; font-weight: 620; letter-spacing: .01em; }
+     generic "share" glyph and the mode was undiscoverable. The Nav
+     sub-toggle (map mode only) shares the labeled treatment. */
+  .canvas-tool.map-toggle, .canvas-tool.nav-toggle { inline-size: auto; grid-auto-flow: column; column-gap: 5px; padding-inline: 8px; }
+  .map-toggle-label, .nav-toggle-label { font-size: 11px; font-weight: 620; letter-spacing: .01em; }
   .tool-divider { inline-size: 1px; block-size: 20px; margin-inline: 3px; background: var(--border); }
 
   .preview-row { position: relative; z-index: 2; margin-block-end: 62px; }
