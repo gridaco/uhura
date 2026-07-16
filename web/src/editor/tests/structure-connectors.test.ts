@@ -523,6 +523,105 @@ test("bottom and top midpoint corridors stagger their y per slot", () => {
   assert.deepEqual(topYs, [-105, -95]);
 });
 
+test("right-edge stub fans clamp inside the gap to the right-row neighbor", () => {
+  const far: StructureRect = { x: -400, y: 400, width: 100, height: 100 };
+  const rightNeighbor: StructureRect = { x: 140, y: 0, width: 100, height: 200 };
+  const stubXs = [0, 1, 2, 3, 4].map((slot) => {
+    const route = routeStructureConnector(
+      placement({ slot, slotCount: 5 }),
+      selectedRect,
+      far,
+      1,
+      [rightNeighbor],
+    );
+    return pathPoints(route.path)[1]![0];
+  });
+
+  assert.deepEqual(stubXs, [104, 112, 120, 128, 136], "fan compresses into the 40px gap");
+  assert.ok(
+    stubXs.every((x) => x! > 100 && x! < 140),
+    `no stub drop enters the neighbor frame, got ${stubXs.join(", ")}`,
+  );
+  assert.equal(new Set(stubXs).size, 5, "clamping keeps the slots distinct");
+});
+
+test("a wide neighbor gap keeps the ideal stub fan", () => {
+  const far: StructureRect = { x: -400, y: 400, width: 100, height: 100 };
+  const rightNeighbor: StructureRect = { x: 400, y: 0, width: 100, height: 200 };
+  const stubXs = [0, 1].map((slot) => pathPoints(routeStructureConnector(
+    placement({ slot, slotCount: 2 }),
+    selectedRect,
+    far,
+    1,
+    [rightNeighbor],
+  ).path)[1]![0]);
+
+  assert.deepEqual(stubXs, [128, 142], "open space keeps the 28 + slot * 14 fan");
+});
+
+test("a stub gap too thin to fan hugs the selected frame's edge", () => {
+  const far: StructureRect = { x: -400, y: 400, width: 100, height: 100 };
+  const rightNeighbor: StructureRect = { x: 106, y: 0, width: 100, height: 200 };
+  const stubXs = [0, 1].map((slot) => pathPoints(routeStructureConnector(
+    placement({ slot, slotCount: 2 }),
+    selectedRect,
+    far,
+    1,
+    [rightNeighbor],
+  ).path)[1]![0]);
+
+  assert.deepEqual(stubXs, [103, 103], "no room to stagger: both hug the edge");
+});
+
+test("stub fans ignore frames outside the edge's cross-axis span", () => {
+  const far: StructureRect = { x: -400, y: 400, width: 100, height: 100 };
+  const offRow: StructureRect = { x: 110, y: 300, width: 100, height: 100 };
+  const route = routeStructureConnector(placement({}), selectedRect, far, 1, [offRow]);
+
+  assert.equal(pathPoints(route.path)[1]![0], 128, "the ideal stub distance survives");
+});
+
+test("left, bottom, and top stub fallbacks clamp to their nearest neighbor", () => {
+  // Left: the far frame's right edge sits past the selected left edge, so the
+  // route stubs left instead of using the inter-frame corridor.
+  const leftFar: StructureRect = { x: 50, y: 400, width: 100, height: 100 };
+  const leftNeighbor: StructureRect = { x: -30, y: 0, width: 20, height: 200 };
+  const leftXs = [0, 1].map((slot) => pathPoints(routeStructureConnector(
+    placement({ direction: "incoming", side: "left", slot, slotCount: 2 }),
+    selectedRect,
+    leftFar,
+    1,
+    [leftNeighbor],
+  ).path)[1]![0]);
+  assert.deepEqual(leftXs, [-4, -6], "left stubs stay inside the 10px gap");
+
+  // Bottom: the surface sits closer than the 2-stub threshold, so the route
+  // stubs down; the neighbor below caps the drop.
+  const bottomFar: StructureRect = { x: 300, y: 210, width: 100, height: 100 };
+  const bottomNeighbor: StructureRect = { x: 0, y: 230, width: 100, height: 100 };
+  const bottomYs = [0, 1].map((slot) => pathPoints(routeStructureConnector(
+    placement({ side: "bottom", slot, slotCount: 2 }),
+    selectedRect,
+    bottomFar,
+    1,
+    [bottomNeighbor],
+  ).path)[1]![1]);
+  assert.deepEqual(bottomYs, [212, 226], "bottom stubs stay inside the 30px gap");
+
+  // Top: the presenting frame's bottom edge sits below the selected top edge,
+  // so the route stubs up; the neighbor above caps the rise.
+  const topFar: StructureRect = { x: 300, y: -50, width: 100, height: 100 };
+  const topNeighbor: StructureRect = { x: 0, y: -40, width: 100, height: 20 };
+  const topYs = [0, 1].map((slot) => pathPoints(routeStructureConnector(
+    placement({ direction: "incoming", side: "top", slot, slotCount: 2 }),
+    selectedRect,
+    topFar,
+    1,
+    [topNeighbor],
+  ).path)[1]![1]);
+  assert.deepEqual(topYs, [-4, -16], "top stubs stay inside the 20px gap");
+});
+
 test("marker scale grows label offsets for low-zoom readability", () => {
   const far: StructureRect = { x: 300, y: 40, width: 100, height: 100 };
   const route = routeStructureConnector(placement({}), selectedRect, far, 4);

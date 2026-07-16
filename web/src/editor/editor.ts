@@ -535,12 +535,22 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     label.setAttribute("y", String(route.label.y));
   };
 
+  // Every other frame on the board, as routing obstacles: stub fans clamp
+  // inside the gap to the nearest neighbor so no drop crosses a frame.
+  const structureNeighborRects = (selectedId: string): Rect[] =>
+    [...model.frameById].flatMap(([previewId, frame]) => {
+      if (previewId === selectedId) return [];
+      const previewShell = frame.querySelector<HTMLElement>(":scope > .preview-shell");
+      return previewShell ? [boardLocalRect(previewShell)] : [];
+    });
+
   // Structural connectors anchor at the frame the user clicked and route
   // direction-aware edges to the far definition's first frame. Markers and
   // labels counter-scale with zoom so they stay legible on a zoomed-out map.
   const layoutStructureConnector = (
     connector: ActiveStructureConnector,
     markerScale: number,
+    neighbors: readonly Rect[],
   ): void => {
     const selectedShell = model.frameById.get(connector.placement.selectedId)
       ?.querySelector<HTMLElement>(":scope > .preview-shell");
@@ -561,6 +571,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       boardLocalRect(selectedShell),
       boardLocalRect(farShell),
       markerScale,
+      neighbors,
     );
     path.setAttribute("d", route.path);
     arrow.setAttribute("d", route.arrow);
@@ -588,8 +599,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     model.connectorLayer.setAttribute("height", String(boardRect.height / scale));
     for (const connector of model.connectors) layoutConnector(connector);
     const markerScale = Math.min(Math.max(1 / scale, 1), STRUCTURE_MARKER_SCALE_MAX);
+    // All active structural connectors share the clicked frame, so the
+    // neighbor obstacle rects are measured once per layout pass.
+    const selectedId = activeStructureConnectors[0]?.placement.selectedId;
+    const structureNeighbors = selectedId === undefined
+      ? []
+      : structureNeighborRects(selectedId);
     for (const connector of activeStructureConnectors) {
-      layoutStructureConnector(connector, markerScale);
+      layoutStructureConnector(connector, markerScale, structureNeighbors);
     }
   };
 

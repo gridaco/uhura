@@ -264,6 +264,64 @@ const staggeredCorridor = (
   return Math.min(Math.max(mid + offset, low), high);
 };
 
+/**
+ * The facing edge of the nearest neighboring frame past the selected edge in
+ * the stub direction, or undefined when the fan has open space. Only frames
+ * whose cross-axis span overlaps the selected frame's can block the fan; the
+ * selected frame itself never qualifies (nothing of it lies past its edge).
+ */
+const nearestNeighborEdge = (
+  selected: StructureRect,
+  neighbors: readonly StructureRect[],
+  side: StructureEdgeSide,
+): number | undefined => {
+  const horizontal = side === "right" || side === "left";
+  const sign = side === "right" || side === "bottom" ? 1 : -1;
+  const span = (rect: StructureRect): readonly [number, number] =>
+    horizontal ? [rect.x, rect.x + rect.width] : [rect.y, rect.y + rect.height];
+  const overlapsCrossAxis = (rect: StructureRect): boolean => horizontal
+    ? rect.y < selected.y + selected.height && rect.y + rect.height > selected.y
+    : rect.x < selected.x + selected.width && rect.x + rect.width > selected.x;
+  const [selectedStart, selectedEnd] = span(selected);
+  const edge = sign > 0 ? selectedEnd : selectedStart;
+  const distances = neighbors
+    .filter(overlapsCrossAxis)
+    .flatMap((rect) => {
+      const [start, end] = span(rect);
+      const blocks = sign * ((sign > 0 ? end : start) - edge) > 0;
+      return blocks ? [sign * ((sign > 0 ? start : end) - edge)] : [];
+    });
+  return distances.length > 0 ? edge + sign * Math.min(...distances) : undefined;
+};
+
+/**
+ * The stub turn coordinate for one fan slot, clamped inside the free gap
+ * between the selected frame's edge and its nearest neighbor in the stub
+ * direction. Mirrors `staggeredCorridor`: open space keeps the ideal
+ * `STRUCTURE_STUB + slot * STRUCTURE_SLOT_STAGGER` fan; a narrow gap
+ * compresses the fan against the far clearance line, shrinking the per-slot
+ * step so every slot stays distinct and inside the gap; a degenerate or
+ * negative gap (overlapping neighbor) hugs the frame edge a few pixels out.
+ */
+const staggeredStub = (
+  edge: number,
+  sign: 1 | -1,
+  neighborEdge: number | undefined,
+  slot: number,
+  count: number,
+): number => {
+  const ideal = STRUCTURE_STUB + slot * STRUCTURE_SLOT_STAGGER;
+  if (neighborEdge === undefined) return edge + sign * ideal;
+  const gap = sign * (neighborEdge - edge);
+  const low = STRUCTURE_CORRIDOR_CLEARANCE;
+  const high = gap - STRUCTURE_CORRIDOR_CLEARANCE;
+  if (high <= low) return edge + sign * Math.max(Math.min(low, gap / 2), 0);
+  const step = count > 1
+    ? Math.min(STRUCTURE_SLOT_STAGGER, (high - low) / (count - 1))
+    : 0;
+  return edge + sign * Math.min(ideal, high - (count - 1 - slot) * step);
+};
+
 interface RoutePoint {
   x: number;
   y: number;
@@ -323,16 +381,25 @@ const arrowHead = (
  * Arrowheads always sit at the target end; labels always sit just outside
  * the selected frame's edge so everything readable clusters at the click.
  * `markerScale` counter-scales arrowheads and label offsets so they keep a
- * constant on-screen size at low zoom.
+ * constant on-screen size at low zoom. `neighbors` are the other board frame
+ * rects; stub fans clamp inside the free gap to the nearest one so no drop
+ * ever runs through an adjacent frame's content.
  */
 export const routeStructureConnector = (
   placement: StructureConnectorPlacement,
   selected: StructureRect,
   far: StructureRect,
   markerScale = 1,
+  neighbors: readonly StructureRect[] = [],
 ): StructureConnectorRoute => {
   const { side, slot, slotCount } = placement;
-  const stagger = STRUCTURE_STUB + slot * STRUCTURE_SLOT_STAGGER;
+  const stub = (edge: number, sign: 1 | -1): number => staggeredStub(
+    edge,
+    sign,
+    nearestNeighborEdge(selected, neighbors, side),
+    slot,
+    slotCount,
+  );
 
   if (side === "right") {
     const start = fanPoint(selected, "right", slot, slotCount);
@@ -361,7 +428,7 @@ export const routeStructureConnector = (
     // Target is left of or above the exit: stub right, then approach the
     // target's top edge from above.
     const end = { x: far.x + far.width / 2, y: far.y };
-    const stubX = start.x + stagger;
+    const stubX = stub(start.x, 1);
     const approachY = far.y - STRUCTURE_STUB;
     return {
       path: orthogonalPath([
@@ -382,7 +449,7 @@ export const routeStructureConnector = (
     const exit = { x: far.x + far.width, y: far.y + far.height / 2 };
     const corridorX = exit.x <= selected.x
       ? staggeredCorridor(exit.x, selected.x, slot, slotCount)
-      : selected.x - stagger;
+      : stub(selected.x, -1);
     return {
       path: orthogonalPath([
         exit,
@@ -405,7 +472,7 @@ export const routeStructureConnector = (
     const end = { x: far.x + far.width / 2, y: far.y };
     const corridorY = far.y >= start.y + STRUCTURE_STUB * 2
       ? staggeredCorridor(start.y, far.y, slot, slotCount)
-      : start.y + stagger;
+      : stub(start.y, 1);
     return {
       path: orthogonalPath([
         start,
@@ -427,7 +494,7 @@ export const routeStructureConnector = (
   const exit = { x: far.x + far.width / 2, y: far.y + far.height };
   const corridorY = exit.y <= selected.y
     ? staggeredCorridor(exit.y, selected.y, slot, slotCount)
-    : selected.y - stagger;
+    : stub(selected.y, -1);
   return {
     path: orthogonalPath([
       exit,
