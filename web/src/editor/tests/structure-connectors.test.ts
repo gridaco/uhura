@@ -5,7 +5,7 @@ import { test } from "vitest";
 import type { InteractionGraph, InteractionGraphEdge } from "../../protocol/types.js";
 import type { EditorPreview, PreviewKind } from "../editor-state.js";
 import {
-  GLOBAL_NAV_MIN_SOURCES,
+  GLOBAL_NAV_MIN_TARGETS,
   buildStructureConnectors,
   incomingLeftLabelShift,
   layoutMapStructureConnectors,
@@ -893,90 +893,108 @@ const navConnector = (
   extraCount: 0,
 });
 
-test("edges sharing (event, target) from 3+ distinct pages classify as global nav", () => {
+test("an event fanning out to 3+ targets from one page classifies as global nav", () => {
   const connectors = [
+    navConnector("page:feed", "page:create", "tab-selected"),
+    navConnector("page:feed", "page:reels", "tab-selected"),
     navConnector("page:feed", "page:search", "tab-selected"),
-    navConnector("page:profile", "page:search", "tab-selected"),
-    navConnector("page:reels", "page:search", "tab-selected"),
     navConnector("page:feed", "page:profile", "author-tapped"),
   ];
   const { flow, globalNav } = splitGlobalNavConnectors(connectors);
 
   assert.deepEqual(
-    globalNav.map((connector) => connector.sourceNode),
-    ["page:feed", "page:profile", "page:reels"],
-    "every member of the 3-source (event, target) group collapses",
+    globalNav.map((connector) => connector.targetNode),
+    ["page:create", "page:reels", "page:search"],
+    "every member of the 3-target (source, event) fan collapses",
   );
   assert.deepEqual(
-    flow.map((connector) => [connector.sourceNode, connector.event]),
-    [["page:feed", "author-tapped"]],
-    "the lone real flow edge stays",
+    flow.map((connector) => [connector.targetNode, connector.event]),
+    [["page:profile", "author-tapped"]],
+    "the real flow edge stays",
   );
 });
 
-test("2 distinct page sources are below the global-nav threshold", () => {
+test("a 2-target fan-out is below the global-nav threshold", () => {
   const connectors = [
+    navConnector("page:feed", "page:reels", "tab-selected"),
     navConnector("page:feed", "page:search", "tab-selected"),
-    navConnector("page:profile", "page:search", "tab-selected"),
   ];
   const { flow, globalNav } = splitGlobalNavConnectors(connectors);
 
-  assert.deepEqual(globalNav, [], "two sources are a coincidence, not chrome");
+  assert.deepEqual(globalNav, [], "two targets are a shortcut pair, not a tab bar");
   assert.equal(flow.length, 2);
-  assert.equal(GLOBAL_NAV_MIN_SOURCES, 3, "the documented threshold is three sources");
+  assert.equal(GLOBAL_NAV_MIN_TARGETS, 3, "the documented threshold is three targets");
 });
 
-test("surface sources never count toward or join a global-nav group", () => {
+test("convergent many-sources-to-one-target edges stay visible content flow", () => {
+  // The previous rule collapsed these; they are the app's core journeys.
   const connectors = [
-    navConnector("page:feed", "page:search", "tab-selected"),
-    navConnector("page:profile", "page:search", "tab-selected"),
-    navConnector("surface:menu", "page:search", "tab-selected"),
-    navConnector("page:reels", "page:search", "tab-selected"),
+    navConnector("page:feed", "page:post", "post-tapped"),
+    navConnector("page:reels", "page:post", "post-tapped"),
+    navConnector("page:search", "page:post", "post-tapped"),
+    navConnector("page:profile", "page:post", "post-tapped"),
   ];
   const { flow, globalNav } = splitGlobalNavConnectors(connectors);
 
+  assert.deepEqual(globalNav, [], "convergence is flow, not chrome");
+  assert.equal(flow.length, 4);
+});
+
+test("present edges are never global nav and never feed the fan-out count", () => {
+  const presents = [
+    navConnector("page:feed", "surface:a", "sheet-requested", "present"),
+    navConnector("page:feed", "surface:b", "sheet-requested", "present"),
+    navConnector("page:feed", "surface:c", "sheet-requested", "present"),
+  ];
   assert.deepEqual(
-    globalNav.map((connector) => connector.sourceNode),
-    ["page:feed", "page:profile", "page:reels"],
-    "three page sources qualify the group",
+    splitGlobalNavConnectors(presents).globalNav,
+    [],
+    "a wide present fan is still content, not navigation chrome",
   );
+
+  const mixed = [
+    navConnector("page:feed", "page:reels", "tab-selected"),
+    navConnector("page:feed", "page:search", "tab-selected"),
+    navConnector("page:feed", "surface:sheet", "tab-selected", "present"),
+  ];
   assert.deepEqual(
-    flow.map((connector) => connector.sourceNode),
-    ["surface:menu"],
-    "a surface-sourced edge is never global chrome itself",
+    splitGlobalNavConnectors(mixed).globalNav,
+    [],
+    "the present target must not push a 2-target navigate fan over the threshold",
   );
 });
 
-test("global-nav groups key on event AND target, and preserve input order and objects", () => {
+test("fans key on source page AND event, preserving input order and objects", () => {
   const connectors = [
     navConnector("page:a", "page:t", "tab-selected"),
-    navConnector("page:b", "page:t", "other-event"),
-    navConnector("page:b", "page:t", "tab-selected"),
-    navConnector("page:c", "page:u", "tab-selected"),
-    navConnector("page:c", "page:t", "tab-selected"),
+    navConnector("page:a", "page:u", "other-event"),
+    navConnector("page:a", "page:u", "tab-selected"),
+    navConnector("page:b", "page:v", "tab-selected"),
+    navConnector("page:a", "page:v", "tab-selected"),
+    navConnector("page:a", "surface:s", "tab-selected"),
   ];
   const { flow, globalNav } = splitGlobalNavConnectors(connectors);
 
   assert.deepEqual(
     globalNav,
-    [connectors[0], connectors[2], connectors[4]],
-    "only the (tab-selected, page:t) trio collapses, in input order, same objects",
+    [connectors[0], connectors[2], connectors[4], connectors[5]],
+    "only page:a's tab-selected fan collapses, in input order, same objects; surface targets count",
   );
   assert.deepEqual(
     flow,
     [connectors[1], connectors[3]],
-    "different event or different target stays out of the group",
+    "a different event or a different source page stays out of the fan",
   );
 });
 
-test("present edges converging from 3+ pages collapse like navigation chrome", () => {
+test("surface-sourced navigate fans never classify as global nav", () => {
   const connectors = [
-    navConnector("page:feed", "surface:comments-sheet", "comments-requested", "present"),
-    navConnector("page:post", "surface:comments-sheet", "comments-requested", "present"),
-    navConnector("page:reels", "surface:comments-sheet", "comments-requested", "present"),
+    navConnector("surface:menu", "page:feed", "menu-tapped"),
+    navConnector("surface:menu", "page:reels", "menu-tapped"),
+    navConnector("surface:menu", "page:search", "menu-tapped"),
   ];
   const { flow, globalNav } = splitGlobalNavConnectors(connectors);
 
-  assert.equal(globalNav.length, 3);
-  assert.deepEqual(flow, []);
+  assert.deepEqual(globalNav, [], "global chrome is a page affordance");
+  assert.equal(flow.length, 3);
 });

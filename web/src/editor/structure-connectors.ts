@@ -108,10 +108,10 @@ export const structureDefinitionNode = (definition: StructureDefinition): string
   `${definition.kind}:${definition.subject}`;
 
 /**
- * Minimum distinct page sources for one (event, target) connector group to
- * read as global chrome (tab bars, ubiquitous shortcuts) rather than flow.
+ * Minimum distinct targets one (source page, event) pair must fan out to
+ * before that event reads as global chrome (a tab bar) on that page.
  */
-export const GLOBAL_NAV_MIN_SOURCES = 3;
+export const GLOBAL_NAV_MIN_TARGETS = 3;
 
 export interface GlobalNavSplit<T extends StructureConnector> {
   /** The app's real flow: everything that is not global chrome. */
@@ -122,30 +122,34 @@ export interface GlobalNavSplit<T extends StructureConnector> {
 
 /**
  * Partitions connectors into real flow and global-nav plumbing. A connector
- * is global nav when it leaves a page and its (event, target) group is fired
- * from at least GLOBAL_NAV_MIN_SOURCES distinct page sources — the signature
- * of app-wide chrome like a tab bar, which repeats the same edge from every
- * page and drowns the map. Deterministic in the connector list alone; both
- * partitions preserve input order and share the input's objects.
+ * is global nav iff it is a `navigate` edge leaving a page whose event fans
+ * out from that SAME page to at least GLOBAL_NAV_MIN_TARGETS distinct
+ * targets — the tab-bar signature, where one event routes to every app
+ * section and its repetition on most pages drowns the map. Convergent
+ * many-sources→one-target edges (open post, open profile, open comments)
+ * are the app's content flow and always stay visible; `present` edges are
+ * never global nav and never feed the fan-out count. Deterministic in the
+ * connector list alone; both partitions preserve input order and share the
+ * input's objects.
  */
 export const splitGlobalNavConnectors = <T extends StructureConnector>(
   connectors: readonly T[],
 ): GlobalNavSplit<T> => {
-  const isPageSource = (connector: StructureConnector): boolean =>
-    connector.sourceNode.startsWith("page:");
-  const groupKey = (connector: StructureConnector): string =>
-    JSON.stringify([connector.event, connector.targetNode]);
-  const pageSourcesByGroup = new Map<string, Set<string>>();
+  const isNavCandidate = (connector: StructureConnector): boolean =>
+    connector.kind === "navigate" && connector.sourceNode.startsWith("page:");
+  const fanKey = (connector: StructureConnector): string =>
+    JSON.stringify([connector.sourceNode, connector.event]);
+  const targetsByFan = new Map<string, Set<string>>();
   for (const connector of connectors) {
-    if (!isPageSource(connector)) continue;
-    const key = groupKey(connector);
-    const sources = pageSourcesByGroup.get(key) ?? new Set<string>();
-    sources.add(connector.sourceNode);
-    pageSourcesByGroup.set(key, sources);
+    if (!isNavCandidate(connector)) continue;
+    const key = fanKey(connector);
+    const targets = targetsByFan.get(key) ?? new Set<string>();
+    targets.add(connector.targetNode);
+    targetsByFan.set(key, targets);
   }
   const isGlobalNav = (connector: T): boolean =>
-    isPageSource(connector)
-    && (pageSourcesByGroup.get(groupKey(connector))?.size ?? 0) >= GLOBAL_NAV_MIN_SOURCES;
+    isNavCandidate(connector)
+    && (targetsByFan.get(fanKey(connector))?.size ?? 0) >= GLOBAL_NAV_MIN_TARGETS;
   return {
     flow: connectors.filter((connector) => !isGlobalNav(connector)),
     globalNav: connectors.filter(isGlobalNav),
