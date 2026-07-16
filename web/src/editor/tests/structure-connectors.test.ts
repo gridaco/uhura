@@ -6,6 +6,7 @@ import type { InteractionGraph, InteractionGraphEdge } from "../../protocol/type
 import type { EditorPreview, PreviewKind } from "../editor-state.js";
 import {
   buildStructureConnectors,
+  incomingLeftLabelShift,
   layoutStructureConnectors,
   routeStructureConnector,
   structureConnectorDescription,
@@ -602,12 +603,139 @@ test("a stub gap too thin to fan hugs the selected frame's edge", () => {
   assert.deepEqual(stubXs, [103, 103], "no room to stagger: both hug the edge");
 });
 
-test("stub fans ignore frames outside the edge's cross-axis span", () => {
+test("stub fans ignore frames outside the vertical's span", () => {
   const far: StructureRect = { x: -400, y: 400, width: 100, height: 100 };
-  const offRow: StructureRect = { x: 110, y: 300, width: 100, height: 100 };
-  const route = routeStructureConnector(placement({}), selectedRect, far, 1, [offRow]);
+  // Below the drop's whole span (fan y 100 → approach y 372): no obstacle.
+  const offSpan: StructureRect = { x: 110, y: 380, width: 100, height: 100 };
+  const route = routeStructureConnector(placement({}), selectedRect, far, 1, [offSpan]);
 
   assert.equal(pathPoints(route.path)[1]![0], 128, "the ideal stub distance survives");
+});
+
+test("a cross-row stem that would cross a frame shifts to a free gap", () => {
+  const far: StructureRect = { x: -400, y: 400, width: 100, height: 100 };
+  // In a row between the endpoints, straddling the ideal stub x of 128.
+  const midRow: StructureRect = { x: 110, y: 300, width: 100, height: 100 };
+  const route = routeStructureConnector(placement({}), selectedRect, far, 1, [midRow]);
+
+  const points = pathPoints(route.path);
+  assert.equal(points[1]![0], 106, "the stem snaps to the frame's left-4 boundary");
+  assert.deepEqual(points[2], [106, 372], "the whole drop runs on the shifted x");
+  assert.ok(points[1]![0] < midRow.x, "the vertical clears the frame body");
+});
+
+test("a blocked rightward corridor shifts to the nearest free column gap", () => {
+  const far: StructureRect = { x: 400, y: 600, width: 100, height: 100 };
+  const blocker: StructureRect = { x: 160, y: 250, width: 200, height: 200 };
+  const route = routeStructureConnector(placement({}), selectedRect, far, 1, [blocker]);
+
+  assert.equal(
+    route.path,
+    "M 100 100 L 156 100 L 156 650 L 400 650",
+    "the corridor leaves the blocked midpoint 250 for the frame's left-4 boundary",
+  );
+});
+
+test("parallel shifted corridors spread per slot inside the free gap", () => {
+  const far: StructureRect = { x: 400, y: 600, width: 100, height: 100 };
+  const blocker: StructureRect = { x: 160, y: 250, width: 200, height: 200 };
+  const corridorXs = [0, 1].map((slot) => pathPoints(routeStructureConnector(
+    placement({ slot, slotCount: 2 }),
+    selectedRect,
+    far,
+    1,
+    [blocker],
+  ).path)[1]![0]);
+
+  assert.deepEqual(corridorXs, [156, 146], "slots fan away from the frame edge");
+  assert.equal(new Set(corridorXs).size, 2, "no two shifted slots share one vertical");
+});
+
+test("blocked vertical routing is deterministic and never crosses the frame", () => {
+  const far: StructureRect = { x: 400, y: 600, width: 100, height: 100 };
+  const blocker: StructureRect = { x: 160, y: 250, width: 200, height: 200 };
+  const first = routeStructureConnector(placement({}), selectedRect, far, 1, [blocker]);
+  const second = routeStructureConnector(placement({}), selectedRect, far, 1, [blocker]);
+
+  assert.deepEqual(first, second, "identical inputs route identically");
+  const verticalX = pathPoints(first.path)[1]![0];
+  assert.ok(
+    verticalX <= blocker.x || verticalX >= blocker.x + blocker.width,
+    "the corridor stays outside the frame's horizontal extent",
+  );
+});
+
+test("the selected and far frames never count as routing obstacles", () => {
+  // The far frame overlaps the corridor's span; excluding it keeps the
+  // plain staggered midpoint corridor between the two columns.
+  const far: StructureRect = { x: 300, y: 40, width: 100, height: 100 };
+  const withEndpoints = routeStructureConnector(
+    placement({}),
+    selectedRect,
+    far,
+    1,
+    [selectedRect, far],
+  );
+  const without = routeStructureConnector(placement({}), selectedRect, far, 1, []);
+
+  assert.deepEqual(withEndpoints, without);
+});
+
+test("a blocked present drop jogs sideways around the frame below", () => {
+  const far: StructureRect = { x: 0, y: 600, width: 100, height: 100 };
+  const blocker: StructureRect = { x: 0, y: 300, width: 100, height: 100 };
+  const route = routeStructureConnector(
+    placement({ side: "bottom" }),
+    selectedRect,
+    far,
+    1,
+    [blocker],
+  );
+
+  assert.equal(
+    route.path,
+    "M 50 200 L 50 228 L -4 228 L -4 572 L 50 572 L 50 600",
+    "stub below the selected frame, free corridor at the blocker's left-4, "
+      + "approach above the far frame",
+  );
+  assert.ok(route.arrow.includes("L 50 600"), "arrowhead still enters the far top edge");
+});
+
+test("an unobstructed present drop keeps the straight three-point path", () => {
+  const far: StructureRect = { x: 300, y: 600, width: 100, height: 100 };
+  // Off to the side of both verticals: no jog.
+  const bystander: StructureRect = { x: 120, y: 300, width: 100, height: 100 };
+  const route = routeStructureConnector(
+    placement({ side: "bottom" }),
+    selectedRect,
+    far,
+    1,
+    [bystander],
+  );
+
+  assert.equal(route.path, "M 50 200 L 50 400 L 350 400 L 350 600");
+});
+
+test("a blocked incoming present climb jogs around the frame above", () => {
+  const surfaceRect: StructureRect = { x: 0, y: 600, width: 100, height: 200 };
+  const far: StructureRect = { x: 0, y: 0, width: 100, height: 100 };
+  const blocker: StructureRect = { x: 0, y: 300, width: 100, height: 100 };
+  const route = routeStructureConnector(
+    placement({ direction: "incoming", side: "top" }),
+    surfaceRect,
+    far,
+    1,
+    [blocker],
+  );
+
+  const points = pathPoints(route.path);
+  assert.equal(points[0]![1], 100, "the route departs the presenting frame's bottom edge");
+  assert.equal(points[points.length - 1]![1], 600, "the route enters the selected top edge");
+  const corridorX = points[2]![0];
+  assert.ok(
+    corridorX <= blocker.x || corridorX >= blocker.x + blocker.width,
+    `the climb corridor clears the blocker, got x ${corridorX}`,
+  );
 });
 
 test("left, bottom, and top stub fallbacks clamp to their nearest neighbor", () => {
@@ -649,6 +777,45 @@ test("left, bottom, and top stub fallbacks clamp to their nearest neighbor", () 
     [topNeighbor],
   ).path)[1]![1]);
   assert.deepEqual(topYs, [-4, -16], "top stubs stay inside the 20px gap");
+});
+
+test("an incoming pill recenters inside a gap wide enough to hold it", () => {
+  const selected: StructureRect = { x: 200, y: 0, width: 100, height: 200 };
+  const leftNeighbor: StructureRect = { x: 0, y: 0, width: 50, height: 200 };
+  // Flush placement: pill right edge 8 inside the label gap, width 60.
+  const shift = incomingLeftLabelShift(
+    { left: 132, right: 192 },
+    selected,
+    [leftNeighbor],
+    1,
+  );
+
+  assert.equal(shift, -37, "the pill centers in the 150-wide gap: left 95, right 155");
+});
+
+test("an incoming pill keeps flush placement over a too-narrow gap", () => {
+  const selected: StructureRect = { x: 200, y: 0, width: 100, height: 200 };
+  const leftNeighbor: StructureRect = { x: 0, y: 0, width: 150, height: 200 };
+  const shift = incomingLeftLabelShift(
+    { left: 132, right: 192 },
+    selected,
+    [leftNeighbor],
+    1,
+  );
+
+  assert.equal(shift, 0, "60 + 2x8 clearance exceeds the 50-wide gap: keep and z-lift");
+});
+
+test("an incoming pill without a left neighbor never moves", () => {
+  const selected: StructureRect = { x: 200, y: 0, width: 100, height: 200 };
+  const offRow: StructureRect = { x: 0, y: 400, width: 100, height: 100 };
+
+  assert.equal(incomingLeftLabelShift({ left: 132, right: 192 }, selected, [], 1), 0);
+  assert.equal(
+    incomingLeftLabelShift({ left: 132, right: 192 }, selected, [offRow], 1),
+    0,
+    "frames outside the cross-axis span are not gap boundaries",
+  );
 });
 
 test("marker scale grows label offsets for low-zoom readability", () => {

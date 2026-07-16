@@ -43,6 +43,7 @@ import {
   type PreviewFocusState,
 } from "./editor-focus.js";
 import {
+  incomingLeftLabelShift,
   layoutStructureConnectors,
   routeStructureConnector,
   structureConnectorLabel,
@@ -567,9 +568,10 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       return;
     }
 
+    const selectedRect = boardLocalRect(selectedShell);
     const route = routeStructureConnector(
       connector.placement,
-      boardLocalRect(selectedShell),
+      selectedRect,
       boardLocalRect(farShell),
       markerScale,
       neighbors,
@@ -586,7 +588,20 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const box = label.getBBox();
     const paddingX = 4 * markerScale;
     const paddingY = 2 * markerScale;
-    labelBackground.setAttribute("x", String(box.x - paddingX));
+    // Incoming left-edge pills recenter inside the inter-frame gap when the
+    // measured pill fits with clearance; narrow gaps keep the flush anchor
+    // and rely on the layer's z-lift for readability.
+    const shift = connector.placement.direction === "incoming"
+        && connector.placement.side === "left"
+      ? incomingLeftLabelShift(
+        { left: box.x - paddingX, right: box.x + box.width + paddingX },
+        selectedRect,
+        neighbors,
+        markerScale,
+      )
+      : 0;
+    if (shift !== 0) label.setAttribute("x", String(route.label.x + shift));
+    labelBackground.setAttribute("x", String(box.x + shift - paddingX));
     labelBackground.setAttribute("y", String(box.y - paddingY));
     labelBackground.setAttribute("width", String(box.width + paddingX * 2));
     labelBackground.setAttribute("height", String(box.height + paddingY * 2));
