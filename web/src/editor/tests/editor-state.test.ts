@@ -247,6 +247,11 @@ test("decodes the complete fixed EditorState contract", () => {
   assert.equal(exampleTarget?.label, preview?.identity.example);
 
   assert.equal(state.render?.interactionGraph.protocol, "uhura-interaction-graph/0");
+  assert.equal(
+    state.render?.interactionGraph.entry,
+    "page:feed",
+    "the entry node roots the map view's navigation-depth columns",
+  );
   assert.equal(state.render?.interactionGraph.nodes[1]?.kind, "surface");
   assert.deepEqual(state.render?.interactionGraph.edges[0], {
     kind: "present",

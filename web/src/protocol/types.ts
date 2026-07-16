@@ -87,6 +87,8 @@ export interface InteractionGraphEdge {
  */
 export interface InteractionGraph {
   protocol: "uhura-interaction-graph/0";
+  /** The app's entry node (e.g. `page:feed`); absent in older snapshots. */
+  entry?: string;
   nodes: InteractionGraphNode[];
   edges: InteractionGraphEdge[];
 }

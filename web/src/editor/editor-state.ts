@@ -1170,6 +1170,9 @@ const interactionGraph = (value: unknown, path: string): InteractionGraph => {
   }
   return {
     protocol: INTERACTION_GRAPH_PROTOCOL,
+    // Older snapshots predate the entry field; the map layout falls back to
+    // the first page node, so the decoder stays lenient here.
+    ...(typeof object["entry"] === "string" ? { entry: object["entry"] } : {}),
     nodes: array(object["nodes"], `${path}.nodes`).map((item, index) => {
       const nodePath = `${path}.nodes[${index}]`;
       const node = record(item, nodePath);

@@ -212,6 +212,52 @@ export const layoutStructureConnectors = <T extends StructureConnector>(
   });
 };
 
+/**
+ * Map-view layout: EVERY structural connector draws at once, each anchored at
+ * its SOURCE frame — outgoing navigation exits the right edge, presents exit
+ * the bottom edge — with slots fanned per (source frame, edge) so siblings
+ * sharing an edge stay distinct. Deterministic in the connector list alone;
+ * geometry still comes from `routeStructureConnector` at draw time.
+ */
+export const layoutMapStructureConnectors = <T extends StructureConnector>(
+  connectors: readonly T[],
+): PlacedStructureConnector<T>[] => {
+  const classified = connectors
+    .map((connector) => ({
+      connector,
+      side: placementSide(connector.kind, "outgoing"),
+    }))
+    .sort((left, right) => compareStrings(
+      [left.connector.sourceId, left.connector.kind, left.connector.targetNode,
+        left.connector.event],
+      [right.connector.sourceId, right.connector.kind, right.connector.targetNode,
+        right.connector.event],
+    ));
+
+  const edgeKey = (entry: (typeof classified)[number]): string =>
+    JSON.stringify([entry.connector.sourceId, entry.side]);
+  const countByEdge = new Map<string, number>();
+  for (const entry of classified) {
+    countByEdge.set(edgeKey(entry), (countByEdge.get(edgeKey(entry)) ?? 0) + 1);
+  }
+  const usedByEdge = new Map<string, number>();
+  return classified.map((entry) => {
+    const slot = usedByEdge.get(edgeKey(entry)) ?? 0;
+    usedByEdge.set(edgeKey(entry), slot + 1);
+    return {
+      ...entry.connector,
+      placement: {
+        direction: "outgoing" as const,
+        side: entry.side,
+        slot,
+        slotCount: countByEdge.get(edgeKey(entry))!,
+        selectedId: entry.connector.sourceId,
+        farId: entry.connector.targetId,
+      },
+    };
+  });
+};
+
 export interface StructureRect {
   x: number;
   y: number;

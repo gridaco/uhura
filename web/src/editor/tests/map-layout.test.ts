@@ -1,0 +1,200 @@
+import assert from "node:assert/strict";
+
+import { test } from "vitest";
+
+import {
+  layoutInteractionMap,
+  MAP_COLUMN_GAP,
+  MAP_ROW_GAP,
+  MAP_SURFACE_GAP,
+  mapNodePreviewIds,
+  type MapGraph,
+} from "../map-layout.js";
+
+const PAGE = { width: 400, height: 900 };
+const SURFACE = { width: 400, height: 600 };
+
+const uniformSize = (nodeId: string): { width: number; height: number } =>
+  nodeId.startsWith("surface:") ? SURFACE : PAGE;
+
+/**
+ * Instagram-shaped fixture: feed is the entry, feed navigates to post and
+ * profile, profile navigates deeper to followers, orphan is unreachable, and
+ * the comments sheet is presented by feed first (then post).
+ */
+const instagramGraph = (): MapGraph => ({
+  entry: "page:feed",
+  nodes: [
+    { id: "page:orphan", kind: "page" },
+    { id: "page:feed", kind: "page" },
+    { id: "page:post", kind: "page" },
+    { id: "page:profile", kind: "page" },
+    { id: "page:followers", kind: "page" },
+    { id: "surface:comments-sheet", kind: "surface" },
+    { id: "command:feed.like", kind: "command" },
+    { id: "dynamic:opener", kind: "dynamic" },
+  ],
+  edges: [
+    { kind: "navigate", from: "page:feed", to: "page:post", event: "post-tapped" },
+    { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
+    { kind: "navigate", from: "page:feed", to: "page:profile", event: "author-tapped" },
+    { kind: "navigate", from: "page:profile", to: "page:followers", event: "followers-tapped" },
+    { kind: "navigate", from: "page:post", to: "page:feed", event: "tab-selected" },
+    { kind: "present", from: "page:post", to: "surface:comments-sheet", event: "comments-requested" },
+    { kind: "send-command", from: "page:feed", to: "command:feed.like", event: "like-toggled" },
+    { kind: "dismiss", from: "surface:comments-sheet", to: "dynamic:opener", event: "dismiss-requested" },
+  ],
+});
+
+test("columns are navigation depth from the entry page", () => {
+  const positions = layoutInteractionMap(instagramGraph(), uniformSize);
+
+  assert.equal(positions.get("page:feed")?.column, 0);
+  assert.equal(positions.get("page:post")?.column, 1);
+  assert.equal(positions.get("page:profile")?.column, 1);
+  assert.equal(positions.get("page:followers")?.column, 2);
+  assert.deepEqual(
+    { x: positions.get("page:feed")?.x, y: positions.get("page:feed")?.y },
+    { x: 0, y: 0 },
+    "the entry anchors the map at the origin",
+  );
+});
+
+test("command and dynamic graph nodes never place", () => {
+  const positions = layoutInteractionMap(instagramGraph(), uniformSize);
+
+  assert.equal(positions.has("command:feed.like"), false);
+  assert.equal(positions.has("dynamic:opener"), false);
+  assert.equal(positions.size, 6, "five pages plus one surface");
+});
+
+test("column x advances by the widest member plus the column gap", () => {
+  const positions = layoutInteractionMap(instagramGraph(), (nodeId) =>
+    nodeId === "page:post" ? { width: 700, height: 900 } : uniformSize(nodeId));
+
+  assert.equal(positions.get("page:post")?.x, PAGE.width + MAP_COLUMN_GAP);
+  assert.equal(
+    positions.get("page:followers")?.x,
+    PAGE.width + MAP_COLUMN_GAP + 700 + MAP_COLUMN_GAP,
+    "column 2 clears column 1's widest frame",
+  );
+});
+
+test("cells in one column stack in BFS discovery order with the row gap", () => {
+  const positions = layoutInteractionMap(instagramGraph(), uniformSize);
+
+  assert.equal(positions.get("page:post")?.y, 0, "post is discovered before profile");
+  assert.equal(positions.get("page:profile")?.y, PAGE.height + MAP_ROW_GAP);
+});
+
+test("a surface hangs below its first presenter by edge order", () => {
+  const positions = layoutInteractionMap(instagramGraph(), uniformSize);
+  const feed = positions.get("page:feed")!;
+  const sheet = positions.get("surface:comments-sheet")!;
+
+  assert.equal(sheet.column, feed.column, "feed presents the sheet before post does");
+  assert.equal(sheet.x, feed.x);
+  assert.equal(sheet.y, feed.y + PAGE.height + MAP_SURFACE_GAP);
+});
+
+test("several surfaces under one page stack with the surface gap", () => {
+  const graph = instagramGraph();
+  const stacked: MapGraph = {
+    ...graph,
+    nodes: [...graph.nodes, { id: "surface:share-sheet", kind: "surface" }],
+    edges: [
+      ...graph.edges,
+      { kind: "present", from: "page:feed", to: "surface:share-sheet", event: "share-tapped" },
+    ],
+  };
+  const positions = layoutInteractionMap(stacked, uniformSize);
+
+  assert.equal(
+    positions.get("surface:share-sheet")?.y,
+    PAGE.height + MAP_SURFACE_GAP + SURFACE.height + MAP_SURFACE_GAP,
+  );
+  assert.equal(
+    positions.get("page:orphan")?.y,
+    0,
+    "surfaces below feed never push other columns down",
+  );
+});
+
+test("unreachable pages land in a final column, sorted by name", () => {
+  const graph = instagramGraph();
+  const twoOrphans: MapGraph = {
+    ...graph,
+    nodes: [...graph.nodes, { id: "page:admin", kind: "page" }],
+  };
+  const positions = layoutInteractionMap(twoOrphans, uniformSize);
+
+  assert.equal(positions.get("page:orphan")?.column, 3, "one past the deepest reachable page");
+  assert.equal(positions.get("page:admin")?.column, 3);
+  assert.equal(positions.get("page:admin")?.y, 0, "admin sorts before orphan");
+  assert.equal(positions.get("page:orphan")?.y, PAGE.height + MAP_ROW_GAP);
+});
+
+test("a surface no page presents joins the trailing column after pages", () => {
+  const graph = instagramGraph();
+  const detached: MapGraph = {
+    ...graph,
+    edges: graph.edges.filter((edge) => edge.kind !== "present"),
+  };
+  const positions = layoutInteractionMap(detached, uniformSize);
+
+  assert.equal(positions.get("surface:comments-sheet")?.column, 3);
+  assert.equal(
+    positions.get("surface:comments-sheet")?.y,
+    PAGE.height + MAP_ROW_GAP,
+    "the trailing column lists unreachable pages first",
+  );
+});
+
+test("a missing or unknown entry falls back to the first page node", () => {
+  const graph = instagramGraph();
+  const withoutEntry: MapGraph = { ...graph, entry: undefined };
+  const positions = layoutInteractionMap(withoutEntry, uniformSize);
+
+  assert.equal(positions.get("page:orphan")?.column, 0, "the first page node becomes the root");
+  assert.equal(positions.get("page:feed")?.column, 1, "everything else is unreachable from it");
+
+  const unknownEntry: MapGraph = { ...graph, entry: "page:nope" };
+  assert.equal(layoutInteractionMap(unknownEntry, uniformSize).get("page:orphan")?.column, 0);
+});
+
+test("duplicate and self navigate edges never distort depth", () => {
+  const graph = instagramGraph();
+  const noisy: MapGraph = {
+    ...graph,
+    edges: [
+      { kind: "navigate", from: "page:feed", to: "page:feed", event: "refresh" },
+      { kind: "navigate", from: "page:feed", to: "page:post", event: "post-tapped" },
+      ...graph.edges,
+    ],
+  };
+  const positions = layoutInteractionMap(noisy, uniformSize);
+
+  assert.equal(positions.get("page:feed")?.column, 0);
+  assert.equal(positions.get("page:post")?.column, 1);
+});
+
+test("an empty graph lays out nothing", () => {
+  const positions = layoutInteractionMap({ nodes: [], edges: [] }, uniformSize);
+  assert.equal(positions.size, 0);
+});
+
+test("mapNodePreviewIds picks each definition's first preview", () => {
+  const ids = mapNodePreviewIds(instagramGraph().nodes, [
+    { id: "component/button/default", identity: { kind: "component", subject: "button" } },
+    { id: "page/feed/base", identity: { kind: "page", subject: "feed" } },
+    { id: "page/feed/extra", identity: { kind: "page", subject: "feed" } },
+    { id: "surface/comments-sheet/open", identity: { kind: "surface", subject: "comments-sheet" } },
+    { id: "page/post/default", identity: { kind: "page", subject: "post" } },
+  ]);
+
+  assert.deepEqual([...ids], [
+    ["page:feed", "page/feed/base"],
+    ["page:post", "page/post/default"],
+    ["surface:comments-sheet", "surface/comments-sheet/open"],
+  ], "definitions without previews (profile, followers, orphan) are absent");
+});

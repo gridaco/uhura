@@ -1,0 +1,193 @@
+/**
+ * Pure layout for the editor's Map view: one node per page/surface in the
+ * checked interaction graph, positioned BY the graph rather than by example
+ * grouping. Columns are navigation depth (BFS from the app's entry page over
+ * `navigate` edges), surfaces hang below the page that presents them, and
+ * pages the entry can't reach land in a final trailing column. Everything is
+ * deterministic in (graph, sizes) — no DOM, no randomness.
+ */
+
+/** The graph subset the map layout reads (a structural InteractionGraph). */
+export interface MapGraph {
+  entry?: string;
+  nodes: ReadonlyArray<{ id: string; kind: string }>;
+  edges: ReadonlyArray<{ kind: string; from: string; to: string; event: string }>;
+}
+
+export interface MapNodeSize {
+  width: number;
+  height: number;
+}
+
+export interface MapNodePosition {
+  x: number;
+  y: number;
+  /** Navigation depth; unreachable nodes share the final column. */
+  column: number;
+}
+
+/** Horizontal gap between navigation-depth columns, board units. */
+export const MAP_COLUMN_GAP = 180;
+/** Vertical gap between page cells stacked in one column, board units. */
+export const MAP_ROW_GAP = 120;
+/** Vertical gap between a page and the surfaces it presents, board units. */
+export const MAP_SURFACE_GAP = 64;
+
+/**
+ * BFS from the entry page over `navigate` edges between pages, discovering
+ * neighbors in edge order. Returns pages in discovery order with their depth.
+ * A missing or unknown entry falls back to the graph's first page node so the
+ * map never degenerates to a single unreachable pile.
+ */
+const pageDepths = (
+  pages: readonly string[],
+  edges: MapGraph["edges"],
+  entry: string | undefined,
+): Map<string, number> => {
+  const pageSet = new Set(pages);
+  const neighbors = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (edge.kind !== "navigate") continue;
+    if (!pageSet.has(edge.from) || !pageSet.has(edge.to) || edge.from === edge.to) continue;
+    const list = neighbors.get(edge.from) ?? [];
+    neighbors.set(edge.from, [...list, edge.to]);
+  }
+  const start = entry !== undefined && pageSet.has(entry) ? entry : pages[0];
+  const depths = new Map<string, number>();
+  if (start === undefined) return depths;
+  depths.set(start, 0);
+  const queue = [start];
+  for (let index = 0; index < queue.length; index += 1) {
+    const page = queue[index]!;
+    for (const next of neighbors.get(page) ?? []) {
+      if (depths.has(next)) continue;
+      depths.set(next, depths.get(page)! + 1);
+      queue.push(next);
+    }
+  }
+  return depths;
+};
+
+/**
+ * The page each surface hangs below: the source of its first `present` edge
+ * (in edge order) whose presenter is a page. Surfaces nothing presents — or
+ * only other surfaces present — return undefined and fall to the last column.
+ */
+const surfaceOpeners = (
+  surfaces: readonly string[],
+  pages: readonly string[],
+  edges: MapGraph["edges"],
+): Map<string, string> => {
+  const pageSet = new Set(pages);
+  const surfaceSet = new Set(surfaces);
+  const openers = new Map<string, string>();
+  for (const edge of edges) {
+    if (edge.kind !== "present") continue;
+    if (!surfaceSet.has(edge.to) || !pageSet.has(edge.from)) continue;
+    if (!openers.has(edge.to)) openers.set(edge.to, edge.from);
+  }
+  return openers;
+};
+
+/** One column cell: a page (or orphan surface) plus its attached surfaces. */
+interface MapCell {
+  head: string;
+  surfaces: string[];
+}
+
+/**
+ * Positions every page/surface node of the graph. Columns run left to right
+ * by navigation depth from the entry (unreachable pages, then orphan
+ * surfaces, in a final name-sorted column); within a column, cells stack in
+ * BFS discovery order. Nodes are keyed by graph id; `sizeOf` supplies each
+ * node's rendered footprint so columns clear their widest member.
+ */
+export const layoutInteractionMap = (
+  graph: MapGraph,
+  sizeOf: (nodeId: string) => MapNodeSize,
+): Map<string, MapNodePosition> => {
+  const pages = graph.nodes.filter((node) => node.kind === "page").map((node) => node.id);
+  const surfaces = graph.nodes.filter((node) => node.kind === "surface").map((node) => node.id);
+  const depths = pageDepths(pages, graph.edges, graph.entry);
+  const openers = surfaceOpeners(surfaces, pages, graph.edges);
+
+  const reachable = [...depths.keys()];
+  const reachableDepth = reachable.reduce((max, page) => Math.max(max, depths.get(page)!), 0);
+  const unreachablePages = pages.filter((page) => !depths.has(page)).sort();
+  const orphanSurfaces = surfaces.filter((surface) => !openers.has(surface)).sort();
+  const trailing = [...unreachablePages, ...orphanSurfaces];
+  const trailingColumn = reachable.length > 0 ? reachableDepth + 1 : 0;
+
+  const columnOf = (head: string): number => depths.get(head) ?? trailingColumn;
+  const heads: string[] = [...reachable, ...trailing];
+
+  const cells = new Map<string, MapCell>(
+    heads.map((head) => [head, { head, surfaces: [] }]),
+  );
+  for (const surface of surfaces) {
+    const opener = openers.get(surface);
+    if (opener === undefined) continue;
+    cells.get(opener)?.surfaces.push(surface);
+  }
+
+  const columns = new Map<number, MapCell[]>();
+  for (const head of heads) {
+    const column = columnOf(head);
+    const list = columns.get(column) ?? [];
+    columns.set(column, [...list, cells.get(head)!]);
+  }
+
+  const columnIndexes = [...columns.keys()].sort((left, right) => left - right);
+  const positions = new Map<string, MapNodePosition>();
+  let x = 0;
+  for (const column of columnIndexes) {
+    const columnCells = columns.get(column)!;
+    let y = 0;
+    let columnWidth = 0;
+    for (const [cellIndex, cell] of columnCells.entries()) {
+      if (cellIndex > 0) y += MAP_ROW_GAP;
+      const headSize = sizeOf(cell.head);
+      positions.set(cell.head, { x, y, column });
+      columnWidth = Math.max(columnWidth, headSize.width);
+      y += headSize.height;
+      for (const surface of cell.surfaces) {
+        y += MAP_SURFACE_GAP;
+        const surfaceSize = sizeOf(surface);
+        positions.set(surface, { x, y, column });
+        columnWidth = Math.max(columnWidth, surfaceSize.width);
+        y += surfaceSize.height;
+      }
+    }
+    x += columnWidth + MAP_COLUMN_GAP;
+  }
+  return positions;
+};
+
+/**
+ * Maps `page:`/`surface:` graph nodes to the first board preview of the same
+ * definition — the frame the Map view shows for that node. Mirrors the
+ * structure-connector frame resolution so every drawn edge lands on a map
+ * node. Nodes without a preview are absent (the map shows a placeholder).
+ */
+export const mapNodePreviewIds = (
+  nodes: MapGraph["nodes"],
+  previews: ReadonlyArray<{
+    id: string;
+    identity: { kind: string; subject: string };
+  }>,
+): Map<string, string> => {
+  const byNode = new Map<string, string>();
+  for (const preview of previews) {
+    const kind = preview.identity.kind;
+    if (kind !== "page" && kind !== "surface") continue;
+    const nodeId = `${kind}:${preview.identity.subject}`;
+    if (!byNode.has(nodeId)) byNode.set(nodeId, preview.id);
+  }
+  const ids = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.kind !== "page" && node.kind !== "surface") continue;
+    const previewId = byNode.get(node.id);
+    if (previewId !== undefined) ids.set(node.id, previewId);
+  }
+  return ids;
+};

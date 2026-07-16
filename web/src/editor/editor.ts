@@ -45,12 +45,19 @@ import {
 } from "./editor-focus.js";
 import {
   incomingLeftLabelShift,
+  layoutMapStructureConnectors,
   layoutStructureConnectors,
   routeStructureConnector,
   structureDefinitionNode,
   visibleStructureConnectors,
   type PlacedStructureConnector,
 } from "./structure-connectors.js";
+import {
+  layoutInteractionMap,
+  mapNodePreviewIds,
+  type MapNodeSize,
+} from "./map-layout.js";
+import type { InteractionGraphNode } from "../protocol/types.js";
 import {
   roundedStructurePath,
   shouldReplayStructureDraw,
@@ -80,6 +87,13 @@ type ActiveStructureConnector = PlacedStructureConnector<PreparedStructureConnec
 /** Font size of structure labels in marker units (constant on-screen size). */
 const STRUCTURE_LABEL_FONT = 11;
 const STRUCTURE_MARKER_SCALE_MAX = 8;
+
+/** Viewport padding when the camera fits the whole map, screen pixels. */
+const MAP_FIT_PADDING = 72;
+/** Map node footprints when measurement is unavailable, board units. */
+const MAP_PAGE_FALLBACK: MapNodeSize = { width: 392, height: 920 };
+const MAP_SURFACE_FALLBACK: MapNodeSize = { width: 392, height: 636 };
+const MAP_PLACEHOLDER_FALLBACK: MapNodeSize = { width: 300, height: 180 };
 
 interface Point {
   x: number;
@@ -132,6 +146,7 @@ interface EditorShell {
   zoomOutput: HTMLButtonElement;
   zoomInButton: HTMLButtonElement;
   focusSelectionButton: HTMLButtonElement;
+  mapToggleButton: HTMLButtonElement;
   sourceDrawerButton: HTMLButtonElement;
   focusHeader: HTMLElement;
   exitFocusButton: HTMLButtonElement;
@@ -217,6 +232,7 @@ const SHELL_HTML = `
         <button class="canvas-tool stroke zoom-in" type="button" aria-label="Zoom in" title="Zoom in"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 8h9M8 3.5v9"></path></svg></button>
         <span class="tool-divider" aria-hidden="true"></span>
         <button class="canvas-tool stroke focus-selection" type="button" aria-label="Center selected preview" title="Center selected preview" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"></path></svg></button>
+        <button class="canvas-tool stroke map-toggle" type="button" aria-label="Toggle map view" aria-pressed="false" title="Map view: one node per page, arranged by app flow" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><circle cx="3.4" cy="8" r="1.9"></circle><circle cx="12.6" cy="3.6" r="1.9"></circle><circle cx="12.6" cy="12.4" r="1.9"></circle><path d="m5.15 7.16 5.7-2.72M5.15 8.84l5.7 2.72"></path></svg></button>
         <button class="canvas-tool stroke source-drawer-toggle" type="button" aria-label="Open Source documentation" aria-controls="editor-source-drawer" aria-expanded="false" aria-keyshortcuts="Y" title="Source documentation (Y)"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.5h7.5L13 5v8.5H3zM10.5 2.5V5H13M5.5 8h5M5.5 10.5h5"></path></svg></button>
       </div>
       <div class="editor-board"><section class="empty-board"><h2>Starting Editor</h2><p>Loading static previews…</p></section></div>
@@ -308,6 +324,7 @@ const buildShell = (root: HTMLElement): EditorShell => {
     zoomOutput: required(shell, ".canvas-zoom"),
     zoomInButton: required(shell, ".zoom-in"),
     focusSelectionButton: required(shell, ".focus-selection"),
+    mapToggleButton: required(shell, ".map-toggle"),
     sourceDrawerButton: required(shell, ".source-drawer-toggle"),
     focusHeader: required(shell, ".focus-header"),
     exitFocusButton: required(shell, ".focus-exit"),
@@ -471,6 +488,15 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   let lastStructureDrawPreviewId: string | null = null;
   let pendingStructureDraw = false;
   let hoveredStructureConnector: ActiveStructureConnector | null = null;
+  // Map view: the board rearranged BY the interaction graph — one frame per
+  // page/surface definition, all structural arrows up at once. The prepared
+  // model is shared with the example board; map mode only repositions.
+  let mapMode = false;
+  let mapReturnCamera: { x: number; y: number; scale: number } | null = null;
+  let mapPlaceholderByNode = new Map<string, HTMLElement>();
+  let mapNodeFrameIds = new Set<string>();
+  let mapPreviewIdByNode = new Map<string, string>();
+  let mapStructureConnectors: ActiveStructureConnector[] = [];
   let annotationLayerVisible = true;
   let destroyed = false;
   let retryTimer: number | undefined;
@@ -634,14 +660,24 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     model.connectorLayer.setAttribute("height", String(boardRect.height / scale));
     for (const connector of model.connectors) layoutConnector(connector);
     const markerScale = Math.min(Math.max(1 / scale, 1), STRUCTURE_MARKER_SCALE_MAX);
-    // All active structural connectors share the clicked frame, so the
-    // neighbor obstacle rects are measured once per layout pass.
-    const selectedId = activeStructureConnectors[0]?.placement.selectedId;
-    const structureNeighbors = selectedId === undefined
-      ? []
-      : structureNeighborRects(selectedId);
-    for (const connector of activeStructureConnectors) {
-      layoutStructureConnector(connector, markerScale, structureNeighbors);
+    if (mapMode) {
+      // Map connectors anchor at their own source frames, so the shared
+      // obstacle set is every visible map node; each route drops its own
+      // endpoints. Hidden example frames measure 0×0 and must not qualify.
+      const mapObstacles = mapObstacleRects();
+      for (const connector of activeStructureConnectors) {
+        layoutStructureConnector(connector, markerScale, mapObstacles);
+      }
+    } else {
+      // All active structural connectors share the clicked frame, so the
+      // neighbor obstacle rects are measured once per layout pass.
+      const selectedId = activeStructureConnectors[0]?.placement.selectedId;
+      const structureNeighbors = selectedId === undefined
+        ? []
+        : structureNeighborRects(selectedId);
+      for (const connector of activeStructureConnectors) {
+        layoutStructureConnector(connector, markerScale, structureNeighbors);
+      }
     }
     // Draw-in classes attach here — one animation frame after the selection
     // pass stripped any previous is-drawing class — so a replay reliably
@@ -979,6 +1015,12 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   const revealPreviewFlow = (previewId: string): void => {
     const selected = model.frameById.get(previewId);
     if (!selected) return;
+    // Replay connectors are hidden on the map (and connect hidden example
+    // frames), so map reveals center the node itself.
+    if (mapMode) {
+      revealElement(selected);
+      return;
+    }
     const active = model.connectors.filter((connector) =>
       connector.sourceId === previewId || connector.targetId === previewId);
     if (active.length === 0) {
@@ -1016,6 +1058,218 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     applyCamera();
   };
 
+  // --- Map view ------------------------------------------------------------
+  // Map mode swaps the example-grouped board for a graph-derived layout: the
+  // first preview frame of every page/surface definition, positioned by
+  // navigation depth (map-layout.ts), with every structural edge drawn at
+  // once. Toggling is pure presentation over the same prepared model — no
+  // reload, and Board mode DOM is restored exactly on the way back.
+
+  const mapFallbackSize = (nodeId: string): MapNodeSize => {
+    if (mapPlaceholderByNode.has(nodeId)) return MAP_PLACEHOLDER_FALLBACK;
+    return nodeId.startsWith("surface:") ? MAP_SURFACE_FALLBACK : MAP_PAGE_FALLBACK;
+  };
+
+  /** A dashed stand-in card for a graph node without any preview frame. */
+  const buildMapPlaceholder = (node: InteractionGraphNode): HTMLElement => {
+    const figure = document.createElement("figure");
+    figure.className = "editor-frame is-map-node map-placeholder";
+    figure.dataset.mapNode = node.id;
+    const card = document.createElement("div");
+    card.className = "preview-shell map-card";
+    const kind = document.createElement("span");
+    kind.className = "map-card-kind";
+    kind.textContent = node.kind;
+    const name = document.createElement("strong");
+    name.className = "map-card-name";
+    name.textContent = node.label;
+    const hint = document.createElement("span");
+    hint.className = "map-card-hint";
+    hint.textContent = "No preview in this snapshot";
+    card.append(kind, name, hint);
+    figure.append(card);
+    return figure;
+  };
+
+  const teardownMapDom = (): void => {
+    shell.board.classList.remove("is-map-mode");
+    model.connectorLayer.classList.remove("is-map-mode");
+    shell.board.style.removeProperty("width");
+    shell.board.style.removeProperty("height");
+    for (const frame of model.frameById.values()) {
+      frame.classList.remove("is-map-node");
+      frame.style.removeProperty("left");
+      frame.style.removeProperty("top");
+    }
+    for (const placeholder of mapPlaceholderByNode.values()) placeholder.remove();
+    mapPlaceholderByNode = new Map();
+    mapNodeFrameIds = new Set();
+    mapPreviewIdByNode = new Map();
+    mapStructureConnectors = [];
+  };
+
+  const applyMapLayout = (): void => {
+    const render = model.render;
+    if (!render) return;
+    for (const placeholder of mapPlaceholderByNode.values()) placeholder.remove();
+    mapPlaceholderByNode = new Map();
+    const graph = render.interactionGraph;
+    const frames = mapNodePreviewIds(graph.nodes, render.previews);
+    mapPreviewIdByNode = frames;
+    mapNodeFrameIds = new Set(frames.values());
+    shell.board.classList.add("is-map-mode");
+    model.connectorLayer.classList.add("is-map-mode");
+    const elementByNode = new Map<string, HTMLElement>();
+    for (const node of graph.nodes) {
+      if (node.kind !== "page" && node.kind !== "surface") continue;
+      const previewId = frames.get(node.id);
+      const frame = previewId === undefined ? undefined : model.frameById.get(previewId);
+      if (frame) {
+        frame.classList.add("is-map-node");
+        elementByNode.set(node.id, frame);
+        continue;
+      }
+      const placeholder = buildMapPlaceholder(node);
+      shell.board.append(placeholder);
+      mapPlaceholderByNode.set(node.id, placeholder);
+      elementByNode.set(node.id, placeholder);
+    }
+    // Nodes are measured AFTER the mode class flips so the map CSS (absolute
+    // frames, hidden example rows) governs the measured footprint.
+    const sizeOf = (nodeId: string): MapNodeSize => {
+      const element = elementByNode.get(nodeId);
+      const width = element?.offsetWidth ?? 0;
+      const height = element?.offsetHeight ?? 0;
+      return width > 0 && height > 0 ? { width, height } : mapFallbackSize(nodeId);
+    };
+    const positions = layoutInteractionMap(graph, sizeOf);
+    let width = 0;
+    let height = 0;
+    for (const [nodeId, position] of positions) {
+      const element = elementByNode.get(nodeId);
+      if (!element) continue;
+      element.style.left = `${position.x}px`;
+      element.style.top = `${position.y}px`;
+      const size = sizeOf(nodeId);
+      width = Math.max(width, position.x + size.width);
+      height = Math.max(height, position.y + size.height);
+    }
+    // With the flow content hidden the board box no longer tracks the map;
+    // explicit extents keep hit-testing and layer sizing over every node.
+    shell.board.style.width = `${width}px`;
+    shell.board.style.height = `${height}px`;
+    mapStructureConnectors = layoutMapStructureConnectors(model.structureConnectors);
+  };
+
+  /** Every visible map node's shell, as routing obstacles for the arrows. */
+  const mapObstacleRects = (): Rect[] => {
+    const shells: Element[] = [];
+    for (const id of mapNodeFrameIds) {
+      const frameShell = model.frameById.get(id)
+        ?.querySelector<HTMLElement>(":scope > .preview-shell");
+      if (frameShell) shells.push(frameShell);
+    }
+    for (const placeholder of mapPlaceholderByNode.values()) {
+      const cardShell = placeholder.querySelector<HTMLElement>(":scope > .preview-shell");
+      if (cardShell) shells.push(cardShell);
+    }
+    return shells.map(boardLocalRect);
+  };
+
+  /**
+   * Re-arms the full structural set after any selection pass: in map mode
+   * every arrow stays up (selection only dims unrelated ones), and every
+   * pill reads source-relative (`event → target`).
+   */
+  const activateMapStructureConnectors = (): void => {
+    activeStructureConnectors = mapStructureConnectors;
+    if (mapStructureConnectors.length === 0) return;
+    model.connectorLayer.classList.add("has-structure");
+    for (const connector of mapStructureConnectors) {
+      connector.element.classList.add("is-active");
+      connector.element.classList.remove("is-incoming", "is-map-dimmed");
+      connector.element.dataset.direction = "outgoing";
+      connector.element.dataset.edge = connector.placement.side;
+      connector.element.dataset.slot =
+        `${connector.placement.slot + 1}/${connector.placement.slotCount}`;
+      const label = connector.element
+        .querySelector<SVGTextElement>(".workflow-connector-label");
+      if (label) renderStructureConnectorLabel(label, connector, "outgoing");
+    }
+  };
+
+  /** Fits the camera around every map node, measured in world coordinates. */
+  const fitMapCamera = (): void => {
+    // The camera model owns all panning via the board transform; any native
+    // scroll smuggled onto the viewport (e.g. browser scroll-on-focus) would
+    // shift every measured rect, so it resets before the fit measures.
+    shell.viewport.scrollLeft = 0;
+    shell.viewport.scrollTop = 0;
+    const elements = [
+      ...[...mapNodeFrameIds].flatMap((id) => {
+        const frame = model.frameById.get(id);
+        return frame ? [frame] : [];
+      }),
+      ...mapPlaceholderByNode.values(),
+    ];
+    if (elements.length === 0) return;
+    const rects = elements.map(frameWorldRect);
+    const minX = Math.min(...rects.map((rect) => rect.x));
+    const minY = Math.min(...rects.map((rect) => rect.y));
+    const width = Math.max(1, Math.max(...rects.map((rect) => rect.x + rect.width)) - minX);
+    const height = Math.max(1, Math.max(...rects.map((rect) => rect.y + rect.height)) - minY);
+    scale = clampScale(Math.min(
+      1,
+      (shell.viewport.clientWidth - MAP_FIT_PADDING) / width,
+      (shell.viewport.clientHeight - MAP_FIT_PADDING) / height,
+    ));
+    x = shell.viewport.clientWidth / 2 - (minX + width / 2) * scale;
+    y = shell.viewport.clientHeight / 2 - (minY + height / 2) * scale;
+    applyCamera();
+  };
+
+  /**
+   * The frame a selection lands on in map mode: previews whose frame the map
+   * hides (later examples of a definition) resolve to their definition's map
+   * node, so navigator clicks always select something visible.
+   */
+  const mapSelectionTargetId = (previewId: string): string => {
+    if (mapNodeFrameIds.has(previewId)) return previewId;
+    const preview = model.previewById.get(previewId);
+    if (!preview) return previewId;
+    return mapPreviewIdByNode.get(structureDefinitionNode(preview.identity)) ?? previewId;
+  };
+
+  const setMapMode = (next: boolean): void => {
+    if (next === mapMode || (next && !model.render)) return;
+    if (next && focusState) leavePreviewFocus(false);
+    mapMode = next;
+    shell.mapToggleButton.setAttribute("aria-pressed", String(next));
+    if (next) {
+      mapReturnCamera = { x, y, scale };
+      applyMapLayout();
+    } else {
+      teardownMapDom();
+    }
+    // Re-run the selection pipeline under the new mode: map mode re-arms the
+    // full structural set, Board mode restores selection-scoped arrows.
+    lastStructureDrawPreviewId = null;
+    const selectedId = previewIdForIdentity(model, selectedIdentity);
+    if (selectedId) selectPreview(selectedId, false);
+    else clearSelection();
+    if (next) {
+      fitMapCamera();
+      pendingStructureDraw = activeStructureConnectors.length > 0;
+      requestConnectors();
+    } else if (mapReturnCamera) {
+      x = mapReturnCamera.x;
+      y = mapReturnCamera.y;
+      scale = mapReturnCamera.scale;
+      mapReturnCamera = null;
+      applyCamera();
+    }
+  };
+
   const clearSelectionDom = (): void => {
     for (const frame of model.frameById.values()) {
       frame.classList.remove("is-selected", "is-related", "is-connector-hover");
@@ -1025,11 +1279,20 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.board.classList.remove("is-spotlight");
     model.connectorLayer.classList.remove("has-selection", "has-structure");
     for (const connector of [...model.connectors, ...model.structureConnectors]) {
-      connector.element.classList.remove("is-active", "is-incoming", "is-drawing", "is-hovered");
+      connector.element.classList.remove(
+        "is-active",
+        "is-incoming",
+        "is-drawing",
+        "is-hovered",
+        "is-map-dimmed",
+      );
     }
     hoveredStructureConnector = null;
     pendingStructureDraw = false;
     activeStructureConnectors = [];
+    // The map's structural arrows are mode state, not selection state: any
+    // selection reset immediately re-arms the full set.
+    if (mapMode) activateMapStructureConnectors();
     shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]").forEach((button) => {
       button.setAttribute("aria-pressed", "false");
       button.removeAttribute("aria-current");
@@ -1293,6 +1556,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   };
 
   const selectPreview = (previewId: string, reveal = false): void => {
+    if (mapMode) previewId = mapSelectionTargetId(previewId);
     const preview = model.previewById.get(previewId);
     const frame = model.frameById.get(previewId);
     if (!preview || !frame) return;
@@ -1310,6 +1574,28 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         ? connector.targetId
         : connector.sourceId;
       model.frameById.get(relatedId)?.classList.add("is-related");
+    }
+    if (mapMode) {
+      // Map mode keeps every structural arrow up (re-armed by the clear pass
+      // above) and spotlights the clicked definition: its arrows keep full
+      // strength while unrelated ones fade back with their frames.
+      const selectedNode = structureDefinitionNode(preview.identity);
+      let relatedCount = 0;
+      for (const connector of mapStructureConnectors) {
+        const related = connector.sourceNode === selectedNode
+          || connector.targetNode === selectedNode;
+        connector.element.classList.toggle("is-map-dimmed", !related);
+        if (!related) continue;
+        relatedCount += 1;
+        const farId = connector.sourceNode === selectedNode
+          ? connector.targetId
+          : connector.sourceId;
+        model.frameById.get(farId)?.classList.add("is-related");
+      }
+      shell.board.classList.toggle("is-spotlight", relatedCount > 0);
+      lastStructureDrawPreviewId = previewId;
+      finishPreviewSelection(previewId, preview, reveal);
+      return;
     }
     // Structural connectors are selection-scoped: only the arrows entering
     // or leaving the selected preview's definition draw, anchored at the
@@ -1361,6 +1647,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       }
       model.frameById.get(connector.placement.farId)?.classList.add("is-related");
     }
+    finishPreviewSelection(previewId, preview, reveal);
+  };
+
+  function finishPreviewSelection(
+    previewId: string,
+    preview: EditorPreview,
+    reveal: boolean,
+  ): void {
     requestConnectors();
     const navigatorButton = Array.from(
       shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]"),
@@ -1372,11 +1666,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     }
     renderInspector(preview);
     if (reveal) revealPreviewFlow(previewId);
-  };
+  }
 
   const focusPreview = (previewId: string): void => {
     const preview = model.previewById.get(previewId);
     if (!preview || !model.frameById.has(previewId)) return;
+    // Focus is an example-board affordance: it isolates one preview, which
+    // has no meaning on the map. Entering focus returns to Board first.
+    if (mapMode) setMapMode(false);
     focusState = enterPreviewFocus(focusState, preview.identity, { x, y, scale });
     syncFocusPresentation();
     selectPreview(previewId, false);
@@ -1429,6 +1726,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
   const renderOverview = (render: EditorRender | null): void => {
     const previews = render?.previews ?? [];
+    shell.mapToggleButton.disabled = !render;
     shell.navigatorApplication.textContent = render?.application.name ?? "Uhura";
     shell.navigatorCount.textContent = `${render?.groups.length ?? 0} groups`;
     shell.overviewApplication.textContent = render?.application.name ?? "Uhura";
@@ -1568,6 +1866,20 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     model = nextModel;
     setAnnotationConnectorsHidden(model.connectorLayer, !annotationLayerVisible);
     disposePreparedEditorModel(previousModel);
+    // A live update replaces the board wholesale, dropping the previous map
+    // DOM with it. Map mode re-derives its layout over the fresh model before
+    // the selection pipeline below re-arms the arrows; losing the render
+    // (invalid save) falls back to the example board's empty state.
+    if (mapMode) {
+      if (model.render) {
+        applyMapLayout();
+      } else {
+        mapMode = false;
+        mapReturnCamera = null;
+        shell.mapToggleButton.setAttribute("aria-pressed", "false");
+        teardownMapDom();
+      }
+    }
     annotationOverlay.install({
       render: nextModel.render,
       authoring: nextModel.authoring,
@@ -1669,6 +1981,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const selectedId = previewIdForIdentity(model, selectedIdentity);
     if (selectedId) revealPreviewFlow(selectedId);
   });
+  listen(shell.mapToggleButton, "click", () => setMapMode(!mapMode));
   listen(shell.exitFocusButton, "click", () => leavePreviewFocus());
   listen(shell.sourceDrawerButton, "click", () => {
     setSourceDrawer(shell.sourceDrawer.hasAttribute("hidden"), true);

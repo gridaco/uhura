@@ -7,6 +7,7 @@ import type { EditorPreview, PreviewKind } from "../editor-state.js";
 import {
   buildStructureConnectors,
   incomingLeftLabelShift,
+  layoutMapStructureConnectors,
   layoutStructureConnectors,
   routeStructureConnector,
   structureConnectorDescription,
@@ -824,4 +825,52 @@ test("marker scale grows label offsets for low-zoom readability", () => {
 
   assert.equal(route.path, "M 100 100 L 200 100 L 200 90 L 300 90", "geometry stays put");
   assert.deepEqual(route.label, { x: 132, y: 100, anchor: "start" });
+});
+
+test("map layout places every connector outgoing from its source frame", () => {
+  const connectors = buildStructureConnectors(graph([
+    { kind: "navigate", from: "page:feed", to: "page:profile", event: "author-tapped" },
+    { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
+    { kind: "navigate", from: "page:profile", to: "page:feed", event: "home-tapped" },
+  ]), boardPreviews);
+  const placed = layoutMapStructureConnectors(connectors);
+
+  assert.equal(placed.length, 3, "map mode scopes nothing out");
+  for (const connector of placed) {
+    assert.equal(connector.placement.direction, "outgoing");
+    assert.equal(connector.placement.selectedId, connector.sourceId);
+    assert.equal(connector.placement.farId, connector.targetId);
+  }
+  const bySignature = new Map(placed.map((connector) =>
+    [`${connector.sourceNode}>${connector.targetNode}`, connector.placement]));
+  assert.equal(bySignature.get("page:feed>page:profile")?.side, "right");
+  assert.equal(bySignature.get("page:profile>page:feed")?.side, "right");
+  assert.equal(
+    bySignature.get("page:feed>surface:comments-sheet")?.side,
+    "bottom",
+    "presents leave the presenting page's bottom edge",
+  );
+});
+
+test("map layout fans slots per source frame edge, deterministically", () => {
+  const connectors = buildStructureConnectors(graph([
+    { kind: "navigate", from: "page:feed", to: "page:settings", event: "settings-tapped" },
+    { kind: "navigate", from: "page:feed", to: "page:profile", event: "author-tapped" },
+    { kind: "present", from: "page:feed", to: "surface:comments-sheet", event: "comments-requested" },
+    { kind: "navigate", from: "page:profile", to: "page:feed", event: "home-tapped" },
+  ]), boardPreviews);
+  const placed = layoutMapStructureConnectors(connectors);
+
+  const slots = placed.map((connector) => [
+    connector.sourceNode,
+    connector.targetNode,
+    connector.placement.side,
+    `${connector.placement.slot + 1}/${connector.placement.slotCount}`,
+  ]);
+  assert.deepEqual(slots, [
+    ["page:feed", "page:profile", "right", "1/2"],
+    ["page:feed", "page:settings", "right", "2/2"],
+    ["page:feed", "surface:comments-sheet", "bottom", "1/1"],
+    ["page:profile", "page:feed", "right", "1/1"],
+  ], "sorted by source frame, kind, far node, event; slots count per edge");
 });

@@ -380,6 +380,36 @@ export const EDITOR_STYLES = `
      inter-frame gaps; annotations (z-index 40) stay on top, and without a
      structural selection replay connectors keep their below-frame stacking. */
   .workflow-connectors.has-structure { z-index: 3; }
+  /* Map view: the board becomes the app's interaction map — example rows and
+     replay arrows step aside, one absolutely positioned frame per
+     page/surface definition remains, and every structural edge draws at
+     once. Selection dims unrelated arrows instead of hiding them. */
+  .editor-board.is-map-mode > .preview-row,
+  .editor-board.is-map-mode .row-frames { display: contents; }
+  .editor-board.is-map-mode .row-title { display: none; }
+  .editor-board.is-map-mode .editor-frame { position: absolute; margin: 0; }
+  .editor-board.is-map-mode .editor-frame:not(.is-map-node) { display: none; }
+  .workflow-connectors.is-map-mode .workflow-connector { display: none; }
+  .workflow-connectors.is-map-mode .structure-connector.is-map-dimmed { opacity: .35; }
+  .map-placeholder .map-card {
+    inline-size: 300px;
+    block-size: 180px;
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: 6px;
+    padding: 20px;
+    border-style: dashed;
+    background: #fbfbfd;
+  }
+  .map-card-kind {
+    font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #68717d;
+  }
+  .map-card-name { font-size: 15px; color: #16181c; }
+  .map-card-hint { font-size: 11px; color: #9aa3ad; }
   /* Draw-in: strokes sweep from the origin over ~240ms in deterministic slot
      order; arrowheads, origin dots, and pills fade in over the second half.
      The whole block is gated on prefers-reduced-motion. */
