@@ -1,141 +1,125 @@
 # `<icon>`
 
-- **Status:** Implemented element; family and provisioning model undecided
+- **Status:** Implemented element; font-only realization selected for pre-v1
 - **Document type:** Capability
 - **Primary form:** Element
-- **Facets:** None
-- **Availability:** Built-in base catalog; currently project-pinned during incubation
-- **Decision:** Current spike convenience; no accepted widget RFC
+- **Facets:** [Icon font](../integrations/icon-font.md)
+- **Availability:** Built-in default family and local font families planned
+- **Decision:** Before v1, `<icon>` is realized only through an icon font
 - **Specification:** Pre-specification
-- **Implementation:** Checked semantic token and browser realization implemented
-- **Owners:** Checker, Core, Renderer
+- **Implementation:** Checked semantic token implemented; font resource pipeline pending
+- **Owners:** Checker, Core, Host, Renderer
 - **Supported renderers:** Browser Editor and Play
 
-`<icon>` names a glyph from the active element catalog. It is a system-defined
-catalog element, not a user-authored component and not an SVG container.
+`<icon>` requests a named glyph from a configured icon-font family. It is a
+system-defined content element, not a user-authored component, SVG container,
+text node, or Unicode escape hatch.
 
-Whether Uhura should permanently have a first-class icon element remains open.
-The current element is practical implementation evidence, not a decision to
-standardize one icon family, one asset format, or one provisioning mechanism.
+The pre-v1 contract is deliberately narrow:
 
-## The language-design tension
+- one font file and one checked name-to-codepoint map define a local family;
+- source uses human-readable glyph names, never characters or codepoints;
+- an omitted family selects the project default;
+- variants such as filled or outlined glyphs are distinct names;
+- concrete font data remains outside Core and semantic protocols; and
+- custom SVG, raster, native-symbol, ligature, and remote-registry sources are
+  not supported.
 
-At the most fundamental level, an icon is visual geometry. A sufficiently
-expressive UI language could expose only an SVG-shaped primitive and let an
-author draw or import any glyph. That approach is language-honest: the source
-states the actual vector content and Uhura does not pretend that `heart` or
-`home` has universal geometry.
+This is the bedrock contract for the current implementation phase. It does not
+decide whether v1 retains font-only realization or later admits an authored
+`<svg>` primitive or other icon resources.
 
-Practical UI systems often add an icon abstraction anyway. A short checked
-token can provide:
-
-- a coherent visual set by default;
-- validation and completion over known names;
-- concise source for common prototype actions;
-- consistent color, sizing, and variant behavior;
-- one renderer-neutral request that a web, native, or terminal renderer can
-  realize differently; and
-- a stable seam for theme or platform substitution.
-
-Flutter's themed icon vocabulary is evidence for that tradeoff, not proof that
-Uhura should copy its ownership model. Uhura is a language with deterministic
-IR and multiple renderer boundaries, so choosing a glyph family in compiler or
-Core code would accidentally make presentation data part of the language.
-
-The narrow current meaning is therefore:
-
-> `<icon name="x" />` requests the active renderer's glyph for the checked
-> catalog token `x`.
-
-It does not promise SVG, a font codepoint, a particular family, or a semantic
-label.
-
-## Current semantic contract
+## Semantic contract
 
 ```uhura
 <button label="Like">
   <icon name="heart" />
 </button>
+
+<icon family="brand" name="logo" />
 ```
 
-| Contract | Current behavior |
+| Contract | Pre-v1 behavior |
 |---|---|
 | Class | `content` |
-| Children | None |
-| `name` | Required token from the active catalog's closed icon set |
+| `family` | Optional literal icon-family name; omission selects the project default |
+| `name` | Required checked glyph name from the selected family |
 | `class` | Universal, CSS-owned class list |
+| Children | None |
 | Events | None |
 | Accessibility | Always decorative and hidden from the accessibility tree |
-| Semantic value | The checked `name` token only |
+| Semantic value | Normalized `{ family, name }` token only |
 
-Literal unknown names are checker errors with a nearest-name suggestion when
-one exists. An expression bound to `name` must have the catalog icon-token
-type. Source cannot expand the set by writing a new string.
+`family` must be a quoted literal before v1. A dynamic family would make the
+valid type of `name` depend on runtime state and is intentionally unsupported.
 
-The current project-pinned base catalog contains these eighteen names:
+`name` may be a checked expression when every possible value belongs to the
+selected family's closed glyph map:
 
-```text
-home, search, plus, reels, profile,
-heart, heart-filled, comment, close, back,
-grid, layers, video-off, progress,
-bookmark, bookmark-filled, chevron-left, chevron-right
+```uhura
+<icon name={if liked then "heart-fill" else "heart"} />
 ```
 
-This is the current spike/base-catalog vocabulary; not every name is used by
-the Instagram markup. It is not an accepted taxonomy, a selected public
-family, or a promise that future base catalogs use these exact tokens.
+There is no portable `variant`, `weight`, `style`, `size`, or `color`
+property. A family may publish names such as `heart`, `heart-fill`, and
+`heart-duotone`, but suffixes have no language-defined meaning. Size and color
+remain CSS-owned.
 
-## Ownership invariant
+Unknown families and glyph names are checker errors. Missing font coverage is
+a build/resource error. Neither condition permits a silent circle, tofu glyph,
+system-font fallback, or substitution with a different meaningful icon.
 
-Uhura's semantic layers may carry and validate the icon token. They must not
-own its concrete drawing.
+## Project integration
 
-The following data is renderer, provider, or resource-pack data and must not
-be synthesized or owned by Uhura Core, checked program IR, semantic view
-snapshots, checkpoints, traces, or the native Editor read model:
+The project topology, manifest syntax, glyph-map format, locking, and font
+requirements are defined by the [Icon font integration](../integrations/icon-font.md).
 
-- SVG paths, shapes, view boxes, and paint commands;
-- font files, family names, codepoints, ligatures, and font-feature settings;
-- platform-symbol identifiers;
-- raster glyph assets; and
-- icon-family variant tables.
+The shortest form requires no configuration:
 
-This invariant applies to hard-coded or bundled icon families and every
-token-to-glyph mapping. A built-in family, an `icons.toml` manifest, font
-icons, and native symbols all require the same separation: semantic source
-names the request; the selected renderer resource realizes it.
+```uhura
+<icon name="heart" />
+```
 
-A future authored `<svg>` or vector primitive is a different contract. Its
-author-supplied geometry could legitimately be semantic source and appear in
-checked IR or Editor data. This rule does not prohibit such a primitive; it
-prohibits `<icon>` family geometry from masquerading as language or engine
-data.
+It resolves through Uhura's Foundation-provided default family. A local family
+is selected explicitly:
 
-A future host may transport an explicitly selected project resource pack as
-opaque renderer input. That is different from the compiler or Editor model
-containing a hard-coded glyph family.
+```uhura
+<icon family="brand" name="logo" />
+```
 
-### Corrected implementation boundary
+There is no `use icons` declaration. Family paths belong to `uhura.toml`, and
+the literal `family` property already makes a non-default dependency explicit.
 
-The original spike violated this boundary by hard-coding SVG commands in
-`uhura-editor-model`, serializing them in `EditorState`, and republishing the
-same table from the native host for Play.
+## Ownership
 
-That geometry now lives only in the shared browser renderer as an explicitly
-provisional table. Editor and Play receive the same semantic `name` token and
-resolve it locally. `uhura-editor-state/2` no longer contains icon commands,
-and Play no longer fetches a native `/api/play/icons.json` artifact. Runtime
-`uhura-ir/0` and `uhura-view/0` did not change because they already carried
-only the token.
+The semantic layers may carry and validate only the logical family and glyph
+name. They must not own or serialize:
 
-The relocated table preserves the spike's appearance. Its location makes it a
-browser default, not language law.
+- font paths or bytes;
+- CSS font-family names or generated `@font-face` rules;
+- Unicode codepoints, ligatures, glyph indices, or OpenType tables;
+- token-to-codepoint mappings;
+- SVG paths, command tables, or other fallback geometry; or
+- Foundation-family build inputs.
+
+After checking, omission is normalized:
+
+```text
+<icon name="heart" />
+        ↓
+{ family: "phosphor", name: "heart" }
+```
+
+That token may appear in Core IR and semantic views. The corresponding
+codepoint map and font remain an opaque, content-addressed renderer resource
+served by the host. Font geometry changes therefore change resource pins, not
+Core hashes or replay.
 
 ## Accessibility
 
-The current `<icon>` is decorative-only. The browser renderer always applies
-`aria-hidden="true"`; the token is never exposed as an accessible name and the
-element is never focusable or interactive.
+`<icon>` is decorative-only before v1. The browser renderer applies
+`aria-hidden="true"`; the glyph is not focusable, selectable, or exposed as an
+accessible name.
 
 Meaning belongs to the containing control:
 
@@ -145,100 +129,83 @@ Meaning belongs to the containing control:
 </button>
 ```
 
-`name="profile"` must not become the button's label. Token spelling is
-developer vocabulary, may be family-specific, and is not necessarily suitable
-for people or localization.
+The glyph name must never become the button label. It is developer vocabulary,
+may be family-specific, and is not localized human-readable text.
 
-A standalone meaningful-icon contract would require an explicit accessible
-name, role, localization behavior, and composition rules. It is not part of
-the current element.
+A meaningful standalone icon would require an explicit accessible-name,
+localization, role, and composition contract. It is deferred beyond pre-v1.
 
-## Rendering and fallback
+## Rendering
 
-The browser currently creates a `currentColor` SVG with a 24 by 24 default
-size from its provisional renderer table. That mapping is an implementation
-detail. Another renderer may use a font glyph, native symbol, raster resource,
-or different vector geometry while honoring the same checked token.
+A conforming pre-v1 renderer resolves the checked `{ family, name }` token to
+exactly one codepoint in the pinned icon font. The browser converts that scalar
+internally and renders it with a content-addressed font-family name. Pre-v1
+icons are monochrome font outlines whose paint follows inherited color.
 
-CSS may override the host element and SVG's layout, size, color, and
-surrounding presentation. There are currently no portable `size`, `color`,
-`weight`, `fill`, or `variant` properties.
+The renderer must:
 
-The browser uses a generic circular placeholder if its renderer table lacks a
-checked token. This prevents broken DOM but is not an accepted semantic
-fallback. A durable design must decide whether missing realization is a build
-error, renderer capability diagnostic, explicit placeholder, or negotiated
-fallback. It must never silently substitute a different meaningful glyph.
+- load no fallback font;
+- use `currentColor` and inherited CSS font sizing;
+- use `font-synthesis: none` and disable ligatures;
+- keep the glyph decorative and non-selectable; and
+- report font-load or mapping failures explicitly.
 
-## Why `<icon>` is not `<text>`
+Although the renderer ultimately emits a font character, source and semantic
+artifacts never contain that character. `<icon>` remains distinct from
+`<text>`: text carries human-readable content and participates in reading
+order; an icon carries a closed developer token and is always decorative.
 
-A font-backed renderer may implement an icon with a glyph, but that does not
-make the semantic element text. `<text>` carries human-readable content,
-participates in reading order, and may require localization. The current
-`<icon>` carries a closed developer token, is always decorative, and delegates
-its visual representation to the renderer.
+## Current implementation gap
 
-Treating icon names as ordinary text or Unicode codepoints would leak one
-font's encoding into source and would make accessibility behavior accidental.
+The current browser renderer still contains a provisional hard-coded SVG
+command table so the Instagram spike keeps its existing appearance. Moving
+that table out of Rust, EditorState, and host protocols corrected an ownership
+violation, but it is not the accepted pre-v1 realization.
+
+The font implementation must replace that table and its generic-circle
+fallback, add `family`, and move name checking to the selected glyph map.
+Until then, the implementation is useful study evidence but does not conform
+to this font-only integration contract.
 
 ## Motion
 
-`<icon>` defines no motion. A future animated-icon or transition contract must
-specify state, interruption, reduced-motion behavior, and ownership separately.
-CSS animation applied by an author remains presentation and does not change
-the icon token's semantics.
+`<icon>` defines no motion. CSS animation remains presentation. A future
+animated-icon contract must define state, interruption, completion, and
+reduced-motion behavior separately.
 
 ## Conformance
 
-Current and future conformance coverage should include:
+Pre-v1 conformance requires tests proving that:
 
-- every current catalog token checks and survives into the semantic view as
-  only its name;
-- an unknown literal name is rejected with a useful diagnostic;
-- an invalid dynamic name type is rejected;
-- missing `name`, children, and event bindings are rejected;
-- `<icon>` remains non-interactive and accessibility-hidden;
-- a labeled parent control retains its accessible name;
-- Editor and Play resolve the same token through the shared renderer policy;
-- renderer-owned glyph coverage matches the active provisional catalog;
-- a missing renderer glyph takes the deterministic fallback path;
-- no engine-owned SVG path, font codepoint, or glyph table appears in native
-  Editor state, semantic Play artifacts, Core IR, view snapshots, checkpoints,
-  or traces; and
-- changing renderer glyph geometry cannot change Core hashes or replay.
+- the configured default family is inserted when `family` is omitted;
+- an explicit family must be a known literal family;
+- every literal or finite dynamic `name` belongs to the selected glyph map;
+- missing names, font files, mappings, or codepoints are build errors;
+- Editor and Play use identical pinned font and glyph-map bytes;
+- font loading is deterministic and works offline;
+- no system-font, Unicode, SVG, or generic-shape fallback is used;
+- the element stays decorative and a labeled parent retains its name;
+- Core IR, semantic views, traces, replay, and EditorState contain only the
+  normalized `{ family, name }` token; and
+- changing font bytes cannot change Core hashes or replay.
 
-## Decisions and open questions
+## Deferred beyond pre-v1
 
-The following choices are intentionally unresolved:
+The narrow contract intentionally defers:
 
-1. Whether Uhura keeps `<icon>` at all or ultimately exposes only an SVG/vector
-   primitive.
-2. Whether names describe semantic concepts such as `back` or concrete family
-   glyphs such as a particular icon pack's identifier.
-3. Whether Uhura ships one default family, requires a project resource such as
-   `icons.toml`, accepts renderer/provider packs, or combines those layers.
-4. How a project pins family identity, version, license, and reproducible
-   assets.
-5. Whether names need namespaces and how collisions compose across packs.
-6. Whether fill, outline, weight, grade, optical size, and other variants are
-   tokens, properties, separate names, or renderer theme policy.
-7. Whether and how user-authored SVG or custom glyphs participate in the same
-   name space.
-8. Whether a meaningful standalone icon exists and what accessible-name
-   contract it requires.
-9. How renderers declare glyph coverage and what a portable missing-glyph
-   diagnostic or fallback looks like.
-10. Whether family selection belongs to the element catalog, a separate
-    resource manifest, project configuration, or host negotiation.
-
-No option above is implied by retaining the provisional browser table. Any
-future `<icon>` or other named-glyph abstraction must preserve the ownership
-invariant.
+- custom SVG and authored vector geometry;
+- variants, weights, styles, and variable-font axes as structured properties;
+- ligatures and multi-codepoint sequences;
+- raster and platform-native symbols;
+- remote registries and package resolution;
+- per-file icon imports or icon namespace values;
+- font subsetting and other distribution optimizations;
+- semantic aliases across families; and
+- meaningful standalone icons.
 
 Current implementation references:
 
-- [Base catalog names and element declaration](../../../examples/instagram/client/catalog/base.toml)
+- [Base catalog declaration](../../../examples/instagram/client/catalog/base.toml)
 - [Catalog and markup checking](../../../crates/uhura-check/src/markup.rs)
-- [Renderer-owned provisional glyph table](../../../web/src/renderer/icons.ts)
-- [Shared semantic element application](../../../web/src/renderer/appliers.ts)
+- [Provisional browser SVG table](../../../web/src/renderer/icons.ts)
 - [Editor state protocol](../../../web/src/editor/editor-state.ts)

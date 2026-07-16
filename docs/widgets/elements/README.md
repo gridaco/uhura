@@ -14,8 +14,9 @@ compatibility requirements.
   delivery; specialized control roles and some state semantics remain open.
 - [`<scroll>`](scroll.md) — explicit semantic viewport with renderer-owned
   physical position and pagination observation.
-- [`<icon>`](icon.md) — checked glyph token with renderer-owned realization;
-  the permanent family and provisioning model remains open.
+- [`<icon>`](icon.md) — checked decorative glyph token with a font-only
+  pre-v1 realization through the icon-font integration; the permanent v1
+  resource model remains open.
 - [`<img>`](img.md) — typed asset-backed image with an explicit informative or
   decorative choice and native browser realization; responsive sources and
   lifecycle state remain open.

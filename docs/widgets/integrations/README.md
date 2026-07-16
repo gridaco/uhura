@@ -9,4 +9,7 @@ Integration documents must make availability, capabilities, effects, privacy
 and security boundaries, fallback behavior, and offline or deterministic Editor
 representation explicit.
 
-No integrations are documented here yet.
+## Catalogue
+
+- [Icon font](icon-font.md) — pre-v1 font resource, glyph-name mapping,
+  validation, locking, and renderer contract for [`<icon>`](../elements/icon.md).

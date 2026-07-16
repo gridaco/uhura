@@ -87,11 +87,10 @@ const filled = (): IconPaint => ({ fill: "currentColor" });
  * it is not part of Uhura Core, EditorState, Play artifacts, or the language's
  * icon-family contract.
  *
- * FIXME(icon-design): Moving this table out of native engine/editor code fixes
- * the ownership violation only. A hard-coded renderer family is still not the
- * intended design. Do not treat this table or its names as Uhura's canonical
- * icon system; resolve the open family, provisioning, and fallback decisions
- * documented in `docs/widgets/elements/icon.md` before expanding it.
+ * FIXME(icon-font): Moving this table out of native engine/editor code fixes
+ * the ownership violation only. Replace it with the font-only pre-v1 resource
+ * pipeline documented in `docs/widgets/integrations/icon-font.md`; do not
+ * expand this table or treat its names as Uhura's canonical icon system.
  */
 export const PROVISIONAL_BROWSER_ICON_TABLE: IconTable = {
   home: icon(path(
