@@ -13,6 +13,8 @@ export const EDITOR_STYLES = `
     --hover: #f2f4f6;
     --accent: #0d99ff;
     --accent-soft: #e9f4ff;
+    --structure-navigate: #0f8a5f;
+    --structure-present: #0e8f86;
     position: fixed;
     inset: 0;
     overflow: hidden;
@@ -325,8 +327,8 @@ export const EDITOR_STYLES = `
      Incoming edges are muted so the selection's outgoing arrows dominate. */
   .structure-connector { display: none; }
   .structure-connector.is-active { display: inline; }
-  .structure-connector.structure-navigate { color: #0f8a5f; }
-  .structure-connector.structure-present { color: #0e8f86; }
+  .structure-connector.structure-navigate { color: var(--structure-navigate); }
+  .structure-connector.structure-present { color: var(--structure-present); }
   .structure-connector.structure-present .workflow-connector-path { stroke-dasharray: 6 4; }
   .structure-connector.is-incoming { opacity: .45; }
   .structure-connector .workflow-connector-label {
@@ -336,14 +338,68 @@ export const EDITOR_STYLES = `
   }
   .structure-connector-label-bg {
     fill: rgb(255 255 255 / 95%);
-    stroke: currentcolor;
+    stroke: color-mix(in srgb, currentcolor 70%, transparent);
     stroke-width: calc(var(--connector-stroke, 1.5px) * .667);
+  }
+  .structure-connector-pill {
+    filter: drop-shadow(0 var(--connector-stroke, 1.5px) calc(var(--connector-stroke, 1.5px) * 2) rgb(15 23 42 / 18%));
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: transform .12s ease, filter .12s ease;
+  }
+  .structure-label-far { font-weight: 750; }
+  /* Hover hits the drawn stroke and the label pill only — never the group's
+     whole bounding box; the surrounding layer stays pointer-transparent. */
+  .structure-connector.is-active .workflow-connector-path { pointer-events: stroke; }
+  .structure-connector.is-active .structure-connector-pill { pointer-events: auto; }
+  .structure-connector.is-active:is(:hover, .is-hovered) .workflow-connector-path {
+    stroke-width: calc(var(--connector-stroke, 1.5px) * 1.667);
+  }
+  .structure-connector.is-active:is(:hover, .is-hovered) {
+    filter: drop-shadow(0 0 calc(var(--connector-stroke, 1.5px) * 2.5) currentcolor);
+  }
+  .structure-connector.is-active:is(:hover, .is-hovered) .structure-connector-pill {
+    transform: scale(1.06);
+    filter: drop-shadow(0 calc(var(--connector-stroke, 1.5px) * 2) calc(var(--connector-stroke, 1.5px) * 4) rgb(15 23 42 / 30%));
+  }
+  /* Hovering a connector rings both endpoint frames in the connector color.
+     The ring hugs the shell border, composing with (never replacing) the
+     is-selected / is-related outlines drawn 4px further out. */
+  .editor-frame.is-connector-hover > .preview-shell {
+    box-shadow: 0 0 0 var(--selection-stroke, 2px) var(--structure-hover-color, var(--accent));
+  }
+  /* Spotlight: while structural arrows are up, unrelated frames step back so
+     the selected frame, its far endpoints, and the connectors carry the
+     board. Composes with is-selected/is-related and reverts on deselect. */
+  .editor-board.is-spotlight .editor-frame:not(.is-selected):not(.is-related) {
+    opacity: .45;
+    filter: grayscale(.4);
   }
   /* While structural arrows are active the connector layer paints above the
      preview rows (z-index 2) so label pills and arrowheads survive narrow
      inter-frame gaps; annotations (z-index 40) stay on top, and without a
      structural selection replay connectors keep their below-frame stacking. */
   .workflow-connectors.has-structure { z-index: 3; }
+  /* Draw-in: strokes sweep from the origin over ~240ms in deterministic slot
+     order; arrowheads, origin dots, and pills fade in over the second half.
+     The whole block is gated on prefers-reduced-motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes structure-draw {
+      from { stroke-dashoffset: calc(var(--structure-path-length, 0) * 1px); }
+      to { stroke-dashoffset: 0px; }
+    }
+    @keyframes structure-fade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .structure-connector.is-drawing .workflow-connector-path {
+      stroke-dasharray: calc(var(--structure-path-length, 0) * 1px);
+      animation: structure-draw 240ms ease-out var(--structure-draw-delay, 0ms) both;
+    }
+    .structure-connector.is-drawing :is(.workflow-connector-arrow, .workflow-connector-origin, .structure-connector-pill) {
+      animation: structure-fade 120ms ease-out calc(var(--structure-draw-delay, 0ms) + 120ms) both;
+    }
+  }
 
   .canvas-tools {
     position: absolute;
@@ -382,7 +438,7 @@ export const EDITOR_STYLES = `
   .preview-row { position: relative; z-index: 2; margin-block-end: 62px; }
   .row-title { margin: 0 0 14px; color: #626b76; font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
   .row-frames { display: flex; align-items: flex-start; gap: 32px; padding-block-start: var(--workflow-rail-height, 0); }
-  .editor-frame { flex: none; margin: 0; color: var(--ink); }
+  .editor-frame { flex: none; margin: 0; color: var(--ink); transition: opacity .15s ease, filter .15s ease; }
   .editor-frame.is-selected > .preview-shell,
   .editor-frame:focus-visible > .preview-shell { outline: var(--selection-stroke, 2px) solid var(--accent); outline-offset: var(--selection-offset, 4px); }
   .editor-frame:focus-visible { outline: none; }
@@ -390,7 +446,7 @@ export const EDITOR_STYLES = `
     outline: var(--selection-stroke, 2px) dashed color-mix(in srgb, var(--accent) 72%, transparent);
     outline-offset: var(--selection-offset, 4px);
   }
-  .preview-shell { position: relative; overflow: hidden; border: 1px solid rgb(26 35 47 / 16%); border-radius: 8px; color: #16181c; background: #fff; box-shadow: none; }
+  .preview-shell { position: relative; overflow: hidden; border: 1px solid rgb(26 35 47 / 16%); border-radius: 8px; color: #16181c; background: #fff; box-shadow: none; transition: box-shadow .12s ease; }
   .preview-shell.device { inline-size: 390px; block-size: 844px; }
   .preview-shell.sheet { inline-size: 390px; block-size: 560px; }
   .preview-shell.component { inline-size: 390px; min-block-size: 48px; background: #fff radial-gradient(circle, #d8d8de 1px, transparent 1px); background-size: 16px 16px; }

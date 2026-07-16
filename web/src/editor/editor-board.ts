@@ -27,9 +27,10 @@ import {
 import {
   buildStructureConnectors,
   type StructureConnector,
+  type StructureConnectorDirection,
   structureConnectorDescription,
-  structureConnectorLabel,
 } from "./structure-connectors.js";
+import { structureConnectorLabelSegments } from "./structure-presentation.js";
 
 export interface PreparedWorkflowConnector extends WorkflowConnector {
   element: SVGGElement;
@@ -109,6 +110,34 @@ const prepareWorkflowConnector = (
   return { ...connector, element: group };
 };
 
+/**
+ * Renders the pill text as segments: kind glyph + event at normal weight and
+ * the far endpoint's name as a slightly bolder tspan. The text element keeps
+ * its single-anchor counter-scaling behavior — only its children change.
+ */
+export const renderStructureConnectorLabel = (
+  label: SVGTextElement,
+  connector: Pick<
+    StructureConnector,
+    "kind" | "event" | "extraCount" | "sourceNode" | "targetNode"
+  >,
+  direction: StructureConnectorDirection = "outgoing",
+): void => {
+  const document = label.ownerDocument;
+  const segments = structureConnectorLabelSegments(connector, direction);
+  const lead = svgElement(document, "tspan");
+  lead.textContent = segments.lead;
+  const farName = svgElement(document, "tspan", "structure-label-far");
+  farName.textContent = segments.farName;
+  const children: SVGTSpanElement[] = [lead, farName];
+  if (segments.suffix) {
+    const suffix = svgElement(document, "tspan");
+    suffix.textContent = segments.suffix;
+    children.push(suffix);
+  }
+  label.replaceChildren(...children);
+};
+
 const prepareStructureConnector = (
   document: Document,
   connector: StructureConnector,
@@ -132,11 +161,14 @@ const prepareStructureConnector = (
   const origin = svgElement(document, "circle", "workflow-connector-origin");
   origin.setAttribute("r", "3");
   // The label pill: a rounded rect sized to the text at layout time so the
-  // event name stays readable over frames and connectors at any zoom.
+  // event name stays readable over frames and connectors at any zoom. Rect
+  // and text share one group so hover scaling lifts them together.
+  const pill = svgElement(document, "g", "structure-connector-pill");
   const labelBackground = svgElement(document, "rect", "structure-connector-label-bg");
   const label = svgElement(document, "text", "workflow-connector-label");
-  label.textContent = structureConnectorLabel(connector);
-  group.append(title, path, arrow, origin, labelBackground, label);
+  renderStructureConnectorLabel(label, connector);
+  pill.append(labelBackground, label);
+  group.append(title, path, arrow, origin, pill);
   return { ...connector, element: group };
 };
 

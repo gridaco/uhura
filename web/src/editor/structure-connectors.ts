@@ -679,7 +679,7 @@ export const incomingLeftLabelShift = (
 };
 
 /** The human name behind a `page:`/`surface:` graph node id. */
-const structureNodeName = (node: string): string =>
+export const structureNodeName = (node: string): string =>
   node.replace(/^(?:page|surface):/, "");
 
 /**

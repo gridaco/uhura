@@ -31,3 +31,27 @@ test("annotations-hidden removes replay connectors but never structural arrows",
     "structural selection arrows stay outside the annotation visibility toggle",
   );
 });
+
+test("the structural draw-in animation respects prefers-reduced-motion", () => {
+  const gate = EDITOR_STYLES.indexOf("@media (prefers-reduced-motion: no-preference)");
+  assert.ok(gate >= 0, "motion styles must be gated on a reduced-motion query");
+  assert.ok(
+    EDITOR_STYLES.indexOf("@keyframes structure-draw") > gate
+      && EDITOR_STYLES.indexOf("@keyframes structure-fade") > gate,
+    "every structure animation keyframe lives inside the motion gate",
+  );
+  assert.ok(
+    !EDITOR_STYLES.slice(0, gate).includes("animation: structure-"),
+    "no structure animation applies outside the motion gate",
+  );
+});
+
+test("spotlight dims only unrelated frames and hover hits stroke and pill only", () => {
+  assert.ok(EDITOR_STYLES.includes(
+    ".editor-board.is-spotlight .editor-frame:not(.is-selected):not(.is-related)",
+  ));
+  assert.ok(
+    EDITOR_STYLES.includes(".structure-connector.is-active .workflow-connector-path { pointer-events: stroke; }"),
+    "hover must hit the drawn stroke, never the group's whole bounding box",
+  );
+});

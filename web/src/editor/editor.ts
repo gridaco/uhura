@@ -14,6 +14,7 @@ import {
   prepareEditorModel,
   previewIdForIdentity,
   reconcilePreparedEditorModel,
+  renderStructureConnectorLabel,
   setAnnotationConnectorsHidden,
   watchPreparedEditorModel,
   type PreparedEditorModel,
@@ -46,11 +47,15 @@ import {
   incomingLeftLabelShift,
   layoutStructureConnectors,
   routeStructureConnector,
-  structureConnectorLabel,
   structureDefinitionNode,
   visibleStructureConnectors,
   type PlacedStructureConnector,
 } from "./structure-connectors.js";
+import {
+  roundedStructurePath,
+  shouldReplayStructureDraw,
+  structureDrawDelayMs,
+} from "./structure-presentation.js";
 import { sourceShortcutAction } from "./editor-shortcuts.js";
 import {
   EditorUpdateSession,
@@ -461,6 +466,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   // The selection-scoped structural subset, fanned around the clicked frame
   // only. Empty whenever nothing is selected (Figma behavior).
   let activeStructureConnectors: ActiveStructureConnector[] = [];
+  // Draw-in replays only when the SELECTED PREVIEW changes: relayouts of the
+  // same selection keep the arrows steady, deselect+reselect replays.
+  let lastStructureDrawPreviewId: string | null = null;
+  let pendingStructureDraw = false;
+  let hoveredStructureConnector: ActiveStructureConnector | null = null;
   let annotationLayerVisible = true;
   let destroyed = false;
   let retryTimer: number | undefined;
@@ -576,7 +586,16 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       markerScale,
       neighbors,
     );
-    path.setAttribute("d", route.path);
+    // Rounded corners are presentation-only: the routed waypoints (and hence
+    // the arrowhead, origin, and label anchors) never move.
+    path.setAttribute("d", roundedStructurePath(route.path));
+    // The draw-in dash sweep needs the rendered length; environments without
+    // SVG geometry (jsdom) fall back to 0, which the animation treats as a
+    // no-op rather than an error.
+    connector.element.style.setProperty(
+      "--structure-path-length",
+      String(typeof path.getTotalLength === "function" ? path.getTotalLength() : 0),
+    );
     arrow.setAttribute("d", route.arrow);
     origin.setAttribute("cx", String(route.origin.x));
     origin.setAttribute("cy", String(route.origin.y));
@@ -624,10 +643,46 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     for (const connector of activeStructureConnectors) {
       layoutStructureConnector(connector, markerScale, structureNeighbors);
     }
+    // Draw-in classes attach here — one animation frame after the selection
+    // pass stripped any previous is-drawing class — so a replay reliably
+    // restarts the sweep and the paths are already routed and measured.
+    if (pendingStructureDraw) {
+      pendingStructureDraw = false;
+      activeStructureConnectors.forEach((connector, index) => {
+        connector.element.style.setProperty(
+          "--structure-draw-delay",
+          `${structureDrawDelayMs(index)}ms`,
+        );
+        connector.element.classList.add("is-drawing");
+      });
+    }
   };
 
   const requestConnectors = (): void => {
     if (!connectorFrame) connectorFrame = window.requestAnimationFrame(layoutConnectors);
+  };
+
+  // Hovering a connector thickens its stroke and pill via CSS; this mirror
+  // state additionally rings both endpoint frames in the connector's color.
+  const setStructureHover = (next: ActiveStructureConnector | null): void => {
+    if (next === hoveredStructureConnector) return;
+    const previous = hoveredStructureConnector;
+    hoveredStructureConnector = next;
+    if (previous) {
+      previous.element.classList.remove("is-hovered");
+      for (const id of [previous.placement.selectedId, previous.placement.farId]) {
+        const frame = model.frameById.get(id);
+        frame?.classList.remove("is-connector-hover");
+        frame?.style.removeProperty("--structure-hover-color");
+      }
+    }
+    if (!next) return;
+    next.element.classList.add("is-hovered");
+    for (const id of [next.placement.selectedId, next.placement.farId]) {
+      const frame = model.frameById.get(id);
+      frame?.classList.add("is-connector-hover");
+      frame?.style.setProperty("--structure-hover-color", `var(--structure-${next.kind})`);
+    }
   };
 
   const setAnnotationLayerVisible = (visible: boolean): void => {
@@ -963,13 +1018,17 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
   const clearSelectionDom = (): void => {
     for (const frame of model.frameById.values()) {
-      frame.classList.remove("is-selected", "is-related");
+      frame.classList.remove("is-selected", "is-related", "is-connector-hover");
+      frame.style.removeProperty("--structure-hover-color");
       frame.setAttribute("aria-pressed", "false");
     }
+    shell.board.classList.remove("is-spotlight");
     model.connectorLayer.classList.remove("has-selection", "has-structure");
     for (const connector of [...model.connectors, ...model.structureConnectors]) {
-      connector.element.classList.remove("is-active", "is-incoming");
+      connector.element.classList.remove("is-active", "is-incoming", "is-drawing", "is-hovered");
     }
+    hoveredStructureConnector = null;
+    pendingStructureDraw = false;
     activeStructureConnectors = [];
     shell.navigatorResults.querySelectorAll<HTMLElement>("[data-preview-id]").forEach((button) => {
       button.setAttribute("aria-pressed", "false");
@@ -1208,6 +1267,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   const clearSelection = (): void => {
     clearSelectionDom();
     selectedIdentity = null;
+    // Deselecting arms the next selection's draw-in, even for the same frame.
+    lastStructureDrawPreviewId = null;
     annotationOverlay.activatePreviewOccurrences(null);
     const previewId = focusedPreviewId();
     const focusedPreview = previewId ? model.previewById.get(previewId) : null;
@@ -1267,6 +1328,15 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       "has-structure",
       activeStructureConnectors.length > 0,
     );
+    // Spotlight: unrelated frames step back while structural arrows are up.
+    shell.board.classList.toggle("is-spotlight", activeStructureConnectors.length > 0);
+    if (
+      activeStructureConnectors.length > 0
+      && shouldReplayStructureDraw(lastStructureDrawPreviewId, previewId)
+    ) {
+      pendingStructureDraw = true;
+    }
+    lastStructureDrawPreviewId = previewId;
     for (const connector of activeStructureConnectors) {
       connector.element.classList.add("is-active");
       connector.element.classList.toggle(
@@ -1283,8 +1353,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       const connectorLabel = connector.element
         .querySelector<SVGTextElement>(".workflow-connector-label");
       if (connectorLabel) {
-        connectorLabel.textContent =
-          structureConnectorLabel(connector, connector.placement.direction);
+        renderStructureConnectorLabel(
+          connectorLabel,
+          connector,
+          connector.placement.direction,
+        );
       }
       model.frameById.get(connector.placement.farId)?.classList.add("is-related");
     }
@@ -1653,6 +1726,30 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     focusPreview(frame.dataset.previewId);
     event.preventDefault();
   });
+  // Structural connector hover: only the drawn stroke and the label pill are
+  // pointer-interactive (CSS pointer-events), so delegation on the viewport
+  // fires exactly when the pointer is over one of those.
+  listen(shell.viewport, "pointerover", (event) => {
+    const group = closest<SVGGElement>(event.target, ".structure-connector.is-active");
+    setStructureHover(
+      group
+        ? activeStructureConnectors.find((connector) => connector.element === group) ?? null
+        : null,
+    );
+  });
+  listen(shell.viewport, "pointerout", (rawEvent) => {
+    const event = rawEvent as PointerEvent;
+    if (!hoveredStructureConnector) return;
+    const next = closest<SVGGElement>(event.relatedTarget, ".structure-connector.is-active");
+    if (next !== hoveredStructureConnector.element) setStructureHover(null);
+  });
+  // Once the draw-in sweep completes, drop the class so present connectors
+  // recover their dashed stroke and the next replay starts from a clean slate.
+  listen(shell.viewport, "animationend", (rawEvent) => {
+    const event = rawEvent as AnimationEvent;
+    if (event.animationName !== "structure-draw") return;
+    closest<SVGGElement>(event.target, ".structure-connector")?.classList.remove("is-drawing");
+  });
   listen(shell.viewport, "keydown", (rawEvent) => {
     const event = rawEvent as KeyboardEvent;
     const frame = closest<HTMLElement>(event.target, ".editor-frame[data-preview-id]");
@@ -1702,7 +1799,10 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       ".annotation-marker, .annotation-card",
     );
     const canvasTool = closest<HTMLElement>(event.target, ".canvas-tools");
-    if (event.button === 0 && !frame && !commentControl && !canvasTool) {
+    // A press on a structural connector's stroke or pill must not read as a
+    // press on empty stage — that would deselect and vanish the connector.
+    const structureConnector = closest<Element>(event.target, ".structure-connector");
+    if (event.button === 0 && !frame && !commentControl && !canvasTool && !structureConnector) {
       clearSelection();
       annotationOverlay.dismissCards();
       setSourceDrawer(false);
