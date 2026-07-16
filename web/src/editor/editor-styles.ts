@@ -335,6 +335,11 @@ export const EDITOR_STYLES = `
     stroke: currentcolor;
     stroke-width: calc(var(--connector-stroke, 1.5px) * .667);
   }
+  /* While structural arrows are active the connector layer paints above the
+     preview rows (z-index 2) so label pills and arrowheads survive narrow
+     inter-frame gaps; annotations (z-index 40) stay on top, and without a
+     structural selection replay connectors keep their below-frame stacking. */
+  .workflow-connectors.has-structure { z-index: 3; }
 
   .canvas-tools {
     position: absolute;

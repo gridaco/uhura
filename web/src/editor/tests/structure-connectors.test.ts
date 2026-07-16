@@ -428,6 +428,101 @@ test("incoming present arrives at the selected surface's top edge", () => {
   assert.deepEqual(route.label, { x: 56, y: -10, anchor: "start" });
 });
 
+/** The (x, y) waypoints of an orthogonal `M … L …` route path. */
+const pathPoints = (path: string): Array<[number, number]> =>
+  [...path.matchAll(/[ML] (-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)]
+    .map((match) => [Number(match[1]), Number(match[2])]);
+
+test("parallel rightward routes stagger their vertical corridor x per slot", () => {
+  const far: StructureRect = { x: 300, y: 0, width: 100, height: 100 };
+  const corridorXs = [0, 1, 2].map((slot) => {
+    const route = routeStructureConnector(
+      placement({ slot, slotCount: 3 }),
+      selectedRect,
+      far,
+    );
+    return pathPoints(route.path)[1]![0];
+  });
+
+  assert.deepEqual(
+    corridorXs,
+    [190, 200, 210],
+    "corridors spread symmetrically around the gap midpoint",
+  );
+  assert.equal(new Set(corridorXs).size, 3, "no two slots share a vertical x");
+});
+
+test("staggered corridors clamp inside a narrow inter-frame gap", () => {
+  const far: StructureRect = { x: 112, y: 0, width: 100, height: 100 };
+  const corridorXs = [0, 1, 2].map((slot) => {
+    const route = routeStructureConnector(
+      placement({ slot, slotCount: 3 }),
+      selectedRect,
+      far,
+    );
+    return pathPoints(route.path)[1]![0];
+  });
+
+  assert.ok(
+    corridorXs.every((x) => x > 100 && x < 112),
+    `every corridor stays inside the gap, got ${corridorXs.join(", ")}`,
+  );
+  assert.equal(new Set(corridorXs).size, 3, "clamping keeps the slots distinct");
+});
+
+test("a degenerate gap falls back to the shared midpoint corridor", () => {
+  const far: StructureRect = { x: 104, y: 0, width: 100, height: 100 };
+  const corridorXs = [0, 1].map((slot) => {
+    const route = routeStructureConnector(
+      placement({ slot, slotCount: 2 }),
+      selectedRect,
+      far,
+    );
+    return pathPoints(route.path)[1]![0];
+  });
+
+  assert.deepEqual(corridorXs, [102, 102], "too thin to stagger: both use the midpoint");
+});
+
+test("incoming left-edge routes stagger their corridor x per slot", () => {
+  const far: StructureRect = { x: -300, y: 0, width: 100, height: 100 };
+  const corridorXs = [0, 1].map((slot) => {
+    const route = routeStructureConnector(
+      placement({ direction: "incoming", side: "left", slot, slotCount: 2 }),
+      selectedRect,
+      far,
+    );
+    return pathPoints(route.path)[1]![0];
+  });
+
+  assert.deepEqual(corridorXs, [-105, -95]);
+  assert.equal(new Set(corridorXs).size, 2, "no two incoming slots share a vertical x");
+});
+
+test("bottom and top midpoint corridors stagger their y per slot", () => {
+  const below: StructureRect = { x: 0, y: 400, width: 100, height: 100 };
+  const bottomYs = [0, 1].map((slot) => {
+    const route = routeStructureConnector(
+      placement({ side: "bottom", slot, slotCount: 2 }),
+      selectedRect,
+      below,
+    );
+    return pathPoints(route.path)[1]![1];
+  });
+  assert.deepEqual(bottomYs, [295, 305]);
+
+  const above: StructureRect = { x: 0, y: -300, width: 100, height: 100 };
+  const topYs = [0, 1].map((slot) => {
+    const route = routeStructureConnector(
+      placement({ direction: "incoming", side: "top", slot, slotCount: 2 }),
+      { x: 0, y: 0, width: 100, height: 100 },
+      above,
+    );
+    return pathPoints(route.path)[1]![1];
+  });
+  assert.deepEqual(topYs, [-105, -95]);
+});
+
 test("marker scale grows label offsets for low-zoom readability", () => {
   const far: StructureRect = { x: 300, y: 40, width: 100, height: 100 };
   const route = routeStructureConnector(placement({}), selectedRect, far, 4);

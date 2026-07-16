@@ -237,6 +237,32 @@ const STRUCTURE_LABEL_GAP = 8;
 /** Vertical rhythm for labels stacked outside a horizontal edge. */
 const STRUCTURE_LABEL_STACK = 18;
 const STRUCTURE_ARROW_WIDTH = 4.5;
+/** Per-slot spread of a shared midpoint corridor, board units. */
+const STRUCTURE_CORRIDOR_STAGGER = 10;
+/** Clearance a staggered corridor keeps from either frame edge. */
+const STRUCTURE_CORRIDOR_CLEARANCE = 4;
+
+/**
+ * The turning corridor between two frame edges, staggered per fan slot so
+ * sibling routes through the same gap never share one vertical (or
+ * horizontal) line. The per-slot step shrinks when the gap is too narrow for
+ * the full stagger, keeping every slot distinct yet inside the gap; gaps too
+ * thin to stagger at all fall back to the shared midpoint.
+ */
+const staggeredCorridor = (
+  from: number,
+  to: number,
+  slot: number,
+  count: number,
+): number => {
+  const mid = (from + to) / 2;
+  const low = Math.min(from, to) + STRUCTURE_CORRIDOR_CLEARANCE;
+  const high = Math.max(from, to) - STRUCTURE_CORRIDOR_CLEARANCE;
+  if (low >= high || count <= 1) return mid;
+  const step = Math.min(STRUCTURE_CORRIDOR_STAGGER, (high - low) / (count - 1));
+  const offset = (slot - (count - 1) / 2) * step;
+  return Math.min(Math.max(mid + offset, low), high);
+};
 
 interface RoutePoint {
   x: number;
@@ -291,8 +317,9 @@ const arrowHead = (
 
 /**
  * Routes one placed structural connector between the CLICKED frame and the
- * far frame. Outgoing routes exit the selected edge and use the midpoint gap
- * between the frames as their turning corridor — no global lane stacking.
+ * far frame. Outgoing routes exit the selected edge and turn in the gap
+ * between the frames, staggered per fan slot around the gap midpoint so
+ * parallel siblings never bundle onto one line — no global lane stacking.
  * Arrowheads always sit at the target end; labels always sit just outside
  * the selected frame's edge so everything readable clusters at the click.
  * `markerScale` counter-scales arrowheads and label offsets so they keep a
@@ -315,10 +342,10 @@ export const routeStructureConnector = (
       anchor: "start" as const,
     };
     if (far.x >= start.x) {
-      // Target column is to the right: enter its left edge through the
-      // vertical corridor at the midpoint of the gap between the columns.
+      // Target column is to the right: enter its left edge through a
+      // slot-staggered vertical corridor in the gap between the columns.
       const end = { x: far.x, y: far.y + far.height / 2 };
-      const corridorX = (start.x + far.x) / 2;
+      const corridorX = staggeredCorridor(start.x, far.x, slot, slotCount);
       return {
         path: orthogonalPath([
           start,
@@ -354,7 +381,7 @@ export const routeStructureConnector = (
     const end = fanPoint(selected, "left", slot, slotCount);
     const exit = { x: far.x + far.width, y: far.y + far.height / 2 };
     const corridorX = exit.x <= selected.x
-      ? (exit.x + selected.x) / 2
+      ? staggeredCorridor(exit.x, selected.x, slot, slotCount)
       : selected.x - stagger;
     return {
       path: orthogonalPath([
@@ -377,7 +404,7 @@ export const routeStructureConnector = (
     const start = fanPoint(selected, "bottom", slot, slotCount);
     const end = { x: far.x + far.width / 2, y: far.y };
     const corridorY = far.y >= start.y + STRUCTURE_STUB * 2
-      ? (start.y + far.y) / 2
+      ? staggeredCorridor(start.y, far.y, slot, slotCount)
       : start.y + stagger;
     return {
       path: orthogonalPath([
@@ -399,7 +426,7 @@ export const routeStructureConnector = (
   const end = fanPoint(selected, "top", slot, slotCount);
   const exit = { x: far.x + far.width / 2, y: far.y + far.height };
   const corridorY = exit.y <= selected.y
-    ? (exit.y + selected.y) / 2
+    ? staggeredCorridor(exit.y, selected.y, slot, slotCount)
     : selected.y - stagger;
   return {
     path: orthogonalPath([

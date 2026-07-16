@@ -928,7 +928,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       frame.classList.remove("is-selected", "is-related");
       frame.setAttribute("aria-pressed", "false");
     }
-    model.connectorLayer.classList.remove("has-selection");
+    model.connectorLayer.classList.remove("has-selection", "has-structure");
     for (const connector of [...model.connectors, ...model.structureConnectors]) {
       connector.element.classList.remove("is-active", "is-incoming");
     }
@@ -1220,6 +1220,14 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     activeStructureConnectors = layoutStructureConnectors(
       visibleStructureConnectors(model.structureConnectors, preview.identity),
       { node: structureDefinitionNode(preview.identity), previewId },
+    );
+    // Active structural arrows lift the whole connector layer above the
+    // preview rows so edge label pills and arrowheads never clip behind a
+    // neighboring frame; without them the layer keeps its below-frame
+    // stacking for replay connectors.
+    model.connectorLayer.classList.toggle(
+      "has-structure",
+      activeStructureConnectors.length > 0,
     );
     for (const connector of activeStructureConnectors) {
       connector.element.classList.add("is-active");
