@@ -55,3 +55,31 @@ test("spotlight dims only unrelated frames and hover hits stroke and pill only",
     "hover must hit the drawn stroke, never the group's whole bounding box",
   );
 });
+
+test("map mode hides non-map frames and selection styling can never reveal them", () => {
+  assert.ok(
+    EDITOR_STYLES.includes(
+      ".editor-board.is-map-mode .editor-frame:not(.is-map-node) { display: none; }",
+    ),
+    "map mode must hide every frame that is not a map node",
+  );
+  // Selection and spotlight only dim or outline frames — neither touches
+  // `display`, so a selection carried across the mode flip cannot re-show
+  // the example frames the map hid.
+  const spotlight = EDITOR_STYLES.match(
+    /\.editor-board\.is-spotlight \.editor-frame[^{]*\{([^}]*)\}/,
+  )?.[1];
+  assert.ok(spotlight !== undefined, "spotlight rule must exist");
+  assert.ok(!spotlight.includes("display"), "spotlight must never set display");
+});
+
+test("the map toggle carries a visible text label affordance", () => {
+  assert.ok(
+    EDITOR_STYLES.includes(".canvas-tool.map-toggle"),
+    "the map toggle needs label-bearing styles",
+  );
+  assert.ok(
+    EDITOR_STYLES.includes(".map-toggle-label"),
+    "the visible Map label must be styled",
+  );
+});

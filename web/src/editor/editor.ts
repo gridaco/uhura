@@ -232,7 +232,7 @@ const SHELL_HTML = `
         <button class="canvas-tool stroke zoom-in" type="button" aria-label="Zoom in" title="Zoom in"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 8h9M8 3.5v9"></path></svg></button>
         <span class="tool-divider" aria-hidden="true"></span>
         <button class="canvas-tool stroke focus-selection" type="button" aria-label="Center selected preview" title="Center selected preview" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"></path></svg></button>
-        <button class="canvas-tool stroke map-toggle" type="button" aria-label="Toggle map view" aria-pressed="false" title="Map view: one node per page, arranged by app flow" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><circle cx="3.4" cy="8" r="1.9"></circle><circle cx="12.6" cy="3.6" r="1.9"></circle><circle cx="12.6" cy="12.4" r="1.9"></circle><path d="m5.15 7.16 5.7-2.72M5.15 8.84l5.7 2.72"></path></svg></button>
+        <button class="canvas-tool stroke map-toggle" type="button" aria-label="Toggle map view" aria-pressed="false" title="Map view: one node per page, arranged by app flow" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M1.75 3.9 5.9 2.4l4.2 1.5 4.15-1.5v9.7L10.1 13.6l-4.2-1.5-4.15 1.5zM5.9 2.4v9.7M10.1 3.9v9.7"></path></svg><span class="map-toggle-label">Map</span></button>
         <button class="canvas-tool stroke source-drawer-toggle" type="button" aria-label="Open Source documentation" aria-controls="editor-source-drawer" aria-expanded="false" aria-keyshortcuts="Y" title="Source documentation (Y)"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.5h7.5L13 5v8.5H3zM10.5 2.5V5H13M5.5 8h5M5.5 10.5h5"></path></svg></button>
       </div>
       <div class="editor-board"><section class="empty-board"><h2>Starting Editor</h2><p>Loading static previews…</p></section></div>
@@ -1245,28 +1245,29 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     if (next && focusState) leavePreviewFocus(false);
     mapMode = next;
     shell.mapToggleButton.setAttribute("aria-pressed", String(next));
+    // A mode flip resets selection through the same path as Escape / a click
+    // on empty stage, before the layout swap: entering or leaving the map
+    // yields one deterministic board no matter what was selected (no carried
+    // spotlight or inspector), and selection starts fresh on the new surface.
+    clearSelection();
     if (next) {
       mapReturnCamera = { x, y, scale };
       applyMapLayout();
-    } else {
-      teardownMapDom();
-    }
-    // Re-run the selection pipeline under the new mode: map mode re-arms the
-    // full structural set, Board mode restores selection-scoped arrows.
-    lastStructureDrawPreviewId = null;
-    const selectedId = previewIdForIdentity(model, selectedIdentity);
-    if (selectedId) selectPreview(selectedId, false);
-    else clearSelection();
-    if (next) {
+      // The map's structural arrows are mode state, not selection state:
+      // they arm as soon as the layout exists.
+      activateMapStructureConnectors();
       fitMapCamera();
       pendingStructureDraw = activeStructureConnectors.length > 0;
       requestConnectors();
-    } else if (mapReturnCamera) {
-      x = mapReturnCamera.x;
-      y = mapReturnCamera.y;
-      scale = mapReturnCamera.scale;
-      mapReturnCamera = null;
-      applyCamera();
+    } else {
+      teardownMapDom();
+      if (mapReturnCamera) {
+        x = mapReturnCamera.x;
+        y = mapReturnCamera.y;
+        scale = mapReturnCamera.scale;
+        mapReturnCamera = null;
+        applyCamera();
+      }
     }
   };
 

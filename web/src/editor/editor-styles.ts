@@ -463,6 +463,10 @@ export const EDITOR_STYLES = `
   .canvas-tool svg { inline-size: 16px; block-size: 16px; fill: currentColor; }
   .canvas-tool svg path[fill="none"], .canvas-tool.stroke svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
   .canvas-zoom { min-inline-size: 46px; padding-inline: 6px; color: #555e69; font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* The map toggle carries a visible text label: the icon alone read as a
+     generic "share" glyph and the mode was undiscoverable. */
+  .canvas-tool.map-toggle { inline-size: auto; grid-auto-flow: column; column-gap: 5px; padding-inline: 8px; }
+  .map-toggle-label { font-size: 11px; font-weight: 620; letter-spacing: .01em; }
   .tool-divider { inline-size: 1px; block-size: 20px; margin-inline: 3px; background: var(--border); }
 
   .preview-row { position: relative; z-index: 2; margin-block-end: 62px; }
