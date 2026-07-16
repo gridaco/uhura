@@ -4,7 +4,6 @@ import { test } from "vitest";
 import { createPlayAssets } from "../../renderer/play.js";
 
 class FakeElement {
-  readonly style = { backgroundImage: "" };
   readonly attributes = new Map<string, string>();
   loadCalls = 0;
 
@@ -29,8 +28,8 @@ class FakeElement {
   }
 }
 
-const asElement = (element: FakeElement): HTMLElement =>
-  element as unknown as HTMLElement;
+const asImage = (element: FakeElement): HTMLImageElement =>
+  element as unknown as HTMLImageElement;
 const asVideo = (element: FakeElement): HTMLVideoElement =>
   element as unknown as HTMLVideoElement;
 
@@ -44,14 +43,11 @@ test("fixture assets select an encoded JPEG or MP4 rendition by semantic slot", 
   const image = new FakeElement();
   const video = new FakeElement();
 
-  assets.applyImage(asElement(image), "still one");
+  assets.applyImage(asImage(image), "still one");
   assets.applyVideoPoster(asVideo(video), "poster/one");
   assets.applyVideoSource(asVideo(video), "clip/one");
 
-  assert.equal(
-    image.style.backgroundImage,
-    'url("/api/play/assets/still%20one.jpg")',
-  );
+  assert.equal(image.getAttribute("src"), "/api/play/assets/still%20one.jpg");
   assert.equal(video.getAttribute("poster"), "/api/play/assets/poster%2Fone.jpg");
   assert.equal(video.getAttribute("src"), "/api/play/assets/clip%2Fone.mp4");
 
@@ -61,11 +57,38 @@ test("fixture assets select an encoded JPEG or MP4 rendition by semantic slot", 
 
   assets.applyVideoSource(asVideo(video), undefined);
   assets.applyVideoPoster(asVideo(video), undefined);
-  assets.applyImage(asElement(image), undefined);
+  assets.applyImage(asImage(image), undefined);
   assert.equal(video.loadCalls, 2);
   assert.equal(video.hasAttribute("src"), false);
   assert.equal(video.hasAttribute("poster"), false);
-  assert.equal(image.style.backgroundImage, "");
+  assert.equal(image.hasAttribute("src"), false);
+});
+
+test("signed image resolution clears eagerly and ignores stale results", async () => {
+  const pending = new Map<string, (url: string) => void>();
+  const requested: string[] = [];
+  const assets = createPlayAssets(
+    (ref) =>
+      new Promise((resolve) => {
+        requested.push(ref);
+        pending.set(ref, resolve);
+      }),
+  );
+  const image = new FakeElement();
+
+  assets.applyImage(asImage(image), "old");
+  assets.applyImage(asImage(image), "new");
+  assert.equal(image.hasAttribute("src"), false);
+  await flushPromises();
+
+  pending.get("new")?.("https://media.example/new.jpg?token=a&part=1");
+  await flushPromises();
+  assert.equal(image.getAttribute("src"), "https://media.example/new.jpg?token=a&part=1");
+
+  pending.get("old")?.("https://media.example/stale.jpg");
+  await flushPromises();
+  assert.equal(image.getAttribute("src"), "https://media.example/new.jpg?token=a&part=1");
+  assert.deepEqual(requested, ["old", "new"]);
 });
 
 test("signed video source and poster resolutions are independent and stale-safe", async () => {

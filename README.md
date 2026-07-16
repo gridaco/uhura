@@ -82,6 +82,7 @@ cargo test --workspace
 - [`web/`](web/) — Editor and Play browser application.
 - [`examples/instagram/`](examples/instagram/) — full-stack Spock framework example.
 - [`docs/spec/`](docs/spec/) — living language specification.
+- [`docs/widgets/`](docs/widgets/) — widget catalogue and capability taxonomy.
 - [`docs/rfcs/`](docs/rfcs/) — accepted design decisions.
 - [`docs/working-group/`](docs/working-group/) — active design notes.
 
@@ -97,5 +98,6 @@ policy may change while the language and toolchain are being established.
 
 - [Documentation index and authority](docs/README.md)
 - [Living specification](docs/spec/README.md)
+- [Widget catalogue and taxonomy](docs/widgets/README.md)
 - [RFC index](docs/rfcs/README.md)
 - [Working group](docs/working-group/README.md)

@@ -6,7 +6,7 @@ import type {
   ScrollController,
   TextFieldController,
 } from "./contracts.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 import { createSemanticRenderer, findScope as findRendererScope } from "./reconciler.js";
 
 export interface PlayRendererOptions {
@@ -16,7 +16,8 @@ export interface PlayRendererOptions {
     data?: Record<string, unknown>,
     onApplied?: () => void,
   ): void;
-  icons: IconTable;
+  /** Host-loaded icon-font resource for this artifact generation. */
+  icons: IconFontRegistry;
   assets: AssetAppliers;
   textFields: TextFieldController;
   scrolls: ScrollController;
@@ -86,5 +87,5 @@ export function findScope(node: VNode): string | undefined {
 
 export { createPlayAssets };
 export type { AssetAppliers, ResolveAsset } from "./assets.js";
-export type { IconDefinition, IconTable } from "./icons.js";
+export type { IconFontRegistry } from "./icons.js";
 export type { ScrollController, TextFieldController } from "./contracts.js";

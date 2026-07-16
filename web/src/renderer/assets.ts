@@ -1,5 +1,5 @@
 export interface AssetAppliers {
-  applyImage(el: HTMLElement, assetRef: string | undefined): void;
+  applyImage(el: HTMLImageElement, assetRef: string | undefined): void;
   applyVideoSource(el: HTMLVideoElement, assetRef: string | undefined): void;
   applyVideoPoster(el: HTMLVideoElement, assetRef: string | undefined): void;
   dispose?(): void;
@@ -24,10 +24,9 @@ function fixtureAssetUrl(assetRef: string, extension: AssetExtension): string {
   return `/api/play/assets/${encodeURIComponent(assetRef)}.${extension}`;
 }
 
-function applyBackgroundUrl(el: HTMLElement, url: string | undefined): void {
-  // JSON string quoting is valid inside CSS url(...) and prevents quotes in a
-  // provider URL from terminating the value.
-  el.style.backgroundImage = url === undefined ? "" : `url(${JSON.stringify(url)})`;
+function applyImageUrl(el: HTMLImageElement, url: string | undefined): void {
+  if (url === undefined) el.removeAttribute("src");
+  else el.setAttribute("src", url);
 }
 
 /** Deterministic local-only stand-in for an unresolved Editor media id. */
@@ -55,7 +54,7 @@ function editorAssetUrl(
 export function createEditorAssets(table: EditorAssetTable): AssetAppliers {
   return {
     applyImage(el, assetRef) {
-      applyBackgroundUrl(el, editorAssetUrl(table, assetRef));
+      applyImageUrl(el, editorAssetUrl(table, assetRef));
     },
     applyVideoPoster(el, assetRef) {
       const url = editorAssetUrl(table, assetRef);
@@ -125,14 +124,14 @@ export function createPlayAssets(resolveAsset?: ResolveAsset): AssetAppliers {
       });
   }
 
-  function applyImage(el: HTMLElement, assetRef: string | undefined): void {
+  function applyImage(el: HTMLImageElement, assetRef: string | undefined): void {
     applyResolved(
       el,
       "image",
       assetRef,
       "jpg",
-      () => applyBackgroundUrl(el, undefined),
-      (url) => applyBackgroundUrl(el, url),
+      () => applyImageUrl(el, undefined),
+      (url) => applyImageUrl(el, url),
     );
   }
 

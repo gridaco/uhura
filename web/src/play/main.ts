@@ -20,12 +20,15 @@ import type {
 } from "../protocol/types.js";
 import type { ResolveAsset } from "../renderer/play.js";
 import type { AssetAppliers } from "../renderer/play.js";
-import type { IconTable } from "../renderer/play.js";
 import {
   createPlayAssets,
   createPlayRenderer,
   findScope,
 } from "../renderer/play.js";
+import {
+  decodeIconFontManifest,
+  loadIconFontRegistry,
+} from "../renderer/icons.js";
 import { createFocusController } from "./focus.js";
 import { PlayGenerationGate } from "./generation.js";
 import type { GenerationAction } from "./generation.js";
@@ -56,8 +59,8 @@ export const PLAY_ARTIFACT_URLS = [
   "/api/play/boot.json",
   "/api/play/fixture.json",
   "/api/play/script.json",
-  "/api/play/icons.json",
   "/api/play/config.json",
+  "/api/play/icon-fonts.json",
   "/api/play/stylesheet.css",
 ] as const;
 
@@ -255,10 +258,21 @@ export function startPlayRuntime(
       bootText,
       fixtureText,
       scriptText,
-      iconsText,
       playText,
+      iconFontsText,
       styleText,
     ] = artifacts.texts;
+    if (disposed) return;
+    const iconManifest = decodeIconFontManifest(JSON.parse(iconFontsText), "play");
+    if (iconManifest.generation !== artifacts.generation) {
+      throw new Error(
+        `Play icon fonts generation ${String(iconManifest.generation)} does not match artifact generation ${artifacts.generation}`,
+      );
+    }
+    const icons = await loadIconFontRegistry({
+      document: shell.document,
+      manifest: iconManifest,
+    });
     if (disposed) return;
     inspection.installArtifacts({
       generation: artifacts.generation,
@@ -335,7 +349,6 @@ export function startPlayRuntime(
       runtime.driver = driver;
     }
 
-    const icons = JSON.parse(iconsText) as IconTable;
     let currentRevision = 0;
     let currentNavKey: string | null = null;
     let pageElement: HTMLElement | null = null;
@@ -367,8 +380,8 @@ export function startPlayRuntime(
     const renderer = createPlayRenderer({
       document: shell.document,
       emit,
-      icons,
       assets,
+      icons,
       textFields,
       scrolls,
     });

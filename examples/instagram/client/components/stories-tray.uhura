@@ -16,7 +16,7 @@ emits {
       <view class="ring-list-item">
         <region label={if story.is-self then "View your story" else "View " ++ story.user.username ++ "'s story"} on:activate={emit story-tapped(story: story.id)}>
           <view class="ring-item">
-            <image class={if story.has-unseen then "ring unseen" else "ring seen"} src={story.user.avatar.src} alt={story.user.avatar.alt} />
+            <img class={if story.has-unseen then "ring unseen" else "ring seen"} src={story.user.avatar.src} alt={story.user.avatar.alt} />
             <text class="ring-name">{if story.is-self then "Your story" else story.user.username}</text>
           </view>
         </region>

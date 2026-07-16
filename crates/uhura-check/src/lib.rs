@@ -9,6 +9,7 @@
 pub mod catalog;
 pub mod examples;
 pub mod fixture;
+pub mod icon_fonts;
 pub mod infer;
 pub mod lower;
 pub mod manifest;
@@ -21,4 +22,5 @@ pub mod resolve;
 pub mod style;
 pub mod types;
 
+pub use icon_fonts::{CheckedIconFamily, CheckedIconFonts, IconFontInput};
 pub use pipeline::{CheckInput, CheckOutput, LockStatus, SourceInput, check};

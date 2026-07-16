@@ -110,7 +110,7 @@ These are real gaps exposed by dogfooding, but none blocks this slice:
    future viewport observation primitive should report semantic visibility;
    playback itself should remain renderer-owned.
 2. **Multiline controlled text.** Caption, alternative text, and comments use
-   the single-line `text-field`. A checked multiline variant is warranted;
+   the single-line `textfield`. A checked multiline variant is warranted;
    silently styling an `<input>` to resemble a textarea is not.
 3. **Per-tab navigation stacks.** Replace prevents false Back depth, but it
    recreates a destination instead of preserving each top-level tab's scroll

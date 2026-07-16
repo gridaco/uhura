@@ -61,6 +61,7 @@ pub const UNKNOWN_PORT_ITEM: Code = ("UH2005", "contract/unknown-port-item");
 pub const PORT_NAME_COLLISION: Code = ("UH2006", "contract/port-name-collision");
 pub const LOCK_DRIFT: Code = ("UH2007", "contract/lock-drift");
 pub const PORT_NAME_MISMATCH: Code = ("UH2008", "contract/port-name-mismatch");
+pub const INVALID_ICON_FONT: Code = ("UH2010", "contract/invalid-icon-font");
 
 // ── UH3xxx: types / expressions ────────────────────────────────────────────
 pub const TYPE_MISMATCH: Code = ("UH3001", "types/type-mismatch");
@@ -107,6 +108,7 @@ pub const UNKNOWN_ICON: Code = ("UH5017", "markup/unknown-icon");
 pub const CARRIED_FIELD_NAMED: Code = ("UH5018", "markup/carried-field-named");
 pub const ELEMENT_EVENT_NEEDS_EMIT: Code = ("UH5019", "markup/element-event-needs-emit");
 pub const SUPPLEMENTARY_UNREACHABLE: Code = ("UH5020", "markup/supplementary-unreachable");
+pub const UNKNOWN_ICON_FAMILY: Code = ("UH5021", "markup/unknown-icon-family");
 
 // ── UH6xxx: style ──────────────────────────────────────────────────────────
 pub const CLASS_ROOTING: Code = ("UH6001", "style/class-rooting");

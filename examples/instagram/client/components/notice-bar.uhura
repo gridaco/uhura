@@ -11,7 +11,7 @@ emits {
 <view class="notice-bar">
   <text class="notice-text">{text}</text>
   <button label="Dismiss" on:press={emit dismissed()}>
-    <icon name="close" />
+    <icon name="x" />
   </button>
 </view>
 

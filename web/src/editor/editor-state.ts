@@ -7,7 +7,7 @@ import type {
   VValue,
 } from "../protocol/types.js";
 
-export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/1" as const;
+export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/2" as const;
 export const EDITOR_EVENT_PROTOCOL = "uhura-editor-event/0" as const;
 export const INTERACTION_GRAPH_PROTOCOL = "uhura-interaction-graph/0" as const;
 
@@ -219,34 +219,6 @@ export interface EditorAsset {
   alt: string;
 }
 
-interface EditorIconPaint {
-  [property: string]: unknown;
-  fill?: string;
-  stroke?: string;
-  strokeWidth?: string;
-  lineCap?: "butt" | "round" | "square";
-  lineJoin?: "miter" | "round" | "bevel";
-  opacity?: string;
-}
-
-export type EditorIconCommand = EditorIconPaint & (
-  | { kind: "path"; d: string }
-  | { kind: "circle"; cx: string; cy: string; r: string }
-  | {
-    kind: "rect";
-    x: string;
-    y: string;
-    width: string;
-    height: string;
-    rx?: string;
-  }
-);
-
-export interface EditorIcon {
-  viewBox: [number, number, number, number];
-  commands: EditorIconCommand[];
-}
-
 export interface EditorRender {
   revision: number;
   freshness: PreviewFreshness;
@@ -255,7 +227,6 @@ export interface EditorRender {
   groups: PreviewGroup[];
   previews: EditorPreview[];
   stylesheet: string;
-  icons: Record<string, EditorIcon>;
   assets: Record<string, EditorAsset>;
   interactionGraph: InteractionGraph;
 }
@@ -849,81 +820,6 @@ const group = (value: unknown, path: string): PreviewGroup => {
   };
 };
 
-const icon = (value: unknown, path: string): EditorIcon => {
-  const object = record(value, path);
-  exact(object, path, ["viewBox", "commands"]);
-  const viewBox = array(object["viewBox"], `${path}.viewBox`);
-  if (viewBox.length !== 4) throw new EditorContractError(`${path}.viewBox`, "four numbers");
-  const commands = array(object["commands"], `${path}.commands`).map((item, index): EditorIconCommand => {
-    const commandPath = `${path}.commands[${index}]`;
-    const command = record(item, commandPath);
-    const kind = oneOf(command["kind"], `${commandPath}.kind`, ["path", "circle", "rect"]);
-    const paintKeys = ["fill", "stroke", "strokeWidth", "lineCap", "lineJoin", "opacity"] as const;
-    const paint: EditorIconPaint = {
-      ...(command["fill"] === undefined ? {} : { fill: string(command["fill"], `${commandPath}.fill`) }),
-      ...(command["stroke"] === undefined ? {} : { stroke: string(command["stroke"], `${commandPath}.stroke`) }),
-      ...(command["strokeWidth"] === undefined
-        ? {}
-        : { strokeWidth: string(command["strokeWidth"], `${commandPath}.strokeWidth`) }),
-      ...(command["lineCap"] === undefined
-        ? {}
-        : { lineCap: oneOf(
-          command["lineCap"],
-          `${commandPath}.lineCap`,
-          ["butt", "round", "square"] as const,
-        ) }),
-      ...(command["lineJoin"] === undefined
-        ? {}
-        : { lineJoin: oneOf(
-          command["lineJoin"],
-          `${commandPath}.lineJoin`,
-          ["miter", "round", "bevel"] as const,
-        ) }),
-      ...(command["opacity"] === undefined
-        ? {}
-        : { opacity: string(command["opacity"], `${commandPath}.opacity`) }),
-    };
-    if (kind === "path") {
-      exact(command, commandPath, ["kind", "d", ...paintKeys]);
-      return { kind, d: string(command["d"], `${commandPath}.d`), ...paint };
-    }
-    if (kind === "circle") {
-      exact(command, commandPath, ["kind", "cx", "cy", "r", ...paintKeys]);
-      return {
-        kind,
-        cx: string(command["cx"], `${commandPath}.cx`),
-        cy: string(command["cy"], `${commandPath}.cy`),
-        r: string(command["r"], `${commandPath}.r`),
-        ...paint,
-      };
-    }
-    exact(command, commandPath, ["kind", "x", "y", "width", "height", "rx", ...paintKeys]);
-    return {
-      kind,
-      x: string(command["x"], `${commandPath}.x`),
-      y: string(command["y"], `${commandPath}.y`),
-      width: string(command["width"], `${commandPath}.width`),
-      height: string(command["height"], `${commandPath}.height`),
-      ...(command["rx"] === undefined ? {} : { rx: string(command["rx"], `${commandPath}.rx`) }),
-      ...paint,
-    };
-  });
-  const viewBoxNumber = (item: unknown, itemPath: string): number => {
-    const number = finiteNumber(item, itemPath);
-    if (!Number.isSafeInteger(number)) throw new EditorContractError(itemPath, "an integer");
-    return number;
-  };
-  return {
-    viewBox: [
-      viewBoxNumber(viewBox[0], `${path}.viewBox[0]`),
-      viewBoxNumber(viewBox[1], `${path}.viewBox[1]`),
-      viewBoxNumber(viewBox[2], `${path}.viewBox[2]`),
-      viewBoxNumber(viewBox[3], `${path}.viewBox[3]`),
-    ],
-    commands,
-  };
-};
-
 const asset = (value: unknown, path: string): EditorAsset => {
   const object = record(value, path);
   exact(object, path, ["dataUri", "alt"]);
@@ -1200,7 +1096,7 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
   const object = record(value, path);
   exact(object, path, [
     "revision", "freshness", "application", "authoring", "groups", "previews", "stylesheet",
-    "icons", "assets", "interactionGraph",
+    "assets", "interactionGraph",
   ]);
   const revision = positiveRevision(object["revision"], `${path}.revision`);
   const freshness = oneOf(object["freshness"], `${path}.freshness`, ["current", "stale"]);
@@ -1219,9 +1115,6 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
   validateReferences(groups, previews);
   const authoring = authoringMetadata(object["authoring"], `${path}.authoring`);
   validateAuthoring(authoring, previews);
-  const icons = Object.fromEntries(Object.entries(record(object["icons"], `${path}.icons`)).map(
-    ([key, item]) => [key, icon(item, `${path}.icons.${key}`)],
-  ));
   const assets = Object.fromEntries(Object.entries(record(object["assets"], `${path}.assets`)).map(
     ([key, item]) => [key, asset(item, `${path}.assets.${key}`)],
   ));
@@ -1233,7 +1126,6 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
     groups,
     previews,
     stylesheet: string(object["stylesheet"], `${path}.stylesheet`, true),
-    icons,
     assets,
     interactionGraph: interactionGraph(object["interactionGraph"], `${path}.interactionGraph`),
   };

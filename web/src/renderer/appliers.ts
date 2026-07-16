@@ -8,18 +8,17 @@ import type {
   RendererNode,
   TextFieldHolder,
 } from "./contracts.js";
-import { applyIcon } from "./icons.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 
 interface ApplyPropsContext {
   document: Document;
-  icons: IconTable;
+  icons: IconFontRegistry;
   assets: AssetAppliers;
   policy: RenderPolicy;
   holderOf(el: HTMLElement): TextFieldHolder;
 }
 
-type SemanticTag = "p" | "span" | "button" | "video" | "div";
+type SemanticTag = "p" | "span" | "button" | "img" | "video" | "div";
 
 export function textOf(v: VValue | undefined): string | undefined {
   if (typeof v === "string") return v;
@@ -58,6 +57,8 @@ export function tagFor(element: string): SemanticTag {
       return "span";
     case "button":
       return "button";
+    case "img":
+      return "img";
     case "video":
       return "video";
     default:
@@ -118,17 +119,17 @@ export function applyProps(
       break;
     }
 
-    case "image": {
-      ctx.assets.applyImage(el, assetOf(props["src"]));
+    case "img": {
+      const img = el as HTMLImageElement;
+      setAttr(img, "role", undefined);
+      setAttr(img, "aria-label", undefined);
+      setAttr(img, "aria-hidden", undefined);
       if (boolOf(props["decorative"])) {
-        setAttr(el, "aria-hidden", "true");
-        setAttr(el, "role", undefined);
-        setAttr(el, "aria-label", undefined);
+        setAttr(img, "alt", "");
       } else {
-        setAttr(el, "role", "img");
-        setAttr(el, "aria-label", textOf(props["alt"]));
-        setAttr(el, "aria-hidden", undefined);
+        setAttr(img, "alt", textOf(props["alt"]) ?? "");
       }
+      ctx.assets.applyImage(img, assetOf(props["src"]));
       break;
     }
 
@@ -162,10 +163,18 @@ export function applyProps(
 
     case "icon": {
       const name = textOf(props["name"]) ?? "";
+      const requestedFamily = textOf(props["family"]);
+      const family = requestedFamily ?? ctx.icons.defaultFamily;
       setAttr(el, "aria-hidden", "true");
-      if (el.getAttribute("data-icon") !== name) {
+      if (
+        el.getAttribute("data-icon") !== name ||
+        el.getAttribute("data-icon-family") !== family ||
+        el.getAttribute("data-icon-resource") !== ctx.icons.fingerprint
+      ) {
+        ctx.icons.apply(el, requestedFamily, name);
         setAttr(el, "data-icon", name);
-        applyIcon(ctx.document, el, ctx.icons[name]);
+        setAttr(el, "data-icon-family", family);
+        setAttr(el, "data-icon-resource", ctx.icons.fingerprint);
       }
       break;
     }
@@ -184,7 +193,7 @@ export function applyProps(
       break;
     }
 
-    case "text-field": {
+    case "textfield": {
       const existing = el.querySelector(":scope > input");
       let input: HTMLInputElement;
       if (isInput(existing)) {

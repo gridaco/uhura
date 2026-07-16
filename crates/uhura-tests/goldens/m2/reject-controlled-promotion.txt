@@ -1,2 +1,2 @@
-error[UH5008 markup/controlled-promotion]: binding `value` makes `<text-field>` controlled — it must handle `on:change` (§10)
+error[UH5008 markup/controlled-promotion]: binding `value` makes `<textfield>` controlled — it must handle `on:change` (§10)
   --> surfaces/comments-sheet.uhura:99:5

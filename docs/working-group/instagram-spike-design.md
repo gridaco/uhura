@@ -219,7 +219,7 @@ emit, trace note `projection-not-ready`. (Guards should still cover
 readiness explicitly; the abort is the deterministic backstop.)
 
 **Carried fields:** for catalog events declaring `carries`
-(`text-field` `change { value: text }`), the emitted payload is author args
+(`textfield` `change { value: text }`), the emitted payload is author args
 ∪ carried fields; the author may not name a carried field; the handler
 signature must include it.
 
@@ -297,7 +297,7 @@ emits {
   <region label="View profile"
       on:activate={emit author-tapped(user: post.author.id)}>
     <view class="author-row">
-      <image class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
+      <img class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
       <text class="username">{post.author.username}</text>
     </view>
   </region>
@@ -306,20 +306,20 @@ emits {
     {:when image m}
       <region label="Like this post" supplementary
           on:activate-double={emit like-toggled(post: post.id, now-liked: true)}>
-        <image class="media" src={m.image.src} alt={m.image.alt} />
+        <img class="media" src={m.image.src} alt={m.image.alt} />
       </region>
     {:when carousel c}
       <region label="Like this post" supplementary
           on:activate-double={emit like-toggled(post: post.id, now-liked: true)}>
         <pager class="media" indicator="dots" label="Photo carousel">
           {#each c.slides as s (s.id)}
-            <image src={s.src} alt={s.alt} />
+            <img src={s.src} alt={s.alt} />
           {/each}
         </pager>
       </region>
     {:when video v}
       <view class="media video-fallback">
-        <image src={v.poster.src} alt={v.poster.alt} />
+        <img src={v.poster.src} alt={v.poster.alt} />
         <view class="video-fallback-badge">
           <icon name="video-off" />
           <text>Video isn't supported in this preview</text>
@@ -331,11 +331,11 @@ emits {
     <button pressed={liked} busy={like-pending}
         label={if liked then "Unlike" else "Like"}
         on:press={emit like-toggled(post: post.id, now-liked: !liked)}>
-      <icon name={if liked then "heart-filled" else "heart"} />
+      <icon name="heart" />
     </button>
     <button label="Comments"
         on:press={emit comments-requested(post: post.id)}>
-      <icon name="comment" />
+      <icon name="message-circle" />
     </button>
   </view>
 
@@ -527,15 +527,15 @@ store {
 `send add-comment(post: post, body: draft) as t` keys the optimistic row;
 `.err` restores `draft = cmd.body` from the echo; `on dismiss-requested()
 { dismiss }`. The composer:
-`<text-field value={draft} label="Add a comment" on:change={emit
+`<textfield value={draft} label="Add a comment" on:change={emit
 composer-changed()} on:submit={emit submit-requested()} />` (`change`
 carries `value: text`); pending rows render via
 `{#each pending-appends as t (t)}`.
 
 ### 4.8 What the checker rejects (highlights)
 
-Unknown element/component (`<avatar>` → "the avatar pattern is `<image
-class=…>` — see docs/patterns"); unkeyed `{#each}` (parse error — the key is
+Unknown element/component (`<avatar>` → "the avatar pattern is `<img
+class=…>` — see docs/widgets/patterns"); unkeyed `{#each}` (parse error — the key is
 grammar, not lint); `on:` on `view` or any layout-class node ("wrap in
 `<region>`"; never auto-repaired); undeclared component emit; unbound
 required prop; unresolved bind with did-you-mean; duplicate keys; unreachable
@@ -829,7 +829,7 @@ otherwise); preserve identity by key-path; insert `{t:"plain"}` via text
 nodes only; emit events only from present descriptors, echoing `payload`
 verbatim + declared `carries`; apply snapshots atomically in revision order;
 preserve focus across applies; meet the a11y minimums (button
-`aria-pressed`/`aria-busy`, image `alt` xor `decorative`, surface
+`aria-pressed`/`aria-busy`, img `alt` xor bare `decorative`, surface
 `role=dialog aria-modal` + page `inert` + focus restore, region keyboard
 synthesis; DOM order = V order; no positive tabindex); apply authored CSS
 as-is.
@@ -851,11 +851,11 @@ viewport (`scroll`), windowing (renderer license), pagination observation
 
 The native side captures one coherent saved-file revision, checks it, resolves
 examples, evaluates semantic page snapshots/component fragments, and asks
-`uhura-editor-model` to serialize one immutable `uhura-editor-state/1`
+`uhura-editor-model` to serialize one immutable `uhura-editor-state/2`
 document. The document contains source and render revisions, current
 diagnostics, application metadata, stable preview groups and identities,
 semantic content, example values and provenance, interaction summaries, the
-compiled application stylesheet, structured icons, and an asset table. It
+compiled application stylesheet, and an asset table. It
 contains no prepared DOM, Editor layout, selectors, or browser behavior.
 
 Revision identity is explicit. A renderable candidate publishes matching
@@ -872,14 +872,17 @@ The `/` route owns the complete read-only Editor UI in TypeScript: navigator,
 search, frames, selection, inspector, toolbar, camera, pan, zoom, Cursor and
 Hand tools. The shared renderer's Editor policy realizes semantic nodes
 one-shot inside inert preview hosts, ignores runtime descriptors, performs no
-provider/scroll/text-field effects, and treats source-less video as poster-only.
+provider/scroll/textfield effects, and treats source-less video as poster-only.
 Controls still have honest platform and accessibility structure, while the
 inspector presents what an interaction would emit. Example values and their
 authored origins remain visible but immutable; see the
 [read-only provenance design note](referential-example-data-and-read-only-provenance.md).
 Application styles and Editor chrome have separate ownership so app CSS does
-not become chrome CSS. Assets use the state's data-URI table; icons arrive as
-structured drawing commands rather than markup strings.
+not become chrome CSS. Assets use the state's data-URI table. Semantic icon
+family/name tokens remain in preview content; a separate revision-matched
+renderer-resource manifest supplies checked codepoints and content-addressed
+WOFF2 bytes. Neither glyph data nor font identifiers enter EditorState or Core
+protocols.
 
 Wheel/trackpad deltas pan; `H` or held Space enables drag-panning; pinch zooms
 around its midpoint; Cursor drag reserves an intentionally inert marquee.
@@ -898,7 +901,7 @@ used by the Editor. The native host serves the same entry document for `/` and
 boots the wasm `Session`, checked IR, fixtures or configured provider, and
 compiled stylesheet. The semantic DOM mechanics live under the shared
 renderer; the Play policy adds reconciliation, descriptors, focus, scroll,
-text-field, surface, media, and runtime-delivery effects. This keeps the V
+textfield, surface, media, and runtime-delivery effects. This keeps the V
 protocol and its mechanics independent of any future framework choice.
 
 `web/src/` and its Vite configuration are authoritative. One application build
@@ -933,7 +936,7 @@ window. True device emulation is deferred.
   `pumping` flag makes nested pumps no-ops; post-apply observation checks
   run in a microtask after the pump drains (prevents the wasm `RefCell`
   re-entry panic).
-- **text-field (normative):** core owns the draft; renderer owns caret/IME.
+- **textfield (normative):** core owns the draft; renderer owns caret/IME.
   Per field, a counter of in-flight change emissions; while nonzero,
   external replacement never applies (stashed) — a tick-scheduled outcome
   landing mid-typing cannot eat keystrokes. IME composition buffers locally,
@@ -1113,21 +1116,22 @@ events only on interactive elements; observation events only on viewports).
 | `scroll` | layout/viewport | `direction(vertical\|horizontal)` | `near-end` (observe) |
 | `pager` | layout/viewport | `indicator(none\|dots)`, `label`; children from one keyed each; **uncontrolled** | (`page-change` when controlled — unused) |
 | `text` | content | content = typed data / interpolation | — |
-| `image` | content | `src` (asset ref), `alt` xor `decorative` | — |
+| `img` | content | `src` (asset ref), `alt` xor bare `decorative` | — |
 | `video` | content | `src`, optional `poster`, `label`, `autoplay`, `muted`, `loop`, `controls`, `playsinline` | native media controls |
-| `icon` | content | `name` (closed set), decorative by default | — |
+| `icon` | content | optional literal `family`, checked `name`; decorative | — |
 | `button` | interactive | `label`, `disabled`, `busy`, `pressed?`, `current?`; content children, no interactive descendants | `press` |
-| `text-field` | interactive | controlled `value`, `placeholder`, `label`, `disabled` | `change{value}`, `submit` |
+| `textfield` | interactive | controlled `value`, `placeholder`, `label`, `disabled` | `change{value}`, `submit` |
 | `region` | interactive | `label` (required), `supplementary`; one child, no interactive descendants | `activate`, `activate-double` |
 
-Every element additionally takes `class` (opaque, CSS-owned). Icon set
-(closed, recomputed from slice usage): `home search plus reels profile heart
-heart-filled comment close back grid layers video-off progress bookmark
-bookmark-filled chevron-left chevron-right`.
+Every element additionally takes `class` (opaque, CSS-owned). Icon names no
+longer live in the semantic element catalog. They come from the selected,
+locked icon-font family; the bundled default is Lucide. See
+[`<icon>`](../widgets/elements/icon.md) and the
+[icon-font integration](../widgets/integrations/icon-font.md).
 
 **What is deliberately NOT an element:** `column/row/stack/grid/spacer`
 (CSS layout on `view`), `card/avatar/tab-bar/app-bar/list` (documented
-patterns in `docs/patterns/`, golden-checked), `sheet/dialog` (core surface
+patterns in `docs/widgets/patterns/`, golden-checked), `sheet/dialog` (core surface
 stack), any styling prop
 (`gap/pad/ratio/shape/kind/size/color/lines` — all CSS now).
 
@@ -1143,7 +1147,7 @@ The checker rules survive unchanged in spirit: catalog authority, event
 eligibility (`on:` only where declared — a `view` can never become
 interactive), children models, **required keyed each**, no nested
 interactives, controlled-state promotion (binding `value` obligates handling
-`change`), a11y completeness (alt xor decorative; accessible names;
+`change`), a11y completeness (alt xor bare decorative; accessible names;
 `role=list` requires one keyed each), viewport sanity. Style-prop closure is
 **deleted** — replaced by the shallow CSS checks of §4.5.
 
@@ -1398,7 +1402,7 @@ historical; the v3 topology describes the maintained end state.)
 5. Navigation: feed → profile → back retains feed page state; history
    intents are emitted and traced (and executed as no-ops).
 6. `uhura-editor-model` deterministically publishes every resolved example in
-   one valid `uhura-editor-state/1` render without HTML or I/O and without
+   one valid `uhura-editor-state/2` render without HTML or I/O and without
    executing extra transitions (derivation remains a checked build step over
    pure `step-u`). The browser's Editor policy cannot dispatch runtime events.
    A broken current revision carries its own diagnostics and an explicitly
@@ -1488,7 +1492,7 @@ reframe.
 
 | # | Challenge | Resolution |
 |---|---|---|
-| 27 | Native code generated the entire Editor document, mixing language truth with browser presentation | Replaced by `uhura-editor-model`, a browser-neutral deterministic read-model builder. Rust publishes semantic preview content, provenance, diagnostics, assets, and structured icons; TypeScript owns all markup and chrome. |
+| 27 | Native code generated the entire Editor document, mixing language truth with browser presentation | Replaced by `uhura-editor-model`, a browser-neutral deterministic read-model builder. Rust publishes semantic preview content, provenance, diagnostics, and source assets; TypeScript owns all markup, chrome, and renderer-local icon geometry. An initial structured-icon wire table was removed in `uhura-editor-state/2`. |
 | 28 | Saved changes replaced the document and therefore required UI-state survival machinery | Replaced by whole-state `EditorState` publication over HTTP/SSE. The application remains mounted and swaps only successfully decoded preview state; current diagnostics and an older render carry distinct revisions and explicit freshness. |
 | 29 | Editor and Play had separate frontend delivery and semantic realization paths | Replaced by one application with `/` and `/play` routes and one semantic renderer. Explicit Editor/Play policies make inertness versus runtime effects a type-level construction choice rather than convention. |
 | 30 | Generated frontend output behaved like authoritative source and constrained native builds around its emitted shape | `web/src/` is authoritative; generated output is ignored. CI builds/tests it before native integration, Vite proxies the native API in development, and release packaging assembles the web app, Wasm, and CLI without making Node a runtime dependency. |

@@ -81,7 +81,7 @@ store {
 <view class="screen create-page">
   <view class="create-head">
     <button label="Cancel creating this post" on:press={emit cancel-tapped()}>
-      <icon name="back" />
+      <icon name="chevron-left" />
     </button>
     <text class="title">New post</text>
   </view>
@@ -105,7 +105,7 @@ store {
         {:when empty}
           <view class="fill-center stack-sm pad-lg">
             <view class="upload-mark">
-              <icon name="plus" />
+              <icon name="square-plus" />
             </view>
             <text class="create-empty-title">Share a photo</text>
             <text class="muted create-empty-copy">Choose a JPEG, PNG, or WebP image from this device.</text>
@@ -115,11 +115,11 @@ store {
           </view>
         {:when uploaded u}
           <scroll class="create-form">
-            <image class="create-preview" src={u.preview} alt={u.name} />
+            <img class="create-preview" src={u.preview} alt={u.name} />
             <view class="create-fields">
               <text class="muted">{u.name}</text>
-              <text-field value={caption} label="Caption (optional)" placeholder="Write a caption…" disabled={publish-pending} on:change={emit caption-changed()} />
-              <text-field value={alt} label="Alternative text (optional)" placeholder="Describe this image for people who can't see it…" disabled={publish-pending} on:change={emit alt-changed()} />
+              <textfield value={caption} label="Caption (optional)" placeholder="Write a caption…" disabled={publish-pending} on:change={emit caption-changed()} />
+              <textfield value={alt} label="Alternative text (optional)" placeholder="Describe this image for people who can't see it…" disabled={publish-pending} on:change={emit alt-changed()} />
               <view class="create-actions">
                 <button class="secondary-button" label="Choose another photo" disabled={publish-pending} busy={choose-pending} on:press={emit choose-tapped()}>
                   <text>Choose another</text>
@@ -139,7 +139,7 @@ store {
 .create-page { display: flex; flex-direction: column; block-size: 100%; }
 .create-page .create-head { display: flex; align-items: center; gap: var(--space-2); min-block-size: 48px; padding: var(--space-2) var(--space-4); border-block-end: 1px solid var(--color-line); }
 .create-page .upload-mark { display: grid; place-items: center; inline-size: 72px; block-size: 72px; border: 1px dashed var(--color-ink-faint); border-radius: var(--radius-full); }
-.create-page .upload-mark .uh-icon svg { inline-size: 30px; block-size: 30px; }
+.create-page .upload-mark .uh-icon { font-size: 30px; }
 .create-page .create-empty-title { font-size: var(--type-lg); font-weight: 600; }
 .create-page .create-empty-copy { max-inline-size: 260px; text-align: center; }
 .create-page .choose-button { margin-block-start: var(--space-2); }

@@ -10,7 +10,7 @@ import type {
   EditorNodeRealization,
   EditorRenderRoot,
 } from "../editor.js";
-import type { IconDefinition } from "../icons.js";
+import type { IconFontRegistry } from "../icons.js";
 import { createPlayAssets, createPlayRenderer, findScope } from "../play.js";
 
 type Listener = (event: FakeEvent) => void;
@@ -45,7 +45,15 @@ class FakeClassList {
 
 class FakeElement {
   readonly attributes = new Map<string, string>();
-  readonly style = { backgroundImage: "", cssText: "" };
+  readonly style = {
+    backgroundImage: "",
+    cssText: "",
+    fontFamily: "",
+    fontSynthesis: "",
+    fontVariantLigatures: "",
+    lineHeight: "",
+    userSelect: "",
+  };
   readonly listeners = new Map<string, Listener[]>();
   readonly classList = new FakeClassList(this);
   readonly nodeType = 1;
@@ -192,6 +200,17 @@ class FakeDocument {
 const asDocument = (value: FakeDocument): Document => value as unknown as Document;
 const asElement = (value: FakeElement): HTMLElement => value as unknown as HTMLElement;
 
+const TEST_ICONS: IconFontRegistry = {
+  defaultFamily: "lucide",
+  fingerprint: "test-lucide",
+  apply(host, family, name) {
+    assert.equal(family ?? "lucide", "lucide");
+    assert.equal(name, "heart");
+    host.textContent = "\ue001";
+    host.style.fontFamily = "uhura-icon-test";
+  },
+};
+
 function keyed(root: FakeElement, key: string): FakeElement {
   const found = [root, ...root.descendants()].find(
     (candidate) => candidate.getAttribute("data-key") === key,
@@ -223,8 +242,8 @@ const fixture: VNode[] = [
         children: [{ key: "button-label", element: "text", props: { content: "Like" } }],
       },
       {
-        key: "image",
-        element: "image",
+        key: "img",
+        element: "img",
         props: { src: { t: "image", asset: "photo" }, alt: "A photograph" },
       },
       {
@@ -251,7 +270,7 @@ const fixture: VNode[] = [
       },
       {
         key: "field",
-        element: "text-field",
+        element: "textfield",
         props: { value: "draft", label: "Caption" },
         on: [{ ...press, event: "change" }],
       },
@@ -271,35 +290,14 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
   const editorHost = editorDocument.createElement("main");
   const playHost = playDocument.createElement("main");
 
-  const icons: Record<string, IconDefinition> = {
-    heart: {
-      viewBox: [0, 0, 24, 24],
-      commands: [
-        {
-          kind: "path",
-          d: "M12 20 4 12",
-          fill: "none",
-          stroke: "currentColor",
-          strokeWidth: "1.8",
-        },
-        {
-          kind: "circle",
-          cx: "12",
-          cy: "12",
-          r: "3.5",
-          opacity: "0.4",
-        },
-      ],
-    },
-  };
   const assets: Record<string, ContractEditorAsset> = {
     photo: { dataUri: "data:image/jpeg;base64,photo", alt: "A photograph" },
     poster: { dataUri: "data:image/jpeg;base64,poster", alt: "A clip" },
   };
   const editor = createEditorRenderer({
     document: asDocument(editorDocument),
-    icons,
     assets,
+    icons: TEST_ICONS,
   });
 
   const emitted: Descriptor[] = [];
@@ -308,13 +306,8 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
   let scrollSyncs = 0;
   const play = createPlayRenderer({
     document: asDocument(playDocument),
-    icons: {
-      heart: {
-        viewBox: [0, 0, 24, 24],
-        commands: [{ kind: "path", d: "M12 20 4 12" }],
-      },
-    },
     assets: createPlayAssets(),
+    icons: TEST_ICONS,
     emit: (descriptor) => emitted.push(descriptor),
     textFields: {
       wire: () => {
@@ -343,7 +336,7 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
     "root",
     "title",
     "button",
-    "image",
+    "img",
     "video",
     "icon",
     "pager",
@@ -360,7 +353,10 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
 
   assert.equal(keyed(editorHost, "root").getAttribute("role"), "list");
   assert.equal(keyed(editorHost, "button").getAttribute("role"), "listitem");
-  assert.equal(keyed(editorHost, "image").getAttribute("aria-label"), "A photograph");
+  const editorImg = keyed(editorHost, "img");
+  assert.equal(editorImg.tagName, "IMG");
+  assert.equal(editorImg.getAttribute("alt"), "A photograph");
+  assert.equal(editorImg.getAttribute("aria-label"), null);
   assert.equal(keyed(editorHost, "button").getAttribute("aria-label"), "Like");
   assert.equal(findScope(fixture[0] as VNode), "page:1");
 
@@ -372,13 +368,15 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
   assert.equal(editorTrack?.children.length, 2);
   assert.equal(editorDots?.children.length, 2);
 
-  const editorSvg = keyed(editorHost, "icon").querySelector("svg");
-  const editorPath = editorSvg?.querySelector("path");
-  const editorCircle = editorSvg?.querySelector("circle");
-  assert.equal(editorSvg?.getAttribute("viewBox"), "0 0 24 24");
-  assert.equal(editorPath?.getAttribute("stroke-width"), "1.8");
-  assert.equal(editorCircle?.getAttribute("r"), "3.5");
-  assert.equal(editorCircle?.getAttribute("opacity"), "0.4");
+  const editorIcon = keyed(editorHost, "icon");
+  const playIcon = keyed(playHost, "icon");
+  assert.equal(editorIcon.textContent, "\ue001");
+  assert.equal(playIcon.textContent, "\ue001");
+  assert.equal(editorIcon.style.fontFamily, "uhura-icon-test");
+  assert.equal(playIcon.style.fontFamily, "uhura-icon-test");
+  assert.equal(editorIcon.getAttribute("data-icon-family"), "lucide");
+  assert.equal(editorIcon.getAttribute("data-icon-resource"), "test-lucide");
+  assert.equal(editorIcon.getAttribute("aria-hidden"), "true");
 
   keyed(editorHost, "button").fire("click");
   assert.deepEqual(emitted, []);
@@ -388,10 +386,103 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
   assert.equal(textFieldWires, 1);
   assert.equal(textFieldApplies, 1);
   assert.equal(scrollSyncs, 1);
+  assert.equal(keyed(editorHost, "field").className, "uh-textfield");
+  assert.equal(keyed(playHost, "field").className, "uh-textfield");
   const editorInput = keyed(editorHost, "field").querySelector(":scope > input");
   assert.equal(editorInput?.readOnly, true);
   assert.equal(editorInput?.value, "draft");
   assert.equal(editorInput?.listeners.size, 0);
+});
+
+test("Play reapplies a stable icon token when its registry resource changes", () => {
+  const document = new FakeDocument();
+  const host = document.createElement("main");
+  let fingerprint = "font-one";
+  let glyph = "\ue001";
+  let applications = 0;
+  const icons: IconFontRegistry = {
+    defaultFamily: "lucide",
+    get fingerprint() {
+      return fingerprint;
+    },
+    apply(element, family, name) {
+      applications += 1;
+      assert.equal(family, "brand");
+      assert.equal(name, "logo");
+      element.textContent = glyph;
+      element.style.fontFamily = `uhura-icon-${fingerprint}`;
+    },
+  };
+  const renderer = createPlayRenderer({
+    document: asDocument(document),
+    icons,
+    assets: createPlayAssets(),
+    emit: () => {},
+    textFields: { wire: () => {}, applyValue: () => {} },
+    scrolls: {
+      sync: () => {},
+      disposeSubtree: () => {},
+      savePositions: () => {},
+      restorePositions: () => {},
+    },
+  });
+  const nodes: VNode[] = [{
+    key: "logo",
+    element: "icon",
+    props: { family: "brand", name: "logo" },
+  }];
+
+  renderer.reconcileChildren(asElement(host), nodes, "page", false);
+  const icon = keyed(host, "logo");
+  assert.equal(icon.textContent, "\ue001");
+  assert.equal(icon.getAttribute("data-icon-resource"), "font-one");
+
+  fingerprint = "font-two";
+  glyph = "\ue002";
+  renderer.reconcileChildren(asElement(host), nodes, "page", false);
+  assert.equal(applications, 2);
+  assert.equal(icon.textContent, "\ue002");
+  assert.equal(icon.style.fontFamily, "uhura-icon-font-two");
+  assert.equal(icon.getAttribute("data-icon-resource"), "font-two");
+});
+
+test("img uses native alternative-text and decorative semantics", () => {
+  const document = new FakeDocument();
+  const host = document.createElement("main");
+  const renderer = createEditorRenderer({
+    document: asDocument(document),
+    icons: TEST_ICONS,
+    assets: {
+      photo: { dataUri: "data:image/jpeg;base64,photo", alt: "Manifest fallback" },
+      texture: { dataUri: "data:image/jpeg;base64,texture", alt: "Manifest fallback" },
+    },
+  });
+
+  renderer.realize(asElement(host), [
+    {
+      key: "informative",
+      element: "img",
+      props: { src: { t: "image", asset: "photo" }, alt: "A photograph" },
+    },
+    {
+      key: "decorative",
+      element: "img",
+      props: { src: { t: "image", asset: "texture" }, decorative: true },
+    },
+  ]);
+
+  const informative = keyed(host, "informative");
+  assert.equal(informative.tagName, "IMG");
+  assert.equal(informative.className, "uh-img");
+  assert.equal(informative.getAttribute("alt"), "A photograph");
+  assert.equal(informative.getAttribute("role"), null);
+  assert.equal(informative.getAttribute("aria-label"), null);
+
+  const decorative = keyed(host, "decorative");
+  assert.equal(decorative.tagName, "IMG");
+  assert.equal(decorative.getAttribute("alt"), "");
+  assert.equal(decorative.getAttribute("role"), null);
+  assert.equal(decorative.getAttribute("aria-hidden"), null);
 });
 
 test("Editor realization is fresh, local-only, and video is poster-only", () => {
@@ -399,31 +490,34 @@ test("Editor realization is fresh, local-only, and video is poster-only", () => 
   const host = document.createElement("main");
   const renderer = createEditorRenderer({
     document: asDocument(document),
-    icons: {},
+    icons: TEST_ICONS,
     assets: {},
   });
 
   renderer.realize(asElement(host), fixture);
   const firstRoot = host.firstChild;
-  const image = keyed(host, "image");
+  const img = keyed(host, "img");
   const video = keyed(host, "video");
+  const icon = keyed(host, "icon");
   assert.match(
-    image.style.backgroundImage,
-    /^url\("data:image\/svg\+xml;utf8,<svg /,
+    img.getAttribute("src") ?? "",
+    /^data:image\/svg\+xml;utf8,<svg /,
   );
   assert.match(
     video.getAttribute("poster") ?? "",
     /^data:image\/svg\+xml;utf8,<svg /,
   );
   assert.notEqual(
-    image.style.backgroundImage,
-    `url(${JSON.stringify(video.getAttribute("poster"))})`,
+    img.getAttribute("src"),
+    video.getAttribute("poster"),
     "each missing asset id keeps its own deterministic hue",
   );
   assert.equal(video.hasAttribute("src"), false);
   assert.equal(video.autoplay, false);
   assert.equal(video.controls, false);
   assert.equal(video.getAttribute("data-video-preview"), "poster");
+  assert.equal(icon.textContent, "\ue001");
+  assert.equal(icon.children.length, 0, "font glyphs do not inject renderer geometry");
 
   renderer.realize(asElement(host), fixture);
   assert.notEqual(host.firstChild, firstRoot, "one-shot realization remounts semantic DOM");
@@ -434,7 +528,7 @@ test("Editor root realization reports semantic paths and direct element handles"
   const host = document.createElement("main");
   const renderer = createEditorRenderer({
     document: asDocument(document),
-    icons: {},
+    icons: TEST_ICONS,
     assets: {},
   });
   const observed: EditorNodeRealization[] = [];
@@ -457,7 +551,7 @@ test("Editor root realization reports semantic paths and direct element handles"
     ["title", [0]],
     ["button", [1]],
     ["button-label", [1, 0]],
-    ["image", [2]],
+    ["img", [2]],
     ["video", [3]],
     ["icon", [4]],
     ["pager", [5]],
@@ -493,7 +587,7 @@ test("Editor root realization reports semantic paths and direct element handles"
   assert.equal(
     realized.some(({ element }) => element === asElement(input as FakeElement)),
     false,
-    "text-field input is mechanic DOM, not a semantic realization",
+    "textfield input is mechanic DOM, not a semantic realization",
   );
   assert.equal(keyed(host, "button").listeners.size, 0);
 });
@@ -503,7 +597,7 @@ test("Editor root identities are explicit and one-shot realizations retain nothi
   const host = document.createElement("main");
   const renderer = createEditorRenderer({
     document: asDocument(document),
-    icons: {},
+    icons: TEST_ICONS,
     assets: {},
   });
   const roots: EditorRenderRoot[] = [
@@ -550,7 +644,7 @@ test("Play disposes replaced and removed subtrees before detaching them", () => 
   const disposed: { root: FakeElement; attached: boolean }[] = [];
   const renderer = createPlayRenderer({
     document: asDocument(document),
-    icons: {},
+    icons: TEST_ICONS,
     assets: createPlayAssets(),
     emit: () => {},
     textFields: {

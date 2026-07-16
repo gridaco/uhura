@@ -23,6 +23,9 @@ wasm-bindgen = "0.2"
 cargo_metadata = "0.19"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
 same-file = "1"
+ttf-parser = "0.25"
+brotli = "7"
+wuff = { version = "0.2.8", default-features = false }
 
 # Internal
 uhura-base = { path = "crates/uhura-base" }

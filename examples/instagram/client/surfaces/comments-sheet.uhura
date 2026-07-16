@@ -52,21 +52,21 @@ store {
   <view class="sheet-head">
     <text class="sheet-title">Comments</text>
     <button label="Close" on:press={emit dismiss-requested()}>
-      <icon name="close" />
+      <icon name="x" />
     </button>
   </view>
   {#if notice != none}
     <view class="notice">
       <text class="muted">{notice ?? ""}</text>
       <button label="Dismiss notice" on:press={emit notice-dismissed()}>
-        <icon name="close" />
+        <icon name="x" />
       </button>
     </view>
   {/if}
   {#match for-post(post)}
     {:when loading}
       <view class="fill-center">
-        <icon name="progress" />
+        <icon name="loader-circle" />
       </view>
     {:when failed reason}
       <view class="fill-center">
@@ -95,8 +95,8 @@ store {
       </scroll>
   {/match}
   <view class="composer">
-    <image class="avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
-    <text-field value={draft} label="Add a comment" placeholder="Add a comment…" disabled={comment-pending} on:change={emit composer-changed()} on:submit={emit submit-requested()} />
+    <img class="avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
+    <textfield value={draft} label="Add a comment" placeholder="Add a comment…" disabled={comment-pending} on:change={emit composer-changed()} on:submit={emit submit-requested()} />
     <button label="Post" disabled={draft == "" || comment-pending} busy={comment-pending} on:press={emit submit-requested()}>
       <text>Post</text>
     </button>

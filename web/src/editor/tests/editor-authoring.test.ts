@@ -111,7 +111,6 @@ const render = (): EditorRender => {
       { id: "only-empty", targetId: "annotation", anchored: false },
     ])],
     stylesheet: "",
-    icons: {},
     assets: {},
     interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
   };

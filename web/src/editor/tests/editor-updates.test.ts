@@ -16,7 +16,7 @@ import {
 } from "../editor-updates.js";
 
 const state = (sourceRevision: number): EditorState => ({
-  protocol: "uhura-editor-state/1",
+  protocol: "uhura-editor-state/2",
   sourceRevision,
   diagnostics: null,
   render: null,
@@ -66,9 +66,6 @@ const render = (
   }],
   previews,
   stylesheet: ":root { --accent: blue; }",
-  icons: {
-    check: { viewBox: [0, 0, 24, 24], commands: [] },
-  },
   assets: {
     photo: { dataUri: "data:image/png;base64,AA==", alt: "Photo" },
   },
@@ -176,7 +173,6 @@ test("semantic selection survives replacement and disappears with its preview", 
         content: { key: "root", element: "view", props: {} },
       }],
       stylesheet: "",
-      icons: {},
       assets: {},
       interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
     },
@@ -238,14 +234,11 @@ test("caption changes replace frame chrome but retain semantic realization", () 
   assert.deepEqual([...reusablePreviewFrameIds(previous, next)], ["beta"]);
 });
 
-test("icon and asset changes conservatively invalidate every realized frame", () => {
+test("asset changes conservatively invalidate every realized frame", () => {
   const previous = render(3);
-  const changedIcons = structuredClone(render(4));
-  changedIcons.icons["check"]!.commands.push({ kind: "path", d: "M0 0" });
   const changedAssets = structuredClone(render(4));
   changedAssets.assets["photo"]!.dataUri = "data:image/png;base64,BB==";
 
-  assert.deepEqual([...reusablePreviewIds(previous, changedIcons)], []);
   assert.deepEqual([...reusablePreviewIds(previous, changedAssets)], []);
 });
 
