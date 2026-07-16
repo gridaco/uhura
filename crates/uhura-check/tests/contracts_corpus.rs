@@ -81,6 +81,15 @@ fn base_catalog_loads_with_ten_elements_and_registry_backed_icons() {
 
 #[test]
 fn icon_catalog_shape_is_language_reserved() {
+    let invalid_type = CATALOG.replace(
+        "[elements.icon.props.family]\ntype = \"icon-family\"",
+        "[elements.icon.props.family]\ntype = \"glyph-family\"",
+    );
+    let issues = load_catalog(&invalid_type).unwrap_err();
+    assert!(issues.iter().any(|issue| {
+        issue.path == "elements.icon.props.family.type" && issue.message.contains("icon-family")
+    }));
+
     let bad_family = CATALOG.replace(
         "[elements.icon.props.family]\ntype = \"icon-family\"",
         "[elements.icon.props.family]\ntype = \"text\"",

@@ -282,3 +282,43 @@ fn icon_name_is_checked_within_the_selected_family() {
         unknown_family.diagnostics
     );
 }
+
+#[test]
+fn icon_name_expressions_use_the_selected_registry_without_giant_enum_diagnostics() {
+    let valid = check_source(
+        "page\n\n<icon family=\"brand\" name={if true then \"spark\" else \"star\"} />\n",
+        local_config(),
+        local_input(r#"{"spark":57589,"star":57586}"#),
+    );
+    assert!(
+        valid
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity != Severity::Error),
+        "{:?}",
+        valid.diagnostics
+    );
+
+    let invalid = check_source(
+        "page\n\n<icon family=\"brand\" name={if true then \"spark\" else \"missing\"} />\n",
+        local_config(),
+        local_input(r#"{"spark":57589,"star":57586}"#),
+    );
+    let diagnostic = invalid
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "UH5017")
+        .expect("the invalid branch should name the missing icon");
+    assert!(diagnostic.message.contains("`missing`"));
+    assert!(diagnostic.message.len() < 200, "{diagnostic:?}");
+
+    let unconstrained = check_source(
+        "page\n\n<icon family=\"brand\" name={\"spa\" ++ \"rk\"} />\n",
+        local_config(),
+        local_input(r#"{"spark":57589}"#),
+    );
+    assert!(unconstrained.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "UH3001"
+            && diagnostic.message == "expected an icon name in family `brand`, got text"
+    }));
+}

@@ -212,7 +212,7 @@ nearby codepoint, or substitute generic SVG geometry.
 Local files are data only. The integration executes no CSS, HTML, JavaScript,
 font lifecycle script, package hook, or remote response. Implementations must
 bound font and map sizes, reject path escapes, decode fonts defensively, and
-serve bytes with a restrictive content security policy.
+serve font bytes from the Uhura host with the `font/woff2` media type.
 
 The pre-v1 JSON format does not carry license metadata. Foundation builds must
 retain upstream licenses and notices as distribution artifacts; private local

@@ -4,12 +4,13 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io;
+use std::io::{self, Read};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use uhura_base::{Severity, to_envelope};
+use uhura_check::icon_fonts::{MAX_ICON_FONT_BYTES, MAX_ICON_GLYPH_MAP_BYTES};
 use uhura_check::manifest::load_manifest;
 use uhura_check::{CheckInput, IconFontInput, SourceInput, check};
 use uhura_editor_model::{Asset, EditorRender, build_render};
@@ -313,31 +314,120 @@ pub(crate) fn build_captured_snapshot_at(
 /// revisions. Safe in-project symlinks retain logical identity; broad output
 /// exclusions are overridden only for exact declared dependencies.
 pub fn capture_project_snapshot(root: &Path) -> ProjectSourceSnapshot {
-    capture_project_snapshot_with(root, &mut |path: &Path| std::fs::read(path))
+    capture_project_snapshot_with(root, &mut |path: &Path, max_bytes| match max_bytes {
+        Some(max_bytes) => read_bounded_file(path, max_bytes),
+        None => std::fs::read(path),
+    })
 }
 
 fn capture_project_snapshot_with(
     root: &Path,
-    read_file: &mut impl FnMut(&Path) -> io::Result<Vec<u8>>,
+    read_file: &mut impl FnMut(&Path, Option<usize>) -> io::Result<Vec<u8>>,
 ) -> ProjectSourceSnapshot {
     let root = project_scan_root(root);
     let case_insensitive = detect_case_insensitive_filesystem(&root);
     let mut snapshot = ProjectSourceSnapshot::default();
     snapshot.files.case_insensitive = case_insensitive;
     snapshot.fingerprint.case_insensitive = case_insensitive;
+    {
+        let mut read_manifest = |path: &Path| read_file(path, None);
+        capture_declared_file(
+            &root,
+            Path::new("uhura.toml"),
+            &mut snapshot,
+            &mut read_manifest,
+            case_insensitive,
+        );
+    }
+    let icon_limits = declared_icon_resource_limits(&snapshot.files);
+    let mut read_project_file = |path: &Path| {
+        let max_bytes = declared_file_limit(&root, path, &icon_limits, case_insensitive);
+        read_file(path, max_bytes)
+    };
     let mut ancestors = vec![root.clone()];
     capture_project_dir(
         &root,
         &root,
         &mut snapshot,
-        read_file,
+        &mut read_project_file,
         case_insensitive,
         false,
         &mut ancestors,
     );
-    capture_declared_dependencies(&root, &mut snapshot, read_file, case_insensitive);
+    capture_declared_dependencies(
+        &root,
+        &mut snapshot,
+        &mut read_project_file,
+        case_insensitive,
+    );
     snapshot.failures.sort();
     snapshot
+}
+
+fn read_bounded_file(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() > max_bytes as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("file exceeds {max_bytes}-byte limit"),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("file exceeds {max_bytes}-byte limit"),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn declared_icon_resource_limits(files: &ProjectSourceFiles) -> BTreeMap<PathBuf, usize> {
+    let Ok(Some(bytes)) = files.resolve(Path::new("uhura.toml")) else {
+        return BTreeMap::new();
+    };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    let Ok(manifest) = load_manifest(text) else {
+        return BTreeMap::new();
+    };
+
+    let mut limits: BTreeMap<PathBuf, usize> = BTreeMap::new();
+    for family in manifest.icons.families.values() {
+        if let Ok(path) = normalize_corpus_path(Path::new(&family.font)) {
+            limits
+                .entry(path)
+                .and_modify(|limit| *limit = (*limit).min(MAX_ICON_FONT_BYTES))
+                .or_insert(MAX_ICON_FONT_BYTES);
+        }
+        if let Ok(path) = normalize_corpus_path(Path::new(&family.glyphs)) {
+            limits
+                .entry(path)
+                .and_modify(|limit| *limit = (*limit).min(MAX_ICON_GLYPH_MAP_BYTES))
+                .or_insert(MAX_ICON_GLYPH_MAP_BYTES);
+        }
+    }
+    limits
+}
+
+fn declared_file_limit(
+    root: &Path,
+    path: &Path,
+    limits: &BTreeMap<PathBuf, usize>,
+    case_insensitive: bool,
+) -> Option<usize> {
+    let relative = path.strip_prefix(root).ok()?;
+    if let Some(limit) = limits.get(relative) {
+        return Some(*limit);
+    }
+    if !case_insensitive {
+        return None;
+    }
+    limits.iter().find_map(|(candidate, limit)| {
+        path_components_equal(relative, candidate, true).then_some(*limit)
+    })
 }
 
 pub(crate) fn project_scan_root(root: &Path) -> PathBuf {
@@ -406,6 +496,9 @@ fn capture_project_dir(
             }
         };
         let path = entry.path();
+        if snapshot.fingerprint.contains_key(&path) {
+            continue;
+        }
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let child_source_scope = source_scope
@@ -1461,11 +1554,11 @@ mod tests {
     use uhura_base::{Diagnostic, Ident, SourceMap, Span};
 
     use super::{
-        EditorModelBuildFailure, ProjectSourceFiles, ProjectSourceFingerprint,
-        assemble_snapshot_input, build_captured_snapshot, build_snapshot, capture_project_snapshot,
-        capture_project_snapshot_with, failure_envelope, load_snapshot_assets,
-        project_indeterminate_path_blocks, project_path_blocks, project_scan_root,
-        snapshot_rel_path, snapshot_source_name,
+        EditorModelBuildFailure, MAX_ICON_GLYPH_MAP_BYTES, ProjectSourceFiles,
+        ProjectSourceFingerprint, assemble_snapshot_input, build_captured_snapshot, build_snapshot,
+        capture_project_snapshot, capture_project_snapshot_with, failure_envelope,
+        load_snapshot_assets, project_indeterminate_path_blocks, project_path_blocks,
+        project_scan_root, snapshot_rel_path, snapshot_source_name,
     };
 
     fn corpus_root() -> PathBuf {
@@ -1649,6 +1742,20 @@ glyphs = "build/icon-fonts/brand.json"
             Some(r#"{"glyphs":{"home":57344}}"#)
         );
 
+        let oversized_glyphs = std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("build/icon-fonts/brand.json"))
+            .expect("open glyph map");
+        oversized_glyphs
+            .set_len((MAX_ICON_GLYPH_MAP_BYTES + 1) as u64)
+            .expect("make sparse oversized glyph map");
+        let oversized = capture_project_snapshot(&root);
+        assert!(oversized.failures.iter().any(|failure| {
+            failure.blocks_build
+                && failure.path.ends_with("build/icon-fonts/brand.json")
+                && failure.message.contains("byte limit")
+        }));
+
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1831,7 +1938,7 @@ glyphs = "build/icon-fonts/brand.json"
 
         let observed_root = project_scan_root(&root);
         let unreadable = observed_root.join("components/unreadable.uhura");
-        let snapshot = capture_project_snapshot_with(&root, &mut |path: &Path| {
+        let snapshot = capture_project_snapshot_with(&root, &mut |path: &Path, _max_bytes| {
             if path == unreadable {
                 Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -1867,7 +1974,7 @@ glyphs = "build/icon-fonts/brand.json"
         let root = corpus_root();
         let observed_root = project_scan_root(&root);
         let unrelated = observed_root.join("README.md");
-        let snapshot = capture_project_snapshot_with(&root, &mut |path: &Path| {
+        let snapshot = capture_project_snapshot_with(&root, &mut |path: &Path, _max_bytes| {
             if path == unrelated {
                 Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -1933,16 +2040,17 @@ glyphs = "build/icon-fonts/brand.json"
 
         std::fs::write(root.join("components/notes.txt"), "designer notes")
             .expect("ordinary source-adjacent file");
-        let ordinary_file_snapshot = capture_project_snapshot_with(&root, &mut |path: &Path| {
-            if path == ordinary_source_file {
-                Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "injected ordinary-file denial",
-                ))
-            } else {
-                std::fs::read(path)
-            }
-        });
+        let ordinary_file_snapshot =
+            capture_project_snapshot_with(&root, &mut |path: &Path, _max_bytes| {
+                if path == ordinary_source_file {
+                    Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "injected ordinary-file denial",
+                    ))
+                } else {
+                    std::fs::read(path)
+                }
+            });
         assert!(
             ordinary_file_snapshot
                 .failures

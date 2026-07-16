@@ -991,28 +991,71 @@ impl MarkupChecker<'_> {
                 "bare `name` means `true`; `<icon>`'s `name` is an icon name".to_string(),
                 span,
             ),
-            ast::AttrValue::Literal(value) => match Ident::new(value) {
-                Ok(icon) if glyphs.contains(&icon) => {}
-                Ok(icon) => {
-                    let mut diagnostic = Diagnostic::error(
-                        codes::UNKNOWN_ICON.0,
-                        codes::UNKNOWN_ICON.1,
-                        format!("`{value}` is not in icon family `{family}`"),
-                        span,
-                    );
-                    if let Some(near) = did_you_mean(&icon, glyphs.iter()) {
-                        diagnostic = diagnostic.with_note(format!("did you mean `{near}`?"));
+            ast::AttrValue::Literal(value) => self.check_icon_literal(family, glyphs, value, span),
+            ast::AttrValue::Expr(expr) => self.check_icon_expr(family, glyphs, expr),
+        }
+    }
+
+    fn check_icon_expr(&mut self, family: &Ident, glyphs: &BTreeSet<Ident>, expr: &ast::Expr) {
+        // Registry membership is a domain constraint, not a 1,995-member
+        // language enum. Keep diagnostics family-specific and accept enum
+        // expressions whose possible values are a valid subset.
+        match &expr.kind {
+            ast::ExprKind::Error => {}
+            ast::ExprKind::Str(value) => self.check_icon_literal(family, glyphs, value, expr.span),
+            ast::ExprKind::If { cond, then, els } => {
+                self.typer.check(cond, &Ty::Bool);
+                self.check_icon_expr(family, glyphs, then);
+                self.check_icon_expr(family, glyphs, els);
+            }
+            _ => match self.typer.infer(expr) {
+                Ty::Error => {}
+                Ty::Enum(values) => {
+                    if let Some(icon) = values.iter().find(|icon| !glyphs.contains(*icon)) {
+                        self.unknown_icon(family, glyphs, icon, expr.span);
                     }
-                    self.typer.diags.push(diagnostic);
                 }
-                Err(_) => self.error(
-                    codes::UNKNOWN_ICON,
-                    format!("`{value}` is not an icon name"),
-                    span,
+                actual => self.error(
+                    codes::TYPE_MISMATCH,
+                    format!(
+                        "expected an icon name in family `{family}`, got {}",
+                        actual.describe()
+                    ),
+                    expr.span,
                 ),
             },
-            ast::AttrValue::Expr(expr) => self.typer.check(expr, &Ty::Enum(glyphs.clone())),
         }
+    }
+
+    fn check_icon_literal(
+        &mut self,
+        family: &Ident,
+        glyphs: &BTreeSet<Ident>,
+        value: &str,
+        span: Span,
+    ) {
+        match Ident::new(value) {
+            Ok(icon) if glyphs.contains(&icon) => {}
+            Ok(icon) => self.unknown_icon(family, glyphs, &icon, span),
+            Err(_) => self.error(
+                codes::UNKNOWN_ICON,
+                format!("`{value}` is not an icon name"),
+                span,
+            ),
+        }
+    }
+
+    fn unknown_icon(&mut self, family: &Ident, glyphs: &BTreeSet<Ident>, icon: &Ident, span: Span) {
+        let mut diagnostic = Diagnostic::error(
+            codes::UNKNOWN_ICON.0,
+            codes::UNKNOWN_ICON.1,
+            format!("`{icon}` is not in icon family `{family}`"),
+            span,
+        );
+        if let Some(near) = did_you_mean(icon, glyphs.iter()) {
+            diagnostic = diagnostic.with_note(format!("did you mean `{near}`?"));
+        }
+        self.typer.diags.push(diagnostic);
     }
 
     /// `on:<event>={emit <machine-event>(args)}` on a catalog element:

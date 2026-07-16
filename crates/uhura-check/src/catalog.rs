@@ -686,7 +686,7 @@ fn walk_prop(path: &str, table: &toml::Table, issues: &mut Vec<CatalogIssue>) ->
             issues.push(CatalogIssue {
                 path: format!("{path}.type"),
                 message: format!(
-                    "`{other}` is not a prop type (text | bool | int | enum | asset | icon)"
+                    "`{other}` is not a prop type (text | bool | int | enum | asset | icon | icon-family)"
                 ),
             });
             return None;

@@ -2,22 +2,27 @@
 //! renderers receive only validated, content-addressed font resources.
 
 use std::collections::BTreeMap;
+use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::io::{self, Read};
+use std::sync::{Arc, OnceLock};
 
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use ttf_parser::{Face, Tag};
 use uhura_base::{Ident, hash_json, sha256_hex};
-use woff2_patched::convert_woff2_to_ttf;
+use wuff::decompress_woff2_with_custom_brotli;
 
 use crate::manifest::IconsConfig;
 
 const LUCIDE_FONT: &[u8] = include_bytes!("../../../resources/icon-fonts/lucide/lucide.woff2");
 const LUCIDE_GLYPHS: &str = include_str!("../../../resources/icon-fonts/lucide/glyphs.json");
-const MAX_WOFF2_BYTES: usize = 16 * 1024 * 1024;
-const MAX_DECODED_FONT_BYTES: u32 = 64 * 1024 * 1024;
-const MAX_GLYPH_MAP_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_ICON_FONT_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_DECODED_ICON_FONT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_ICON_GLYPH_MAP_BYTES: usize = 4 * 1024 * 1024;
+const MAX_ICON_FONT_TABLE_BYTES: usize = 2 * 1024 * 1024;
+
+static LUCIDE_CHECKED: OnceLock<Result<CheckedIconFamily, Vec<IconFontIssue>>> = OnceLock::new();
 
 /// App-provided bytes for one family declared as `[icons.<alias>]`.
 /// The duplicated paths make the pure checker verify that a host associated
@@ -59,16 +64,28 @@ pub fn load_icon_fonts(
     let mut issues = Vec::new();
     let mut families = BTreeMap::new();
 
-    if let Some(lucide) = check_family(
-        "icons.lucide",
-        Arc::<[u8]>::from(LUCIDE_FONT),
-        LUCIDE_GLYPHS,
-        &mut issues,
-    ) {
-        families.insert(
-            Ident::new("lucide").expect("built-in icon family is a valid identifier"),
-            lucide,
-        );
+    match LUCIDE_CHECKED
+        .get_or_init(|| {
+            let mut issues = Vec::new();
+            match check_family(
+                "icons.lucide",
+                Arc::<[u8]>::from(LUCIDE_FONT),
+                LUCIDE_GLYPHS,
+                &mut issues,
+            ) {
+                Some(family) => Ok(family),
+                None => Err(issues),
+            }
+        })
+        .clone()
+    {
+        Ok(lucide) => {
+            families.insert(
+                Ident::new("lucide").expect("built-in icon family is a valid identifier"),
+                lucide,
+            );
+        }
+        Err(mut lucide_issues) => issues.append(&mut lucide_issues),
     }
 
     for (name, declaration) in &config.families {
@@ -152,11 +169,11 @@ fn check_family(
     issues: &mut Vec<IconFontIssue>,
 ) -> Option<CheckedIconFamily> {
     let start = issues.len();
-    let raw = if glyphs_text.len() > MAX_GLYPH_MAP_BYTES {
+    let raw = if glyphs_text.len() > MAX_ICON_GLYPH_MAP_BYTES {
         issues.push(IconFontIssue {
             path: format!("{path}.glyphs"),
             message: format!(
-                "glyph map is too large ({} bytes; maximum is {MAX_GLYPH_MAP_BYTES})",
+                "glyph map is too large ({} bytes; maximum is {MAX_ICON_GLYPH_MAP_BYTES})",
                 glyphs_text.len()
             ),
         });
@@ -229,11 +246,11 @@ fn validate_font(
     issues: &mut Vec<IconFontIssue>,
 ) {
     let font_path = format!("{path}.font");
-    if font.len() > MAX_WOFF2_BYTES {
+    if font.len() > MAX_ICON_FONT_BYTES {
         issues.push(IconFontIssue {
             path: font_path,
             message: format!(
-                "WOFF2 font is too large ({} bytes; maximum is {MAX_WOFF2_BYTES})",
+                "WOFF2 font is too large ({} bytes; maximum is {MAX_ICON_FONT_BYTES})",
                 font.len()
             ),
         });
@@ -253,20 +270,27 @@ fn validate_font(
         });
         return;
     }
-    let decoded_size = u32::from_be_bytes(font[16..20].try_into().expect("four-byte range"));
-    if decoded_size > MAX_DECODED_FONT_BYTES {
+    if &font[4..8] == b"ttcf" {
+        issues.push(IconFontIssue {
+            path: font_path,
+            message: "font collections are not supported; expected exactly one font face".into(),
+        });
+        return;
+    }
+    let declared_size = u32::from_be_bytes(font[16..20].try_into().expect("four-byte range"));
+    if declared_size as usize > MAX_DECODED_ICON_FONT_BYTES {
         issues.push(IconFontIssue {
             path: font_path,
             message: format!(
-                "decoded font would be too large ({decoded_size} bytes; maximum is {MAX_DECODED_FONT_BYTES})"
+                "decoded font would be too large ({declared_size} bytes; maximum is {MAX_DECODED_ICON_FONT_BYTES})"
             ),
         });
         return;
     }
 
     let decoded = std::panic::catch_unwind(|| {
-        let mut input = font;
-        convert_woff2_to_ttf(&mut input)
+        let mut brotli = decode_brotli_bounded;
+        decompress_woff2_with_custom_brotli(font, &mut brotli)
     });
     let sfnt = match decoded {
         Ok(Ok(sfnt)) => sfnt,
@@ -285,6 +309,16 @@ fn validate_font(
             return;
         }
     };
+    if sfnt.len() > MAX_DECODED_ICON_FONT_BYTES {
+        issues.push(IconFontIssue {
+            path: font_path,
+            message: format!(
+                "decoded font is too large ({} bytes; maximum is {MAX_DECODED_ICON_FONT_BYTES})",
+                sfnt.len()
+            ),
+        });
+        return;
+    }
 
     if ttf_parser::fonts_in_collection(&sfnt).is_some() {
         issues.push(IconFontIssue {
@@ -351,6 +385,38 @@ fn validate_font(
     }
 }
 
+fn decode_brotli_bounded(compressed: &[u8], expected: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+    // `expected` is derived by wuff from the checked table directory. A
+    // transformed `glyf` stream can temporarily expand each encoded point
+    // into several output vectors, so its input ceiling is deliberately
+    // tighter than the final decoded-font ceiling.
+    if expected > MAX_ICON_FONT_TABLE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "WOFF2 table data would be too large ({expected} bytes; maximum is {MAX_ICON_FONT_TABLE_BYTES})"
+            ),
+        )
+        .into());
+    }
+    let decoder = brotli::Decompressor::new(compressed, 4096);
+    let mut decoded = Vec::with_capacity(expected);
+    decoder
+        .take(expected as u64 + 1)
+        .read_to_end(&mut decoded)?;
+    if decoded.len() != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "WOFF2 Brotli output has {} bytes, but its table directory requires {expected}",
+                decoded.len()
+            ),
+        )
+        .into());
+    }
+    Ok(decoded)
+}
+
 struct UniqueGlyphMap(BTreeMap<String, u32>);
 
 impl<'de> Deserialize<'de> for UniqueGlyphMap {
@@ -391,4 +457,29 @@ fn is_private_use(codepoint: u32) -> bool {
     (0xE000..=0xF8FF).contains(&codepoint)
         || (0xF0000..=0xFFFFD).contains(&codepoint)
         || (0x100000..=0x10FFFD).contains(&codepoint)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::{MAX_ICON_FONT_TABLE_BYTES, decode_brotli_bounded};
+
+    #[test]
+    fn bounded_brotli_rejects_oversized_table_allocation() {
+        let error = decode_brotli_bounded(&[], MAX_ICON_FONT_TABLE_BYTES + 1).unwrap_err();
+        assert!(error.to_string().contains("table data would be too large"));
+    }
+
+    #[test]
+    fn bounded_brotli_rejects_output_larger_than_the_directory() {
+        let mut compressed = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut compressed, 4096, 5, 22);
+            writer.write_all(b"ab").unwrap();
+        }
+
+        let error = decode_brotli_bounded(&compressed, 1).unwrap_err();
+        assert!(error.to_string().contains("has 2 bytes"));
+    }
 }
