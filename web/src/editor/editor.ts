@@ -14,6 +14,7 @@ import {
   prepareEditorModel,
   previewIdForIdentity,
   reconcilePreparedEditorModel,
+  setAnnotationConnectorsHidden,
   watchPreparedEditorModel,
   type PreparedEditorModel,
   type PreparedStructureConnector,
@@ -599,7 +600,11 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   const setAnnotationLayerVisible = (visible: boolean): void => {
     annotationLayerVisible = visible;
     annotationOverlay.setCanvasVisible(visible);
-    model.connectorLayer.style.display = visible ? "" : "none";
+    // Only replay connectors follow the annotation toggle; the layer itself
+    // stays rendered so selection-driven structural arrows keep working (and
+    // keep valid getBBox measurements) while annotations are hidden.
+    setAnnotationConnectorsHidden(model.connectorLayer, !visible);
+    requestConnectors();
   };
 
   const applyCamera = (): void => {
@@ -1446,7 +1451,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.board = nextModel.board;
     shell.navigatorResults.replaceChildren(nextModel.navigator);
     model = nextModel;
-    model.connectorLayer.style.display = annotationLayerVisible ? "" : "none";
+    setAnnotationConnectorsHidden(model.connectorLayer, !annotationLayerVisible);
     disposePreparedEditorModel(previousModel);
     annotationOverlay.install({
       render: nextModel.render,

@@ -295,6 +295,10 @@ export const EDITOR_STYLES = `
   .workflow-connector.opens-surface { color: #6d4fc2; }
   .workflow-connectors.has-selection .workflow-connector { opacity: .16; }
   .workflow-connectors.has-selection .workflow-connector.is-active { opacity: 1; }
+  /* Shift+Y hides annotations and replay connectors together, but only the
+     replay groups: the layer itself stays rendered so selection-scoped
+     structural arrows below keep drawing on the otherwise clean board. */
+  .workflow-connectors.annotations-hidden .workflow-connector { display: none; }
   .workflow-connector-path {
     fill: none;
     stroke: currentcolor;

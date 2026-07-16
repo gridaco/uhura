@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { scopePreviewSelector } from "../editor-styles.js";
+import { EDITOR_STYLES, scopePreviewSelector } from "../editor-styles.js";
 
 test("maps document roots onto the isolated preview application boundary", () => {
   assert.equal(scopePreviewSelector(":root"), ":host");
@@ -16,5 +16,18 @@ test("leaves ordinary selectors and root-like substrings alone", () => {
   assert.equal(
     scopePreviewSelector(".somebody .html-card, [data-root='body']"),
     ".somebody .html-card, [data-root='body']",
+  );
+});
+
+test("annotations-hidden removes replay connectors but never structural arrows", () => {
+  assert.ok(
+    EDITOR_STYLES.includes(
+      ".workflow-connectors.annotations-hidden .workflow-connector { display: none; }",
+    ),
+    "hiding the annotation layer must hide replay connector groups via CSS",
+  );
+  assert.ok(
+    !EDITOR_STYLES.includes(".annotations-hidden .structure-connector"),
+    "structural selection arrows stay outside the annotation visibility toggle",
   );
 });

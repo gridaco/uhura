@@ -337,6 +337,19 @@ const navigatorGroup = (
   return section;
 };
 
+// Shift+Y hides authored annotations plus replay (workflow) connectors, but
+// structural arrows are selection state rather than annotation content. The
+// connector layer therefore never leaves the render tree: CSS keyed off this
+// class hides only `.workflow-connector` groups, so `.structure-connector
+// .is-active` keeps drawing (and `getBBox` keeps measuring label pills) while
+// annotations are hidden.
+export const setAnnotationConnectorsHidden = (
+  connectorLayer: SVGSVGElement,
+  hidden: boolean,
+): void => {
+  connectorLayer.classList.toggle("annotations-hidden", hidden);
+};
+
 export const prepareEditorModel = (
   document: Document,
   render: EditorRender | null,
