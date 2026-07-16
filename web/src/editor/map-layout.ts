@@ -55,6 +55,15 @@ export const MAP_COLUMN_GAP = 72;
 export const MAP_ROW_GAP = 48;
 /** Vertical gap between a page and the surfaces it presents, board units. */
 export const MAP_SURFACE_GAP = 32;
+/**
+ * Maximum stacked height of one depth column before its cells wrap into a
+ * side-by-side sub-column, board units — about four scaled phone frames. A
+ * tab bar reaching six pages puts them all at depth 1; without wrapping that
+ * single column stretches the map into a strip no zoom can take in at once.
+ */
+export const MAP_COLUMN_MAX_HEIGHT = 1500;
+/** Horizontal gap between wrapped sub-columns inside one depth column. */
+export const MAP_SUBCOLUMN_GAP = 48;
 
 /**
  * BFS from the entry page over `navigate` edges between pages, discovering
@@ -122,8 +131,10 @@ interface MapCell {
  * Positions every page/surface node of the graph. Columns run left to right
  * by navigation depth from the entry (unreachable pages, then orphan
  * surfaces, in a final name-sorted column); within a column, cells stack in
- * BFS discovery order. Nodes are keyed by graph id; `sizeOf` supplies each
- * node's rendered footprint so columns clear their widest member.
+ * BFS discovery order, wrapping into side-by-side sub-columns once the stack
+ * would exceed MAP_COLUMN_MAX_HEIGHT (a cell — page plus its surfaces — is
+ * atomic and never splits). Nodes are keyed by graph id; `sizeOf` supplies
+ * each node's rendered footprint so columns clear their widest member.
  */
 export const layoutInteractionMap = (
   graph: MapGraph,
@@ -165,23 +176,36 @@ export const layoutInteractionMap = (
   let x = 0;
   for (const column of columnIndexes) {
     const columnCells = columns.get(column)!;
+    let subX = x;
+    let subWidth = 0;
     let y = 0;
-    let columnWidth = 0;
-    for (const [cellIndex, cell] of columnCells.entries()) {
-      if (cellIndex > 0) y += MAP_ROW_GAP;
+    let rightEdge = x;
+    for (const cell of columnCells) {
       const headSize = sizeOf(cell.head);
-      positions.set(cell.head, { x, y, column });
-      columnWidth = Math.max(columnWidth, headSize.width);
-      y += headSize.height;
-      for (const surface of cell.surfaces) {
-        y += MAP_SURFACE_GAP;
-        const surfaceSize = sizeOf(surface);
-        positions.set(surface, { x, y, column });
-        columnWidth = Math.max(columnWidth, surfaceSize.width);
-        y += surfaceSize.height;
+      const surfaceSizes = cell.surfaces.map((surface) => sizeOf(surface));
+      const cellHeight = headSize.height
+        + surfaceSizes.reduce((sum, size) => sum + MAP_SURFACE_GAP + size.height, 0);
+      // Wrap BEFORE overflowing, never an empty sub-column: a first cell
+      // taller than the cap still lands at the top of its sub-column.
+      if (y > 0 && y + MAP_ROW_GAP + cellHeight > MAP_COLUMN_MAX_HEIGHT) {
+        subX += subWidth + MAP_SUBCOLUMN_GAP;
+        subWidth = 0;
+        y = 0;
+      } else if (y > 0) {
+        y += MAP_ROW_GAP;
       }
+      positions.set(cell.head, { x: subX, y, column });
+      subWidth = Math.max(subWidth, headSize.width);
+      y += headSize.height;
+      for (const [surfaceIndex, surface] of cell.surfaces.entries()) {
+        y += MAP_SURFACE_GAP;
+        positions.set(surface, { x: subX, y, column });
+        subWidth = Math.max(subWidth, surfaceSizes[surfaceIndex]!.width);
+        y += surfaceSizes[surfaceIndex]!.height;
+      }
+      rightEdge = Math.max(rightEdge, subX + subWidth);
     }
-    x += columnWidth + MAP_COLUMN_GAP;
+    x = rightEdge + MAP_COLUMN_GAP;
   }
   return positions;
 };

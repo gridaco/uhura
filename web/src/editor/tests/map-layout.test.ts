@@ -5,16 +5,20 @@ import { test } from "vitest";
 import {
   layoutInteractionMap,
   MAP_COLUMN_GAP,
+  MAP_COLUMN_MAX_HEIGHT,
   MAP_NODE_SCALE,
   MAP_ROW_GAP,
+  MAP_SUBCOLUMN_GAP,
   MAP_SURFACE_GAP,
   mapNodePreviewIds,
   scaledMapNodeSize,
   type MapGraph,
 } from "../map-layout.js";
 
-const PAGE = { width: 400, height: 900 };
-const SURFACE = { width: 400, height: 600 };
+// Fixture footprints mirror what the editor feeds the layout: raw frames
+// already reduced by MAP_NODE_SCALE (≈ 390x844 pages -> ~156x338).
+const PAGE = { width: 160, height: 360 };
+const SURFACE = { width: 160, height: 240 };
 
 const uniformSize = (nodeId: string): { width: number; height: number } =>
   nodeId.startsWith("surface:") ? SURFACE : PAGE;
@@ -178,6 +182,67 @@ test("duplicate and self navigate edges never distort depth", () => {
 
   assert.equal(positions.get("page:feed")?.column, 0);
   assert.equal(positions.get("page:post")?.column, 1);
+});
+
+/** A tab-bar-like fan-out: the entry navigates to six depth-1 pages. */
+const fanOutGraph = (): MapGraph => {
+  const names = ["a", "b", "c", "d", "e", "f"];
+  return {
+    entry: "page:feed",
+    nodes: [
+      { id: "page:feed", kind: "page" },
+      ...names.map((name) => ({ id: `page:${name}`, kind: "page" })),
+    ],
+    edges: names.map((name) => ({
+      kind: "navigate",
+      from: "page:feed",
+      to: `page:${name}`,
+      event: `${name}-tapped`,
+    })),
+  };
+};
+
+test("a fan-out column wraps into sub-columns at the height cap", () => {
+  const positions = layoutInteractionMap(fanOutGraph(), uniformSize);
+  // Pages a/b/c stack to 1176; adding d would reach 1584 > MAP_COLUMN_MAX_HEIGHT.
+  assert.ok(
+    3 * PAGE.height + 2 * MAP_ROW_GAP <= MAP_COLUMN_MAX_HEIGHT
+      && 4 * PAGE.height + 3 * MAP_ROW_GAP > MAP_COLUMN_MAX_HEIGHT,
+    "fixture wraps after the third cell",
+  );
+  const columnX = PAGE.width + MAP_COLUMN_GAP;
+  assert.equal(positions.get("page:a")?.x, columnX);
+  assert.equal(positions.get("page:c")?.y, (PAGE.height + MAP_ROW_GAP) * 2);
+  assert.equal(
+    positions.get("page:d")?.x,
+    columnX + PAGE.width + MAP_SUBCOLUMN_GAP,
+    "the fourth cell starts a side-by-side sub-column",
+  );
+  assert.equal(positions.get("page:d")?.y, 0);
+  assert.equal(positions.get("page:d")?.column, 1, "sub-columns stay in the depth column");
+  assert.equal(positions.get("page:e")?.y, PAGE.height + MAP_ROW_GAP);
+});
+
+test("the next depth column clears every wrapped sub-column", () => {
+  const graph = fanOutGraph();
+  const deeper: MapGraph = {
+    ...graph,
+    nodes: [...graph.nodes, { id: "page:g", kind: "page" }],
+    edges: [
+      ...graph.edges,
+      { kind: "navigate", from: "page:a", to: "page:g", event: "g-tapped" },
+    ],
+  };
+  const positions = layoutInteractionMap(deeper, uniformSize);
+
+  assert.equal(positions.get("page:g")?.column, 2);
+  assert.equal(
+    positions.get("page:g")?.x,
+    PAGE.width + MAP_COLUMN_GAP
+      + PAGE.width + MAP_SUBCOLUMN_GAP + PAGE.width
+      + MAP_COLUMN_GAP,
+    "column 2 starts past both sub-columns of column 1",
+  );
 });
 
 test("scaledMapNodeSize shrinks a raw footprint by MAP_NODE_SCALE", () => {

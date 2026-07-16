@@ -60,6 +60,14 @@ import {
   scaledMapNodeSize,
   type MapNodeSize,
 } from "./map-layout.js";
+import {
+  applyMapOverrides,
+  draggedMapPosition,
+  isDragGesture,
+  retainMapOverrides,
+  setMapOverride,
+  type MapPoint,
+} from "./map-interaction.js";
 import type { InteractionGraphNode } from "../protocol/types.js";
 import {
   roundedStructurePath,
@@ -151,6 +159,7 @@ interface EditorShell {
   focusSelectionButton: HTMLButtonElement;
   mapToggleButton: HTMLButtonElement;
   navToggleButton: HTMLButtonElement;
+  mapResetButton: HTMLButtonElement;
   sourceDrawerButton: HTMLButtonElement;
   focusHeader: HTMLElement;
   exitFocusButton: HTMLButtonElement;
@@ -238,6 +247,7 @@ const SHELL_HTML = `
         <button class="canvas-tool stroke focus-selection" type="button" aria-label="Center selected preview" title="Center selected preview" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"></path></svg></button>
         <button class="canvas-tool stroke map-toggle" type="button" aria-label="Toggle map view" aria-pressed="false" title="Map view: one node per page, arranged by app flow" disabled><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M1.75 3.9 5.9 2.4l4.2 1.5 4.15-1.5v9.7L10.1 13.6l-4.2-1.5-4.15 1.5zM5.9 2.4v9.7M10.1 3.9v9.7"></path></svg><span class="map-toggle-label">Map</span></button>
         <button class="canvas-tool stroke nav-toggle" type="button" aria-label="Show tab-bar navigation edges" aria-pressed="false" title="Show tab-bar navigation edges" hidden><svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="10.5" width="12" height="3" rx="1"></rect><path d="M5 8.5v2M8 6.5v4M11 8.5v2"></path></svg><span class="nav-toggle-label">Nav</span></button>
+        <button class="canvas-tool stroke map-reset" type="button" aria-label="Reset map layout" title="Reset dragged nodes to the derived layout" hidden><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M12.9 9.2a5 5 0 1 1-.5-3.9M12.7 2.6v2.9H9.8"></path></svg><span class="map-reset-label">Reset layout</span></button>
         <button class="canvas-tool stroke source-drawer-toggle" type="button" aria-label="Open Source documentation" aria-controls="editor-source-drawer" aria-expanded="false" aria-keyshortcuts="Y" title="Source documentation (Y)"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 2.5h7.5L13 5v8.5H3zM10.5 2.5V5H13M5.5 8h5M5.5 10.5h5"></path></svg></button>
       </div>
       <div class="editor-board"><section class="empty-board"><h2>Starting Editor</h2><p>Loading static previews…</p></section></div>
@@ -331,6 +341,7 @@ const buildShell = (root: HTMLElement): EditorShell => {
     focusSelectionButton: required(shell, ".focus-selection"),
     mapToggleButton: required(shell, ".map-toggle"),
     navToggleButton: required(shell, ".nav-toggle"),
+    mapResetButton: required(shell, ".map-reset"),
     sourceDrawerButton: required(shell, ".source-drawer-toggle"),
     focusHeader: required(shell, ".focus-header"),
     exitFocusButton: required(shell, ".focus-exit"),
@@ -508,6 +519,19 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   // dashed hairlines. Visibility resets to hidden on every map entry.
   let mapNavConnectors: ActiveStructureConnector[] = [];
   let mapNavVisible = false;
+  // Dragged node positions are session VIEW STATE, keyed by graph node id:
+  // they survive mode toggles and revision reloads (pruned to nodes the new
+  // graph still has) but never persist to disk. Never mutated in place —
+  // every drag or reset swaps in a fresh map.
+  let mapPositionOverrides: ReadonlyMap<string, MapPoint> = new Map();
+  let mapDrag: {
+    pointerId: number;
+    nodeId: string;
+    element: HTMLElement;
+    start: MapPoint;
+    origin: MapPoint;
+    moved: boolean;
+  } | null = null;
   let annotationLayerVisible = true;
   let destroyed = false;
   let retryTimer: number | undefined;
@@ -1108,10 +1132,12 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.board.style.removeProperty("width");
     shell.board.style.removeProperty("height");
     shell.board.style.removeProperty("--map-node-scale");
+    cancelMapDrag();
     for (const frame of model.frameById.values()) {
-      frame.classList.remove("is-map-node");
+      frame.classList.remove("is-map-node", "is-map-dragging");
       frame.style.removeProperty("left");
       frame.style.removeProperty("top");
+      delete frame.dataset.mapNode;
     }
     for (const placeholder of mapPlaceholderByNode.values()) placeholder.remove();
     for (const connector of model.structureConnectors) {
@@ -1123,12 +1149,16 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     mapStructureConnectors = [];
     mapNavConnectors = [];
     mapNavVisible = false;
+    // mapPositionOverrides intentionally survives: toggling back into map
+    // mode within the session restores dragged positions.
     syncNavToggle();
+    syncMapResetButton();
   };
 
   const applyMapLayout = (): void => {
     const render = model.render;
     if (!render) return;
+    cancelMapDrag();
     for (const placeholder of mapPlaceholderByNode.values()) placeholder.remove();
     mapPlaceholderByNode = new Map();
     const graph = render.interactionGraph;
@@ -1145,6 +1175,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       const frame = previewId === undefined ? undefined : model.frameById.get(previewId);
       if (frame) {
         frame.classList.add("is-map-node");
+        // The drag handler resolves a pressed frame back to its graph node
+        // through this tag (placeholders carry it from construction).
+        frame.dataset.mapNode = node.id;
         elementByNode.set(node.id, frame);
         continue;
       }
@@ -1167,7 +1200,16 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         width > 0 && height > 0 ? { width, height } : mapFallbackSize(nodeId),
       );
     };
-    const positions = layoutInteractionMap(graph, sizeOf);
+    // Derived layout first, then session drag overrides on top — pruned so
+    // a node the new revision dropped never leaves a stale pin behind.
+    mapPositionOverrides = retainMapOverrides(
+      mapPositionOverrides,
+      new Set(elementByNode.keys()),
+    );
+    const positions = applyMapOverrides(
+      layoutInteractionMap(graph, sizeOf),
+      mapPositionOverrides,
+    );
     let width = 0;
     let height = 0;
     for (const [nodeId, position] of positions) {
@@ -1195,12 +1237,106 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       connector.element.classList.add("is-global-nav");
     }
     syncNavToggle();
+    syncMapResetButton();
   };
 
   /** The Nav sub-toggle exists only on a map that actually collapsed edges. */
   const syncNavToggle = (): void => {
     shell.navToggleButton.hidden = !mapMode || mapNavConnectors.length === 0;
     shell.navToggleButton.setAttribute("aria-pressed", String(mapNavVisible));
+  };
+
+  /** Reset layout exists only while dragged nodes diverge from the map. */
+  const syncMapResetButton = (): void => {
+    shell.mapResetButton.hidden = !mapMode || mapPositionOverrides.size === 0;
+  };
+
+  // --- Map drag ------------------------------------------------------------
+  // Pointer down on a map node arms a potential drag; crossing the movement
+  // threshold turns it into one (below it, the release clicks-to-select as
+  // always). While dragging, the frame tracks the pointer in board units and
+  // the structural arrows relayout live through the existing rAF batch. The
+  // result lands in mapPositionOverrides — draw-in never replays, because a
+  // drag is not a selection change.
+
+  const beginMapDrag = (event: PointerEvent): boolean => {
+    if (
+      !mapMode
+      || mapDrag !== null
+      || event.button !== 0
+      || event.pointerType === "touch"
+      || effectiveTool() !== "cursor"
+    ) return false;
+    const frame = closest<HTMLElement>(event.target, ".editor-frame.is-map-node");
+    const nodeId = frame?.dataset.mapNode;
+    if (!frame || nodeId === undefined) return false;
+    mapDrag = {
+      pointerId: event.pointerId,
+      nodeId,
+      element: frame,
+      start: { x: event.clientX, y: event.clientY },
+      origin: {
+        x: Number.parseFloat(frame.style.left) || 0,
+        y: Number.parseFloat(frame.style.top) || 0,
+      },
+      moved: false,
+    };
+    return true;
+  };
+
+  const updateMapDrag = (event: PointerEvent): boolean => {
+    if (!mapDrag || event.pointerId !== mapDrag.pointerId) return false;
+    const current = { x: event.clientX, y: event.clientY };
+    if (!mapDrag.moved && isDragGesture(mapDrag.start, current)) {
+      mapDrag.moved = true;
+      mapDrag.element.classList.add("is-map-dragging");
+      // Capture only once the gesture IS a drag: capturing at press would
+      // retarget the pointerup — and the click the browser synthesizes from
+      // it — to the viewport, silently breaking click-to-select on nodes.
+      shell.viewport.setPointerCapture(event.pointerId);
+    }
+    if (!mapDrag.moved) return true;
+    const position = draggedMapPosition(mapDrag.origin, mapDrag.start, current, scale);
+    mapDrag.element.style.left = `${position.x}px`;
+    mapDrag.element.style.top = `${position.y}px`;
+    requestConnectors();
+    return true;
+  };
+
+  const finishMapDrag = (pointerId: number): void => {
+    if (!mapDrag || mapDrag.pointerId !== pointerId) return;
+    const drag = mapDrag;
+    mapDrag = null;
+    drag.element.classList.remove("is-map-dragging");
+    // A press that never crossed the threshold is a click: the click event
+    // that follows runs the normal select path, untouched.
+    if (!drag.moved) return;
+    suppressClickUntil = performance.now() + 250;
+    mapPositionOverrides = setMapOverride(mapPositionOverrides, drag.nodeId, {
+      x: Number.parseFloat(drag.element.style.left) || 0,
+      y: Number.parseFloat(drag.element.style.top) || 0,
+    });
+    syncMapResetButton();
+    requestConnectors();
+  };
+
+  const cancelMapDrag = (): void => {
+    if (!mapDrag) return;
+    mapDrag.element.classList.remove("is-map-dragging");
+    mapDrag = null;
+  };
+
+  /** Clears every drag override and returns the map to the derived layout. */
+  const resetMapLayout = (): void => {
+    if (!mapMode || mapPositionOverrides.size === 0) return;
+    mapPositionOverrides = new Map();
+    applyMapLayout();
+    // Re-arm the arrows through the one selection pipeline so spotlight and
+    // emphasis states stay exactly as they were before the reset.
+    const selectedId = previewIdForIdentity(model, selectedIdentity);
+    if (selectedId) selectPreview(selectedId, false);
+    else activateMapStructureConnectors();
+    requestConnectors();
   };
 
   /** Every visible map node's shell, as routing obstacles for the arrows. */
@@ -2055,6 +2191,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   });
   listen(shell.mapToggleButton, "click", () => setMapMode(!mapMode));
   listen(shell.navToggleButton, "click", () => setMapNavVisible(!mapNavVisible));
+  listen(shell.mapResetButton, "click", resetMapLayout);
   listen(shell.exitFocusButton, "click", () => leavePreviewFocus());
   listen(shell.sourceDrawerButton, "click", () => {
     setSourceDrawer(shell.sourceDrawer.hasAttribute("hidden"), true);
@@ -2193,6 +2330,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       annotationOverlay.dismissCards();
       setSourceDrawer(false);
     }
+    // In map mode a primary press on a node arms a drag; the release decides
+    // between drag (past the threshold) and the ordinary click-to-select.
+    if (beginMapDrag(event)) return;
     if (event.pointerType === "touch") {
       const point = localPoint(event.clientX, event.clientY);
       touches.set(event.pointerId, point);
@@ -2209,6 +2349,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   });
   listen(shell.viewport, "pointermove", (rawEvent) => {
     const event = rawEvent as PointerEvent;
+    if (updateMapDrag(event)) return;
     if (event.pointerType === "touch" && touches.has(event.pointerId)) {
       const point = localPoint(event.clientX, event.clientY);
       touches.set(event.pointerId, point);
@@ -2221,6 +2362,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   });
   const finishPointer = (rawEvent: Event): void => {
     const event = rawEvent as PointerEvent;
+    finishMapDrag(event.pointerId);
     finishPan(event.pointerId);
     if (!touches.delete(event.pointerId)) return;
     pinch = null;
@@ -2330,6 +2472,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   });
   const resetPointers = (): void => {
     spaceHeld = false;
+    cancelMapDrag();
     finishPan();
     touches.clear();
     pinch = null;

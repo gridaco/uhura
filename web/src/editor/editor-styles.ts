@@ -397,6 +397,14 @@ export const EDITOR_STYLES = `
     transform: scale(var(--map-node-scale, 1));
     transform-origin: top left;
     user-select: none;
+    cursor: grab;
+  }
+  /* A dragged node rides above its siblings AND the lifted connector layer
+     (has-structure, z-index 3) so it never slides underneath an arrow. */
+  .editor-board.is-map-mode .editor-frame.is-map-node.is-map-dragging {
+    cursor: grabbing;
+    z-index: 4;
+    transition: none;
   }
   .workflow-connectors.is-map-mode .workflow-connector { display: none; }
   .workflow-connectors.is-map-mode .structure-connector.is-map-dimmed { opacity: .35; }
@@ -505,8 +513,8 @@ export const EDITOR_STYLES = `
   /* The map toggle carries a visible text label: the icon alone read as a
      generic "share" glyph and the mode was undiscoverable. The Nav
      sub-toggle (map mode only) shares the labeled treatment. */
-  .canvas-tool.map-toggle, .canvas-tool.nav-toggle { inline-size: auto; grid-auto-flow: column; column-gap: 5px; padding-inline: 8px; }
-  .map-toggle-label, .nav-toggle-label { font-size: 11px; font-weight: 620; letter-spacing: .01em; }
+  .canvas-tool.map-toggle, .canvas-tool.nav-toggle, .canvas-tool.map-reset { inline-size: auto; grid-auto-flow: column; column-gap: 5px; padding-inline: 8px; }
+  .map-toggle-label, .nav-toggle-label, .map-reset-label { font-size: 11px; font-weight: 620; letter-spacing: .01em; }
   .tool-divider { inline-size: 1px; block-size: 20px; margin-inline: 3px; background: var(--border); }
 
   .preview-row { position: relative; z-index: 2; margin-block-end: 62px; }
