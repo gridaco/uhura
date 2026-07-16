@@ -72,6 +72,7 @@ const render = (
   assets: {
     photo: { dataUri: "data:image/png;base64,AA==", alt: "Photo" },
   },
+  interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
 });
 
 test("every connection open fetches, including equal counters after a restart", () => {
@@ -177,6 +178,7 @@ test("semantic selection survives replacement and disappears with its preview", 
       stylesheet: "",
       icons: {},
       assets: {},
+      interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
     },
   };
 

@@ -58,6 +58,39 @@ export interface Snapshot {
   surfaces: SurfaceView[];
 }
 
+/** The board-facing slice of one `uhura-interaction-graph/0` node. */
+export interface InteractionGraphNode {
+  id: string;
+  kind: "page" | "surface" | "command" | "dynamic";
+  label: string;
+}
+
+/** The board-facing slice of one `uhura-interaction-graph/0` edge. */
+export interface InteractionGraphEdge {
+  kind:
+    | "navigate"
+    | "navigate-back"
+    | "present"
+    | "dismiss"
+    | "state-change"
+    | "send-command"
+    | "receive-outcome";
+  from: string;
+  to: string;
+  event: string;
+}
+
+/**
+ * The app's static interaction structure, projected by the native check.
+ * The editor only reads the fields it draws; extra native fields (guards,
+ * commands, source spans) are deliberately not mirrored here.
+ */
+export interface InteractionGraph {
+  protocol: "uhura-interaction-graph/0";
+  nodes: InteractionGraphNode[];
+  edges: InteractionGraphEdge[];
+}
+
 export interface ProviderMsg {
   kind: "command" | "projection" | "projection-failed" | "outcome";
   port?: string;

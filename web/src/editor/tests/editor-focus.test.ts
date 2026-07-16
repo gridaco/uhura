@@ -49,6 +49,7 @@ const render = (previews: EditorPreview[]): EditorRender => ({
   stylesheet: "",
   icons: {},
   assets: {},
+  interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
 });
 
 const state = (value: EditorRender | null): EditorState => ({

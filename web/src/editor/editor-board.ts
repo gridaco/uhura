@@ -24,8 +24,19 @@ import {
   workflowConnectorDescription,
   workflowConnectorLabel,
 } from "./workflow-connectors.js";
+import {
+  buildStructureConnectors,
+  type StructureConnector,
+  type StructureConnectorDirection,
+  structureConnectorDescription,
+} from "./structure-connectors.js";
+import { structureConnectorLabelSegments } from "./structure-presentation.js";
 
 export interface PreparedWorkflowConnector extends WorkflowConnector {
+  element: SVGGElement;
+}
+
+export interface PreparedStructureConnector extends StructureConnector {
   element: SVGGElement;
 }
 
@@ -41,6 +52,7 @@ export interface PreparedEditorModel {
   authoring: PreparedAuthoring;
   connectorLayer: SVGSVGElement;
   connectors: PreparedWorkflowConnector[];
+  structureConnectors: PreparedStructureConnector[];
   render: EditorRender | null;
   stylesheet: CSSStyleSheet | null;
   reusableRealizationIds: ReadonlySet<string>;
@@ -95,6 +107,68 @@ const prepareWorkflowConnector = (
   const label = svgElement(document, "text", "workflow-connector-label");
   label.textContent = workflowConnectorLabel(connector.steps, connector.openedSurfaces);
   group.append(title, path, arrow, origin, label);
+  return { ...connector, element: group };
+};
+
+/**
+ * Renders the pill text as segments: kind glyph + event at normal weight and
+ * the far endpoint's name as a slightly bolder tspan. The text element keeps
+ * its single-anchor counter-scaling behavior — only its children change.
+ */
+export const renderStructureConnectorLabel = (
+  label: SVGTextElement,
+  connector: Pick<
+    StructureConnector,
+    "kind" | "event" | "extraCount" | "sourceNode" | "targetNode"
+  >,
+  direction: StructureConnectorDirection = "outgoing",
+): void => {
+  const document = label.ownerDocument;
+  const segments = structureConnectorLabelSegments(connector, direction);
+  const lead = svgElement(document, "tspan");
+  lead.textContent = segments.lead;
+  const farName = svgElement(document, "tspan", "structure-label-far");
+  farName.textContent = segments.farName;
+  const children: SVGTSpanElement[] = [lead, farName];
+  if (segments.suffix) {
+    const suffix = svgElement(document, "tspan");
+    suffix.textContent = segments.suffix;
+    children.push(suffix);
+  }
+  label.replaceChildren(...children);
+};
+
+const prepareStructureConnector = (
+  document: Document,
+  connector: StructureConnector,
+): PreparedStructureConnector => {
+  const group = svgElement(
+    document,
+    "g",
+    `structure-connector structure-${connector.kind}`,
+  );
+  group.dataset.sourcePreviewId = connector.sourceId;
+  group.dataset.targetPreviewId = connector.targetId;
+  group.dataset.sourceNode = connector.sourceNode;
+  group.dataset.targetNode = connector.targetNode;
+  group.dataset.structureKind = connector.kind;
+  group.dataset.event = connector.event;
+
+  const title = svgElement(document, "title");
+  title.textContent = `App structure: ${structureConnectorDescription(connector)}`;
+  const path = svgElement(document, "path", "workflow-connector-path");
+  const arrow = svgElement(document, "path", "workflow-connector-arrow");
+  const origin = svgElement(document, "circle", "workflow-connector-origin");
+  origin.setAttribute("r", "3");
+  // The label pill: a rounded rect sized to the text at layout time so the
+  // event name stays readable over frames and connectors at any zoom. Rect
+  // and text share one group so hover scaling lifts them together.
+  const pill = svgElement(document, "g", "structure-connector-pill");
+  const labelBackground = svgElement(document, "rect", "structure-connector-label-bg");
+  const label = svgElement(document, "text", "workflow-connector-label");
+  renderStructureConnectorLabel(label, connector);
+  pill.append(labelBackground, label);
+  group.append(title, path, arrow, origin, pill);
   return { ...connector, element: group };
 };
 
@@ -295,6 +369,19 @@ const navigatorGroup = (
   return section;
 };
 
+// Shift+Y hides authored annotations plus replay (workflow) connectors, but
+// structural arrows are selection state rather than annotation content. The
+// connector layer therefore never leaves the render tree: CSS keyed off this
+// class hides only `.workflow-connector` groups, so `.structure-connector
+// .is-active` keeps drawing (and `getBBox` keeps measuring label pills) while
+// annotations are hidden.
+export const setAnnotationConnectorsHidden = (
+  connectorLayer: SVGSVGElement,
+  hidden: boolean,
+): void => {
+  connectorLayer.classList.toggle("annotations-hidden", hidden);
+};
+
 export const prepareEditorModel = (
   document: Document,
   render: EditorRender | null,
@@ -312,6 +399,7 @@ export const prepareEditorModel = (
   const connectorLayer = svgElement(document, "svg", "workflow-connectors");
   connectorLayer.setAttribute("aria-hidden", "true");
   const connectors: PreparedWorkflowConnector[] = [];
+  const structureConnectors: PreparedStructureConnector[] = [];
   board.append(connectorLayer);
 
   if (!render) {
@@ -333,6 +421,7 @@ export const prepareEditorModel = (
       authoring,
       connectorLayer,
       connectors,
+      structureConnectors,
       render,
       stylesheet: null,
       reusableRealizationIds: new Set(),
@@ -405,6 +494,14 @@ export const prepareEditorModel = (
       board.append(row);
       navigator.append(navigatorGroup(document, group, typedPreviews));
     }
+    // Every structural candidate is prepared once but stays hidden: the
+    // editor scopes them to the current selection (Figma prototype-arrow
+    // behavior) and packs lanes over that visible subset only.
+    structureConnectors.push(...buildStructureConnectors(
+      render.interactionGraph,
+      render.previews,
+    ).map((connector) => prepareStructureConnector(document, connector)));
+    connectorLayer.append(...structureConnectors.map((connector) => connector.element));
   } catch (error) {
     for (const resources of resourcesByPreviewId.values()) resources.release(resourceOwner);
     throw error;
@@ -422,6 +519,7 @@ export const prepareEditorModel = (
     authoring,
     connectorLayer,
     connectors,
+    structureConnectors,
     render,
     stylesheet,
     reusableRealizationIds,

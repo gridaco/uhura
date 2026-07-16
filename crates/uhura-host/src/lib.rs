@@ -1732,6 +1732,7 @@ mod tests {
             stylesheet: String::new(),
             icons: BTreeMap::new(),
             assets: BTreeMap::new(),
+            interaction_graph: Default::default(),
         }
     }
 

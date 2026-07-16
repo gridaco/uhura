@@ -5,6 +5,7 @@ import {
   disposePreparedEditorModel,
   prepareEditorModel,
   reconcilePreparedEditorModel,
+  setAnnotationConnectorsHidden,
   type PreparedEditorModel,
 } from "../editor-board.js";
 import { sourceActionsEnabled } from "../editor-authoring.js";
@@ -364,6 +365,7 @@ const render = (
   stylesheet: ":root { --accent: blue; } body { color: black; }",
   icons: {},
   assets: {},
+  interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
 });
 
 const annotationText = (model: PreparedEditorModel): string | undefined =>
@@ -713,5 +715,29 @@ test("Source targets and canvas markers expose one direct annotation selection p
   );
 
   overlay.dispose();
+  disposePreparedEditorModel(model);
+});
+
+test("hiding annotations flags the connector layer without touching selection classes", () => {
+  const document = new FakeDocument();
+  const model = prepareEditorModel(asDocument(document), render(1, "current", "First"));
+  const layer = model.connectorLayer;
+  assert.equal(layer.getAttribute("class"), "workflow-connectors");
+  layer.classList.add("has-selection", "has-structure");
+
+  setAnnotationConnectorsHidden(layer, true);
+  assert.equal(layer.classList.contains("annotations-hidden"), true);
+  assert.equal(layer.classList.contains("has-selection"), true);
+  assert.equal(layer.classList.contains("has-structure"), true);
+  assert.equal(
+    (layer as unknown as { style: { display: string } }).style.display,
+    "",
+    "the layer itself stays rendered so structural arrows can draw and measure",
+  );
+
+  setAnnotationConnectorsHidden(layer, false);
+  assert.equal(layer.classList.contains("annotations-hidden"), false);
+  assert.equal(layer.classList.contains("has-structure"), true);
+
   disposePreparedEditorModel(model);
 });

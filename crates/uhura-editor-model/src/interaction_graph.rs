@@ -20,6 +20,20 @@ pub struct InteractionGraph {
     pub edges: Vec<InteractionEdge>,
 }
 
+impl Default for InteractionGraph {
+    /// An empty graph that still speaks the protocol, for hosts that need a
+    /// placeholder render before any checked program exists.
+    fn default() -> Self {
+        Self {
+            protocol: INTERACTION_GRAPH_PROTOCOL.to_string(),
+            app: String::new(),
+            entry: String::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct InteractionNode {

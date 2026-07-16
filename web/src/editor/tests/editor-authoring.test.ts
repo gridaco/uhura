@@ -113,6 +113,7 @@ const render = (): EditorRender => {
     stylesheet: "",
     icons: {},
     assets: {},
+    interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
   };
 };
 

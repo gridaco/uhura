@@ -190,6 +190,23 @@ const stateFixture = (): unknown => ({
     assets: {
       avatar: { dataUri: "data:image/png;base64,AA==", alt: "Avatar" },
     },
+    interactionGraph: {
+      protocol: "uhura-interaction-graph/0",
+      app: "example",
+      entry: "page:feed",
+      nodes: [
+        { id: "page:feed", kind: "page", label: "feed" },
+        { id: "surface:comments-sheet", kind: "surface", label: "comments-sheet", modality: "sheet" },
+      ],
+      edges: [{
+        id: "pages.feed/handler/0/stmt/0",
+        kind: "present",
+        from: "page:feed",
+        to: "surface:comments-sheet",
+        event: "comments-requested",
+        guard: { t: "bool", v: true },
+      }],
+    },
   },
 });
 
@@ -228,6 +245,15 @@ test("decodes the complete fixed EditorState contract", () => {
   assert.equal(exampleDoc?.class, "doc");
   assert.equal(exampleTarget?.class, "example-declaration");
   assert.equal(exampleTarget?.label, preview?.identity.example);
+
+  assert.equal(state.render?.interactionGraph.protocol, "uhura-interaction-graph/0");
+  assert.equal(state.render?.interactionGraph.nodes[1]?.kind, "surface");
+  assert.deepEqual(state.render?.interactionGraph.edges[0], {
+    kind: "present",
+    from: "page:feed",
+    to: "surface:comments-sheet",
+    event: "comments-requested",
+  }, "the decoder keeps only the drawn fields of a graph edge");
 });
 
 test("decodes the native model's canonical contract fixture", () => {
@@ -243,6 +269,9 @@ test("decodes the native model's canonical contract fixture", () => {
   assert.equal(render.previews[1]?.identity.kind, "surface");
   assert.equal(render.authoring.targets.length, 3);
   assert.equal(render.authoring.entries.length, 3);
+  assert.equal(render.interactionGraph.protocol, "uhura-interaction-graph/0");
+  assert.equal(render.interactionGraph.nodes.length, 4);
+  assert.equal(render.interactionGraph.edges.length, 0);
 
   const page = render.previews.find((preview) => preview.id === "page/home/default");
   assert.ok(page);
