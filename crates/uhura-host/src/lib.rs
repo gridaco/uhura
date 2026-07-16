@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
 use uhura_base::{Severity, sha256_hex, to_canonical_json, to_envelope};
-use uhura_check::check;
 use uhura_check::fixture::load_fixture;
+use uhura_check::{CheckedIconFonts, check};
 use uhura_core::ir::ProgramIr;
 use uhura_editor_model::{EditorRender, EditorState};
 
@@ -26,6 +26,7 @@ pub mod source;
 pub use source::{ProjectSourceFingerprint, ProjectSourceSnapshot, capture_project_snapshot};
 
 const EDITOR_EVENT_PROTOCOL: &str = "uhura-editor-event/0";
+const ICON_FONT_MANIFEST_PROTOCOL: &str = "uhura-icon-fonts/0";
 
 // ── state and coherent Editor publication ──────────────────────────────────
 
@@ -54,10 +55,52 @@ struct GoodBuild {
     fixture_json: String,
     script_json: String,
     boot_json: String,
-    icons_json: String,
     config_json: String,
     provider_js: Option<String>,
     play_assets: BTreeMap<String, Arc<[u8]>>,
+    icon_fonts: Option<IconFontResources>,
+}
+
+/// Renderer resources captured from one successful checker result. This is a
+/// host-private transport snapshot: semantic artifacts retain only logical
+/// icon tokens and never receive font bytes or codepoints.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IconFontResources {
+    default: String,
+    families: BTreeMap<String, IconFontFamilyResource>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IconFontFamilyResource {
+    font: Arc<[u8]>,
+    font_hash: String,
+    glyphs: BTreeMap<String, u32>,
+}
+
+impl From<&CheckedIconFonts> for IconFontResources {
+    fn from(checked: &CheckedIconFonts) -> Self {
+        Self {
+            default: checked.default.to_string(),
+            families: checked
+                .families
+                .iter()
+                .map(|(name, family)| {
+                    (
+                        name.to_string(),
+                        IconFontFamilyResource {
+                            font: Arc::clone(&family.font),
+                            font_hash: family.font_hash.clone(),
+                            glyphs: family
+                                .glyphs
+                                .iter()
+                                .map(|(name, codepoint)| (name.to_string(), *codepoint))
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
 }
 
 type EditorBuildOutcome = Result<source::EditorModelArtifact, serde_json::Value>;
@@ -162,7 +205,13 @@ struct EditorHostState {
     state_json: String,
     /// Always kept with its original render revision and `current` marker;
     /// stale publication mutates a clone only.
-    last_renderable: Option<EditorRender>,
+    last_renderable: Option<EditorRenderable>,
+}
+
+#[derive(Clone)]
+struct EditorRenderable {
+    render: EditorRender,
+    icon_fonts: Option<IconFontResources>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -215,18 +264,21 @@ impl EditorHostState {
 fn materialize_editor_state(
     revision: u64,
     outcome: EditorBuildOutcome,
-    last_renderable: Option<&EditorRender>,
-) -> Result<(String, Option<EditorRender>), String> {
+    last_renderable: Option<&EditorRenderable>,
+) -> Result<(String, Option<EditorRenderable>), String> {
     let (state, next_renderable) = match outcome {
         Ok(artifact) => {
-            let next_renderable = artifact.render.clone();
+            let next_renderable = EditorRenderable {
+                render: artifact.render.clone(),
+                icon_fonts: artifact.icon_fonts,
+            };
             let state = EditorState::current(revision, artifact.diagnostics, artifact.render)
                 .map_err(|error| error.to_string())?;
             (state, Some(next_renderable))
         }
         Err(diagnostics) => match last_renderable {
             Some(render) => (
-                EditorState::stale(revision, diagnostics, render.clone())
+                EditorState::stale(revision, diagnostics, render.render.clone())
                     .map_err(|error| error.to_string())?,
                 Some(render.clone()),
             ),
@@ -370,10 +422,10 @@ fn recheck_play(files: &source::ProjectSourceFiles) -> Result<GoodBuild, serde_j
         fixture_json,
         script_json: script_canonical,
         boot_json: boot_envelope(program, &fixture).map_err(fail)?,
-        icons_json: structured_icons_json(),
         config_json,
         provider_js,
         play_assets: files.subtree(Path::new("fixtures/assets")),
+        icon_fonts: output.icon_fonts.as_ref().map(IconFontResources::from),
     })
 }
 
@@ -429,14 +481,6 @@ pub fn boot_envelope(
             .map(uhura_port::envelope::ProjectionUpdate::to_json)
             .collect::<Vec<_>>(),
     })))
-}
-
-fn structured_icons_json() -> String {
-    let icons = uhura_editor_model::icons::table()
-        .into_iter()
-        .map(|(name, icon)| (name, icon.to_json()))
-        .collect::<serde_json::Map<_, _>>();
-    to_canonical_json(&serde_json::Value::Object(icons))
 }
 
 /// Listenerless Editor/Play host. The state and event hubs have host-session
@@ -1230,7 +1274,6 @@ enum PlayArtifact {
     Fixture,
     Script,
     Boot,
-    Icons,
     Config,
 }
 
@@ -1238,8 +1281,12 @@ enum PlayArtifact {
 enum ApiRoute<'a> {
     EditorState,
     EditorEvents,
+    EditorIconFonts,
+    EditorIconFont(&'a str),
     PlayEvents,
     PlayArtifact(PlayArtifact),
+    PlayIconFonts,
+    PlayIconFont(&'a str),
     PlayProvider,
     PlayAsset(&'a str),
     PlayWasm(&'a str),
@@ -1250,18 +1297,27 @@ fn api_route(path: &str) -> Option<ApiRoute<'_>> {
     let route = match path {
         "/api/editor/state" => ApiRoute::EditorState,
         "/api/editor/events" => ApiRoute::EditorEvents,
+        "/api/editor/icon-fonts.json" => ApiRoute::EditorIconFonts,
         "/api/play/events" => ApiRoute::PlayEvents,
+        "/api/play/icon-fonts.json" => ApiRoute::PlayIconFonts,
         "/api/play/ir.json" => ApiRoute::PlayArtifact(PlayArtifact::Ir),
         "/api/play/inspect.json" => ApiRoute::PlayArtifact(PlayArtifact::Inspect),
         "/api/play/stylesheet.css" => ApiRoute::PlayArtifact(PlayArtifact::Stylesheet),
         "/api/play/fixture.json" => ApiRoute::PlayArtifact(PlayArtifact::Fixture),
         "/api/play/script.json" => ApiRoute::PlayArtifact(PlayArtifact::Script),
         "/api/play/boot.json" => ApiRoute::PlayArtifact(PlayArtifact::Boot),
-        "/api/play/icons.json" => ApiRoute::PlayArtifact(PlayArtifact::Icons),
         "/api/play/config.json" => ApiRoute::PlayArtifact(PlayArtifact::Config),
         "/api/play/provider.js" => ApiRoute::PlayProvider,
         _ => {
-            if let Some(relative) = path.strip_prefix("/api/play/assets/")
+            if let Some(relative) = path.strip_prefix("/api/editor/icon-fonts/")
+                && !relative.is_empty()
+            {
+                ApiRoute::EditorIconFont(relative)
+            } else if let Some(relative) = path.strip_prefix("/api/play/icon-fonts/")
+                && !relative.is_empty()
+            {
+                ApiRoute::PlayIconFont(relative)
+            } else if let Some(relative) = path.strip_prefix("/api/play/assets/")
                 && !relative.is_empty()
             {
                 ApiRoute::PlayAsset(relative)
@@ -1377,9 +1433,13 @@ impl Host {
 
         let outcome = match api_route(path) {
             Some(ApiRoute::EditorState) => editor_state_artifact(&self.state),
+            Some(ApiRoute::EditorIconFonts) => editor_icon_font_manifest(&self.state),
+            Some(ApiRoute::EditorIconFont(file)) => editor_icon_font(&self.state, file),
             Some(ApiRoute::PlayArtifact(artifact_kind)) => {
                 play_artifact(&self.state, artifact_kind)
             }
+            Some(ApiRoute::PlayIconFonts) => play_icon_font_manifest(&self.state),
+            Some(ApiRoute::PlayIconFont(file)) => play_icon_font(&self.state, file),
             Some(ApiRoute::PlayProvider) => provider_artifact(&self.state, query),
             Some(ApiRoute::PlayAsset(relative)) => play_asset(&self.state, relative),
             Some(ApiRoute::PlayWasm(relative)) => serve_file_map(&self.web.wasm_files, relative)
@@ -1489,6 +1549,160 @@ fn editor_state_artifact(state: &RwLock<DevState>) -> Served {
     ))
 }
 
+fn editor_icon_font_manifest(state: &RwLock<DevState>) -> Served {
+    let state = state.read().expect("state lock");
+    let Some(renderable) = &state.editor.last_renderable else {
+        return Err((
+            503,
+            "no renderable Editor revision has icon-font resources yet".to_string(),
+        ));
+    };
+    let resources = require_icon_fonts(renderable.icon_fonts.as_ref(), "Editor")?;
+    Ok((
+        content_type("json"),
+        icon_font_manifest(
+            resources,
+            IconFontManifestVersion::Revision(renderable.render.revision),
+            "/api/editor/icon-fonts",
+        ),
+        None,
+    ))
+}
+
+fn editor_icon_font(state: &RwLock<DevState>, file: &str) -> Served {
+    let state = state.read().expect("state lock");
+    let Some(renderable) = &state.editor.last_renderable else {
+        return Err((
+            503,
+            "no renderable Editor revision has icon-font resources yet".to_string(),
+        ));
+    };
+    let resources = require_icon_fonts(renderable.icon_fonts.as_ref(), "Editor")?;
+    icon_font_file(resources, file, None)
+}
+
+fn play_icon_font_manifest(state: &RwLock<DevState>) -> Served {
+    let state = state.read().expect("state lock");
+    let Some(good) = &state.play.good else {
+        return Err((
+            503,
+            "no good Play build yet — fix the project diagnostics".to_string(),
+        ));
+    };
+    let resources = require_icon_fonts(good.icon_fonts.as_ref(), "Play")?;
+    // Play's transport generation labels the complete currently served
+    // artifact set. After a rejected check that set is last-good, but it is
+    // still re-published under the new generation like every other Play
+    // artifact, so the browser's coherent-fetch gate sees one version.
+    Ok((
+        content_type("json"),
+        icon_font_manifest(
+            resources,
+            IconFontManifestVersion::Generation(state.play.generation),
+            "/api/play/icon-fonts",
+        ),
+        Some(state.play.generation),
+    ))
+}
+
+fn play_icon_font(state: &RwLock<DevState>, file: &str) -> Served {
+    let state = state.read().expect("state lock");
+    let Some(good) = &state.play.good else {
+        return Err((
+            503,
+            "no good Play build yet — fix the project diagnostics".to_string(),
+        ));
+    };
+    let resources = require_icon_fonts(good.icon_fonts.as_ref(), "Play")?;
+    icon_font_file(resources, file, Some(state.play.generation))
+}
+
+#[derive(Clone, Copy)]
+enum IconFontManifestVersion {
+    Revision(u64),
+    Generation(u64),
+}
+
+fn require_icon_fonts<'a>(
+    resources: Option<&'a IconFontResources>,
+    owner: &str,
+) -> Result<&'a IconFontResources, (u16, String)> {
+    resources.ok_or_else(|| {
+        (
+            503,
+            format!("the current {owner} artifact has no icon-font resources"),
+        )
+    })
+}
+
+fn icon_font_manifest(
+    resources: &IconFontResources,
+    version: IconFontManifestVersion,
+    url_base: &str,
+) -> Vec<u8> {
+    let families = resources
+        .families
+        .iter()
+        .map(|(name, family)| {
+            let glyphs = family
+                .glyphs
+                .iter()
+                .map(|(name, codepoint)| (name.clone(), serde_json::json!(codepoint)))
+                .collect::<serde_json::Map<_, _>>();
+            (
+                name.clone(),
+                serde_json::json!({
+                    "font": format!("{url_base}/{}.woff2", family.font_hash),
+                    "sha256": family.font_hash,
+                    "glyphs": glyphs,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let mut manifest = serde_json::json!({
+        "protocol": ICON_FONT_MANIFEST_PROTOCOL,
+        "default": resources.default,
+        "families": families,
+    });
+    match version {
+        IconFontManifestVersion::Revision(revision) => manifest["revision"] = revision.into(),
+        IconFontManifestVersion::Generation(generation) => {
+            manifest["generation"] = generation.into();
+        }
+    }
+    to_canonical_json(&manifest).into_bytes()
+}
+
+fn icon_font_file(resources: &IconFontResources, file: &str, generation: Option<u64>) -> Served {
+    let hash = parse_icon_font_file(file)?;
+    let family = resources
+        .families
+        .values()
+        .find(|family| family.font_hash == hash)
+        .ok_or_else(|| (404, format!("no such icon font: {hash}")))?;
+    Ok((content_type("woff2"), family.font.to_vec(), generation))
+}
+
+fn parse_icon_font_file(file: &str) -> Result<&str, (u16, String)> {
+    let Some(hash) = file.strip_suffix(".woff2") else {
+        return Err((
+            400,
+            "bad icon-font path: expected <sha256>.woff2".to_string(),
+        ));
+    };
+    if hash.len() != 64
+        || !hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err((
+            400,
+            "bad icon-font path: expected a lowercase SHA-256 digest".to_string(),
+        ));
+    }
+    Ok(hash)
+}
+
 fn play_artifact(state: &RwLock<DevState>, artifact_kind: PlayArtifact) -> Served {
     let state = state.read().expect("state lock");
     let Some(good) = &state.play.good else {
@@ -1504,7 +1718,6 @@ fn play_artifact(state: &RwLock<DevState>, artifact_kind: PlayArtifact) -> Serve
         PlayArtifact::Fixture => ("json", good.fixture_json.as_bytes()),
         PlayArtifact::Script => ("json", good.script_json.as_bytes()),
         PlayArtifact::Boot => ("json", good.boot_json.as_bytes()),
-        PlayArtifact::Icons => ("json", good.icons_json.as_bytes()),
         PlayArtifact::Config => ("json", good.config_json.as_bytes()),
     };
     Ok((
@@ -1704,19 +1917,20 @@ mod tests {
     use std::sync::{Arc, Mutex, Weak};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use uhura_base::to_canonical_json;
+    use uhura_base::{sha256_hex, to_canonical_json};
     use uhura_editor_model::{Application, AuthoringMetadata, EditorRender, RenderFreshness};
 
     use crate::source::EditorModelArtifact;
 
     use super::{
         ApiRoute, BLOCKING_EVENT_STREAM_WRITE_BOUNDARY, ClientCandidate, ClientRegistry,
-        EditorHostState, EventStream, EventStreamPoll, Host, MAX_EVENT_STREAMS_PER_HOST,
-        PlayArtifact, ProjectSourceFingerprint, RequestMethod, RouteBody, RouteRequest,
-        RouteResponse, WebAssets, WebFile, api_route, app_document, application_path, broadcast,
-        captured_play_asset, content_type, decode_play_asset_path, editor_sse_payload,
-        index_asset_references, load_web_app_from, recheck_play, serve_file_map, split_request_url,
-        subscribe, subscribe_with_blocking_keepalive, tool_root,
+        EditorHostState, EventStream, EventStreamPoll, GoodBuild, Host, IconFontFamilyResource,
+        IconFontResources, MAX_EVENT_STREAMS_PER_HOST, PlayArtifact, ProjectSourceFingerprint,
+        RequestMethod, RouteBody, RouteRequest, RouteResponse, WebAssets, WebFile, api_route,
+        app_document, application_path, broadcast, captured_play_asset, content_type,
+        decode_play_asset_path, editor_sse_payload, index_asset_references, load_web_app_from,
+        recheck_play, serve_file_map, split_request_url, subscribe,
+        subscribe_with_blocking_keepalive, tool_root,
     };
 
     fn render(revision: u64, name: &str) -> EditorRender {
@@ -1730,7 +1944,6 @@ mod tests {
             groups: Vec::new(),
             previews: Vec::new(),
             stylesheet: String::new(),
-            icons: BTreeMap::new(),
             assets: BTreeMap::new(),
             interaction_graph: Default::default(),
         }
@@ -1739,10 +1952,76 @@ mod tests {
     fn artifact(revision: u64, name: &str) -> EditorModelArtifact {
         EditorModelArtifact {
             render: render(revision, name),
+            icon_fonts: None,
             preview_count: 0,
             replay_derived_count: 0,
             diagnostics: serde_json::Value::Null,
         }
+    }
+
+    fn icon_fonts(bytes: &[u8]) -> IconFontResources {
+        let font_hash = sha256_hex(bytes);
+        IconFontResources {
+            default: "foundation".to_string(),
+            families: BTreeMap::from([(
+                "foundation".to_string(),
+                IconFontFamilyResource {
+                    font: Arc::<[u8]>::from(bytes),
+                    font_hash,
+                    glyphs: BTreeMap::from([
+                        ("heart".to_string(), 0xe001),
+                        ("home".to_string(), 0xe000),
+                    ]),
+                },
+            )]),
+        }
+    }
+
+    fn artifact_with_icon_fonts(
+        revision: u64,
+        name: &str,
+        icon_fonts: IconFontResources,
+    ) -> EditorModelArtifact {
+        EditorModelArtifact {
+            icon_fonts: Some(icon_fonts),
+            ..artifact(revision, name)
+        }
+    }
+
+    fn good_build(icon_fonts: IconFontResources) -> GoodBuild {
+        GoodBuild {
+            diagnostics: serde_json::Value::Null,
+            ir: "{}".to_string(),
+            inspect_json: "{}".to_string(),
+            stylesheet: String::new(),
+            fixture_json: "{}".to_string(),
+            script_json: "{}".to_string(),
+            boot_json: "{}".to_string(),
+            config_json: "{}".to_string(),
+            provider_js: None,
+            play_assets: BTreeMap::new(),
+            icon_fonts: Some(icon_fonts),
+        }
+    }
+
+    fn candidate_with_icon_fonts(revision: u64, bytes: &[u8]) -> ClientCandidate {
+        let resources = icon_fonts(bytes);
+        ClientCandidate {
+            revision,
+            source_fingerprint: ProjectSourceFingerprint::default(),
+            editor: Ok(artifact_with_icon_fonts(
+                revision,
+                "icons",
+                resources.clone(),
+            )),
+            play: Ok(good_build(resources)),
+        }
+    }
+
+    fn host_with_icon_fonts(bytes: &[u8]) -> Host {
+        Host::new(test_web_assets(), candidate_with_icon_fonts(1, bytes))
+            .unwrap()
+            .0
     }
 
     fn diagnostics(message: &str) -> serde_json::Value {
@@ -1867,7 +2146,23 @@ mod tests {
             api_route("/api/editor/events"),
             Some(ApiRoute::EditorEvents)
         );
+        assert_eq!(
+            api_route("/api/editor/icon-fonts.json"),
+            Some(ApiRoute::EditorIconFonts)
+        );
+        assert_eq!(
+            api_route("/api/editor/icon-fonts/0123.woff2"),
+            Some(ApiRoute::EditorIconFont("0123.woff2"))
+        );
         assert_eq!(api_route("/api/play/events"), Some(ApiRoute::PlayEvents));
+        assert_eq!(
+            api_route("/api/play/icon-fonts.json"),
+            Some(ApiRoute::PlayIconFonts)
+        );
+        assert_eq!(
+            api_route("/api/play/icon-fonts/0123.woff2"),
+            Some(ApiRoute::PlayIconFont("0123.woff2"))
+        );
         assert_eq!(
             api_route("/api/play/ir.json"),
             Some(ApiRoute::PlayArtifact(PlayArtifact::Ir))
@@ -1886,7 +2181,163 @@ mod tests {
         );
         assert_eq!(api_route("/ir.json"), None);
         assert_eq!(api_route("/events"), None);
+        assert_eq!(api_route("/api/play/icons.json"), Some(ApiRoute::Unknown));
         assert_eq!(api_route("/api/nope"), Some(ApiRoute::Unknown));
+    }
+
+    #[test]
+    fn editor_and_play_serve_scoped_icon_font_manifests_and_exact_bytes() {
+        let font = b"checked-foundation-woff2";
+        let hash = sha256_hex(font);
+        let host = host_with_icon_fonts(font);
+
+        for (scope, version_name) in [("editor", "revision"), ("play", "generation")] {
+            let manifest_url = format!("/api/{scope}/icon-fonts.json");
+            let manifest_response = host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url: &manifest_url,
+            });
+            assert_eq!(manifest_response.status, 200, "GET {manifest_url}");
+            assert!(manifest_response.headers.iter().any(|(name, value)| {
+                name == "Content-Type" && value == "application/json; charset=utf-8"
+            }));
+            if scope == "play" {
+                assert!(
+                    manifest_response
+                        .headers
+                        .iter()
+                        .any(|(name, value)| { name == "X-Uhura-Generation" && value == "1" })
+                );
+            }
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&response_bytes(manifest_response)).unwrap();
+            assert_eq!(manifest["protocol"], "uhura-icon-fonts/0");
+            assert_eq!(manifest[version_name], 1);
+            assert_eq!(manifest["default"], "foundation");
+            assert_eq!(
+                manifest["families"]["foundation"]["font"],
+                format!("/api/{scope}/icon-fonts/{hash}.woff2")
+            );
+            assert_eq!(manifest["families"]["foundation"]["sha256"], hash);
+            assert_eq!(
+                manifest["families"]["foundation"]["glyphs"],
+                serde_json::json!({ "heart": 0xe001, "home": 0xe000 })
+            );
+
+            let font_url = format!("/api/{scope}/icon-fonts/{hash}.woff2");
+            let font_response = host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url: &font_url,
+            });
+            assert_eq!(font_response.status, 200, "GET {font_url}");
+            assert!(
+                font_response
+                    .headers
+                    .iter()
+                    .any(|(name, value)| { name == "Content-Type" && value == "font/woff2" })
+            );
+            assert_eq!(response_bytes(font_response), font);
+
+            let head_response = host.route(RouteRequest {
+                method: RequestMethod::Head,
+                url: &font_url,
+            });
+            assert_eq!(head_response.status, 200, "HEAD {font_url}");
+            assert!(head_response.headers.iter().any(|(name, value)| {
+                name == "Content-Length" && value == &font.len().to_string()
+            }));
+            assert!(response_bytes(head_response).is_empty());
+        }
+    }
+
+    #[test]
+    fn icon_font_routes_reject_malformed_or_unknown_digests() {
+        let host = host_with_icon_fonts(b"checked-font");
+        for file in [
+            "font.woff2",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.woff2",
+            "../../secret.woff2",
+            "0123.ttf",
+        ] {
+            let url = format!("/api/editor/icon-fonts/{file}");
+            assert_eq!(
+                host.route(RouteRequest {
+                    method: RequestMethod::Get,
+                    url: &url,
+                })
+                .status,
+                400,
+                "GET {url}",
+            );
+        }
+
+        let unknown = "0".repeat(64);
+        let url = format!("/api/play/icon-fonts/{unknown}.woff2");
+        assert_eq!(
+            host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url: &url,
+            })
+            .status,
+            404,
+        );
+    }
+
+    #[test]
+    fn rejected_publication_retains_matching_editor_and_play_icon_resources() {
+        let font = b"last-good-font";
+        let hash = sha256_hex(font);
+        let host = host_with_icon_fonts(font);
+
+        let report = host
+            .publish(ClientCandidate {
+                revision: 2,
+                source_fingerprint: ProjectSourceFingerprint::default(),
+                editor: Err(diagnostics("broken Editor")),
+                play: Err(diagnostics("broken Play")),
+            })
+            .unwrap();
+        assert_eq!(report.source_revision, 2);
+        assert_eq!(report.play_generation, 2);
+        assert!(!report.editor_current);
+        assert!(!report.play_ok);
+
+        let editor_manifest: serde_json::Value =
+            serde_json::from_slice(&response_bytes(host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url: "/api/editor/icon-fonts.json",
+            })))
+            .unwrap();
+        let play_manifest: serde_json::Value =
+            serde_json::from_slice(&response_bytes(host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url: "/api/play/icon-fonts.json",
+            })))
+            .unwrap();
+        assert_eq!(editor_manifest["revision"], 1);
+        assert_eq!(editor_manifest.get("generation"), None);
+        assert_eq!(play_manifest["generation"], 2);
+        assert_eq!(play_manifest.get("revision"), None);
+        assert_eq!(editor_manifest["families"]["foundation"]["sha256"], hash);
+        assert_eq!(play_manifest["families"]["foundation"]["sha256"], hash);
+
+        for scope in ["editor", "play"] {
+            let url = format!("/api/{scope}/icon-fonts/{hash}.woff2");
+            let response = host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url: &url,
+            });
+            assert_eq!(response.status, 200);
+            if scope == "play" {
+                assert!(
+                    response
+                        .headers
+                        .iter()
+                        .any(|(name, value)| { name == "X-Uhura-Generation" && value == "2" })
+                );
+            }
+            assert_eq!(response_bytes(response), font);
+        }
     }
 
     #[test]

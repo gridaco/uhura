@@ -36,7 +36,7 @@ const diagnostics = (message: string): Record<string, unknown> => ({
 });
 
 const stateFixture = (): unknown => ({
-  protocol: "uhura-editor-state/1",
+  protocol: "uhura-editor-state/2",
   sourceRevision: 3,
   diagnostics: null,
   render: {
@@ -175,18 +175,6 @@ const stateFixture = (): unknown => ({
       },
     }],
     stylesheet: ":root { --accent: blue; }",
-    icons: {
-      heart: {
-        viewBox: [0, 0, 24, 24],
-        commands: [{
-          kind: "path",
-          d: "M12 20L4 12",
-          fill: "none",
-          stroke: "currentColor",
-          strokeWidth: "1.8",
-        }],
-      },
-    },
     assets: {
       avatar: { dataUri: "data:image/png;base64,AA==", alt: "Avatar" },
     },
@@ -213,7 +201,7 @@ const stateFixture = (): unknown => ({
 test("decodes the complete fixed EditorState contract", () => {
   const state = decodeEditorState(stateFixture());
 
-  assert.equal(state.protocol, "uhura-editor-state/1");
+  assert.equal(state.protocol, "uhura-editor-state/2");
   assert.equal(state.sourceRevision, 3);
   assert.equal(state.render?.previews[0]?.data[0]?.source?.kind, "fixture");
   assert.equal(state.render?.previews[0]?.sourceFile, "app/feed/page.uhura");
@@ -223,7 +211,6 @@ test("decodes the complete fixed EditorState contract", () => {
     field: "selected",
     value: "post-1",
   });
-  assert.equal(state.render?.icons["heart"]?.commands[0]?.kind, "path");
   assert.equal(state.render?.authoring.entries[1]?.class, "annotation");
   assert.deepEqual(state.render?.previews[0]?.provenance.occurrences[0]?.anchors[0], {
     root: { kind: "page" },
@@ -353,6 +340,14 @@ test("rejects unknown properties, malformed data variants, and content-kind drif
   const unknown = stateFixture() as { render: { previews: Array<Record<string, unknown>> } };
   unknown.render.previews[0]!["html"] = "<p>not semantic</p>";
   assert.throws(() => decodeEditorState(unknown), /no unknown property/);
+
+  const legacyIcons = stateFixture() as { render: Record<string, unknown> };
+  legacyIcons.render["icons"] = { heart: { viewBox: [0, 0, 24, 24], commands: [] } };
+  assert.throws(
+    () => decodeEditorState(legacyIcons),
+    /no unknown property/,
+    "EditorState/2 rejects engine-delivered glyph geometry",
+  );
 
   const waitingWithValue = stateFixture() as {
     render: { previews: Array<{ data: Array<Record<string, unknown>> }> };

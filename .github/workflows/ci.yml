@@ -46,8 +46,26 @@ jobs:
           cargo run --locked -p uhura-cli -- check examples/instagram/client --deny-warnings
           cargo run --locked -p uhura-cli -- trace examples/instagram/client --script=demo > /dev/null
 
-      - name: Check the complete framework example with the published CLI
-        run: npx --yes spock@0.5.2 check examples/instagram
+      - name: Check out Spock integration source
+        uses: actions/checkout@v4
+        with:
+          repository: gridaco/spock
+          ref: 66edad443660361ec98414f212203868408dcdc5
+          path: .ci/spock
+          submodules: false
+          persist-credentials: false
+
+      - name: Check the complete framework example with current Uhura
+        shell: bash
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/.ci/spock/uhura"
+          ln -s "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/.ci/spock/uhura"
+
+          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/spock-integration" \
+            cargo run \
+              --manifest-path "$GITHUB_WORKSPACE/.ci/spock/Cargo.toml" \
+              -p spock-cli -- \
+              check "$GITHUB_WORKSPACE/examples/instagram"
 
       - name: Install the lockfile-exact wasm-bindgen CLI
         shell: bash
@@ -182,7 +200,7 @@ jobs:
           import sys
 
           state = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          assert state["protocol"] == "uhura-editor-state/1"
+          assert state["protocol"] == "uhura-editor-state/2"
           assert isinstance(state["sourceRevision"], int)
           assert state["sourceRevision"] >= 1
           render = state["render"]

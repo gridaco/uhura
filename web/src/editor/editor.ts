@@ -62,8 +62,14 @@ import {
   retainPreviewSelection,
   type EditorFetchToken,
 } from "./editor-updates.js";
+import {
+  decodeIconFontManifest,
+  loadIconFontRegistry,
+  type IconFontRegistry,
+} from "../renderer/icons.js";
 
 const EDITOR_STATE_PATH = "/api/editor/state";
+const EDITOR_ICON_FONTS_PATH = "/api/editor/icon-fonts.json";
 const EDITOR_EVENTS_PATH = "/api/editor/events";
 const UI_VISIBLE_KEY = "uhura.editor.ui-visible";
 const MIN_SCALE = 0.02;
@@ -1619,7 +1625,29 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         scheduleRetry(token, decision.expectedRevision, 50);
         return;
       }
-      const nextModel = prepareEditorModel(document, decision.state.render, model);
+      let icons: IconFontRegistry | undefined;
+      if (decision.state.render) {
+        const iconResponse = await window.fetch(EDITOR_ICON_FONTS_PATH, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (!iconResponse.ok) {
+          throw new Error(`Editor icon fonts request failed (${iconResponse.status})`);
+        }
+        const iconManifest = decodeIconFontManifest(await iconResponse.json(), "editor");
+        if (iconManifest.revision !== decision.state.render.revision) {
+          throw new Error(
+            `Editor icon fonts revision ${String(iconManifest.revision)} does not match render revision ${decision.state.render.revision}`,
+          );
+        }
+        icons = await loadIconFontRegistry({ document, manifest: iconManifest });
+      }
+      const nextModel = prepareEditorModel(
+        document,
+        decision.state.render,
+        model,
+        icons,
+      );
       prepared = nextModel;
       const committed = updates.commit(
         token,

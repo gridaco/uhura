@@ -82,7 +82,7 @@ store {
 <view class="screen people-page">
   <view class="people-bar">
     <button label="Back" on:press={emit back-tapped()}>
-      <icon name="back" />
+      <icon name="chevron-left" />
     </button>
     <text class="title">Followers</text>
   </view>

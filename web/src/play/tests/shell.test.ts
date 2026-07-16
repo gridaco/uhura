@@ -96,8 +96,8 @@ test("Play fetches one namespaced coherent artifact set including app CSS", () =
     "/api/play/boot.json",
     "/api/play/fixture.json",
     "/api/play/script.json",
-    "/api/play/icons.json",
     "/api/play/config.json",
+    "/api/play/icon-fonts.json",
     "/api/play/stylesheet.css",
   ]);
 });

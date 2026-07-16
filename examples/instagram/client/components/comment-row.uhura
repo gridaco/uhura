@@ -11,7 +11,7 @@ props {
 }
 
 <view class={if pending then "comment-row pending" else "comment-row"}>
-  <image class="avatar" src={avatar.src} alt={avatar.alt} />
+  <img class="avatar" src={avatar.src} alt={avatar.alt} />
   <view class="comment-body">
     <text class="comment-head">{username ++ " · " ++ time-label}</text>
     <text class="comment-text">{body}</text>

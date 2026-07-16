@@ -23,7 +23,7 @@ emits {
 
 <view class="profile-header">
   <view class="head-row">
-    <image class="avatar" src={user.avatar.src} alt={user.avatar.alt} />
+    <img class="avatar" src={user.avatar.src} alt={user.avatar.alt} />
     <view class="stats">
       <button class="stat" label={to-text(post-count) ++ (if post-count == 1 then " post" else " posts")} on:press={emit posts-tapped()}>
         <text class="stat-num">{to-text(post-count)}</text>

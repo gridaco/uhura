@@ -11,6 +11,7 @@ use uhura_syntax::{Parsed, SourceKind, parse};
 
 use crate::catalog::{Catalog, load_catalog};
 use crate::examples::check_examples;
+use crate::icon_fonts::{CheckedIconFonts, IconFontInput, load_icon_fonts};
 use crate::infer::check_store;
 use crate::lower::{Lowered, lower};
 use crate::manifest::Manifest;
@@ -32,6 +33,9 @@ pub struct CheckInput {
     pub manifest_text: String,
     /// (corpus-relative path, text) — `None` text = unreadable/missing.
     pub catalog_file: (String, Option<String>),
+    /// Local family alias → manifest-associated WOFF2 bytes and glyph JSON.
+    /// Built-in families are compiled into `uhura-check` and are omitted.
+    pub icon_font_files: BTreeMap<Ident, IconFontInput>,
     /// Port name → (rel path, text).
     pub port_files: BTreeMap<Ident, (String, Option<String>)>,
     pub sources: Vec<SourceInput>,
@@ -56,6 +60,9 @@ pub struct CheckOutput {
     pub source_map: SourceMap,
     /// Present iff the pipeline finished with zero errors.
     pub lowered: Option<Lowered>,
+    /// Validated built-in and app-local icon resources. Available even when
+    /// unrelated diagnostics gate runtime artifacts.
+    pub icon_fonts: Option<CheckedIconFonts>,
     /// Resolved example previews (empty unless the check came up clean).
     pub previews: Vec<crate::preview::ResolvedPreview>,
     /// theme.css + `<style>` blocks in path order (ships beside the IR).
@@ -106,6 +113,30 @@ pub fn check(input: &CheckInput) -> CheckOutput {
         },
     };
 
+    // ── icon family resources ─────────────────────────────────────────
+    // Keep local glyph maps in the source map even though registry failures
+    // are reported at the manifest declaration that selected the resource.
+    for input in input.icon_font_files.values() {
+        sm.add(
+            input.glyphs_path.clone(),
+            input.glyphs_text.clone().unwrap_or_default(),
+        );
+    }
+    let icon_fonts = match load_icon_fonts(&input.manifest.icons, &input.icon_font_files) {
+        Ok(fonts) => Some(fonts),
+        Err(issues) => {
+            for issue in issues {
+                diags.push(Diagnostic::error(
+                    codes::INVALID_ICON_FONT.0,
+                    codes::INVALID_ICON_FONT.1,
+                    format!("{}: {}", issue.path, issue.message),
+                    Span::new(manifest_file, 0, 0),
+                ));
+            }
+            None
+        }
+    };
+
     // ── port contracts (link L1: manifest name == contract name) ──────
     let mut ports: BTreeMap<Ident, (PortContract, PortTypes)> = BTreeMap::new();
     for (declared_name, (rel_path, text)) in &input.port_files {
@@ -150,7 +181,7 @@ pub fn check(input: &CheckInput) -> CheckOutput {
     }
 
     // ── lock (computed from what loaded; compared before source work) ──
-    let lock_computed = render_lock(catalog.as_ref(), &ports);
+    let lock_computed = render_lock(catalog.as_ref(), &ports, icon_fonts.as_ref());
     let lock_status = match &input.lock_text {
         None => LockStatus::Absent,
         Some(existing) => {
@@ -161,7 +192,7 @@ pub fn check(input: &CheckInput) -> CheckOutput {
                     Diagnostic::error(
                         codes::LOCK_DRIFT.0,
                         codes::LOCK_DRIFT.1,
-                        "contract pins drifted from uhura.lock — a contract or catalog changed \
+                        "contract pins drifted from uhura.lock — a contract, catalog, or icon family changed \
                          shape (§9.1: drift is a link error, never silent)"
                             .to_string(),
                         Span::new(manifest_file, 0, 0),
@@ -230,7 +261,7 @@ pub fn check(input: &CheckInput) -> CheckOutput {
 
     // ── markup + style (need the catalog) ──────────────────────────────
     let mut stylesheet = String::new();
-    if let Some(catalog) = &catalog {
+    if let (Some(catalog), Some(icon_fonts)) = (&catalog, &icon_fonts) {
         let memo = interactive_content_memo(&resolved, &sources, catalog);
 
         let mut class_refs: Vec<(String, Span)> = Vec::new();
@@ -258,9 +289,9 @@ pub fn check(input: &CheckInput) -> CheckOutput {
                 env,
                 &resolved,
                 catalog,
+                icon_fonts,
                 &memo,
                 &ast.markup,
-                Span::new(env.file, 0, 0),
                 &mut diags,
             );
             class_refs.extend(facts.class_refs);
@@ -319,9 +350,9 @@ pub fn check(input: &CheckInput) -> CheckOutput {
     }
 
     // ── lower (zero-error gated) ───────────────────────────────────────
-    let lowered = match (&catalog, has_errors(&diags)) {
-        (Some(catalog), false) => {
-            let lowered = lower(&input.manifest, &resolved, catalog, &sources);
+    let lowered = match (&catalog, &icon_fonts, has_errors(&diags)) {
+        (Some(catalog), Some(icon_fonts), false) => {
+            let lowered = lower(&input.manifest, &resolved, catalog, icon_fonts, &sources);
             match lowered.with_template_origins(authoring.template_origins.clone()) {
                 Ok(lowered) => Some(lowered),
                 Err(message) => {
@@ -395,6 +426,7 @@ pub fn check(input: &CheckInput) -> CheckOutput {
         diagnostics: diags,
         source_map: sm,
         lowered,
+        icon_fonts,
         previews,
         stylesheet,
         lock_computed,
@@ -407,6 +439,7 @@ pub fn check(input: &CheckInput) -> CheckOutput {
 fn render_lock(
     catalog: Option<&Catalog>,
     ports: &BTreeMap<Ident, (PortContract, PortTypes)>,
+    icon_fonts: Option<&CheckedIconFonts>,
 ) -> String {
     let mut out = String::from(
         "# uhura.lock — canonical contract pins (§9.1). `uhura check` writes this\n\
@@ -419,6 +452,17 @@ fn render_lock(
             c.version,
             c.canonical_hash()
         ));
+    }
+    if let Some(icon_fonts) = icon_fonts {
+        for (name, family) in &icon_fonts.families {
+            out.push_str(&format!(
+                "icon-glyphs {name} sha256:{}\n",
+                family.glyphs_hash
+            ));
+        }
+        for (name, family) in &icon_fonts.families {
+            out.push_str(&format!("icon-font {name} sha256:{}\n", family.font_hash));
+        }
     }
     for (name, (contract, _)) in ports {
         out.push_str(&format!(

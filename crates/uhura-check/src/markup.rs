@@ -10,6 +10,7 @@ use uhura_base::{Diagnostic, Ident, Span, codes};
 use uhura_syntax::ast;
 
 use crate::catalog::{Catalog, ChildrenModel, ElementClass, PropType};
+use crate::icon_fonts::CheckedIconFonts;
 use crate::infer::Typer;
 use crate::resolve::{DefEnv, Resolved, SubjectKind, did_you_mean};
 use crate::types::{MapKey, Ty};
@@ -47,14 +48,22 @@ pub(crate) fn resolve_element(
 
 /// Documented patterns for things that are deliberately not elements (§10);
 /// surfaced as notes on `unknown-element`.
-const PATTERN_NOTES: &[(&str, &str)] = &[
+const UNKNOWN_ELEMENT_NOTES: &[(&str, &str)] = &[
+    (
+        "image",
+        "`<image>` was renamed to `<img>`; the old spelling is not a compatibility alias",
+    ),
+    (
+        "text-field",
+        "`<text-field>` was renamed to `<textfield>`; the old spelling is not a compatibility alias",
+    ),
     (
         "avatar",
-        "the avatar pattern is `<image class=…>` — see docs/patterns",
+        "the avatar pattern is `<img class=…>` — see docs/widgets/patterns",
     ),
     (
         "card",
-        "the card pattern is `<view class=…>` — see docs/patterns",
+        "the card pattern is `<view class=…>` — see docs/widgets/patterns",
     ),
     (
         "column",
@@ -75,7 +84,7 @@ const PATTERN_NOTES: &[(&str, &str)] = &[
     ("dialog", "dialogs are surfaces (core surface stack)"),
     (
         "video",
-        "video is deferred: poster `<image>` + `video-off` badge pattern",
+        "video is deferred: poster `<img>` + `video-off` badge pattern",
     ),
 ];
 
@@ -93,6 +102,7 @@ struct EmitUse {
 pub struct MarkupChecker<'a> {
     pub typer: Typer<'a>,
     pub catalog: &'a Catalog,
+    pub icon_fonts: &'a CheckedIconFonts,
     /// Component name → its expansion contains an interactive element.
     pub interactive_memo: &'a BTreeMap<Ident, bool>,
     class_refs: Vec<(String, Span)>,
@@ -103,16 +113,18 @@ pub fn check_markup(
     env: &DefEnv,
     resolved: &Resolved,
     catalog: &Catalog,
+    icon_fonts: &CheckedIconFonts,
     interactive_memo: &BTreeMap<Ident, bool>,
     markup: &ast::MarkupList,
-    file_span: Span,
     diags: &mut Vec<Diagnostic>,
 ) -> MarkupFacts {
+    let file_span = Span::new(env.file, 0, 0);
     let mut typer = Typer::new(env, resolved, diags);
     typer.in_view = true;
     let mut checker = MarkupChecker {
         typer,
         catalog,
+        icon_fonts,
         interactive_memo,
         class_refs: Vec::new(),
         emit_uses: Vec::new(),
@@ -266,7 +278,9 @@ impl MarkupChecker<'_> {
                             el.span,
                         );
                         if let Some((_, note)) =
-                            PATTERN_NOTES.iter().find(|(p, _)| *p == name.as_str())
+                            UNKNOWN_ELEMENT_NOTES
+                                .iter()
+                                .find(|(p, _)| *p == name.as_str())
                         {
                             d = d.with_note((*note).to_string());
                         } else if let Some(s) = did_you_mean(
@@ -577,6 +591,11 @@ impl MarkupChecker<'_> {
 
     fn walk_element(&mut self, el: &ast::Element, name: &Ident, in_interactive: bool) {
         let decl = self.catalog.elements[name].clone();
+        let icon_family = if name.as_str() == "icon" {
+            self.resolve_icon_family(el)
+        } else {
+            None
+        };
 
         if decl.class == ElementClass::Interactive && in_interactive {
             self.error(
@@ -633,6 +652,17 @@ impl MarkupChecker<'_> {
             {
                 role_literal = Some(v.clone());
             }
+            if name.as_str() == "icon" && attr_name.as_str() == "family" {
+                // Family selection was resolved before the attribute loop so
+                // `name` is checked correctly regardless of authoring order.
+                continue;
+            }
+            if name.as_str() == "icon" && attr_name.as_str() == "name" {
+                if let Some((family, glyphs)) = &icon_family {
+                    self.check_icon_name(family, glyphs, &attr.value, attr.span);
+                }
+                continue;
+            }
             self.check_prop_value(name, &attr_name, &prop.ty, &attr.value, attr.span);
         }
 
@@ -660,6 +690,32 @@ impl MarkupChecker<'_> {
                     format!("`<{name}>` takes exactly one of {}", names.join(" / ")),
                     el.span,
                 );
+                continue;
+            }
+
+            // An exactly-one boolean branch is selected by its presence, so a
+            // false or dynamic value would contradict the structural choice.
+            // Treat it as a bare marker while keeping ordinary bool props
+            // expression-capable.
+            for prop_name in group {
+                if !bound.contains_key(prop_name)
+                    || !matches!(decl.props[prop_name].ty, PropType::Bool)
+                {
+                    continue;
+                }
+                let Some(attr) = el.attrs.iter().find(|attr| attr.name == prop_name.as_str())
+                else {
+                    continue;
+                };
+                if !matches!(attr.value, ast::AttrValue::Bare) {
+                    self.error(
+                        codes::A11Y_ALT,
+                        format!(
+                            "`<{name}>`'s `{prop_name}` alternative is a presence marker — write bare `{prop_name}`"
+                        ),
+                        attr.span,
+                    );
+                }
             }
         }
 
@@ -780,7 +836,7 @@ impl MarkupChecker<'_> {
                         self.error(
                             codes::BAD_CHILDREN,
                             format!(
-                                "`<{name}>` children are content elements (text / image / icon)"
+                                "`<{name}>` children are content elements (text / img / video / icon)"
                             ),
                             node_span(child),
                         );
@@ -841,7 +897,7 @@ impl MarkupChecker<'_> {
             PropType::Int => Ty::Int,
             PropType::Asset => Ty::Asset,
             PropType::Enum(values) => Ty::Enum(values.clone()),
-            PropType::Icon => Ty::Enum(self.catalog.icons.clone()),
+            PropType::Icon | PropType::IconFamily => Ty::Text,
         };
         match value {
             ast::AttrValue::Bare => {
@@ -857,28 +913,6 @@ impl MarkupChecker<'_> {
                 }
             }
             ast::AttrValue::Literal(s) => match ty {
-                PropType::Icon => {
-                    if let Ok(icon) = Ident::new(s) {
-                        if !self.catalog.icons.contains(&icon) {
-                            let mut d = Diagnostic::error(
-                                codes::UNKNOWN_ICON.0,
-                                codes::UNKNOWN_ICON.1,
-                                format!("`{s}` is not in the catalog icon set"),
-                                span,
-                            );
-                            if let Some(near) = did_you_mean(&icon, self.catalog.icons.iter()) {
-                                d = d.with_note(format!("did you mean `{near}`?"));
-                            }
-                            self.typer.diags.push(d);
-                        }
-                    } else {
-                        self.error(
-                            codes::UNKNOWN_ICON,
-                            format!("`{s}` is not an icon name"),
-                            span,
-                        );
-                    }
-                }
                 PropType::Enum(values) => {
                     if !values.iter().any(|v| v.as_str() == s) {
                         let names: Vec<&str> = values.iter().map(Ident::as_str).collect();
@@ -889,7 +923,7 @@ impl MarkupChecker<'_> {
                         );
                     }
                 }
-                PropType::Text => {}
+                PropType::Text | PropType::Icon | PropType::IconFamily => {}
                 other => {
                     self.error(
                         codes::TYPE_MISMATCH,
@@ -900,6 +934,128 @@ impl MarkupChecker<'_> {
             },
             ast::AttrValue::Expr(expr) => self.typer.check(expr, &expected),
         }
+    }
+
+    fn resolve_icon_family(&mut self, el: &ast::Element) -> Option<(Ident, BTreeSet<Ident>)> {
+        let family_attr = el.attrs.iter().find(|attr| attr.name == "family");
+        let family = match family_attr.map(|attr| (&attr.value, attr.span)) {
+            None => self.icon_fonts.default.clone(),
+            Some((ast::AttrValue::Literal(value), span)) => match Ident::new(value) {
+                Ok(family) => family,
+                Err(_) => {
+                    self.error(
+                        codes::UNKNOWN_ICON_FAMILY,
+                        format!("`{value}` is not an icon family name"),
+                        span,
+                    );
+                    return None;
+                }
+            },
+            Some((_, span)) => {
+                self.error(
+                    codes::TYPE_MISMATCH,
+                    "`<icon>` family must be a quoted, statically selected family name".to_string(),
+                    span,
+                );
+                return None;
+            }
+        };
+
+        let Some(checked) = self.icon_fonts.families.get(&family) else {
+            let span = family_attr.map_or(el.span, |attr| attr.span);
+            let mut diagnostic = Diagnostic::error(
+                codes::UNKNOWN_ICON_FAMILY.0,
+                codes::UNKNOWN_ICON_FAMILY.1,
+                format!("unknown icon family `{family}`"),
+                span,
+            );
+            if let Some(near) = did_you_mean(&family, self.icon_fonts.families.keys()) {
+                diagnostic = diagnostic.with_note(format!("did you mean `{near}`?"));
+            }
+            self.typer.diags.push(diagnostic);
+            return None;
+        };
+        Some((family, checked.glyphs.keys().cloned().collect()))
+    }
+
+    fn check_icon_name(
+        &mut self,
+        family: &Ident,
+        glyphs: &BTreeSet<Ident>,
+        value: &ast::AttrValue,
+        span: Span,
+    ) {
+        match value {
+            ast::AttrValue::Bare => self.error(
+                codes::TYPE_MISMATCH,
+                "bare `name` means `true`; `<icon>`'s `name` is an icon name".to_string(),
+                span,
+            ),
+            ast::AttrValue::Literal(value) => self.check_icon_literal(family, glyphs, value, span),
+            ast::AttrValue::Expr(expr) => self.check_icon_expr(family, glyphs, expr),
+        }
+    }
+
+    fn check_icon_expr(&mut self, family: &Ident, glyphs: &BTreeSet<Ident>, expr: &ast::Expr) {
+        // Registry membership is a domain constraint, not a 1,995-member
+        // language enum. Keep diagnostics family-specific and accept enum
+        // expressions whose possible values are a valid subset.
+        match &expr.kind {
+            ast::ExprKind::Error => {}
+            ast::ExprKind::Str(value) => self.check_icon_literal(family, glyphs, value, expr.span),
+            ast::ExprKind::If { cond, then, els } => {
+                self.typer.check(cond, &Ty::Bool);
+                self.check_icon_expr(family, glyphs, then);
+                self.check_icon_expr(family, glyphs, els);
+            }
+            _ => match self.typer.infer(expr) {
+                Ty::Error => {}
+                Ty::Enum(values) => {
+                    if let Some(icon) = values.iter().find(|icon| !glyphs.contains(*icon)) {
+                        self.unknown_icon(family, glyphs, icon, expr.span);
+                    }
+                }
+                actual => self.error(
+                    codes::TYPE_MISMATCH,
+                    format!(
+                        "expected an icon name in family `{family}`, got {}",
+                        actual.describe()
+                    ),
+                    expr.span,
+                ),
+            },
+        }
+    }
+
+    fn check_icon_literal(
+        &mut self,
+        family: &Ident,
+        glyphs: &BTreeSet<Ident>,
+        value: &str,
+        span: Span,
+    ) {
+        match Ident::new(value) {
+            Ok(icon) if glyphs.contains(&icon) => {}
+            Ok(icon) => self.unknown_icon(family, glyphs, &icon, span),
+            Err(_) => self.error(
+                codes::UNKNOWN_ICON,
+                format!("`{value}` is not an icon name"),
+                span,
+            ),
+        }
+    }
+
+    fn unknown_icon(&mut self, family: &Ident, glyphs: &BTreeSet<Ident>, icon: &Ident, span: Span) {
+        let mut diagnostic = Diagnostic::error(
+            codes::UNKNOWN_ICON.0,
+            codes::UNKNOWN_ICON.1,
+            format!("`{icon}` is not in icon family `{family}`"),
+            span,
+        );
+        if let Some(near) = did_you_mean(icon, glyphs.iter()) {
+            diagnostic = diagnostic.with_note(format!("did you mean `{near}`?"));
+        }
+        self.typer.diags.push(diagnostic);
     }
 
     /// `on:<event>={emit <machine-event>(args)}` on a catalog element:

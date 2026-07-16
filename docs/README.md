@@ -2,6 +2,7 @@
 
 - **Status:** Incubating
 - **Master specification:** [Uhura specification](spec/README.md)
+- **Widget catalogue:** [Widget catalogue and taxonomy](widgets/README.md)
 - **Foundational proposal:** [RFC 0001](rfcs/0001-project-foundation.md)
 - **Decision records and proposals:** [Uhura RFC index](rfcs/README.md)
 - **Research and stewardship:** [Uhura Working Group](working-group/README.md)
@@ -48,3 +49,5 @@ decision are present today. Future RFCs may establish:
 - implementation language, packaging, compatibility, and release policy.
 
 These topics are intentionally not resolved merely by creating a directory.
+The [widget catalogue](widgets/README.md) provides a stable reference topology
+for cataloguing work without granting an entry normative or supported status.

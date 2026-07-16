@@ -24,7 +24,7 @@ Editor and Play are routes of one web application:
 ```text
 Uhura source
   -> native capture, check, and evaluation
-  -> uhura-editor-state/1
+  -> uhura-editor-state/2
   -> HTTP state + SSE revision notification
   -> shared semantic browser renderer
   -> Editor at / or Play at /play
@@ -66,7 +66,7 @@ Parsing, checking, lowering, static example evaluation, structured
 diagnostics, semantic view trees, and renderer-neutral identities stay native.
 The Editor model builder transforms one checked result into deterministic
 preview groups, preview identity and content, example data and provenance,
-interaction summaries, compiled application CSS, icons, and assets.
+interaction summaries, compiled application CSS, and assets.
 
 It emits semantic data only. Prepared DOM, browser layout, and Editor chrome
 are forbidden in this layer.
@@ -90,6 +90,10 @@ replacement, Play chrome, and runtime controls. The application remains
 mounted during a model update, preserving camera and selection state without a
 reload checkpoint.
 
+Concrete icon geometry is browser-renderer data. Native model and host layers
+may carry checked icon-name tokens inside semantic content, but never SVG
+paths, font codepoints, or glyph-family tables.
+
 The shared semantic renderer exposes two policies:
 
 - **Editor:** one-shot realization, inert controls, no descriptor dispatch,
@@ -103,10 +107,12 @@ than relying on consumers to remember not to call it.
 ## 4. `EditorState` contract
 
 The initial browser-facing protocol was `uhura-editor-state/0`. The RFC 0003
-implementation advances the current contract to `uhura-editor-state/1`, adding
+implementation advanced the contract to `uhura-editor-state/1`, adding
 render-owned authoring metadata, explicit preview documentation references,
-and source-target occurrences while leaving canonical language and view IR
-unchanged. It remains an Editor read model, not canonical language IR.
+and source-target occurrences. The current `uhura-editor-state/2` removes
+concrete icon geometry from the native read model; glyph realization now
+belongs entirely to the browser renderer. Canonical language and view IR are
+unchanged. EditorState remains an Editor read model, not canonical language IR.
 
 ```text
 EditorState
@@ -123,7 +129,6 @@ EditorState
         example data and provenance
         interaction summaries
     stylesheet
-    structured icons
     assets
 ```
 
@@ -137,10 +142,12 @@ The following invariants apply:
    render, explicitly marked `freshness: stale`.
 5. An initially invalid project has `render: null`; the web application still
    loads and presents its diagnostics.
-6. A response is one complete state. The first protocol does not split or
+6. A response is one complete state. The contract does not split or
    patch independently mutable fragments.
 7. Ordering and serialization are deterministic so fixtures can enforce the
    boundary.
+8. Icon tokens may occur in semantic preview content, but glyph paths,
+   codepoints, and family assets never occur in EditorState.
 
 The browser rejects an unknown protocol or malformed state before replacing
 the currently displayed model.

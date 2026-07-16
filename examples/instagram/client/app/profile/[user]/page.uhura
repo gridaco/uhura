@@ -113,7 +113,7 @@ store {
       <view class="top-bar">
         {#if user != viewer.id}
           <button label="Back" on:press={emit back-tapped()}>
-            <icon name="back" />
+            <icon name="chevron-left" />
           </button>
         {/if}
         <text class="title">Profile</text>
@@ -125,7 +125,7 @@ store {
       <view class="top-bar">
         {#if user != viewer.id}
           <button label="Back" on:press={emit back-tapped()}>
-            <icon name="back" />
+            <icon name="chevron-left" />
           </button>
         {/if}
         <text class="title">Profile</text>
@@ -140,7 +140,7 @@ store {
       <view class="top-bar">
         {#if !pr.is-self}
           <button label="Back" on:press={emit back-tapped()}>
-            <icon name="back" />
+            <icon name="chevron-left" />
           </button>
         {/if}
         <text class="title">{pr.user.username}</text>
@@ -149,10 +149,10 @@ store {
         <profile-header user={pr.user} bio={pr.bio} is-self={pr.is-self} viewer-follows={pr.viewer-follows} relationship-pending={relationship-pending} post-count={pr.post-count} follower-count={pr.follower-count} following-count={pr.following-count} on:posts-tapped on:followers-tapped on:following-tapped on:follow-toggled on:create-tapped />
         <view role="tablist" class="profile-tabs">
           <button label="Posts" current={active-tab == "posts"} on:press={emit profile-tab-selected(tab: "posts")}>
-            <icon name="grid" />
+            <icon name="grid-3x3" />
           </button>
           <button label="Reels" current={active-tab == "reels"} on:press={emit profile-tab-selected(tab: "reels")}>
-            <icon name="reels" />
+            <icon name="clapperboard" />
           </button>
           {#if pr.is-self}
             <button label="Saved" current={active-tab == "saved"} on:press={emit profile-tab-selected(tab: "saved")}>
@@ -160,7 +160,7 @@ store {
             </button>
           {/if}
           <button label="Tagged" current={active-tab == "tagged"} on:press={emit profile-tab-selected(tab: "tagged")}>
-            <icon name="profile" />
+            <icon name="user-round" />
           </button>
         </view>
         {#if active-tab == "posts"}
@@ -173,7 +173,7 @@ store {
               {#each pr.posts as th (th.id)}
                 <view class="grid-item">
                   <region class="grid-link" label={"View post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                    <image class="grid-tile" src={th.src} alt={th.alt} />
+                    <img class="grid-tile" src={th.src} alt={th.alt} />
                   </region>
                 </view>
               {/each}
@@ -183,7 +183,7 @@ store {
           {#if active-tab == "reels"}
             {#if count(pr.reels) == 0}
               <view class="fill-center pad-lg stack-sm">
-                <icon name="reels" />
+                <icon name="clapperboard" />
                 <text class="muted">No reels yet.</text>
               </view>
             {:else}
@@ -191,7 +191,7 @@ store {
                 {#each pr.reels as th (th.id)}
                   <view class="grid-item">
                     <region class="grid-link" label={"View reel: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                      <image class="grid-tile" src={th.src} alt={th.alt} />
+                      <img class="grid-tile" src={th.src} alt={th.alt} />
                     </region>
                   </view>
                 {/each}
@@ -209,7 +209,7 @@ store {
                   {#each pr.saved as th (th.id)}
                     <view class="grid-item">
                       <region class="grid-link" label={"View saved post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                        <image class="grid-tile" src={th.src} alt={th.alt} />
+                        <img class="grid-tile" src={th.src} alt={th.alt} />
                       </region>
                     </view>
                   {/each}
@@ -225,7 +225,7 @@ store {
                   {#each pr.tagged as th (th.id)}
                     <view class="grid-item">
                       <region class="grid-link" label={"View tagged post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                        <image class="grid-tile" src={th.src} alt={th.alt} />
+                        <img class="grid-tile" src={th.src} alt={th.alt} />
                       </region>
                     </view>
                   {/each}

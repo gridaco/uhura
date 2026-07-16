@@ -5,11 +5,14 @@ pub mod fmt;
 pub mod graph;
 pub mod trace;
 
+use std::io::{self, Read};
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::Arc;
 
+use uhura_check::icon_fonts::{MAX_ICON_FONT_BYTES, MAX_ICON_GLYPH_MAP_BYTES};
 use uhura_check::manifest::load_manifest;
-use uhura_check::{CheckInput, SourceInput};
+use uhura_check::{CheckInput, IconFontInput, SourceInput};
 
 use crate::fsio::walk_corpus;
 
@@ -44,6 +47,32 @@ pub fn assemble_input(root: &Path) -> Result<CheckInput, ExitCode> {
         manifest.catalog_path.clone(),
         read_opt(&manifest.catalog_path),
     );
+    let canonical_root = std::fs::canonicalize(root).ok();
+    let read_icon_bytes = |rel: &str, max_bytes: usize| {
+        let root = canonical_root.as_ref()?;
+        let path = std::fs::canonicalize(root.join(rel)).ok()?;
+        path.starts_with(root)
+            .then(|| read_bounded_file(&path, max_bytes).ok())
+            .flatten()
+    };
+    let icon_font_files = manifest
+        .icons
+        .families
+        .iter()
+        .map(|(name, family)| {
+            (
+                name.clone(),
+                IconFontInput {
+                    font_path: family.font.clone(),
+                    font_bytes: read_icon_bytes(&family.font, MAX_ICON_FONT_BYTES)
+                        .map(Arc::<[u8]>::from),
+                    glyphs_path: family.glyphs.clone(),
+                    glyphs_text: read_icon_bytes(&family.glyphs, MAX_ICON_GLYPH_MAP_BYTES)
+                        .and_then(|bytes| String::from_utf8(bytes).ok()),
+                },
+            )
+        })
+        .collect();
     let port_files = manifest
         .ports
         .iter()
@@ -83,6 +112,7 @@ pub fn assemble_input(root: &Path) -> Result<CheckInput, ExitCode> {
         manifest_rel_path: "uhura.toml".to_string(),
         manifest_text,
         catalog_file,
+        icon_font_files,
         port_files,
         sources,
         theme_css,
@@ -90,4 +120,52 @@ pub fn assemble_input(root: &Path) -> Result<CheckInput, ExitCode> {
         lock_text,
     };
     Ok(input)
+}
+
+fn read_bounded_file(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() > max_bytes as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("file exceeds {max_bytes}-byte limit"),
+        ));
+    }
+
+    // The handle-level bound closes the metadata/read race if a file grows
+    // after the size check.
+    let mut bytes = Vec::new();
+    file.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("file exceeds {max_bytes}-byte limit"),
+        ));
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::read_bounded_file;
+
+    #[test]
+    fn bounded_resource_read_rejects_size_before_loading_the_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "uhura-bounded-icon-read-{}-{unique}",
+            std::process::id()
+        ));
+        let file = std::fs::File::create(&path).expect("create sparse file");
+        file.set_len(9).expect("size sparse file");
+
+        let error = read_bounded_file(&path, 8).expect_err("oversized file must be rejected");
+        assert!(error.to_string().contains("8-byte limit"));
+
+        std::fs::remove_file(path).expect("cleanup");
+    }
 }

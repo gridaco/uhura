@@ -184,10 +184,10 @@ store {
     <text class="wordmark">Instagram</text>
     <view class="feed-head-actions">
       <button label="Create post" on:press={emit tab-selected(section: "create")}>
-        <icon name="plus" />
+        <icon name="square-plus" />
       </button>
       <region label="View your profile" on:activate={emit author-tapped(user: viewer.id)}>
-        <image class="viewer-avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
+        <img class="viewer-avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
       </region>
     </view>
   </view>

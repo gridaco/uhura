@@ -9,7 +9,7 @@ import type {
   ScrollHolder,
   TextFieldHolder,
 } from "./contracts.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 
 interface Holder extends ScrollHolder, TextFieldHolder {
   node?: RendererNode;
@@ -20,7 +20,7 @@ type HeldElement = HTMLElement & { __uh?: Holder };
 
 interface SemanticRendererContext {
   document: Document;
-  icons: IconTable;
+  icons: IconFontRegistry;
   assets: AssetAppliers;
   policy: RenderPolicy;
 }
@@ -265,7 +265,7 @@ export function createSemanticRenderer(ctx: SemanticRendererContext): SemanticRe
     collect?: RealizationCollector,
   ): void {
     // Remove only semantic children. A prop applier may already have created
-    // mechanic children (text-field input, pager track/dots).
+    // mechanic children (textfield input, pager track/dots).
     for (const child of [...host.children]) {
       if (isHTMLElement(child) && child.hasAttribute("data-key")) {
         disposeSubtree(child);

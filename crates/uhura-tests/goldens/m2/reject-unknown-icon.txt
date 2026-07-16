@@ -1,3 +1,3 @@
-error[UH5017 markup/unknown-icon]: `reel` is not in the catalog icon set
+error[UH5017 markup/unknown-icon]: `clapperboar` is not in icon family `lucide`
   --> components/bottom-nav.uhura:27:13
-  note: did you mean `reels`?
+  note: did you mean `clapperboard`?

@@ -9,14 +9,7 @@
 
 [catalog]
 name = "base"
-version = "0.1.0"
-# The closed icon set, recomputed from slice usage (§10).
-icons = [
-  "home", "search", "plus", "reels", "profile",
-  "heart", "heart-filled", "comment", "close", "back",
-  "grid", "layers", "video-off", "progress",
-  "bookmark", "bookmark-filled", "chevron-left", "chevron-right",
-]
+version = "0.3.0"
 
 [elements.view]
 class = "layout"
@@ -64,20 +57,20 @@ class = "content"
 # Literal text and {expr} interpolation — only here (§4.4).
 children = "text"
 
-[elements.image]
+[elements.img]
 class = "content"
 children = "none"
 # a11y completeness: exactly one of alt / decorative (§10).
 exactly-one-of = [["alt", "decorative"]]
 
-[elements.image.props.src]
+[elements.img.props.src]
 type = "asset"
 required = true
 
-[elements.image.props.alt]
+[elements.img.props.alt]
 type = "text"
 
-[elements.image.props.decorative]
+[elements.img.props.decorative]
 type = "bool"
 
 # First-class time-based media. The semantic props are deliberately small:
@@ -121,6 +114,9 @@ children = "none"
 type = "icon"
 required = true
 
+[elements.icon.props.family]
+type = "icon-family"
+
 [elements.button]
 class = "interactive"
 children = "content"
@@ -144,30 +140,30 @@ type = "bool"
 [elements.button.events.press]
 kind = "input"
 
-[elements.text-field]
+[elements.textfield]
 class = "interactive"
 children = "none"
 # Binding `value` obligates handling `change` (controlled promotion, §10).
 controlled = { prop = "value", event = "change" }
 
-[elements.text-field.props.value]
+[elements.textfield.props.value]
 type = "text"
 
-[elements.text-field.props.placeholder]
+[elements.textfield.props.placeholder]
 type = "text"
 
-[elements.text-field.props.label]
+[elements.textfield.props.label]
 type = "text"
 required = true
 
-[elements.text-field.props.disabled]
+[elements.textfield.props.disabled]
 type = "bool"
 
-[elements.text-field.events.change]
+[elements.textfield.events.change]
 kind = "input"
 carries = { value = "text" }
 
-[elements.text-field.events.submit]
+[elements.textfield.events.submit]
 kind = "input"
 
 [elements.region]

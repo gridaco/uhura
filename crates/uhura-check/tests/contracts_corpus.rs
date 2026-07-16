@@ -14,10 +14,9 @@ const CREATE: &str = include_str!("../../../examples/instagram/client/ports/crea
 const MANIFEST: &str = include_str!("../../../examples/instagram/client/uhura.toml");
 
 #[test]
-fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {
+fn base_catalog_loads_with_ten_elements_and_registry_backed_icons() {
     let catalog = load_catalog(CATALOG).unwrap();
     assert_eq!(catalog.elements.len(), 10, "design §10: ten elements");
-    assert_eq!(catalog.icons.len(), 18, "design §10: the closed icon set");
 
     let names: Vec<&str> = catalog.elements.keys().map(|k| k.as_str()).collect();
     assert_eq!(
@@ -25,12 +24,12 @@ fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {
         [
             "button",
             "icon",
-            "image",
+            "img",
             "pager",
             "region",
             "scroll",
             "text",
-            "text-field",
+            "textfield",
             "video",
             "view"
         ]
@@ -54,7 +53,20 @@ fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {
     let pager = &catalog.elements[&ident("pager")];
     assert_eq!(pager.children, ChildrenModel::KeyedEach);
 
-    let text_field = &catalog.elements[&ident("text-field")];
+    let icon = &catalog.elements[&ident("icon")];
+    assert!(icon.props.contains_key(&ident("name")));
+    assert!(icon.props.contains_key(&ident("family")));
+
+    let img = &catalog.elements[&ident("img")];
+    assert_eq!(img.children, ChildrenModel::None);
+    assert!(img.events.is_empty());
+    assert_eq!(
+        img.exactly_one_of,
+        vec![vec![ident("alt"), ident("decorative")]],
+        "an image must select informative or decorative semantics"
+    );
+
+    let text_field = &catalog.elements[&ident("textfield")];
     assert_eq!(
         text_field.controlled,
         Some((ident("value"), ident("change"))),
@@ -65,6 +77,36 @@ fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {
         1,
         "change carries {{ value: text }} (§4.2)"
     );
+}
+
+#[test]
+fn icon_catalog_shape_is_language_reserved() {
+    let invalid_type = CATALOG.replace(
+        "[elements.icon.props.family]\ntype = \"icon-family\"",
+        "[elements.icon.props.family]\ntype = \"glyph-family\"",
+    );
+    let issues = load_catalog(&invalid_type).unwrap_err();
+    assert!(issues.iter().any(|issue| {
+        issue.path == "elements.icon.props.family.type" && issue.message.contains("icon-family")
+    }));
+
+    let bad_family = CATALOG.replace(
+        "[elements.icon.props.family]\ntype = \"icon-family\"",
+        "[elements.icon.props.family]\ntype = \"text\"",
+    );
+    let issues = load_catalog(&bad_family).unwrap_err();
+    assert!(issues.iter().any(|issue| {
+        issue.path == "elements.icon.props.family" && issue.message.contains("optional `family`")
+    }));
+
+    let optional_name = CATALOG.replace(
+        "[elements.icon.props.name]\ntype = \"icon\"\nrequired = true",
+        "[elements.icon.props.name]\ntype = \"icon\"",
+    );
+    let issues = load_catalog(&optional_name).unwrap_err();
+    assert!(issues.iter().any(|issue| {
+        issue.path == "elements.icon.props.name" && issue.message.contains("requires a `name`")
+    }));
 }
 
 #[test]

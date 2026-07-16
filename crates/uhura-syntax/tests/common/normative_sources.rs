@@ -21,7 +21,7 @@ emits {
   <region label="View profile"
       on:activate={emit author-tapped(user: post.author.id)}>
     <view class="author-row">
-      <image class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
+      <img class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
       <text class="username">{post.author.username}</text>
     </view>
   </region>
@@ -30,17 +30,17 @@ emits {
     {:when image m}
       <region label="Like this post" supplementary
           on:activate-double={emit like-toggled(post: post.id, now-liked: true)}>
-        <image class="media" src={m.image.src} alt={m.image.alt} />
+        <img class="media" src={m.image.src} alt={m.image.alt} />
       </region>
     {:when carousel c}
       <pager class="media" indicator="dots" label="Photo carousel">
         {#each c.slides as s (s.id)}
-          <image src={s.src} alt={s.alt} />
+          <img src={s.src} alt={s.alt} />
         {/each}
       </pager>
     {:when video v}
       <view class="media video-fallback">
-        <image src={v.poster.src} alt={v.poster.alt} />
+        <img src={v.poster.src} alt={v.poster.alt} />
         <view class="video-fallback-badge">
           <icon name="video-off" />
           <text>Video isn't supported in this preview</text>
@@ -52,11 +52,11 @@ emits {
     <button pressed={liked} busy={like-pending}
         label={if liked then "Unlike" else "Like"}
         on:press={emit like-toggled(post: post.id, now-liked: !liked)}>
-      <icon name={if liked then "heart-filled" else "heart"} />
+      <icon name="heart" />
     </button>
     <button label="Comments"
         on:press={emit comments-requested(post: post.id)}>
-      <icon name="comment" />
+      <icon name="message-circle" />
     </button>
   </view>
 

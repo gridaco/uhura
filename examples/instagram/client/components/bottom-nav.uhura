@@ -20,15 +20,15 @@ emits {
       <text class="nav-label">Search</text>
     </button>
     <button label="Create" current={current == "create"} on:press={emit tab-selected(section: "create")}>
-      <icon name="plus" />
+      <icon name="square-plus" />
       <text class="nav-label">Create</text>
     </button>
     <button label="Reels" current={current == "reels"} on:press={emit tab-selected(section: "reels")}>
-      <icon name="reels" />
+      <icon name="clapperboard" />
       <text class="nav-label">Reels</text>
     </button>
     <button label="Profile" current={current == "profile"} on:press={emit tab-selected(section: "profile")}>
-      <icon name="profile" />
+      <icon name="user-round" />
       <text class="nav-label">Profile</text>
     </button>
   </view>

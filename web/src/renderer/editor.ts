@@ -7,12 +7,13 @@ import type {
   EditorRenderRoot,
   RendererNode,
 } from "./contracts.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 import { createSemanticRenderer } from "./reconciler.js";
 
 export interface EditorRendererOptions {
   document?: Document;
-  icons: IconTable;
+  /** Host-loaded icon-font resource for the same render revision. */
+  icons: IconFontRegistry;
   assets: EditorAssetTable;
 }
 
@@ -56,7 +57,7 @@ function browserDocument(injected: Document | undefined): Document {
 /**
  * Creates the read-only renderer facade. Its construction surface has no
  * emitter, descriptor delivery, provider resolver, scroll controller, or
- * text-field controller to accidentally wire into a preview.
+ * textfield controller to accidentally wire into a preview.
  */
 export function createEditorRenderer(options: EditorRendererOptions): EditorRenderer {
   const dom = browserDocument(options.document);
@@ -105,12 +106,7 @@ export function createEditorRenderer(options: EditorRendererOptions): EditorRend
 }
 
 export type { EditorAsset, EditorAssetTable } from "./assets.js";
-export type {
-  IconDefinition,
-  IconTable,
-  IconCommand,
-  IconPaint,
-} from "./icons.js";
+export type { IconFontRegistry } from "./icons.js";
 export type {
   EditorNode,
   EditorNodeRealization,

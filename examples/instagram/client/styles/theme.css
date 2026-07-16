@@ -66,7 +66,7 @@ body {
 }
 
 #uh-app button.uh-button,
-#uh-app .uh-text-field input { min-block-size: 44px; }
+#uh-app .uh-textfield input { min-block-size: 44px; }
 
 .uh-button.primary-button {
   padding-inline: var(--space-4);
@@ -157,9 +157,8 @@ body {
   font-size: var(--type-md);
 }
 
-#uh-frame[data-frame="desktop"] .bottom-nav .uh-icon svg {
-  inline-size: 25px;
-  block-size: 25px;
+#uh-frame[data-frame="desktop"] .bottom-nav .uh-icon {
+  font-size: 25px;
 }
 
 #uh-frame[data-frame="desktop"] .screen:not(.story-page):not(.reels-page) > :not(.bottom-nav) {

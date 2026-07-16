@@ -186,7 +186,7 @@ fn annotation_on_an_unknown_element_is_incompatible_and_not_projected() {
             return text;
         }
         text.replacen(
-            "      <image class=\"avatar\" src={post.author.avatar.src} alt={post.author.avatar.alt} />",
+            "      <img class=\"avatar\" src={post.author.avatar.src} alt={post.author.avatar.alt} />",
             "      <!-- @review-note This target is unresolved. -->\n      <mystery />",
             1,
         )
