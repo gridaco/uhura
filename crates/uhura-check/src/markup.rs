@@ -47,14 +47,22 @@ pub(crate) fn resolve_element(
 
 /// Documented patterns for things that are deliberately not elements (§10);
 /// surfaced as notes on `unknown-element`.
-const PATTERN_NOTES: &[(&str, &str)] = &[
+const UNKNOWN_ELEMENT_NOTES: &[(&str, &str)] = &[
+    (
+        "image",
+        "`<image>` was renamed to `<img>`; the old spelling is not a compatibility alias",
+    ),
+    (
+        "text-field",
+        "`<text-field>` was renamed to `<textfield>`; the old spelling is not a compatibility alias",
+    ),
     (
         "avatar",
-        "the avatar pattern is `<image class=…>` — see docs/patterns",
+        "the avatar pattern is `<img class=…>` — see docs/widgets/patterns",
     ),
     (
         "card",
-        "the card pattern is `<view class=…>` — see docs/patterns",
+        "the card pattern is `<view class=…>` — see docs/widgets/patterns",
     ),
     (
         "column",
@@ -75,7 +83,7 @@ const PATTERN_NOTES: &[(&str, &str)] = &[
     ("dialog", "dialogs are surfaces (core surface stack)"),
     (
         "video",
-        "video is deferred: poster `<image>` + `video-off` badge pattern",
+        "video is deferred: poster `<img>` + `video-off` badge pattern",
     ),
 ];
 
@@ -266,7 +274,9 @@ impl MarkupChecker<'_> {
                             el.span,
                         );
                         if let Some((_, note)) =
-                            PATTERN_NOTES.iter().find(|(p, _)| *p == name.as_str())
+                            UNKNOWN_ELEMENT_NOTES
+                                .iter()
+                                .find(|(p, _)| *p == name.as_str())
                         {
                             d = d.with_note((*note).to_string());
                         } else if let Some(s) = did_you_mean(
@@ -660,6 +670,32 @@ impl MarkupChecker<'_> {
                     format!("`<{name}>` takes exactly one of {}", names.join(" / ")),
                     el.span,
                 );
+                continue;
+            }
+
+            // An exactly-one boolean branch is selected by its presence, so a
+            // false or dynamic value would contradict the structural choice.
+            // Treat it as a bare marker while keeping ordinary bool props
+            // expression-capable.
+            for prop_name in group {
+                if !bound.contains_key(prop_name)
+                    || !matches!(decl.props[prop_name].ty, PropType::Bool)
+                {
+                    continue;
+                }
+                let Some(attr) = el.attrs.iter().find(|attr| attr.name == prop_name.as_str())
+                else {
+                    continue;
+                };
+                if !matches!(attr.value, ast::AttrValue::Bare) {
+                    self.error(
+                        codes::A11Y_ALT,
+                        format!(
+                            "`<{name}>`'s `{prop_name}` alternative is a presence marker — write bare `{prop_name}`"
+                        ),
+                        attr.span,
+                    );
+                }
             }
         }
 
@@ -780,7 +816,7 @@ impl MarkupChecker<'_> {
                         self.error(
                             codes::BAD_CHILDREN,
                             format!(
-                                "`<{name}>` children are content elements (text / image / icon)"
+                                "`<{name}>` children are content elements (text / img / video / icon)"
                             ),
                             node_span(child),
                         );

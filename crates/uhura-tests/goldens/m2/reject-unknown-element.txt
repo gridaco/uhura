@@ -1,3 +1,3 @@
 error[UH5001 markup/unknown-element]: `<avatar>` is neither a catalog element nor an imported component
   --> components/post-card.uhura:29:7
-  note: the avatar pattern is `<image class=…>` — see docs/patterns
+  note: the avatar pattern is `<img class=…>` — see docs/widgets/patterns

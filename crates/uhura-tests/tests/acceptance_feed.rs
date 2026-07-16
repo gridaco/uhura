@@ -38,11 +38,9 @@ include!("common/corpus.rs");
 
 #[test]
 fn acceptance_walkthrough() {
-    // §13.1 — the corpus checks clean. Of §4.8's documented rejections,
-    // ten are pinned as source-level goldens in m2_gates (REJECTIONS);
-    // the value-dependent eleventh — duplicate keys — and the §13.6
-    // clause that had no pin anywhere — uncorrelated outcome injection —
-    // are asserted below.
+    // §13.1 — the corpus checks clean. The source-level rejection suite is
+    // golden-pinned in m2_gates (REJECTIONS); value-dependent duplicate keys
+    // and uncorrelated outcome injection are asserted below.
     let out = check(&corpus_input(true, &identity));
     assert_clean(&out);
     let program = &out.lowered.as_ref().expect("clean check lowers").program;
@@ -213,7 +211,7 @@ fn criterion_3_comments(program: &ProgramIr) {
     let mut nodes = Vec::new();
     walk_nodes(&surfaces[0]["root"], &mut nodes);
     assert!(
-        nodes.iter().any(|n| n["element"] == "text-field"),
+        nodes.iter().any(|n| n["element"] == "textfield"),
         "§13.3: the sheet carries the typed input"
     );
 

@@ -27,7 +27,7 @@ export function createPump({ dispatch, deliver, onStep, onError, onDrained }: Pu
    * goes through the queue, so step order is arrival order.
    * @param {string} eventJson
    * @param {() => void} [onApplied] runs right after this event's step
-   *   lands (the text-field in-flight accounting hangs off this)
+   *   lands (the textfield in-flight accounting hangs off this)
    */
   function enqueue(eventJson: string, onApplied?: () => void): void {
     queue.push(onApplied ? { eventJson, onApplied } : { eventJson });

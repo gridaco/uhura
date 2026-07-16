@@ -24,11 +24,11 @@ emits {
       {:when video v}
         <video class="reel-media" src={v.src} poster={v.poster.src} label={v.poster.alt} muted loop controls playsinline />
       {:when image m}
-        <image class="reel-media" src={m.image.src} alt={m.image.alt} />
+        <img class="reel-media" src={m.image.src} alt={m.image.alt} />
       {:when carousel c}
         <pager class="reel-media" indicator="dots" label="Reel carousel">
           {#each c.slides as s (s.id)}
-            <image class="reel-slide" src={s.src} alt={s.alt} />
+            <img class="reel-slide" src={s.src} alt={s.alt} />
           {/each}
         </pager>
     {/match}
@@ -38,7 +38,7 @@ emits {
     <view class="reel-copy">
       <region label={"View " ++ post.author.username} on:activate={emit author-tapped(user: post.author.id)}>
         <view class="reel-author">
-          <image class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
+          <img class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
           <text class="username">{post.author.username}</text>
         </view>
       </region>

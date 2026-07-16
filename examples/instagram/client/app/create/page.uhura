@@ -115,11 +115,11 @@ store {
           </view>
         {:when uploaded u}
           <scroll class="create-form">
-            <image class="create-preview" src={u.preview} alt={u.name} />
+            <img class="create-preview" src={u.preview} alt={u.name} />
             <view class="create-fields">
               <text class="muted">{u.name}</text>
-              <text-field value={caption} label="Caption (optional)" placeholder="Write a caption…" disabled={publish-pending} on:change={emit caption-changed()} />
-              <text-field value={alt} label="Alternative text (optional)" placeholder="Describe this image for people who can't see it…" disabled={publish-pending} on:change={emit alt-changed()} />
+              <textfield value={caption} label="Caption (optional)" placeholder="Write a caption…" disabled={publish-pending} on:change={emit caption-changed()} />
+              <textfield value={alt} label="Alternative text (optional)" placeholder="Describe this image for people who can't see it…" disabled={publish-pending} on:change={emit alt-changed()} />
               <view class="create-actions">
                 <button class="secondary-button" label="Choose another photo" disabled={publish-pending} busy={choose-pending} on:press={emit choose-tapped()}>
                   <text>Choose another</text>

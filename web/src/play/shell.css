@@ -736,14 +736,14 @@ body.uh-play-shell {
 .uh-scroll { overflow-y: auto; overflow-x: hidden; min-block-size: 0; }
 .uh-scroll[data-direction="horizontal"] { overflow-x: auto; overflow-y: hidden; }
 .uh-text { margin: 0; overflow-wrap: anywhere; }
-.uh-image { background-size: cover; background-position: center; background-color: #d9d9de; display: block; }
+.uh-img { display: block; background-color: #d9d9de; }
 .uh-video { display: block; inline-size: 100%; background: #111 center / cover no-repeat; object-fit: cover; }
 .uh-icon { display: inline-flex; }
 .uh-icon svg { display: block; }
 button.uh-button { appearance: none; background: none; border: 0; padding: 6px; font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; cursor: pointer; }
 button.uh-button[disabled] { opacity: 0.35; cursor: default; }
 button.uh-button[aria-busy="true"] { opacity: 0.6; }
-.uh-text-field input { font: inherit; inline-size: 100%; border: 1px solid #d5d5da; border-radius: 999px; padding: 8px 14px; background: #fff; color: #222; }
+.uh-textfield input { font: inherit; inline-size: 100%; border: 1px solid #d5d5da; border-radius: 999px; padding: 8px 14px; background: #fff; color: #222; }
 .uh-region { display: block; cursor: pointer; }
 .uh-pager .uh-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
 .uh-pager .uh-track > * { flex: 0 0 100%; scroll-snap-align: center; }

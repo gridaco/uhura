@@ -95,8 +95,8 @@ store {
       </scroll>
   {/match}
   <view class="composer">
-    <image class="avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
-    <text-field value={draft} label="Add a comment" placeholder="Add a comment…" disabled={comment-pending} on:change={emit composer-changed()} on:submit={emit submit-requested()} />
+    <img class="avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
+    <textfield value={draft} label="Add a comment" placeholder="Add a comment…" disabled={comment-pending} on:change={emit composer-changed()} on:submit={emit submit-requested()} />
     <button label="Post" disabled={draft == "" || comment-pending} busy={comment-pending} on:press={emit submit-requested()}>
       <text>Post</text>
     </button>

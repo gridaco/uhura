@@ -199,7 +199,6 @@ const realizePreview = (
   wrapper.inert = true;
   const renderer = createEditorRenderer({
     document,
-    icons: render.icons,
     assets: render.assets,
   });
   if (isSnapshot(preview.content)) {

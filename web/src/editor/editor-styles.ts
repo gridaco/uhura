@@ -630,14 +630,14 @@ export const PREVIEW_BASE_STYLES = `
   .uh-scroll { overflow-y: auto; overflow-x: hidden; min-block-size: 0; }
   .uh-scroll[data-direction="horizontal"] { overflow-x: auto; overflow-y: hidden; }
   .uh-text { margin: 0; overflow-wrap: anywhere; }
-  .uh-image { display: block; background-size: cover; background-position: center; background-color: #d9d9de; }
+  .uh-img { display: block; background-color: #d9d9de; }
   .uh-video { display: block; inline-size: 100%; background: #111 center / cover no-repeat; object-fit: cover; }
   .uh-icon { display: inline-flex; }
   .uh-icon svg { display: block; }
   button.uh-button { appearance: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px; border: 0; border-radius: 8px; color: inherit; background: none; font: inherit; }
   button.uh-button[disabled] { opacity: .35; }
   button.uh-button[aria-busy="true"] { opacity: .6; }
-  .uh-text-field input { inline-size: 100%; padding: 8px 14px; border: 1px solid #d5d5da; border-radius: 999px; color: #222; background: #fff; font: inherit; }
+  .uh-textfield input { inline-size: 100%; padding: 8px 14px; border: 1px solid #d5d5da; border-radius: 999px; color: #222; background: #fff; font: inherit; }
   .uh-region { display: block; }
   .uh-pager { position: relative; }
   .uh-pager .uh-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; }

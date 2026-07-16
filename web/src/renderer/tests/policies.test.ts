@@ -10,7 +10,7 @@ import type {
   EditorNodeRealization,
   EditorRenderRoot,
 } from "../editor.js";
-import type { IconDefinition } from "../icons.js";
+import { PROVISIONAL_BROWSER_ICON_TABLE } from "../icons.js";
 import { createPlayAssets, createPlayRenderer, findScope } from "../play.js";
 
 type Listener = (event: FakeEvent) => void;
@@ -223,8 +223,8 @@ const fixture: VNode[] = [
         children: [{ key: "button-label", element: "text", props: { content: "Like" } }],
       },
       {
-        key: "image",
-        element: "image",
+        key: "img",
+        element: "img",
         props: { src: { t: "image", asset: "photo" }, alt: "A photograph" },
       },
       {
@@ -251,7 +251,7 @@ const fixture: VNode[] = [
       },
       {
         key: "field",
-        element: "text-field",
+        element: "textfield",
         props: { value: "draft", label: "Caption" },
         on: [{ ...press, event: "change" }],
       },
@@ -271,34 +271,12 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
   const editorHost = editorDocument.createElement("main");
   const playHost = playDocument.createElement("main");
 
-  const icons: Record<string, IconDefinition> = {
-    heart: {
-      viewBox: [0, 0, 24, 24],
-      commands: [
-        {
-          kind: "path",
-          d: "M12 20 4 12",
-          fill: "none",
-          stroke: "currentColor",
-          strokeWidth: "1.8",
-        },
-        {
-          kind: "circle",
-          cx: "12",
-          cy: "12",
-          r: "3.5",
-          opacity: "0.4",
-        },
-      ],
-    },
-  };
   const assets: Record<string, ContractEditorAsset> = {
     photo: { dataUri: "data:image/jpeg;base64,photo", alt: "A photograph" },
     poster: { dataUri: "data:image/jpeg;base64,poster", alt: "A clip" },
   };
   const editor = createEditorRenderer({
     document: asDocument(editorDocument),
-    icons,
     assets,
   });
 
@@ -308,12 +286,6 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
   let scrollSyncs = 0;
   const play = createPlayRenderer({
     document: asDocument(playDocument),
-    icons: {
-      heart: {
-        viewBox: [0, 0, 24, 24],
-        commands: [{ kind: "path", d: "M12 20 4 12" }],
-      },
-    },
     assets: createPlayAssets(),
     emit: (descriptor) => emitted.push(descriptor),
     textFields: {
@@ -343,7 +315,7 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
     "root",
     "title",
     "button",
-    "image",
+    "img",
     "video",
     "icon",
     "pager",
@@ -360,7 +332,10 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
 
   assert.equal(keyed(editorHost, "root").getAttribute("role"), "list");
   assert.equal(keyed(editorHost, "button").getAttribute("role"), "listitem");
-  assert.equal(keyed(editorHost, "image").getAttribute("aria-label"), "A photograph");
+  const editorImg = keyed(editorHost, "img");
+  assert.equal(editorImg.tagName, "IMG");
+  assert.equal(editorImg.getAttribute("alt"), "A photograph");
+  assert.equal(editorImg.getAttribute("aria-label"), null);
   assert.equal(keyed(editorHost, "button").getAttribute("aria-label"), "Like");
   assert.equal(findScope(fixture[0] as VNode), "page:1");
 
@@ -374,11 +349,11 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
 
   const editorSvg = keyed(editorHost, "icon").querySelector("svg");
   const editorPath = editorSvg?.querySelector("path");
-  const editorCircle = editorSvg?.querySelector("circle");
+  const playPath = keyed(playHost, "icon").querySelector("svg")?.querySelector("path");
   assert.equal(editorSvg?.getAttribute("viewBox"), "0 0 24 24");
   assert.equal(editorPath?.getAttribute("stroke-width"), "1.8");
-  assert.equal(editorCircle?.getAttribute("r"), "3.5");
-  assert.equal(editorCircle?.getAttribute("opacity"), "0.4");
+  assert.equal(editorPath?.getAttribute("d"), playPath?.getAttribute("d"));
+  assert.equal(keyed(editorHost, "icon").getAttribute("aria-hidden"), "true");
 
   keyed(editorHost, "button").fire("click");
   assert.deepEqual(emitted, []);
@@ -388,10 +363,73 @@ test("Editor and Play share semantic structure while Editor stays inert", () => 
   assert.equal(textFieldWires, 1);
   assert.equal(textFieldApplies, 1);
   assert.equal(scrollSyncs, 1);
+  assert.equal(keyed(editorHost, "field").className, "uh-textfield");
+  assert.equal(keyed(playHost, "field").className, "uh-textfield");
   const editorInput = keyed(editorHost, "field").querySelector(":scope > input");
   assert.equal(editorInput?.readOnly, true);
   assert.equal(editorInput?.value, "draft");
   assert.equal(editorInput?.listeners.size, 0);
+});
+
+test("img uses native alternative-text and decorative semantics", () => {
+  const document = new FakeDocument();
+  const host = document.createElement("main");
+  const renderer = createEditorRenderer({
+    document: asDocument(document),
+    assets: {
+      photo: { dataUri: "data:image/jpeg;base64,photo", alt: "Manifest fallback" },
+      texture: { dataUri: "data:image/jpeg;base64,texture", alt: "Manifest fallback" },
+    },
+  });
+
+  renderer.realize(asElement(host), [
+    {
+      key: "informative",
+      element: "img",
+      props: { src: { t: "image", asset: "photo" }, alt: "A photograph" },
+    },
+    {
+      key: "decorative",
+      element: "img",
+      props: { src: { t: "image", asset: "texture" }, decorative: true },
+    },
+  ]);
+
+  const informative = keyed(host, "informative");
+  assert.equal(informative.tagName, "IMG");
+  assert.equal(informative.className, "uh-img");
+  assert.equal(informative.getAttribute("alt"), "A photograph");
+  assert.equal(informative.getAttribute("role"), null);
+  assert.equal(informative.getAttribute("aria-label"), null);
+
+  const decorative = keyed(host, "decorative");
+  assert.equal(decorative.tagName, "IMG");
+  assert.equal(decorative.getAttribute("alt"), "");
+  assert.equal(decorative.getAttribute("role"), null);
+  assert.equal(decorative.getAttribute("aria-hidden"), null);
+});
+
+test("provisional browser glyphs cover the current base-catalog vocabulary", () => {
+  assert.deepEqual(Object.keys(PROVISIONAL_BROWSER_ICON_TABLE).sort(), [
+    "back",
+    "bookmark",
+    "bookmark-filled",
+    "chevron-left",
+    "chevron-right",
+    "close",
+    "comment",
+    "grid",
+    "heart",
+    "heart-filled",
+    "home",
+    "layers",
+    "plus",
+    "profile",
+    "progress",
+    "reels",
+    "search",
+    "video-off",
+  ]);
 });
 
 test("Editor realization is fresh, local-only, and video is poster-only", () => {
@@ -405,25 +443,27 @@ test("Editor realization is fresh, local-only, and video is poster-only", () => 
 
   renderer.realize(asElement(host), fixture);
   const firstRoot = host.firstChild;
-  const image = keyed(host, "image");
+  const img = keyed(host, "img");
   const video = keyed(host, "video");
+  const missingGlyph = keyed(host, "icon").querySelector("svg")?.querySelector("circle");
   assert.match(
-    image.style.backgroundImage,
-    /^url\("data:image\/svg\+xml;utf8,<svg /,
+    img.getAttribute("src") ?? "",
+    /^data:image\/svg\+xml;utf8,<svg /,
   );
   assert.match(
     video.getAttribute("poster") ?? "",
     /^data:image\/svg\+xml;utf8,<svg /,
   );
   assert.notEqual(
-    image.style.backgroundImage,
-    `url(${JSON.stringify(video.getAttribute("poster"))})`,
+    img.getAttribute("src"),
+    video.getAttribute("poster"),
     "each missing asset id keeps its own deterministic hue",
   );
   assert.equal(video.hasAttribute("src"), false);
   assert.equal(video.autoplay, false);
   assert.equal(video.controls, false);
   assert.equal(video.getAttribute("data-video-preview"), "poster");
+  assert.equal(missingGlyph?.getAttribute("r"), "8");
 
   renderer.realize(asElement(host), fixture);
   assert.notEqual(host.firstChild, firstRoot, "one-shot realization remounts semantic DOM");
@@ -457,7 +497,7 @@ test("Editor root realization reports semantic paths and direct element handles"
     ["title", [0]],
     ["button", [1]],
     ["button-label", [1, 0]],
-    ["image", [2]],
+    ["img", [2]],
     ["video", [3]],
     ["icon", [4]],
     ["pager", [5]],
@@ -493,7 +533,7 @@ test("Editor root realization reports semantic paths and direct element handles"
   assert.equal(
     realized.some(({ element }) => element === asElement(input as FakeElement)),
     false,
-    "text-field input is mechanic DOM, not a semantic realization",
+    "textfield input is mechanic DOM, not a semantic realization",
   );
   assert.equal(keyed(host, "button").listeners.size, 0);
 });

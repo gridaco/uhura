@@ -26,7 +26,7 @@ emits {
 <view class="post-card">
   <region label="View profile" on:activate={emit author-tapped(user: post.author.id)}>
     <view class="author-row">
-      <image class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
+      <img class="avatar" src={post.author.avatar.src} alt={post.author.avatar.alt} />
       <text class="username">{post.author.username}</text>
     </view>
   </region>
@@ -34,13 +34,13 @@ emits {
   {#match post.media}
     {:when image m}
       <region label="Like this post" supplementary on:activate-double={emit like-toggled(post: post.id, now-liked: true)}>
-        <image class="media" src={m.image.src} alt={m.image.alt} />
+        <img class="media" src={m.image.src} alt={m.image.alt} />
       </region>
     {:when carousel c}
       <region label="Like this post" supplementary on:activate-double={emit like-toggled(post: post.id, now-liked: true)}>
         <pager class="media" indicator="dots" label="Photo carousel">
           {#each c.slides as s (s.id)}
-            <image class="slide" src={s.src} alt={s.alt} />
+            <img class="slide" src={s.src} alt={s.alt} />
           {/each}
         </pager>
       </region>

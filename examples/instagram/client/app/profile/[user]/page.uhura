@@ -173,7 +173,7 @@ store {
               {#each pr.posts as th (th.id)}
                 <view class="grid-item">
                   <region class="grid-link" label={"View post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                    <image class="grid-tile" src={th.src} alt={th.alt} />
+                    <img class="grid-tile" src={th.src} alt={th.alt} />
                   </region>
                 </view>
               {/each}
@@ -191,7 +191,7 @@ store {
                 {#each pr.reels as th (th.id)}
                   <view class="grid-item">
                     <region class="grid-link" label={"View reel: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                      <image class="grid-tile" src={th.src} alt={th.alt} />
+                      <img class="grid-tile" src={th.src} alt={th.alt} />
                     </region>
                   </view>
                 {/each}
@@ -209,7 +209,7 @@ store {
                   {#each pr.saved as th (th.id)}
                     <view class="grid-item">
                       <region class="grid-link" label={"View saved post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                        <image class="grid-tile" src={th.src} alt={th.alt} />
+                        <img class="grid-tile" src={th.src} alt={th.alt} />
                       </region>
                     </view>
                   {/each}
@@ -225,7 +225,7 @@ store {
                   {#each pr.tagged as th (th.id)}
                     <view class="grid-item">
                       <region class="grid-link" label={"View tagged post: " ++ th.alt} on:activate={emit post-tapped(post: th.id)}>
-                        <image class="grid-tile" src={th.src} alt={th.alt} />
+                        <img class="grid-tile" src={th.src} alt={th.alt} />
                       </region>
                     </view>
                   {/each}

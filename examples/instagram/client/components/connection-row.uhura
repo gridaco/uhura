@@ -16,7 +16,7 @@ emits {
 <view class="connection-row">
   <region label={"View " ++ person.user.username} on:activate={emit profile-tapped(target: person.user.id)}>
     <view class="connection-person">
-      <image class="avatar" src={person.user.avatar.src} alt={person.user.avatar.alt} />
+      <img class="avatar" src={person.user.avatar.src} alt={person.user.avatar.alt} />
       <view class="connection-names">
         <text class="username">{person.user.username}</text>
         <text class="muted">{person.user.display-name}</text>

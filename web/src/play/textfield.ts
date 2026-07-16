@@ -1,4 +1,4 @@
-// text-field mechanics (§8.4, normative): core owns the DRAFT; the
+// textfield mechanics (§8.4, normative): core owns the DRAFT; the
 // renderer owns caret and IME. Per field, a counter of in-flight change
 // emissions; while nonzero, external replacement never applies (stashed)
 // — a tick-scheduled outcome landing mid-typing cannot eat keystrokes.

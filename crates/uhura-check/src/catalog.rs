@@ -37,11 +37,11 @@ impl ElementClass {
 /// What an element accepts as children (§10 children models).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChildrenModel {
-    /// No children ever (`image`, `icon`, `text-field`).
+    /// No children ever (`img`, `icon`, `textfield`).
     None,
     /// Any markup (`view`, `scroll`).
     Any,
-    /// Content-class elements only (`button` — icon/text/image).
+    /// Content-class elements only (`button` — icon/text/img).
     Content,
     /// Exactly one child element (`region`).
     One,
@@ -71,7 +71,7 @@ pub enum PropType {
     Int,
     /// A closed token set; values typecheck as enum values (§4.3).
     Enum(BTreeSet<Ident>),
-    /// An asset reference (`image src`).
+    /// An asset reference (`img src`).
     Asset,
     /// A name from the catalog's closed icon set.
     Icon,

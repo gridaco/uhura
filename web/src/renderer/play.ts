@@ -6,6 +6,7 @@ import type {
   ScrollController,
   TextFieldController,
 } from "./contracts.js";
+import { PROVISIONAL_BROWSER_ICON_TABLE } from "./icons.js";
 import type { IconTable } from "./icons.js";
 import { createSemanticRenderer, findScope as findRendererScope } from "./reconciler.js";
 
@@ -16,7 +17,8 @@ export interface PlayRendererOptions {
     data?: Record<string, unknown>,
     onApplied?: () => void,
   ): void;
-  icons: IconTable;
+  /** Renderer-owned glyph realization; defaults to the provisional browser table. */
+  icons?: IconTable;
   assets: AssetAppliers;
   textFields: TextFieldController;
   scrolls: ScrollController;
@@ -51,7 +53,7 @@ function browserDocument(injected: Document | undefined): Document {
 export function createPlayRenderer(options: PlayRendererOptions): PlayRenderer {
   const renderer = createSemanticRenderer({
     document: browserDocument(options.document),
-    icons: options.icons,
+    icons: options.icons ?? PROVISIONAL_BROWSER_ICON_TABLE,
     assets: options.assets,
     policy: {
       kind: "play",

@@ -105,7 +105,7 @@ store {
   <view class="search-head">
     <text class="search-title">Explore</text>
     <view class="search-controls">
-      <text-field value={query} label="Search accounts and posts" placeholder="Search accounts and posts…" disabled={search-pending} on:change={emit query-changed()} on:submit={emit search-submitted()} />
+      <textfield value={query} label="Search accounts and posts" placeholder="Search accounts and posts…" disabled={search-pending} on:change={emit query-changed()} on:submit={emit search-submitted()} />
       <button label="Search" busy={search-pending} on:press={emit search-submitted()}>
         <icon name="search" />
       </button>
@@ -148,7 +148,7 @@ store {
                 {#each results.posts as post (post.id)}
                   <view class="explore-item">
                     <region class="explore-link" label={"View post: " ++ post.alt} on:activate={emit post-tapped(post: post.id)}>
-                      <image class="explore-tile" src={post.src} alt={post.alt} />
+                      <img class="explore-tile" src={post.src} alt={post.alt} />
                     </region>
                   </view>
                 {/each}
@@ -165,7 +165,7 @@ store {
 .search-page .search-head { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-line); }
 .search-page .search-title { font-size: var(--type-xl); font-weight: 700; }
 .search-page .search-controls { display: flex; align-items: flex-end; gap: var(--space-2); }
-.search-page .search-controls .uh-text-field { flex: 1; }
+.search-page .search-controls .uh-textfield { flex: 1; }
 .search-page .search-controls .uh-button { min-inline-size: 42px; min-block-size: 42px; justify-content: center; }
 .search-page .search-results { flex: 1; min-block-size: 0; }
 .search-page .search-section { display: flex; flex-direction: column; }

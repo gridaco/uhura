@@ -187,7 +187,7 @@ store {
         <icon name="plus" />
       </button>
       <region label="View your profile" on:activate={emit author-tapped(user: viewer.id)}>
-        <image class="viewer-avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
+        <img class="viewer-avatar" src={viewer.avatar.src} alt={viewer.avatar.alt} />
       </region>
     </view>
   </view>

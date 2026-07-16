@@ -47,13 +47,12 @@ const render = (previews: EditorPreview[]): EditorRender => ({
   groups: [],
   previews,
   stylesheet: "",
-  icons: {},
   assets: {},
   interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
 });
 
 const state = (value: EditorRender | null): EditorState => ({
-  protocol: "uhura-editor-state/1",
+  protocol: "uhura-editor-state/2",
   sourceRevision: 1,
   diagnostics: null,
   render: value,

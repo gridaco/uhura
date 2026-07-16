@@ -20,7 +20,6 @@ import type {
 } from "../protocol/types.js";
 import type { ResolveAsset } from "../renderer/play.js";
 import type { AssetAppliers } from "../renderer/play.js";
-import type { IconTable } from "../renderer/play.js";
 import {
   createPlayAssets,
   createPlayRenderer,
@@ -56,7 +55,6 @@ export const PLAY_ARTIFACT_URLS = [
   "/api/play/boot.json",
   "/api/play/fixture.json",
   "/api/play/script.json",
-  "/api/play/icons.json",
   "/api/play/config.json",
   "/api/play/stylesheet.css",
 ] as const;
@@ -255,7 +253,6 @@ export function startPlayRuntime(
       bootText,
       fixtureText,
       scriptText,
-      iconsText,
       playText,
       styleText,
     ] = artifacts.texts;
@@ -335,7 +332,6 @@ export function startPlayRuntime(
       runtime.driver = driver;
     }
 
-    const icons = JSON.parse(iconsText) as IconTable;
     let currentRevision = 0;
     let currentNavKey: string | null = null;
     let pageElement: HTMLElement | null = null;
@@ -367,7 +363,6 @@ export function startPlayRuntime(
     const renderer = createPlayRenderer({
       document: shell.document,
       emit,
-      icons,
       assets,
       textFields,
       scrolls,

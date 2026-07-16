@@ -19,7 +19,7 @@ interface ApplyPropsContext {
   holderOf(el: HTMLElement): TextFieldHolder;
 }
 
-type SemanticTag = "p" | "span" | "button" | "video" | "div";
+type SemanticTag = "p" | "span" | "button" | "img" | "video" | "div";
 
 export function textOf(v: VValue | undefined): string | undefined {
   if (typeof v === "string") return v;
@@ -58,6 +58,8 @@ export function tagFor(element: string): SemanticTag {
       return "span";
     case "button":
       return "button";
+    case "img":
+      return "img";
     case "video":
       return "video";
     default:
@@ -118,17 +120,17 @@ export function applyProps(
       break;
     }
 
-    case "image": {
-      ctx.assets.applyImage(el, assetOf(props["src"]));
+    case "img": {
+      const img = el as HTMLImageElement;
+      setAttr(img, "role", undefined);
+      setAttr(img, "aria-label", undefined);
+      setAttr(img, "aria-hidden", undefined);
       if (boolOf(props["decorative"])) {
-        setAttr(el, "aria-hidden", "true");
-        setAttr(el, "role", undefined);
-        setAttr(el, "aria-label", undefined);
+        setAttr(img, "alt", "");
       } else {
-        setAttr(el, "role", "img");
-        setAttr(el, "aria-label", textOf(props["alt"]));
-        setAttr(el, "aria-hidden", undefined);
+        setAttr(img, "alt", textOf(props["alt"]) ?? "");
       }
+      ctx.assets.applyImage(img, assetOf(props["src"]));
       break;
     }
 
@@ -184,7 +186,7 @@ export function applyProps(
       break;
     }
 
-    case "text-field": {
+    case "textfield": {
       const existing = el.querySelector(":scope > input");
       let input: HTMLInputElement;
       if (isInput(existing)) {

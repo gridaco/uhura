@@ -54,7 +54,6 @@ struct GoodBuild {
     fixture_json: String,
     script_json: String,
     boot_json: String,
-    icons_json: String,
     config_json: String,
     provider_js: Option<String>,
     play_assets: BTreeMap<String, Arc<[u8]>>,
@@ -370,7 +369,6 @@ fn recheck_play(files: &source::ProjectSourceFiles) -> Result<GoodBuild, serde_j
         fixture_json,
         script_json: script_canonical,
         boot_json: boot_envelope(program, &fixture).map_err(fail)?,
-        icons_json: structured_icons_json(),
         config_json,
         provider_js,
         play_assets: files.subtree(Path::new("fixtures/assets")),
@@ -429,14 +427,6 @@ pub fn boot_envelope(
             .map(uhura_port::envelope::ProjectionUpdate::to_json)
             .collect::<Vec<_>>(),
     })))
-}
-
-fn structured_icons_json() -> String {
-    let icons = uhura_editor_model::icons::table()
-        .into_iter()
-        .map(|(name, icon)| (name, icon.to_json()))
-        .collect::<serde_json::Map<_, _>>();
-    to_canonical_json(&serde_json::Value::Object(icons))
 }
 
 /// Listenerless Editor/Play host. The state and event hubs have host-session
@@ -1230,7 +1220,6 @@ enum PlayArtifact {
     Fixture,
     Script,
     Boot,
-    Icons,
     Config,
 }
 
@@ -1257,7 +1246,6 @@ fn api_route(path: &str) -> Option<ApiRoute<'_>> {
         "/api/play/fixture.json" => ApiRoute::PlayArtifact(PlayArtifact::Fixture),
         "/api/play/script.json" => ApiRoute::PlayArtifact(PlayArtifact::Script),
         "/api/play/boot.json" => ApiRoute::PlayArtifact(PlayArtifact::Boot),
-        "/api/play/icons.json" => ApiRoute::PlayArtifact(PlayArtifact::Icons),
         "/api/play/config.json" => ApiRoute::PlayArtifact(PlayArtifact::Config),
         "/api/play/provider.js" => ApiRoute::PlayProvider,
         _ => {
@@ -1504,7 +1492,6 @@ fn play_artifact(state: &RwLock<DevState>, artifact_kind: PlayArtifact) -> Serve
         PlayArtifact::Fixture => ("json", good.fixture_json.as_bytes()),
         PlayArtifact::Script => ("json", good.script_json.as_bytes()),
         PlayArtifact::Boot => ("json", good.boot_json.as_bytes()),
-        PlayArtifact::Icons => ("json", good.icons_json.as_bytes()),
         PlayArtifact::Config => ("json", good.config_json.as_bytes()),
     };
     Ok((
@@ -1730,7 +1717,6 @@ mod tests {
             groups: Vec::new(),
             previews: Vec::new(),
             stylesheet: String::new(),
-            icons: BTreeMap::new(),
             assets: BTreeMap::new(),
             interaction_graph: Default::default(),
         }
@@ -1886,6 +1872,7 @@ mod tests {
         );
         assert_eq!(api_route("/ir.json"), None);
         assert_eq!(api_route("/events"), None);
+        assert_eq!(api_route("/api/play/icons.json"), Some(ApiRoute::Unknown));
         assert_eq!(api_route("/api/nope"), Some(ApiRoute::Unknown));
     }
 

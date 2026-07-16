@@ -4,9 +4,8 @@
 //! application. It evaluates every resolved example into semantic
 //! `uhura-core` view data and serializes one immutable, versioned state. It
 //! deliberately owns no HTML, CSS, DOM identifiers, browser event handling,
-//! filesystem access, or transport.
+//! concrete icon geometry, filesystem access, or transport.
 
-pub mod icons;
 pub mod interaction_graph;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,7 +29,7 @@ use uhura_core::template::{
 pub use uhura_core::template::{RenderNodeRef, RenderRoot};
 use uhura_core::view::{Descriptor, DescriptorKind, Node, Snapshot};
 
-pub const EDITOR_STATE_PROTOCOL: &str = "uhura-editor-state/1";
+pub const EDITOR_STATE_PROTOCOL: &str = "uhura-editor-state/2";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorState {
@@ -51,7 +50,6 @@ pub struct EditorRender {
     pub groups: Vec<PreviewGroup>,
     pub previews: Vec<Preview>,
     pub stylesheet: String,
-    pub icons: BTreeMap<String, icons::Icon>,
     pub assets: BTreeMap<String, Asset>,
     /// The app's static interaction structure (`uhura-interaction-graph/0`),
     /// projected from the same checked program as the previews.
@@ -690,7 +688,6 @@ pub fn build_render(
         groups,
         previews,
         stylesheet: output.stylesheet.clone(),
-        icons: icons::table(),
         assets,
         interaction_graph: interaction_graph::build_interaction_graph_with_spans(
             program,
@@ -1326,9 +1323,6 @@ impl EditorRender {
             "groups": self.groups.iter().map(PreviewGroup::to_json).collect::<Vec<_>>(),
             "previews": self.previews.iter().map(Preview::to_json).collect::<Vec<_>>(),
             "stylesheet": self.stylesheet,
-            "icons": self.icons.iter().map(|(name, icon)| {
-                (name.clone(), icon.to_json())
-            }).collect::<serde_json::Map<_, _>>(),
             "assets": self.assets.iter().map(|(id, asset)| {
                 (id.clone(), asset.to_json())
             }).collect::<serde_json::Map<_, _>>(),
@@ -2487,6 +2481,10 @@ mod tests {
         assert_eq!(first.to_json()["protocol"], EDITOR_STATE_PROTOCOL);
         assert_eq!(first.to_json()["sourceRevision"], 9);
         assert_eq!(first.to_json()["render"]["freshness"], "current");
+        assert!(
+            first.to_json()["render"].get("icons").is_none(),
+            "glyph geometry is renderer-owned and absent from EditorState"
+        );
         assert_eq!(
             first.to_json()["render"]["previews"][0]["content"]["protocol"],
             uhura_core::view::VIEW_PROTOCOL
@@ -2502,7 +2500,6 @@ mod tests {
 
         let mut fixture = first;
         let render = fixture.render.as_mut().unwrap();
-        render.icons.clear();
         render.assets.clear();
         assert_eq!(
             fixture.to_canonical_string().unwrap(),

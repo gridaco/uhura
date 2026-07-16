@@ -25,12 +25,12 @@ fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {
         [
             "button",
             "icon",
-            "image",
+            "img",
             "pager",
             "region",
             "scroll",
             "text",
-            "text-field",
+            "textfield",
             "video",
             "view"
         ]
@@ -54,7 +54,16 @@ fn base_catalog_loads_with_ten_elements_and_eighteen_icons() {
     let pager = &catalog.elements[&ident("pager")];
     assert_eq!(pager.children, ChildrenModel::KeyedEach);
 
-    let text_field = &catalog.elements[&ident("text-field")];
+    let img = &catalog.elements[&ident("img")];
+    assert_eq!(img.children, ChildrenModel::None);
+    assert!(img.events.is_empty());
+    assert_eq!(
+        img.exactly_one_of,
+        vec![vec![ident("alt"), ident("decorative")]],
+        "an image must select informative or decorative semantics"
+    );
+
+    let text_field = &catalog.elements[&ident("textfield")];
     assert_eq!(
         text_field.controlled,
         Some((ident("value"), ident("change"))),

@@ -66,7 +66,7 @@ body {
 }
 
 #uh-app button.uh-button,
-#uh-app .uh-text-field input { min-block-size: 44px; }
+#uh-app .uh-textfield input { min-block-size: 44px; }
 
 .uh-button.primary-button {
   padding-inline: var(--space-4);

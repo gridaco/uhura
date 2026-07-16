@@ -7,12 +7,14 @@ import type {
   EditorRenderRoot,
   RendererNode,
 } from "./contracts.js";
+import { PROVISIONAL_BROWSER_ICON_TABLE } from "./icons.js";
 import type { IconTable } from "./icons.js";
 import { createSemanticRenderer } from "./reconciler.js";
 
 export interface EditorRendererOptions {
   document?: Document;
-  icons: IconTable;
+  /** Renderer-owned glyph realization; defaults to the provisional browser table. */
+  icons?: IconTable;
   assets: EditorAssetTable;
 }
 
@@ -56,13 +58,13 @@ function browserDocument(injected: Document | undefined): Document {
 /**
  * Creates the read-only renderer facade. Its construction surface has no
  * emitter, descriptor delivery, provider resolver, scroll controller, or
- * text-field controller to accidentally wire into a preview.
+ * textfield controller to accidentally wire into a preview.
  */
 export function createEditorRenderer(options: EditorRendererOptions): EditorRenderer {
   const dom = browserDocument(options.document);
   const renderer = createSemanticRenderer({
     document: dom,
-    icons: options.icons,
+    icons: options.icons ?? PROVISIONAL_BROWSER_ICON_TABLE,
     assets: createEditorAssets(options.assets),
     policy: { kind: "editor" },
   });

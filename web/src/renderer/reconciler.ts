@@ -265,7 +265,7 @@ export function createSemanticRenderer(ctx: SemanticRendererContext): SemanticRe
     collect?: RealizationCollector,
   ): void {
     // Remove only semantic children. A prop applier may already have created
-    // mechanic children (text-field input, pager track/dots).
+    // mechanic children (textfield input, pager track/dots).
     for (const child of [...host.children]) {
       if (isHTMLElement(child) && child.hasAttribute("data-key")) {
         disposeSubtree(child);

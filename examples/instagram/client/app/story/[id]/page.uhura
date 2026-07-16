@@ -55,7 +55,7 @@ store {
       </view>
     {:when ready s}
       <view class="story-stage">
-        <image class="story-media" src={s.image.src} alt={s.image.alt} />
+        <img class="story-media" src={s.image.src} alt={s.image.alt} />
         <view class="story-overlay">
           <view class="story-top">
             <!-- @annotation Progress segments mirror the author's story sequence and distinguish viewed, current, and unseen frames. -->
@@ -67,7 +67,7 @@ store {
             <view class="story-head">
               <region label={"View " ++ s.author.username} on:activate={emit author-tapped(user: s.author.id)}>
                 <view class="story-author">
-                  <image class="avatar" src={s.author.avatar.src} alt={s.author.avatar.alt} />
+                  <img class="avatar" src={s.author.avatar.src} alt={s.author.avatar.alt} />
                   <text class="story-author-label">{s.author.username ++ " · " ++ s.posted-label}</text>
                 </view>
               </region>

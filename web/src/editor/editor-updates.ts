@@ -41,8 +41,9 @@ const structurallyEqual = (left: unknown, right: unknown): boolean => {
  * Returns the previews whose already-realized frame is safe to retain.
  *
  * CSS is deliberately not a frame dependency: retained ShadowRoots can adopt
- * the next model's sheet. Icons and assets are realization-time dependencies,
- * so a changed global table conservatively invalidates every frame.
+ * the next model's sheet. Assets are realization-time dependencies, so a
+ * changed asset table conservatively invalidates every frame. Icon glyphs are
+ * renderer-owned and cannot vary between EditorState revisions.
  */
 export const reusablePreviewIds = (
   previous: EditorRender | null,
@@ -51,7 +52,6 @@ export const reusablePreviewIds = (
   if (
     !previous
     || !next
-    || !structurallyEqual(previous.icons, next.icons)
     || !structurallyEqual(previous.assets, next.assets)
   ) {
     return new Set();
