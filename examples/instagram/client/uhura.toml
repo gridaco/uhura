@@ -8,6 +8,9 @@ entry = "feed"
 [catalog]
 path = "catalog/base.toml"
 
+[icons]
+default = "lucide"
+
 [ports]
 feed = "ports/feed.port.toml"
 comments = "ports/comments.port.toml"

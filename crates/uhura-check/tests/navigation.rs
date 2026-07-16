@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use uhura_base::{Ident, Severity};
-use uhura_check::manifest::Manifest;
+use uhura_check::manifest::{IconsConfig, Manifest};
 use uhura_check::{CheckInput, SourceInput, check};
 use uhura_core::ir::{ExprIr, StmtIr};
 use uhura_syntax::SourceKind;
@@ -17,6 +17,7 @@ fn input(home: &str) -> CheckInput {
         app_name: ident("navigation-test"),
         entry: ident("home"),
         catalog_path: "catalog/base.toml".into(),
+        icons: IconsConfig::default(),
         ports: BTreeMap::new(),
         fixtures: BTreeMap::new(),
         assets_manifest: None,
@@ -27,6 +28,7 @@ fn input(home: &str) -> CheckInput {
         manifest_rel_path: "uhura.toml".into(),
         manifest_text: "# constructed test manifest".into(),
         catalog_file: ("catalog/base.toml".into(), Some(CATALOG.into())),
+        icon_font_files: BTreeMap::new(),
         port_files: BTreeMap::new(),
         sources: vec![
             SourceInput {

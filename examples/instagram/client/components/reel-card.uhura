@@ -46,15 +46,15 @@ emits {
     </view>
     <view class="reel-actions">
       <button class={if liked then "reel-action liked" else "reel-action"} pressed={liked} busy={like-pending} label={if liked then "Unlike" else "Like"} on:press={emit like-toggled(post: post.id, now-liked: !liked)}>
-        <icon name={if liked then "heart-filled" else "heart"} />
+        <icon name="heart" />
         <text>{to-text(post.like-count + (if liked && !post.viewer-has-liked then 1 else if !liked && post.viewer-has-liked then 0 - 1 else 0))}</text>
       </button>
       <button class="reel-action" label="Comments" on:press={emit comments-requested(post: post.id)}>
-        <icon name="comment" />
+        <icon name="message-circle" />
         <text>{to-text(post.comment-count)}</text>
       </button>
       <button class="reel-action" pressed={saved} busy={save-pending} label={if saved then "Remove from saved" else "Save reel"} on:press={emit save-toggled(post: post.id, now-saved: !saved)}>
-        <icon name={if saved then "bookmark-filled" else "bookmark"} />
+        <icon name={if saved then "bookmark-check" else "bookmark"} />
       </button>
       <button class="reel-open" label="View post details" on:press={emit post-tapped(post: post.id)}>
         <text>View post</text>

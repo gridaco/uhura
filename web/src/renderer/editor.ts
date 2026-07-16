@@ -7,14 +7,13 @@ import type {
   EditorRenderRoot,
   RendererNode,
 } from "./contracts.js";
-import { PROVISIONAL_BROWSER_ICON_TABLE } from "./icons.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 import { createSemanticRenderer } from "./reconciler.js";
 
 export interface EditorRendererOptions {
   document?: Document;
-  /** Renderer-owned glyph realization; defaults to the provisional browser table. */
-  icons?: IconTable;
+  /** Host-loaded icon-font resource for the same render revision. */
+  icons: IconFontRegistry;
   assets: EditorAssetTable;
 }
 
@@ -64,7 +63,7 @@ export function createEditorRenderer(options: EditorRendererOptions): EditorRend
   const dom = browserDocument(options.document);
   const renderer = createSemanticRenderer({
     document: dom,
-    icons: options.icons ?? PROVISIONAL_BROWSER_ICON_TABLE,
+    icons: options.icons,
     assets: createEditorAssets(options.assets),
     policy: { kind: "editor" },
   });
@@ -107,12 +106,7 @@ export function createEditorRenderer(options: EditorRendererOptions): EditorRend
 }
 
 export type { EditorAsset, EditorAssetTable } from "./assets.js";
-export type {
-  IconDefinition,
-  IconTable,
-  IconCommand,
-  IconPaint,
-} from "./icons.js";
+export type { IconFontRegistry } from "./icons.js";
 export type {
   EditorNode,
   EditorNodeRealization,

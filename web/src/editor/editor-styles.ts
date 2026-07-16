@@ -632,8 +632,7 @@ export const PREVIEW_BASE_STYLES = `
   .uh-text { margin: 0; overflow-wrap: anywhere; }
   .uh-img { display: block; background-color: #d9d9de; }
   .uh-video { display: block; inline-size: 100%; background: #111 center / cover no-repeat; object-fit: cover; }
-  .uh-icon { display: inline-flex; }
-  .uh-icon svg { display: block; }
+  .uh-icon { display: inline-flex; align-items: center; justify-content: center; inline-size: 1em; block-size: 1em; font-size: 24px; }
   button.uh-button { appearance: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px; border: 0; border-radius: 8px; color: inherit; background: none; font: inherit; }
   button.uh-button[disabled] { opacity: .35; }
   button.uh-button[aria-busy="true"] { opacity: .6; }

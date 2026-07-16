@@ -9,14 +9,7 @@
 
 [catalog]
 name = "base"
-version = "0.2.0"
-# The closed icon set, recomputed from slice usage (§10).
-icons = [
-  "home", "search", "plus", "reels", "profile",
-  "heart", "heart-filled", "comment", "close", "back",
-  "grid", "layers", "video-off", "progress",
-  "bookmark", "bookmark-filled", "chevron-left", "chevron-right",
-]
+version = "0.3.0"
 
 [elements.view]
 class = "layout"
@@ -120,6 +113,9 @@ children = "none"
 [elements.icon.props.name]
 type = "icon"
 required = true
+
+[elements.icon.props.family]
+type = "icon-family"
 
 [elements.button]
 class = "interactive"

@@ -72,7 +72,7 @@ store {
                 </view>
               </region>
               <button class="story-close" label="Close story" on:press={emit back-tapped()}>
-                <icon name="close" />
+                <icon name="x" />
               </button>
             </view>
           </view>

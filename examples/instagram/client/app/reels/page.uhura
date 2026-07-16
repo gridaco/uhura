@@ -146,7 +146,7 @@ store {
     {:when ready r}
       {#if count(r.posts) == 0}
         <view class="fill-center stack-sm">
-          <icon name="reels" />
+          <icon name="clapperboard" />
           <text>No reels yet.</text>
         </view>
       {:else}

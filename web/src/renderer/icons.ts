@@ -1,288 +1,339 @@
-export interface IconPaint {
-  fill?: string;
-  stroke?: string;
-  strokeWidth?: string | number;
-  lineCap?: "butt" | "round" | "square";
-  lineJoin?: "miter" | "round" | "bevel";
-  opacity?: string | number;
+const ICON_FONT_PROTOCOL = "uhura-icon-fonts/0";
+const TOKEN_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+export type IconFontManifestAuthority = "editor" | "play";
+
+export interface IconFontFamilyManifest {
+  font: string;
+  sha256: string;
+  glyphs: Readonly<Record<string, number>>;
 }
 
-/**
- * Renderer-local command shape. Definitions may come from the bundled
- * provisional table or a future renderer resource; realization admits only
- * this closed path/circle/rect subset.
- */
-export interface IconCommand {
-  kind: string;
-  [property: string]: unknown;
+export interface IconFontManifest {
+  protocol: typeof ICON_FONT_PROTOCOL;
+  revision?: number;
+  generation?: number;
+  default: string;
+  families: Readonly<Record<string, IconFontFamilyManifest>>;
 }
 
-export interface IconDefinition {
-  viewBox: [number, number, number, number];
-  commands: IconCommand[];
+export interface IconFontLoadRequest {
+  document: Document;
+  font: string;
+  sha256: string;
+  cssFamily: string;
 }
 
-export type IconTable = Record<string, IconDefinition>;
+export type IconFontLoader = (request: IconFontLoadRequest) => Promise<void>;
 
-const icon = (...commands: IconCommand[]): IconDefinition => ({
-  viewBox: [0, 0, 24, 24],
-  commands,
-});
-
-const path = (d: string, paint: IconPaint): IconCommand => ({
-  kind: "path",
-  d,
-  ...paint,
-});
-
-const circle = (
-  cx: number,
-  cy: number,
-  r: number,
-  paint: IconPaint,
-): IconCommand => ({ kind: "circle", cx, cy, r, ...paint });
-
-const rect = (
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  rx: number | undefined,
-  paint: IconPaint,
-): IconCommand => ({
-  kind: "rect",
-  x,
-  y,
-  width,
-  height,
-  ...(rx === undefined ? {} : { rx }),
-  ...paint,
-});
-
-const outline = (
-  strokeWidth: number,
-  extra: Partial<IconPaint> = {},
-): IconPaint => ({
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth,
-  ...extra,
-});
-
-const stroke = (
-  strokeWidth: number,
-  extra: Partial<IconPaint> = {},
-): IconPaint => ({
-  stroke: "currentColor",
-  strokeWidth,
-  ...extra,
-});
-
-const filled = (): IconPaint => ({ fill: "currentColor" });
-
-/**
- * Provisional browser-renderer glyphs for the current base-catalog names.
- *
- * This table preserves the spike's visual defaults, but it is renderer data:
- * it is not part of Uhura Core, EditorState, Play artifacts, or the language's
- * icon-family contract.
- *
- * FIXME(icon-font): Moving this table out of native engine/editor code fixes
- * the ownership violation only. Replace it with the font-only pre-v1 resource
- * pipeline documented in `docs/widgets/integrations/icon-font.md`; do not
- * expand this table or treat its names as Uhura's canonical icon system.
- */
-export const PROVISIONAL_BROWSER_ICON_TABLE: IconTable = {
-  home: icon(path(
-    "M4 11 12 4l8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z",
-    outline(1.8, { lineJoin: "round" }),
-  )),
-  search: icon(
-    circle(10.5, 10.5, 6, outline(1.8)),
-    path("m15.5 15.5 5 5", stroke(1.8, { lineCap: "round" })),
-  ),
-  plus: icon(
-    rect(3.5, 3.5, 17, 17, 4, outline(1.8)),
-    path("M12 8v8M8 12h8", stroke(1.8, { lineCap: "round" })),
-  ),
-  reels: icon(
-    rect(3.5, 3.5, 17, 17, 4, outline(1.8)),
-    path("M3.5 8.5h17M8.5 3.5l3 5M14 3.5l3 5", stroke(1.6)),
-    path("m10.5 12.2 4.4 2.6-4.4 2.6z", filled()),
-  ),
-  profile: icon(
-    circle(12, 8.6, 3.6, outline(1.8)),
-    path("M4.8 20a7.4 7.4 0 0 1 14.4 0", outline(1.8, { lineCap: "round" })),
-  ),
-  heart: icon(path(
-    "M12 20.3 5 13.6a4.6 4.6 0 0 1 6.5-6.5l.5.5.5-.5a4.6 4.6 0 0 1 6.5 6.5z",
-    outline(1.8, { lineJoin: "round" }),
-  )),
-  "heart-filled": icon(path(
-    "M12 20.3 5 13.6a4.6 4.6 0 0 1 6.5-6.5l.5.5.5-.5a4.6 4.6 0 0 1 6.5 6.5z",
-    filled(),
-  )),
-  comment: icon(path(
-    "M20 11.6A8 8 0 1 0 7 17.9L4.5 20l.6-3.2A8 8 0 0 0 20 11.6z",
-    outline(1.8, { lineJoin: "round" }),
-  )),
-  close: icon(path(
-    "m6 6 12 12M18 6 6 18",
-    stroke(1.8, { lineCap: "round" }),
-  )),
-  back: icon(path(
-    "M14.5 5 8 12l6.5 7",
-    outline(1.8, { lineCap: "round", lineJoin: "round" }),
-  )),
-  grid: icon(path(
-    "M4 4h16v16H4zM4 10.7h16M4 17.3h16M10.7 4v16M17.3 4v16",
-    outline(1.5),
-  )),
-  layers: icon(
-    path("m12 4 8 4.5-8 4.5-8-4.5z", outline(1.7, { lineJoin: "round" })),
-    path("m5.2 12.8 6.8 3.8 6.8-3.8", outline(1.7, { lineJoin: "round" })),
-    path("m5.2 16.3 6.8 3.8 6.8-3.8", outline(1.7, { lineJoin: "round" })),
-  ),
-  "video-off": icon(
-    path(
-      "M4 7.5A1.5 1.5 0 0 1 5.5 6h8A1.5 1.5 0 0 1 15 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 4 16.5zM15 10.5l5-2.5v8l-5-2.5",
-      outline(1.7, { lineJoin: "round" }),
-    ),
-    path("m3.5 3.5 17 17", stroke(1.7, { lineCap: "round" })),
-  ),
-  progress: icon(
-    circle(12, 12, 7.5, outline(1.8, { opacity: 0.25 })),
-    path("M12 4.5a7.5 7.5 0 0 1 7.5 7.5", outline(1.8, { lineCap: "round" })),
-  ),
-  bookmark: icon(path(
-    "M6.5 4.5h11a1 1 0 0 1 1 1v15L12 16.2l-6.5 4.3v-15a1 1 0 0 1 1-1z",
-    outline(1.8, { lineJoin: "round" }),
-  )),
-  "bookmark-filled": icon(path(
-    "M6.5 4.5h11a1 1 0 0 1 1 1v15L12 16.2l-6.5 4.3v-15a1 1 0 0 1 1-1z",
-    filled(),
-  )),
-  "chevron-left": icon(path(
-    "m14.5 5-6.5 7 6.5 7",
-    outline(1.8, { lineCap: "round", lineJoin: "round" }),
-  )),
-  "chevron-right": icon(path(
-    "m9.5 5 6.5 7-6.5 7",
-    outline(1.8, { lineCap: "round", lineJoin: "round" }),
-  )),
-};
-
-const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
-
-function setOptionalAttribute(
-  element: Element,
-  name: string,
-  value: string | number | undefined,
-): void {
-  if (value !== undefined) element.setAttribute(name, String(value));
+/** Loaded, closed icon-family vocabulary used by one renderer artifact. */
+export interface IconFontRegistry {
+  readonly defaultFamily: string;
+  /** Stable across manifests with identical realization data. */
+  readonly fingerprint: string;
+  apply(host: HTMLElement, family: string | undefined, name: string): void;
 }
 
-function stringProperty(command: IconCommand, name: string): string | undefined {
-  const value = command[name];
-  return typeof value === "string" ? value : undefined;
+export interface LoadIconFontRegistryOptions {
+  document: Document;
+  manifest: IconFontManifest;
+  loadFont?: IconFontLoader;
 }
 
-function scalarProperty(
-  command: IconCommand,
-  name: string,
-): string | number | undefined {
-  const value = command[name];
-  if (typeof value === "string") return value;
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function applyPaint(element: Element, command: IconCommand): void {
-  setOptionalAttribute(element, "fill", stringProperty(command, "fill"));
-  setOptionalAttribute(element, "stroke", stringProperty(command, "stroke"));
-  setOptionalAttribute(element, "stroke-width", scalarProperty(command, "strokeWidth"));
-  setOptionalAttribute(element, "stroke-linecap", stringProperty(command, "lineCap"));
-  setOptionalAttribute(element, "stroke-linejoin", stringProperty(command, "lineJoin"));
-  setOptionalAttribute(element, "opacity", scalarProperty(command, "opacity"));
-}
-
-function appendCommand(document: Document, svg: SVGSVGElement, command: IconCommand): void {
-  switch (command.kind) {
-    case "path": {
-      const d = stringProperty(command, "d");
-      if (d === undefined) break;
-      const path = document.createElementNS(SVG_NAMESPACE, "path");
-      path.setAttribute("d", d);
-      applyPaint(path, command);
-      svg.append(path);
-      break;
-    }
-    case "circle": {
-      const cx = scalarProperty(command, "cx");
-      const cy = scalarProperty(command, "cy");
-      const r = scalarProperty(command, "r");
-      if (cx === undefined || cy === undefined || r === undefined) break;
-      const circle = document.createElementNS(SVG_NAMESPACE, "circle");
-      circle.setAttribute("cx", String(cx));
-      circle.setAttribute("cy", String(cy));
-      circle.setAttribute("r", String(r));
-      applyPaint(circle, command);
-      svg.append(circle);
-      break;
-    }
-    case "rect": {
-      const x = scalarProperty(command, "x");
-      const y = scalarProperty(command, "y");
-      const width = scalarProperty(command, "width");
-      const height = scalarProperty(command, "height");
-      if (x === undefined || y === undefined || width === undefined || height === undefined) {
-        break;
-      }
-      const rect = document.createElementNS(SVG_NAMESPACE, "rect");
-      rect.setAttribute("x", String(x));
-      rect.setAttribute("y", String(y));
-      rect.setAttribute("width", String(width));
-      rect.setAttribute("height", String(height));
-      setOptionalAttribute(rect, "rx", scalarProperty(command, "rx"));
-      applyPaint(rect, command);
-      svg.append(rect);
-      break;
-    }
+export class IconFontContractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IconFontContractError";
   }
 }
 
-function fallbackIcon(): IconDefinition {
+function fail(path: string, message: string): never {
+  throw new IconFontContractError(`${path} ${message}`);
+}
+
+function recordOf(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail(path, "must be an object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function expectExactKeys(
+  value: Record<string, unknown>,
+  path: string,
+  expected: readonly string[],
+): void {
+  const expectedSet = new Set(expected);
+  for (const key of Object.keys(value)) {
+    if (!expectedSet.has(key)) fail(`${path}.${key}`, "is not allowed");
+  }
+  for (const key of expected) {
+    if (!(key in value)) fail(`${path}.${key}`, "is required");
+  }
+}
+
+function stringOf(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    return fail(path, "must be a non-empty string");
+  }
+  return value;
+}
+
+function tokenOf(value: unknown, path: string): string {
+  const token = stringOf(value, path);
+  if (!TOKEN_PATTERN.test(token)) {
+    return fail(path, "must be lowercase kebab-case");
+  }
+  return token;
+}
+
+function positiveIntegerOf(value: unknown, path: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    return fail(path, "must be a positive safe integer");
+  }
+  return value as number;
+}
+
+function isPrivateUseCodepoint(value: number): boolean {
+  return (
+    (value >= 0xe000 && value <= 0xf8ff) ||
+    (value >= 0xf0000 && value <= 0xffffd) ||
+    (value >= 0x100000 && value <= 0x10fffd)
+  );
+}
+
+function decodeGlyphs(
+  value: unknown,
+  path: string,
+): Readonly<Record<string, number>> {
+  const source = recordOf(value, path);
+  if (Object.keys(source).length === 0) return fail(path, "must not be empty");
+
+  const glyphs: Record<string, number> = {};
+  for (const [rawName, rawCodepoint] of Object.entries(source)) {
+    const name = tokenOf(rawName, `${path}.${rawName}`);
+    if (!Number.isSafeInteger(rawCodepoint) || !isPrivateUseCodepoint(rawCodepoint as number)) {
+      fail(`${path}.${rawName}`, "must be a Private Use Area codepoint number");
+    }
+    glyphs[name] = rawCodepoint as number;
+  }
+  return glyphs;
+}
+
+function decodeFamilies(
+  value: unknown,
+  path: string,
+): Readonly<Record<string, IconFontFamilyManifest>> {
+  const source = recordOf(value, path);
+  if (Object.keys(source).length === 0) return fail(path, "must not be empty");
+
+  const families: Record<string, IconFontFamilyManifest> = {};
+  for (const [rawName, rawFamily] of Object.entries(source)) {
+    const name = tokenOf(rawName, `${path}.${rawName}`);
+    const family = recordOf(rawFamily, `${path}.${name}`);
+    expectExactKeys(family, `${path}.${name}`, ["font", "sha256", "glyphs"]);
+    const sha256 = stringOf(family.sha256, `${path}.${name}.sha256`);
+    if (!SHA256_PATTERN.test(sha256)) {
+      fail(`${path}.${name}.sha256`, "must be a lowercase SHA-256 digest");
+    }
+    families[name] = {
+      font: stringOf(family.font, `${path}.${name}.font`),
+      sha256,
+      glyphs: decodeGlyphs(family.glyphs, `${path}.${name}.glyphs`),
+    };
+  }
+  return families;
+}
+
+/** Strictly decodes the host-owned icon-font resource manifest. */
+export function decodeIconFontManifest(
+  value: unknown,
+  authority: IconFontManifestAuthority,
+): IconFontManifest {
+  const source = recordOf(value, "icon font manifest");
+  const authorityKey = authority === "editor" ? "revision" : "generation";
+  expectExactKeys(source, "icon font manifest", [
+    "protocol",
+    authorityKey,
+    "default",
+    "families",
+  ]);
+
+  if (source.protocol !== ICON_FONT_PROTOCOL) {
+    fail("icon font manifest.protocol", `must be ${JSON.stringify(ICON_FONT_PROTOCOL)}`);
+  }
+
+  const defaultFamily = tokenOf(source.default, "icon font manifest.default");
+  const families = decodeFamilies(source.families, "icon font manifest.families");
+  if (!Object.hasOwn(families, defaultFamily)) {
+    fail("icon font manifest.default", "must name a declared family");
+  }
+
+  const authorityValue = positiveIntegerOf(
+    source[authorityKey],
+    `icon font manifest.${authorityKey}`,
+  );
   return {
-    viewBox: [0, 0, 24, 24],
-    commands: [
-      {
-        kind: "circle",
-        cx: 12,
-        cy: 12,
-        r: 8,
-        fill: "none",
-        stroke: "currentColor",
-        strokeWidth: 1.8,
-      },
-    ],
+    protocol: ICON_FONT_PROTOCOL,
+    ...(authority === "editor"
+      ? { revision: authorityValue }
+      : { generation: authorityValue }),
+    default: defaultFamily,
+    families,
   };
 }
 
-function isStructuredIcon(value: IconDefinition | undefined): value is IconDefinition {
-  return value !== undefined && Array.isArray(value.commands);
+function fontUrl(document: Document, raw: string): URL {
+  let base: URL;
+  let resolved: URL;
+  try {
+    base = new URL(document.baseURI);
+    resolved = new URL(raw, base);
+  } catch {
+    return fail("icon font manifest font", "must be a valid URL");
+  }
+  if (base.protocol !== "http:" && base.protocol !== "https:") {
+    return fail("document.baseURI", "must use HTTP or HTTPS to load icon fonts");
+  }
+  if (resolved.origin !== base.origin) {
+    return fail("icon font manifest font", "must be same-origin");
+  }
+  return resolved;
 }
 
-/** Replaces an icon host's contents from renderer-owned glyph data. */
-export function applyIcon(
+const browserFontLoads = new WeakMap<Document, Map<string, Promise<void>>>();
+
+async function performBrowserFontLoad(request: IconFontLoadRequest): Promise<void> {
+  const FontFaceConstructor = request.document.defaultView?.FontFace;
+  if (FontFaceConstructor === undefined) {
+    throw new IconFontContractError("FontFace is unavailable in this renderer");
+  }
+  if (request.document.fonts === undefined) {
+    throw new IconFontContractError("document.fonts is unavailable in this renderer");
+  }
+
+  const face = new FontFaceConstructor(
+    request.cssFamily,
+    `url(${JSON.stringify(request.font)}) format("woff2")`,
+    { style: "normal", weight: "400" },
+  );
+  try {
+    const loaded = await face.load();
+    request.document.fonts.add(loaded);
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : "";
+    throw new IconFontContractError(
+      `failed to load icon font ${request.sha256}${detail}`,
+    );
+  }
+}
+
+async function loadBrowserFont(request: IconFontLoadRequest): Promise<void> {
+  let documentLoads = browserFontLoads.get(request.document);
+  if (documentLoads === undefined) {
+    documentLoads = new Map();
+    browserFontLoads.set(request.document, documentLoads);
+  }
+
+  let pending = documentLoads.get(request.sha256);
+  if (pending === undefined) {
+    pending = performBrowserFontLoad(request);
+    documentLoads.set(request.sha256, pending);
+  }
+  try {
+    await pending;
+  } catch (error) {
+    if (documentLoads.get(request.sha256) === pending) {
+      documentLoads.delete(request.sha256);
+    }
+    throw error;
+  }
+}
+
+interface LoadedFamily {
+  cssFamily: string;
+  glyphs: Readonly<Record<string, number>>;
+}
+
+async function registryFingerprint(
   document: Document,
-  host: HTMLElement,
-  icon: IconDefinition | undefined,
-): void {
-  const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-  svg.setAttribute("width", "24");
-  svg.setAttribute("height", "24");
-  const definition = isStructuredIcon(icon) ? icon : fallbackIcon();
-  svg.setAttribute("viewBox", definition.viewBox.join(" "));
-  for (const command of definition.commands) appendCommand(document, svg, command);
-
-  host.replaceChildren(svg);
+  manifest: IconFontManifest,
+): Promise<string> {
+  const families = Object.entries(manifest.families)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, family]) => [
+      name,
+      family.sha256,
+      Object.entries(family.glyphs).sort(([left], [right]) => left.localeCompare(right)),
+    ]);
+  const canonical = JSON.stringify([manifest.default, families]);
+  const cryptography = document.defaultView?.crypto ?? globalThis.crypto;
+  if (cryptography?.subtle === undefined) {
+    throw new IconFontContractError("Web Crypto is unavailable for icon resources");
+  }
+  const digest = await cryptography.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonical),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
+
+/** Loads every digest before exposing a registry, so rendering cannot fall back. */
+export async function loadIconFontRegistry(
+  options: LoadIconFontRegistryOptions,
+): Promise<IconFontRegistry> {
+  const loadFont = options.loadFont ?? loadBrowserFont;
+  const fingerprint = await registryFingerprint(options.document, options.manifest);
+  const loadedDigests = new Set<string>();
+  const families = new Map<string, LoadedFamily>();
+
+  for (const [name, family] of Object.entries(options.manifest.families)) {
+    const cssFamily = `uhura-icon-${family.sha256}`;
+    const resolvedFont = fontUrl(options.document, family.font);
+    if (!loadedDigests.has(family.sha256)) {
+      await loadFont({
+        document: options.document,
+        font: resolvedFont.href,
+        sha256: family.sha256,
+        cssFamily,
+      });
+      loadedDigests.add(family.sha256);
+    }
+    families.set(name, { cssFamily, glyphs: family.glyphs });
+  }
+
+  return {
+    defaultFamily: options.manifest.default,
+    fingerprint,
+    apply(host, requestedFamily, name) {
+      const familyName = requestedFamily ?? options.manifest.default;
+      const family = families.get(familyName);
+      if (family === undefined) {
+        host.textContent = "";
+        host.style.fontFamily = "";
+        throw new IconFontContractError(`unknown icon family ${JSON.stringify(familyName)}`);
+      }
+      if (!Object.hasOwn(family.glyphs, name)) {
+        host.textContent = "";
+        host.style.fontFamily = "";
+        throw new IconFontContractError(
+          `unknown icon glyph ${JSON.stringify(name)} in family ${JSON.stringify(familyName)}`,
+        );
+      }
+      const codepoint = family.glyphs[name] as number;
+
+      const glyph = String.fromCodePoint(codepoint);
+      if (host.textContent !== glyph) host.textContent = glyph;
+      host.style.fontFamily = family.cssFamily;
+      host.style.fontSynthesis = "none";
+      host.style.fontVariantLigatures = "none";
+      host.style.lineHeight = "1";
+      host.style.userSelect = "none";
+    },
+  };
+}
+
+export { ICON_FONT_PROTOCOL };

@@ -1,4 +1,5 @@
 import { createEditorRenderer } from "../renderer/editor.js";
+import type { IconFontRegistry } from "../renderer/icons.js";
 import type { Snapshot, VNode } from "../protocol/types.js";
 import {
   type EditorPreview,
@@ -54,6 +55,7 @@ export interface PreparedEditorModel {
   connectors: PreparedWorkflowConnector[];
   structureConnectors: PreparedStructureConnector[];
   render: EditorRender | null;
+  iconFingerprint: string | null;
   stylesheet: CSSStyleSheet | null;
   reusableRealizationIds: ReadonlySet<string>;
   reusableFrameIds: ReadonlySet<string>;
@@ -188,6 +190,7 @@ const realizePreview = (
   stylesheet: CSSStyleSheet,
   host: HTMLElement,
   resources: RealizationResources,
+  icons: IconFontRegistry,
 ): void => {
   const shadow = host.attachShadow({ mode: "open" });
   shadow.adoptedStyleSheets = [stylesheet];
@@ -200,6 +203,7 @@ const realizePreview = (
   const renderer = createEditorRenderer({
     document,
     assets: render.assets,
+    icons,
   });
   if (isSnapshot(preview.content)) {
     renderer.realizeRoot(wrapper, preview.content.page.root, {
@@ -261,6 +265,7 @@ const frame = (
   render: EditorRender,
   stylesheet: CSSStyleSheet,
   resources: RealizationResources,
+  icons: IconFontRegistry,
   realize: boolean,
 ): PreparedFrame => {
   const figure = element(document, "figure", "editor-frame");
@@ -278,7 +283,9 @@ const frame = (
   const shell = element(document, "div", `preview-shell ${shellClass}`);
   const shadowHost = element(document, "div", "preview-shadow-host");
   shell.append(shadowHost);
-  if (realize) realizePreview(document, preview, render, stylesheet, shadowHost, resources);
+  if (realize) {
+    realizePreview(document, preview, render, stylesheet, shadowHost, resources, icons);
+  }
 
   const caption = element(document, "figcaption");
   const captionId = `caption-${preview.id}`;
@@ -385,6 +392,7 @@ export const prepareEditorModel = (
   document: Document,
   render: EditorRender | null,
   previous: PreparedEditorModel | null = null,
+  icons?: IconFontRegistry,
 ): PreparedEditorModel => {
   const board = element(document, "div", "editor-board");
   const navigator = document.createDocumentFragment();
@@ -422,23 +430,27 @@ export const prepareEditorModel = (
       connectors,
       structureConnectors,
       render,
+      iconFingerprint: null,
       stylesheet: null,
       reusableRealizationIds: new Set(),
       reusableFrameIds: new Set(),
     };
   }
 
+  if (!icons) throw new Error("A renderable Editor model requires icon fonts");
+
   const stylesheet = previous?.render?.stylesheet === render.stylesheet
     ? previous.stylesheet ?? preparePreviewStylesheet(document, render.stylesheet)
     : preparePreviewStylesheet(document, render.stylesheet);
-  const reusableRealizationIds = new Set(
-    [...reusablePreviewIds(previous?.render ?? null, render)].filter((id) =>
-      previous?.frameById.has(id) ?? false),
-  );
-  const reusableFrameIds = new Set(
-    [...reusablePreviewFrameIds(previous?.render ?? null, render)].filter((id) =>
-      previous?.frameById.has(id) ?? false),
-  );
+  const resourcesMatch = previous?.iconFingerprint === icons.fingerprint;
+  const reusableRealizationIds = new Set(resourcesMatch
+    ? [...reusablePreviewIds(previous?.render ?? null, render)].filter((id) =>
+      previous?.frameById.has(id) ?? false)
+    : []);
+  const reusableFrameIds = new Set(resourcesMatch
+    ? [...reusablePreviewFrameIds(previous?.render ?? null, render)].filter((id) =>
+      previous?.frameById.has(id) ?? false)
+    : []);
 
   for (const preview of render.previews) {
     previewById.set(preview.id, preview);
@@ -483,6 +495,7 @@ export const prepareEditorModel = (
           render,
           stylesheet,
           resources,
+          icons,
           !reusableRealizationIds.has(preview.id),
         );
         frameById.set(preview.id, prepared.frame);
@@ -520,6 +533,7 @@ export const prepareEditorModel = (
     connectors,
     structureConnectors,
     render,
+    iconFingerprint: icons.fingerprint,
     stylesheet,
     reusableRealizationIds,
     reusableFrameIds,

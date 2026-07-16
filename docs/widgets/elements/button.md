@@ -81,7 +81,7 @@ An icon-only action uses the same explicit accessible label:
 
 ```uhura
 <button label="Open profile" on:press={emit profile-tapped()}>
-  <icon name="profile" />
+  <icon name="user-round" />
 </button>
 ```
 

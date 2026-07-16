@@ -124,8 +124,10 @@ fn criterion_2_like(program: &ProgramIr) {
         "pre-like the like button is unpressed"
     );
 
-    // The press itself: heart AND computed count flip before any provider
-    // word arrives (§11.4 step 2).
+    // The press itself: pressed presentation and the computed count flip
+    // before any provider word arrives (§11.4 step 2). Lucide is outline-only,
+    // so the semantic glyph remains `heart` while the button class supplies
+    // the selected color.
     let card = lena_card(&steps[press]["v"]["page"]["root"], "§13.2 press");
     assert!(
         find_text(card, "8 likes"),
@@ -134,8 +136,8 @@ fn criterion_2_like(program: &ProgramIr) {
     let like = like_button(card);
     assert_eq!(
         icon_names(like),
-        vec!["heart-filled"],
-        "the optimistic heart fills"
+        vec!["heart"],
+        "the optimistic like keeps the Lucide heart glyph"
     );
     assert_eq!(
         like["props"]["pressed"].as_bool(),
@@ -145,8 +147,7 @@ fn criterion_2_like(program: &ProgramIr) {
 
     // Settlement never flickers (§13.2): from the press to the end of the
     // script — through the piggybacked update AND the `.ok` dispatch — the
-    // whole optimistic view (heart AND count AND pressed, the criterion
-    // names all of it) never once regresses.
+    // whole optimistic view (glyph, count, and pressed state) never regresses.
     for (i, step) in steps.iter().enumerate().skip(press) {
         let card = lena_card(
             &step["v"]["page"]["root"],
@@ -159,8 +160,8 @@ fn criterion_2_like(program: &ProgramIr) {
         let like = like_button(card);
         assert_eq!(
             icon_names(like),
-            vec!["heart-filled"],
-            "§13.2: step {i} flickered the heart"
+            vec!["heart"],
+            "§13.2: step {i} changed the heart glyph"
         );
         assert_eq!(
             like["props"]["pressed"].as_bool(),

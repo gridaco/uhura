@@ -58,6 +58,7 @@ fn corpus_input(include_examples: bool, mutate: &dyn Fn(&str, String) -> String)
         manifest_rel_path: "uhura.toml".into(),
         manifest_text,
         catalog_file,
+        icon_font_files: BTreeMap::new(),
         port_files,
         sources,
         theme_css: Some(("styles/theme.css".into(), read("styles/theme.css"))),
@@ -101,4 +102,3 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<SourceInput>) {
         });
     }
 }
-

@@ -331,11 +331,11 @@ emits {
     <button pressed={liked} busy={like-pending}
         label={if liked then "Unlike" else "Like"}
         on:press={emit like-toggled(post: post.id, now-liked: !liked)}>
-      <icon name={if liked then "heart-filled" else "heart"} />
+      <icon name="heart" />
     </button>
     <button label="Comments"
         on:press={emit comments-requested(post: post.id)}>
-      <icon name="comment" />
+      <icon name="message-circle" />
     </button>
   </view>
 
@@ -879,9 +879,10 @@ authored origins remain visible but immutable; see the
 [read-only provenance design note](referential-example-data-and-read-only-provenance.md).
 Application styles and Editor chrome have separate ownership so app CSS does
 not become chrome CSS. Assets use the state's data-URI table. Semantic icon
-names remain in preview content, while the browser renderer owns its
-provisional glyph table; no path commands or font identifiers cross the native
-Editor boundary.
+family/name tokens remain in preview content; a separate revision-matched
+renderer-resource manifest supplies checked codepoints and content-addressed
+WOFF2 bytes. Neither glyph data nor font identifiers enter EditorState or Core
+protocols.
 
 Wheel/trackpad deltas pan; `H` or held Space enables drag-panning; pinch zooms
 around its midpoint; Cursor drag reserves an intentionally inert marquee.
@@ -1117,15 +1118,16 @@ events only on interactive elements; observation events only on viewports).
 | `text` | content | content = typed data / interpolation | — |
 | `img` | content | `src` (asset ref), `alt` xor bare `decorative` | — |
 | `video` | content | `src`, optional `poster`, `label`, `autoplay`, `muted`, `loop`, `controls`, `playsinline` | native media controls |
-| `icon` | content | `name` (closed set), decorative by default | — |
+| `icon` | content | optional literal `family`, checked `name`; decorative | — |
 | `button` | interactive | `label`, `disabled`, `busy`, `pressed?`, `current?`; content children, no interactive descendants | `press` |
 | `textfield` | interactive | controlled `value`, `placeholder`, `label`, `disabled` | `change{value}`, `submit` |
 | `region` | interactive | `label` (required), `supplementary`; one child, no interactive descendants | `activate`, `activate-double` |
 
-Every element additionally takes `class` (opaque, CSS-owned). Icon set
-(closed, recomputed from slice usage): `home search plus reels profile heart
-heart-filled comment close back grid layers video-off progress bookmark
-bookmark-filled chevron-left chevron-right`.
+Every element additionally takes `class` (opaque, CSS-owned). Icon names no
+longer live in the semantic element catalog. They come from the selected,
+locked icon-font family; the bundled default is Lucide. See
+[`<icon>`](../widgets/elements/icon.md) and the
+[icon-font integration](../widgets/integrations/icon-font.md).
 
 **What is deliberately NOT an element:** `column/row/stack/grid/spacer`
 (CSS layout on `view`), `card/avatar/tab-bar/app-bar/list` (documented

@@ -12,8 +12,6 @@ use uhura_base::{Ident, hash_json};
 pub struct Catalog {
     pub name: Ident,
     pub version: String,
-    /// The closed icon set (`<icon name=…>` values).
-    pub icons: BTreeSet<Ident>,
     pub elements: BTreeMap<Ident, ElementDecl>,
 }
 
@@ -73,8 +71,10 @@ pub enum PropType {
     Enum(BTreeSet<Ident>),
     /// An asset reference (`img src`).
     Asset,
-    /// A name from the catalog's closed icon set.
+    /// A name from the selected icon family's glyph registry.
     Icon,
+    /// A statically selected icon family alias.
+    IconFamily,
 }
 
 impl PropType {
@@ -89,6 +89,7 @@ impl PropType {
             }
             PropType::Asset => "an asset reference".into(),
             PropType::Icon => "an icon name".into(),
+            PropType::IconFamily => "an icon family name".into(),
         }
     }
 }
@@ -207,7 +208,6 @@ impl Catalog {
             "catalog": "uhura-catalog/0",
             "name": self.name.to_string(),
             "version": self.version,
-            "icons": self.icons.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "elements": elements,
         })
     }
@@ -297,19 +297,60 @@ impl Catalog {
                     Some(_) => {}
                 }
             }
-            for prop in el.props.keys() {
+            for (prop, prop_decl) in &el.props {
                 if prop.as_str() == "class" {
                     push(
                         format!("{path}.props.class"),
                         "`class` is universal and may not be redeclared".to_string(),
                     );
                 }
+                if matches!(prop_decl.ty, PropType::Icon)
+                    && !(name.as_str() == "icon" && prop.as_str() == "name")
+                {
+                    push(
+                        format!("{path}.props.{prop}"),
+                        "the `icon` type is reserved for `<icon>`'s `name` prop".to_string(),
+                    );
+                }
+                if matches!(prop_decl.ty, PropType::IconFamily)
+                    && !(name.as_str() == "icon" && prop.as_str() == "family")
+                {
+                    push(
+                        format!("{path}.props.{prop}"),
+                        "the `icon-family` type is reserved for `<icon>`'s `family` prop"
+                            .to_string(),
+                    );
+                }
             }
-            if el.props.values().any(|p| matches!(p.ty, PropType::Icon)) && self.icons.is_empty() {
-                push(
-                    path,
-                    "an `icon` prop needs a non-empty catalog icon set".to_string(),
-                );
+            if name.as_str() == "icon" {
+                if el.class != ElementClass::Content {
+                    push(
+                        path.clone(),
+                        "`<icon>` must be a content element".to_string(),
+                    );
+                }
+                if el.children != ChildrenModel::None {
+                    push(path.clone(), "`<icon>` cannot accept children".to_string());
+                }
+                if !el.events.is_empty() {
+                    push(path.clone(), "`<icon>` cannot declare events".to_string());
+                }
+                match el.props.iter().find(|(prop, _)| prop.as_str() == "name") {
+                    Some((_, decl)) if matches!(decl.ty, PropType::Icon) && decl.required => {}
+                    _ => push(
+                        format!("{path}.props.name"),
+                        "`<icon>` requires a `name` prop of type `icon`".to_string(),
+                    ),
+                }
+                match el.props.iter().find(|(prop, _)| prop.as_str() == "family") {
+                    Some((_, decl))
+                        if matches!(decl.ty, PropType::IconFamily) && !decl.required => {}
+                    _ => push(
+                        format!("{path}.props.family"),
+                        "`<icon>` requires an optional `family` prop of type `icon-family`"
+                            .to_string(),
+                    ),
+                }
             }
         }
         issues
@@ -324,6 +365,7 @@ fn prop_type_json(ty: &PropType) -> serde_json::Value {
         PropType::Int => json!("int"),
         PropType::Asset => json!("asset"),
         PropType::Icon => json!("icon"),
+        PropType::IconFamily => json!("icon-family"),
         PropType::Enum(values) => json!({
             "enum": values.iter().map(ToString::to_string).collect::<Vec<_>>(),
         }),
@@ -375,7 +417,7 @@ fn walk_catalog(table: &toml::Table, issues: &mut Vec<CatalogIssue>) -> Option<C
         }
     };
     for key in head.keys() {
-        if !["name", "version", "icons"].contains(&key.as_str()) {
+        if !["name", "version"].contains(&key.as_str()) {
             push(&format!("catalog.{key}"), format!("unknown key `{key}`"));
         }
     }
@@ -390,31 +432,6 @@ fn walk_catalog(table: &toml::Table, issues: &mut Vec<CatalogIssue>) -> Option<C
             return None;
         }
     };
-    let mut icons = BTreeSet::new();
-    if let Some(toml::Value::Array(items)) = head.get("icons") {
-        for (i, item) in items.iter().enumerate() {
-            let path = format!("catalog.icons[{i}]");
-            match item.as_str().map(Ident::new) {
-                Some(Ok(icon)) => {
-                    if !icons.insert(icon) {
-                        issues.push(CatalogIssue {
-                            path,
-                            message: "duplicate icon".into(),
-                        });
-                    }
-                }
-                Some(Err(e)) => issues.push(CatalogIssue {
-                    path,
-                    message: e.to_string(),
-                }),
-                None => issues.push(CatalogIssue {
-                    path,
-                    message: "expected a string".into(),
-                }),
-            }
-        }
-    }
-
     let mut elements = BTreeMap::new();
     if let Some(section) = table.get("elements") {
         let Some(section) = section.as_table() else {
@@ -445,7 +462,6 @@ fn walk_catalog(table: &toml::Table, issues: &mut Vec<CatalogIssue>) -> Option<C
     Some(Catalog {
         name,
         version,
-        icons,
         elements,
     })
 }
@@ -639,6 +655,7 @@ fn walk_prop(path: &str, table: &toml::Table, issues: &mut Vec<CatalogIssue>) ->
         Some("int") => PropType::Int,
         Some("asset") => PropType::Asset,
         Some("icon") => PropType::Icon,
+        Some("icon-family") => PropType::IconFamily,
         Some("enum") => {
             let mut values = BTreeSet::new();
             match table.get("values") {

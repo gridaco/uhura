@@ -6,8 +6,7 @@ import type {
   ScrollController,
   TextFieldController,
 } from "./contracts.js";
-import { PROVISIONAL_BROWSER_ICON_TABLE } from "./icons.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 import { createSemanticRenderer, findScope as findRendererScope } from "./reconciler.js";
 
 export interface PlayRendererOptions {
@@ -17,8 +16,8 @@ export interface PlayRendererOptions {
     data?: Record<string, unknown>,
     onApplied?: () => void,
   ): void;
-  /** Renderer-owned glyph realization; defaults to the provisional browser table. */
-  icons?: IconTable;
+  /** Host-loaded icon-font resource for this artifact generation. */
+  icons: IconFontRegistry;
   assets: AssetAppliers;
   textFields: TextFieldController;
   scrolls: ScrollController;
@@ -53,7 +52,7 @@ function browserDocument(injected: Document | undefined): Document {
 export function createPlayRenderer(options: PlayRendererOptions): PlayRenderer {
   const renderer = createSemanticRenderer({
     document: browserDocument(options.document),
-    icons: options.icons ?? PROVISIONAL_BROWSER_ICON_TABLE,
+    icons: options.icons,
     assets: options.assets,
     policy: {
       kind: "play",
@@ -88,5 +87,5 @@ export function findScope(node: VNode): string | undefined {
 
 export { createPlayAssets };
 export type { AssetAppliers, ResolveAsset } from "./assets.js";
-export type { IconDefinition, IconTable } from "./icons.js";
+export type { IconFontRegistry } from "./icons.js";
 export type { ScrollController, TextFieldController } from "./contracts.js";

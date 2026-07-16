@@ -140,7 +140,7 @@ store {
 <view class="screen post-page">
   <view class="detail-bar">
     <button label="Back" on:press={emit back-tapped()}>
-      <icon name="back" />
+      <icon name="chevron-left" />
     </button>
     <text class="title">Post</text>
   </view>

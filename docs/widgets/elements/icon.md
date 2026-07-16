@@ -4,10 +4,10 @@
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** [Icon font](../integrations/icon-font.md)
-- **Availability:** Built-in default family and local font families planned
+- **Availability:** Built-in Lucide family and local font families implemented
 - **Decision:** Before v1, `<icon>` is realized only through an icon font
 - **Specification:** Pre-specification
-- **Implementation:** Checked semantic token implemented; font resource pipeline pending
+- **Implementation:** Checked token, font resources, host transport, and browser realization implemented
 - **Owners:** Checker, Core, Host, Renderer
 - **Supported renderers:** Browser Editor and Play
 
@@ -57,13 +57,14 @@ valid type of `name` depend on runtime state and is intentionally unsupported.
 selected family's closed glyph map:
 
 ```uhura
-<icon name={if liked then "heart-fill" else "heart"} />
+<icon name={if alert then "heart-pulse" else "heart"} />
 ```
 
 There is no portable `variant`, `weight`, `style`, `size`, or `color`
-property. A family may publish names such as `heart`, `heart-fill`, and
-`heart-duotone`, but suffixes have no language-defined meaning. Size and color
-remain CSS-owned.
+property. A local family could publish names such as `heart`, `heart-fill`, and
+`heart-duotone`; those are hypothetical family-owned names, and their suffixes
+have no language-defined meaning. The bundled Lucide family does not define
+filled or duotone variants. Size and color remain CSS-owned.
 
 Unknown families and glyph names are checker errors. Missing font coverage is
 a build/resource error. Neither condition permits a silent circle, tofu glyph,
@@ -90,6 +91,13 @@ is selected explicitly:
 There is no `use icons` declaration. Family paths belong to `uhura.toml`, and
 the literal `family` property already makes a non-default dependency explicit.
 
+The built-in `lucide` vocabulary is derived from the official `lucide-static`
+`codepoints.json`, with only entries that actually resolve through the shipped
+font's `cmap`. Uhura adds no renamed or replacement aliases. For example,
+source uses `x`, `clapperboard`, `user-round`, `message-circle`,
+`square-plus`, and `loader-circle`. This keeps names searchable in Lucide's
+own catalogue and makes generated source agree with the installed family.
+
 ## Ownership
 
 The semantic layers may carry and validate only the logical family and glyph
@@ -107,7 +115,7 @@ After checking, omission is normalized:
 ```text
 <icon name="heart" />
         ↓
-{ family: "phosphor", name: "heart" }
+{ family: "lucide", name: "heart" }
 ```
 
 That token may appear in Core IR and semantic views. The corresponding
@@ -125,7 +133,7 @@ Meaning belongs to the containing control:
 
 ```uhura
 <button label="Open profile">
-  <icon name="profile" />
+  <icon name="user-round" />
 </button>
 ```
 
@@ -155,17 +163,18 @@ artifacts never contain that character. `<icon>` remains distinct from
 `<text>`: text carries human-readable content and participates in reading
 order; an icon carries a closed developer token and is always decorative.
 
-## Current implementation gap
+## Implementation
 
-The current browser renderer still contains a provisional hard-coded SVG
-command table so the Instagram spike keeps its existing appearance. Moving
-that table out of Rust, EditorState, and host protocols corrected an ownership
-violation, but it is not the accepted pre-v1 realization.
+The checker loads the bundled or project-local family, decodes and validates
+its WOFF2/OpenType data, checks every named codepoint against `cmap`, and pins
+the glyph map separately from the font bytes. The host publishes immutable,
+revision- or generation-matched renderer resources. Editor and Play load the
+content-addressed WOFF2 through `FontFace` before realizing an icon.
 
-The font implementation must replace that table and its generic-circle
-fallback, add `family`, and move name checking to the selected glyph map.
-Until then, the implementation is useful study evidence but does not conform
-to this font-only integration contract.
+The former hard-coded SVG command table and generic-circle fallback are
+removed. A missing family, glyph, resource, or browser font load fails
+explicitly instead of substituting geometry or falling through to a system
+font.
 
 ## Motion
 
@@ -207,5 +216,7 @@ Current implementation references:
 
 - [Base catalog declaration](../../../examples/instagram/client/catalog/base.toml)
 - [Catalog and markup checking](../../../crates/uhura-check/src/markup.rs)
-- [Provisional browser SVG table](../../../web/src/renderer/icons.ts)
+- [Browser icon-font resource loader](../../../web/src/renderer/icons.ts)
+- [Checked icon-font registry](../../../crates/uhura-check/src/icon_fonts.rs)
+- [Bundled Lucide provenance](../../../resources/icon-fonts/lucide/PROVENANCE.md)
 - [Editor state protocol](../../../web/src/editor/editor-state.ts)

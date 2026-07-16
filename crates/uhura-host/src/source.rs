@@ -11,9 +11,11 @@ use std::sync::Arc;
 
 use uhura_base::{Severity, to_envelope};
 use uhura_check::manifest::load_manifest;
-use uhura_check::{CheckInput, SourceInput, check};
+use uhura_check::{CheckInput, IconFontInput, SourceInput, check};
 use uhura_editor_model::{Asset, EditorRender, build_render};
 use uhura_syntax::SourceKind;
+
+use crate::IconFontResources;
 
 /// Canonical corpus-relative file bytes captured by the project observer.
 ///
@@ -211,9 +213,12 @@ impl ProjectSourceSnapshot {
     }
 }
 
-/// One completely checked, browser-neutral Editor model held in memory.
+/// One completely checked Editor publication held in memory. The render stays
+/// browser-neutral; validated renderer resources ride beside it and are never
+/// serialized into `EditorState`.
 pub(crate) struct EditorModelArtifact {
     pub(crate) render: EditorRender,
+    pub(crate) icon_fonts: Option<IconFontResources>,
     pub(crate) preview_count: usize,
     pub(crate) replay_derived_count: usize,
     /// Diagnostics belonging to this otherwise renderable source revision.
@@ -745,6 +750,10 @@ fn capture_declared_dependencies(
     ];
     declared.extend(manifest.ports.values().map(PathBuf::from));
     declared.extend(manifest.fixtures.values().map(PathBuf::from));
+    for family in manifest.icons.families.values() {
+        declared.push(PathBuf::from(&family.font));
+        declared.push(PathBuf::from(&family.glyphs));
+    }
     if let Some(asset_manifest) = manifest.assets_manifest.as_deref() {
         declared.push(PathBuf::from(asset_manifest));
     }
@@ -1194,6 +1203,7 @@ fn build_input(
 
     Ok(EditorModelArtifact {
         render,
+        icon_fonts: output.icon_fonts.as_ref().map(IconFontResources::from),
         preview_count,
         replay_derived_count,
         diagnostics,
@@ -1249,6 +1259,28 @@ pub(crate) fn assemble_snapshot_input(
         manifest.catalog_path.clone(),
         optional_text(&manifest.catalog_path)?,
     );
+    let icon_font_files = manifest
+        .icons
+        .families
+        .iter()
+        .map(|(name, family)| {
+            let font_bytes = files
+                .resolve(Path::new(&family.font))
+                .map_err(|error| {
+                    EditorModelBuildFailure::build(2, "editor/input", error.clone(), error)
+                })?
+                .cloned();
+            Ok((
+                name.clone(),
+                IconFontInput {
+                    font_path: family.font.clone(),
+                    font_bytes,
+                    glyphs_path: family.glyphs.clone(),
+                    glyphs_text: optional_text(&family.glyphs)?,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, EditorModelBuildFailure>>()?;
     let port_files = manifest
         .ports
         .iter()
@@ -1299,6 +1331,7 @@ pub(crate) fn assemble_snapshot_input(
         manifest_rel_path: "uhura.toml".to_string(),
         manifest_text,
         catalog_file,
+        icon_font_files,
         port_files,
         sources,
         theme_css,
@@ -1425,11 +1458,11 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use uhura_base::{Diagnostic, SourceMap, Span};
+    use uhura_base::{Diagnostic, Ident, SourceMap, Span};
 
     use super::{
         EditorModelBuildFailure, ProjectSourceFiles, ProjectSourceFingerprint,
-        build_captured_snapshot, build_snapshot, capture_project_snapshot,
+        assemble_snapshot_input, build_captured_snapshot, build_snapshot, capture_project_snapshot,
         capture_project_snapshot_with, failure_envelope, load_snapshot_assets,
         project_indeterminate_path_blocks, project_path_blocks, project_scan_root,
         snapshot_rel_path, snapshot_source_name,
@@ -1557,6 +1590,66 @@ mod tests {
                 .expect_err("absolute paths are rejected")
                 .contains("relative")
         );
+    }
+
+    #[test]
+    fn declared_local_icon_files_are_captured_and_associated_with_their_family() {
+        let root = temp_root("declared-icon-fonts");
+        std::fs::create_dir_all(root.join("components")).expect("source directory");
+        std::fs::create_dir_all(root.join("build/icon-fonts")).expect("generated icon directory");
+        std::fs::write(
+            root.join("uhura.toml"),
+            r#"[app]
+name = "icon-capture"
+entry = "home"
+
+[catalog]
+path = "catalog/base.toml"
+
+[icons]
+default = "brand"
+
+[icons.brand]
+font = "build/icon-fonts/brand.woff2"
+glyphs = "build/icon-fonts/brand.json"
+"#,
+        )
+        .expect("manifest");
+        std::fs::write(root.join("components/card.uhura"), "component card").expect("source");
+        std::fs::write(root.join("build/icon-fonts/brand.woff2"), b"brand-font").expect("font");
+        std::fs::write(
+            root.join("build/icon-fonts/brand.json"),
+            r#"{"glyphs":{"home":57344}}"#,
+        )
+        .expect("glyph map");
+
+        let snapshot = capture_project_snapshot(&root);
+        assert!(
+            snapshot
+                .files
+                .entries
+                .contains_key(Path::new("build/icon-fonts/brand.woff2")),
+            "declared font overrides the broad generated-directory exclusion",
+        );
+        assert!(
+            snapshot
+                .files
+                .entries
+                .contains_key(Path::new("build/icon-fonts/brand.json")),
+            "declared glyph map overrides the broad generated-directory exclusion",
+        );
+
+        let input = assemble_snapshot_input(&snapshot.files).expect("assembled checker input");
+        let brand = &input.icon_font_files[&Ident::new("brand").expect("valid family identifier")];
+        assert_eq!(brand.font_path, "build/icon-fonts/brand.woff2");
+        assert_eq!(brand.font_bytes.as_deref(), Some(&b"brand-font"[..]));
+        assert_eq!(brand.glyphs_path, "build/icon-fonts/brand.json");
+        assert_eq!(
+            brand.glyphs_text.as_deref(),
+            Some(r#"{"glyphs":{"home":57344}}"#)
+        );
+
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

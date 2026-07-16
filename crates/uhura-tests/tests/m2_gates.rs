@@ -213,7 +213,7 @@ const REJECTIONS: &[Rejection] = &[
     Rejection {
         name: "missing-availability-arm",
         file: "app/profile/[user]/page.uhura",
-        from: "{:when loading}\n      <view class=\"top-bar\">\n        {#if user != viewer.id}\n          <button label=\"Back\" on:press={emit back-tapped()}>\n            <icon name=\"back\" />\n          </button>\n        {/if}\n        <text class=\"title\">Profile</text>\n      </view>\n      <view class=\"fill-center\">\n        <text class=\"muted\">Loading profile…</text>\n      </view>\n    {:when failed reason}",
+        from: "{:when loading}\n      <view class=\"top-bar\">\n        {#if user != viewer.id}\n          <button label=\"Back\" on:press={emit back-tapped()}>\n            <icon name=\"chevron-left\" />\n          </button>\n        {/if}\n        <text class=\"title\">Profile</text>\n      </view>\n      <view class=\"fill-center\">\n        <text class=\"muted\">Loading profile…</text>\n      </view>\n    {:when failed reason}",
         to: "{:when failed reason}",
         expect_code: "UH5015",
         expect_severity: Severity::Error,
@@ -229,8 +229,8 @@ const REJECTIONS: &[Rejection] = &[
     Rejection {
         name: "nested-interactive",
         file: "components/post-card.uhura",
-        from: "<button class=\"icon-action\" label=\"Comments\" on:press={emit comments-requested(post: post.id)}>\n        <icon name=\"comment\" />\n      </button>",
-        to: "<button class=\"icon-action\" label=\"Comments\" on:press={emit comments-requested(post: post.id)}>\n        <button label=\"Inner\" on:press={emit comments-requested(post: post.id)}>\n          <icon name=\"comment\" />\n        </button>\n      </button>",
+        from: "<button class=\"icon-action\" label=\"Comments\" on:press={emit comments-requested(post: post.id)}>\n        <icon name=\"message-circle\" />\n      </button>",
+        to: "<button class=\"icon-action\" label=\"Comments\" on:press={emit comments-requested(post: post.id)}>\n        <button label=\"Inner\" on:press={emit comments-requested(post: post.id)}>\n          <icon name=\"message-circle\" />\n        </button>\n      </button>",
         expect_code: "UH5007",
         expect_severity: Severity::Error,
     },
@@ -261,8 +261,8 @@ const REJECTIONS: &[Rejection] = &[
     Rejection {
         name: "unknown-icon",
         file: "components/bottom-nav.uhura",
-        from: "<icon name=\"reels\" />",
-        to: "<icon name=\"reel\" />",
+        from: "<icon name=\"clapperboard\" />",
+        to: "<icon name=\"clapperboar\" />",
         expect_code: "UH5017",
         expect_severity: Severity::Error,
     },

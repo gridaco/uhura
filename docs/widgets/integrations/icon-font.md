@@ -1,16 +1,16 @@
 # Icon font
 
-- **Status:** Pre-v1 direction; implementation pending
+- **Status:** Implemented pre-v1 foundation
 - **Document type:** Shared facet
 - **Primary form:** Not applicable
 - **Facets:** Integration
-- **Availability:** Foundation built-ins and local opt-in families planned
+- **Availability:** Built-in Lucide family and local opt-in families implemented
 - **Decision:** Font files plus checked name maps are the only pre-v1 icon resources
 - **Specification:** Pre-specification
-- **Implementation:** Provisional SVG realization exists; font pipeline unimplemented
+- **Implementation:** Checker, lock, host transport, and browser loading implemented
 - **Owners:** Foundation, Checker, Host, Renderer
 - **Applies to:** [`<icon>`](../elements/icon.md)
-- **Supported renderers:** Browser Editor and Play planned
+- **Supported renderers:** Browser Editor and Play
 
 This integration defines how a logical `<icon>` token is backed by a font. It
 owns family configuration, name-to-codepoint maps, font validation, locking,
@@ -39,18 +39,22 @@ client/
 Both paths are project-relative. Relative escapes, absolute paths, symlink
 escapes, and network URLs are rejected.
 
-Foundation families use the same resolved pair but are shipped or installed by
-the Uhura/Spock/Grida Foundation. Their generated artifacts belong in
-[`gridaco/icons`](https://github.com/gridaco/icons):
+Foundation families use the same resolved pair but are shipped with Uhura. The
+first built-in family is the official Lucide font from `lucide-static`:
 
 ```text
-dist/<family>/font/
-├── icons.woff2
-└── glyphs.json
+resources/icon-fonts/lucide/
+├── lucide.woff2
+├── codepoints.json        # unchanged upstream provenance input
+├── glyphs.json            # deterministic cmap-backed checked map
+├── LICENSE
+└── PROVENANCE.md
 ```
 
-SVG may remain an upstream input to the Foundation's font build. It is not an
-Uhura project resource and never crosses the icon-font contract.
+Additional Foundation-managed families may be produced through
+[`gridaco/icons`](https://github.com/gridaco/icons). SVG may remain an upstream
+input to such a font build. It is not an Uhura project resource and never
+crosses the icon-font contract.
 
 ## Manifest
 
@@ -58,18 +62,18 @@ The project default is a logical family name:
 
 ```toml
 [icons]
-default = "phosphor"
+default = "lucide"
 ```
 
-When `[icons]` is absent, the pre-v1 default is Foundation Phosphor. Other
-Foundation families may be selected by their reserved names without local
-paths.
+When `[icons]` is absent, the pre-v1 default is the bundled `lucide` family.
+Other Foundation families may later be selected by reserved names without
+local paths.
 
 A local family is declared directly beneath `[icons]`:
 
 ```toml
 [icons]
-default = "phosphor"
+default = "lucide"
 
 [icons.brand]
 font = "icons/brand/icons.woff2"
@@ -85,23 +89,28 @@ and format negotiation are deliberately unsupported.
 
 ## Glyph map
 
-Authors and agents use names. Codepoints exist only in the renderer resource:
+Authors and agents use names. Codepoints exist only in the renderer resource.
+The JSON format matches the official `lucide-static` `codepoints.json`: one
+top-level object from lower-kebab names to decimal Unicode scalar values.
 
 ```json
 {
-  "$schema": "https://icons.grida.co/schema/font-glyphs-v0.json",
-  "glyphs": {
-    "heart": "U+E001",
-    "heart-fill": "U+E002",
-    "logo": "U+F0000"
-  }
+  "heart": 57586,
+  "heart-pulse": 57587,
+  "logo": 983040
 }
 ```
 
-The format contains only `$schema` and `glyphs` before v1. `glyphs` must be a
-non-empty JSON object whose keys are lowercase kebab-case names and whose
-values are canonical `U+` codepoint strings. Duplicate JSON keys, unknown
-fields, empty maps, non-string values, and raw Unicode characters are errors.
+The map must be non-empty. Keys are lowercase kebab-case names and values are
+integer codepoints. Duplicate JSON keys, nested metadata, empty maps,
+non-integer values, and raw Unicode characters are errors. Reusing the
+upstream shape avoids a second Foundation-only wrapper format.
+
+The bundled Lucide family retains the byte-identical upstream map as
+provenance input and uses a deterministic checked `glyphs.json` containing
+only the 1,995 entries backed by the published WOFF2 `cmap`. Nineteen stale
+upstream names are recorded in `PROVENANCE.md`; Uhura introduces no aliases or
+replacement codepoints.
 
 Each value names exactly one Unicode scalar from a Private Use Area:
 
@@ -117,7 +126,7 @@ must not resolve to `.notdef`.
 Filled, outlined, weighted, or otherwise varied glyphs remain ordinary names:
 
 ```uhura
-<icon name={if selected then "heart-fill" else "heart"} />
+<icon name={if alert then "heart-pulse" else "heart"} />
 ```
 
 The language assigns no meaning to the suffix.
@@ -157,6 +166,12 @@ set. The host captures the JSON and font bytes as immutable project inputs and
 serves them through a renderer-resource channel separate from assets and
 EditorState.
 
+Pre-v1 resolution is intentionally eager: every declared family is validated,
+transported, and loaded before a render becomes usable, even if the current
+view does not reference it. This keeps resource coherence simple and makes a
+bad declaration fail deterministically; used-family closure, lazy loading, and
+subsetting remain later distribution optimizations.
+
 `uhura.lock` pins semantic names and presentation bytes separately:
 
 ```text
@@ -164,9 +179,11 @@ icon-glyphs brand sha256:<canonical-glyph-map>
 icon-font brand sha256:<woff2-bytes>
 ```
 
-Foundation pins additionally record the exact `gridaco/icons` source revision.
-No font or glyph map is fetched during rendering. Editor and Play must receive
-the same pinned resources and work offline after resolution.
+Bundled-family provenance records the upstream package version and integrity
+beside the vendored files. Rendering performs no external/package resolution
+and never rereads project paths: the browser fetches the checked manifest and
+WOFF2 only from the current Uhura host. Editor and Play receive the same pinned
+resources and work offline without third-party network access.
 
 Core IR, semantic views, checkpoints, traces, replay, and EditorState carry
 only normalized `{ family, name }` tokens. They never contain font URLs,

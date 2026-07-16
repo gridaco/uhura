@@ -21,6 +21,13 @@ import type {
   SourceMetadataEntry,
   SourceTarget,
 } from "../editor-state.js";
+import type { IconFontRegistry } from "../../renderer/icons.js";
+
+const TEST_ICONS: IconFontRegistry = {
+  defaultFamily: "lucide",
+  fingerprint: "test-lucide",
+  apply: () => {},
+};
 
 class FakeStyle {
   backgroundImage = "";
@@ -422,7 +429,12 @@ test("metadata, stale, cold-invalid, and recovery preserve only their owned DOM"
     focusPreview: () => {},
   });
 
-  const current = prepareEditorModel(asDocument(document), render(1, "current", "First"));
+  const current = prepareEditorModel(
+    asDocument(document),
+    render(1, "current", "First"),
+    null,
+    TEST_ICONS,
+  );
   install(root, overlay, null, current);
   const originalFrame = current.frameById.get("card/default");
   const originalHost = current.shadowHostById.get("card/default");
@@ -438,6 +450,7 @@ test("metadata, stale, cold-invalid, and recovery preserve only their owned DOM"
     asDocument(document),
     render(2, "current", "Second"),
     current,
+    TEST_ICONS,
   );
   const discardedFrame = metadataOnly.frameById.get("card/default");
   const discardedResources = metadataOnly.resourcesByPreviewId.get("card/default");
@@ -463,6 +476,7 @@ test("metadata, stale, cold-invalid, and recovery preserve only their owned DOM"
     asDocument(document),
     render(2, "stale", "Second"),
     metadataOnly,
+    TEST_ICONS,
   );
   install(root, overlay, metadataOnly, stale);
   assert.equal(stale.frameById.get("card/default"), originalFrame);
@@ -486,6 +500,7 @@ test("metadata, stale, cold-invalid, and recovery preserve only their owned DOM"
     asDocument(document),
     render(4, "current", "Recovered"),
     coldInvalid,
+    TEST_ICONS,
   );
   install(root, overlay, coldInvalid, recovered);
   const recoveredFrame = recovered.frameById.get("card/default");
@@ -513,7 +528,12 @@ test("caption chrome can replace while its semantic ShadowRoot stays exact", () 
     root: asElement(overlayRoot),
     focusPreview: () => {},
   });
-  const current = prepareEditorModel(asDocument(document), render(1, "current", "First"));
+  const current = prepareEditorModel(
+    asDocument(document),
+    render(1, "current", "First"),
+    null,
+    TEST_ICONS,
+  );
   install(root, overlay, null, current);
   const originalFrame = current.frameById.get("card/default");
   const originalHost = current.shadowHostById.get("card/default");
@@ -522,7 +542,12 @@ test("caption chrome can replace while its semantic ShadowRoot stays exact", () 
 
   const nextRender = render(2, "current", "First");
   nextRender.previews[0]!.note = "Updated caption";
-  const captionUpdate = prepareEditorModel(asDocument(document), nextRender, current);
+  const captionUpdate = prepareEditorModel(
+    asDocument(document),
+    nextRender,
+    current,
+    TEST_ICONS,
+  );
   const preparedFrame = captionUpdate.frameById.get("card/default");
   assert.deepEqual([...captionUpdate.reusableRealizationIds], ["card/default"]);
   assert.deepEqual([...captionUpdate.reusableFrameIds], []);
@@ -571,7 +596,7 @@ test("all rendered occurrences keep one badge while preview selection only decor
     },
   });
   multiPreview.groups[0]!.previews.push("card/alternate");
-  const model = prepareEditorModel(asDocument(document), multiPreview);
+  const model = prepareEditorModel(asDocument(document), multiPreview, null, TEST_ICONS);
   install(root, overlay, null, model);
 
   const markers = classElements(overlayRoot, "annotation-marker");
@@ -646,7 +671,12 @@ test("Source targets and canvas markers expose one direct annotation selection p
     },
     focusSourceTarget: (targetId) => { focusedSourceIds.push(targetId); },
   });
-  const model = prepareEditorModel(asDocument(document), render(1, "current", "Navigate me"));
+  const model = prepareEditorModel(
+    asDocument(document),
+    render(1, "current", "Navigate me"),
+    null,
+    TEST_ICONS,
+  );
   install(root, overlay, null, model);
 
   const marker = classElements(overlayRoot, "annotation-marker")[0];
@@ -719,7 +749,12 @@ test("Source targets and canvas markers expose one direct annotation selection p
 
 test("hiding annotations flags the connector layer without touching selection classes", () => {
   const document = new FakeDocument();
-  const model = prepareEditorModel(asDocument(document), render(1, "current", "First"));
+  const model = prepareEditorModel(
+    asDocument(document),
+    render(1, "current", "First"),
+    null,
+    TEST_ICONS,
+  );
   const layer = model.connectorLayer;
   assert.equal(layer.getAttribute("class"), "workflow-connectors");
   layer.classList.add("has-selection", "has-structure");

@@ -52,11 +52,11 @@ emits {
     <button pressed={liked} busy={like-pending}
         label={if liked then "Unlike" else "Like"}
         on:press={emit like-toggled(post: post.id, now-liked: !liked)}>
-      <icon name={if liked then "heart-filled" else "heart"} />
+      <icon name="heart" />
     </button>
     <button label="Comments"
         on:press={emit comments-requested(post: post.id)}>
-      <icon name="comment" />
+      <icon name="message-circle" />
     </button>
   </view>
 

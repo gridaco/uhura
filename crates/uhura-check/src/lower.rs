@@ -14,6 +14,7 @@ use uhura_core::template::{DefinitionAddress, DefinitionKind, TemplateAddress, w
 use uhura_syntax::{Parsed, ast};
 
 use crate::catalog::{Catalog, EventKind, PropType};
+use crate::icon_fonts::CheckedIconFonts;
 use crate::infer::Typer;
 use crate::manifest::Manifest;
 use crate::markup::{ElementResolution, resolve_element};
@@ -97,6 +98,7 @@ pub fn lower(
     manifest: &Manifest,
     resolved: &Resolved,
     catalog: &Catalog,
+    icon_fonts: &CheckedIconFonts,
     sources: &[ParsedSource],
 ) -> Lowered {
     let mut spans = BTreeMap::new();
@@ -147,7 +149,9 @@ pub fn lower(
                             PropType::Text => ir::PropKindIr::Plain,
                             PropType::Bool => ir::PropKindIr::Bool,
                             PropType::Int => ir::PropKindIr::Int,
-                            PropType::Enum(_) | PropType::Icon => ir::PropKindIr::Token,
+                            PropType::Enum(_) | PropType::Icon | PropType::IconFamily => {
+                                ir::PropKindIr::Token
+                            }
                             PropType::Asset => ir::PropKindIr::Asset,
                         },
                     )
@@ -216,11 +220,16 @@ pub fn lower(
             defs.iter()
                 .filter_map(|(name, env)| {
                     let src = &sources[env.source];
-                    let Parsed::Module(ast) = &src.parsed else {
-                        return None;
-                    };
                     let path = format!("{prefix}.{name}");
-                    let def = lower_def(env, ast, resolved, catalog, src, &path, spans);
+                    let def = lower_def(
+                        env,
+                        src,
+                        resolved,
+                        catalog,
+                        &icon_fonts.default,
+                        &path,
+                        spans,
+                    )?;
                     Some((name.clone(), def))
                 })
                 .collect::<BTreeMap<Ident, ir::DefIr>>()
@@ -315,13 +324,16 @@ fn record_span(spans: &mut BTreeMap<String, SpanEntry>, key: String, rel_path: &
 
 fn lower_def(
     env: &DefEnv,
-    ast: &ast::File,
+    src: &ParsedSource,
     resolved: &Resolved,
     catalog: &Catalog,
-    src: &ParsedSource,
+    icon_default: &Ident,
     path: &str,
     spans: &mut BTreeMap<String, SpanEntry>,
-) -> ir::DefIr {
+) -> Option<ir::DefIr> {
+    let Parsed::Module(ast) = &src.parsed else {
+        return None;
+    };
     record_span(spans, path.to_string(), &src.rel_path, def_span(ast));
 
     let modality = match &ast.kind {
@@ -363,7 +375,7 @@ fn lower_def(
                 &src.rel_path,
                 handler.span,
             );
-            if let Some(h) = lower_handler(env, resolved, catalog, handler) {
+            if let Some(h) = lower_handler(env, resolved, catalog, icon_default, handler) {
                 handlers.push(h);
             }
         }
@@ -373,6 +385,7 @@ fn lower_def(
         env,
         resolved,
         catalog,
+        icon_default,
         locals: Vec::new(),
         next_ord: 0,
     };
@@ -410,7 +423,7 @@ fn lower_def(
         })
         .collect();
 
-    ir::DefIr {
+    Some(ir::DefIr {
         modality,
         props,
         emits,
@@ -419,7 +432,7 @@ fn lower_def(
         events,
         handlers,
         root,
-    }
+    })
 }
 
 fn def_span(ast: &ast::File) -> Span {
@@ -445,6 +458,7 @@ fn lower_handler(
     env: &DefEnv,
     resolved: &Resolved,
     catalog: &Catalog,
+    icon_default: &Ident,
     handler: &ast::Handler,
 ) -> Option<ir::HandlerIr> {
     let on = match &handler.event {
@@ -500,6 +514,7 @@ fn lower_handler(
         env,
         resolved,
         catalog,
+        icon_default,
         locals,
         next_ord: 0,
     };
@@ -522,6 +537,7 @@ struct LowerCtx<'a> {
     env: &'a DefEnv,
     resolved: &'a Resolved,
     catalog: &'a Catalog,
+    icon_default: &'a Ident,
     /// Names bound locally (handler params, `as` tags, each items, match
     /// bindings) — they lower to `BindingRef`. Types ride along so
     /// re-inference (each-over classification, union arms) stays exact.
@@ -869,6 +885,12 @@ impl LowerCtx<'_> {
                     value,
                 });
             }
+        }
+        if element.as_str() == "icon" && !props.iter().any(|prop| prop.name.as_str() == "family") {
+            props.push(ir::ArgIr {
+                name: Ident::new("family").expect("kebab"),
+                value: ir::ExprIr::Text(self.icon_default.to_string()),
+            });
         }
         let events = el
             .events

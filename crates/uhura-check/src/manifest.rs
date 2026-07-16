@@ -13,6 +13,9 @@ pub struct Manifest {
     pub entry: Ident,
     /// Corpus-relative path to the catalog TOML.
     pub catalog_path: String,
+    /// Icon registry selection plus any app-local font families. `lucide` is
+    /// always available as the built-in good default.
+    pub icons: IconsConfig,
     /// Port name → corpus-relative contract path. The name must equal the
     /// contract's own `[port] name` (link rule L1).
     pub ports: BTreeMap<Ident, String>,
@@ -23,6 +26,29 @@ pub struct Manifest {
     /// Play profile name → fixture/script test double plus an optional
     /// browser-only provider module for `uhura dev`.
     pub play: BTreeMap<Ident, PlayProfile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IconsConfig {
+    pub default: Ident,
+    pub families: BTreeMap<Ident, IconFamilyConfig>,
+}
+
+impl Default for IconsConfig {
+    fn default() -> Self {
+        Self {
+            default: Ident::new("lucide").expect("built-in icon family is a valid identifier"),
+            families: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IconFamilyConfig {
+    /// Corpus-relative WOFF2 file.
+    pub font: String,
+    /// Corpus-relative JSON map from icon name to decimal Unicode codepoint.
+    pub glyphs: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,7 +100,11 @@ pub fn load_manifest(text: &str) -> Result<Manifest, Vec<ManifestIssue>> {
         }
     };
     for key in table.keys() {
-        if !["app", "catalog", "ports", "fixtures", "assets", "play"].contains(&key.as_str()) {
+        if ![
+            "app", "catalog", "icons", "ports", "fixtures", "assets", "play",
+        ]
+        .contains(&key.as_str())
+        {
             push(&mut issues, key, format!("unknown key `{key}`"));
         }
     }
@@ -117,6 +147,8 @@ pub fn load_manifest(text: &str) -> Result<Manifest, Vec<ManifestIssue>> {
     if catalog_path.is_none() {
         push(&mut issues, "catalog.path", "missing catalog path".into());
     }
+
+    let icons = parse_icons(&table, &mut issues);
 
     let string_map = |issues: &mut Vec<ManifestIssue>, section: &str| {
         let mut out = BTreeMap::new();
@@ -234,12 +266,113 @@ pub fn load_manifest(text: &str) -> Result<Manifest, Vec<ManifestIssue>> {
             app_name,
             entry,
             catalog_path,
+            icons,
             ports,
             fixtures,
             assets_manifest,
             play,
         }),
         _ => Err(issues),
+    }
+}
+
+fn parse_icons(table: &toml::Table, issues: &mut Vec<ManifestIssue>) -> IconsConfig {
+    let mut out = IconsConfig::default();
+    let Some(value) = table.get("icons") else {
+        return out;
+    };
+    let Some(icons) = value.as_table() else {
+        issues.push(ManifestIssue {
+            path: "icons".into(),
+            message: "expected an `[icons]` table".into(),
+        });
+        return out;
+    };
+    if let Some(value) = icons.get("default") {
+        match value.as_str().map(Ident::new) {
+            Some(Ok(default)) => out.default = default,
+            Some(Err(error)) => issues.push(ManifestIssue {
+                path: "icons.default".into(),
+                message: error.to_string(),
+            }),
+            None => issues.push(ManifestIssue {
+                path: "icons.default".into(),
+                message: "expected an icon family name string".into(),
+            }),
+        }
+    }
+
+    for (name, value) in icons.iter().filter(|(name, _)| name.as_str() != "default") {
+        let path = format!("icons.{name}");
+        let Ok(name) = Ident::new(name) else {
+            issues.push(ManifestIssue {
+                path,
+                message: format!("`{name}` is not a lowercase kebab-case identifier"),
+            });
+            continue;
+        };
+        if name.as_str() == "lucide" {
+            issues.push(ManifestIssue {
+                path,
+                message: "`lucide` is built in and cannot be replaced locally".into(),
+            });
+            continue;
+        }
+        let Some(family) = value.as_table() else {
+            issues.push(ManifestIssue {
+                path,
+                message: "expected `{ font = ..., glyphs = ... }`".into(),
+            });
+            continue;
+        };
+        for key in family.keys() {
+            if !["font", "glyphs"].contains(&key.as_str()) {
+                issues.push(ManifestIssue {
+                    path: format!("{path}.{key}"),
+                    message: format!("unknown key `{key}`"),
+                });
+            }
+        }
+        let font = local_icon_path(family.get("font"), &format!("{path}.font"), issues);
+        let glyphs = local_icon_path(family.get("glyphs"), &format!("{path}.glyphs"), issues);
+        if let (Some(font), Some(glyphs)) = (font, glyphs) {
+            out.families.insert(name, IconFamilyConfig { font, glyphs });
+        }
+    }
+
+    if out.default.as_str() != "lucide" && !out.families.contains_key(&out.default) {
+        issues.push(ManifestIssue {
+            path: "icons.default".into(),
+            message: format!(
+                "`{}` is neither the built-in `lucide` family nor a declared local family",
+                out.default
+            ),
+        });
+    }
+    out
+}
+
+fn local_icon_path(
+    value: Option<&toml::Value>,
+    path: &str,
+    issues: &mut Vec<ManifestIssue>,
+) -> Option<String> {
+    match value.and_then(toml::Value::as_str) {
+        Some(value) if safe_corpus_path(value) => Some(value.to_string()),
+        Some(_) => {
+            issues.push(ManifestIssue {
+                path: path.into(),
+                message: "expected a safe corpus-relative path".into(),
+            });
+            None
+        }
+        None => {
+            issues.push(ManifestIssue {
+                path: path.into(),
+                message: "missing required path string".into(),
+            });
+            None
+        }
     }
 }
 

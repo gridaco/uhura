@@ -7,6 +7,15 @@ import {
   tagFor,
 } from "../../renderer/appliers.js";
 import type { AssetAppliers } from "../../renderer/assets.js";
+import type { IconFontRegistry } from "../../renderer/icons.js";
+
+const UNUSED_ICONS: IconFontRegistry = {
+  defaultFamily: "lucide",
+  fingerprint: "unused",
+  apply: () => {
+    throw new Error("video test unexpectedly applied an icon");
+  },
+};
 
 class FakeVideo {
   readonly attributes = new Map<string, string>();
@@ -47,7 +56,7 @@ const asVideo = (video: FakeVideo): HTMLVideoElement =>
 function context(assets: AssetAppliers): Parameters<typeof applyProps>[2] {
   return {
     document: {} as Document,
-    icons: {},
+    icons: UNUSED_ICONS,
     assets,
     policy: {
       kind: "play",

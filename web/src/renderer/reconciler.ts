@@ -9,7 +9,7 @@ import type {
   ScrollHolder,
   TextFieldHolder,
 } from "./contracts.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 
 interface Holder extends ScrollHolder, TextFieldHolder {
   node?: RendererNode;
@@ -20,7 +20,7 @@ type HeldElement = HTMLElement & { __uh?: Holder };
 
 interface SemanticRendererContext {
   document: Document;
-  icons: IconTable;
+  icons: IconFontRegistry;
   assets: AssetAppliers;
   policy: RenderPolicy;
 }

@@ -25,6 +25,10 @@ import {
   createPlayRenderer,
   findScope,
 } from "../renderer/play.js";
+import {
+  decodeIconFontManifest,
+  loadIconFontRegistry,
+} from "../renderer/icons.js";
 import { createFocusController } from "./focus.js";
 import { PlayGenerationGate } from "./generation.js";
 import type { GenerationAction } from "./generation.js";
@@ -56,6 +60,7 @@ export const PLAY_ARTIFACT_URLS = [
   "/api/play/fixture.json",
   "/api/play/script.json",
   "/api/play/config.json",
+  "/api/play/icon-fonts.json",
   "/api/play/stylesheet.css",
 ] as const;
 
@@ -254,8 +259,20 @@ export function startPlayRuntime(
       fixtureText,
       scriptText,
       playText,
+      iconFontsText,
       styleText,
     ] = artifacts.texts;
+    if (disposed) return;
+    const iconManifest = decodeIconFontManifest(JSON.parse(iconFontsText), "play");
+    if (iconManifest.generation !== artifacts.generation) {
+      throw new Error(
+        `Play icon fonts generation ${String(iconManifest.generation)} does not match artifact generation ${artifacts.generation}`,
+      );
+    }
+    const icons = await loadIconFontRegistry({
+      document: shell.document,
+      manifest: iconManifest,
+    });
     if (disposed) return;
     inspection.installArtifacts({
       generation: artifacts.generation,
@@ -364,6 +381,7 @@ export function startPlayRuntime(
       document: shell.document,
       emit,
       assets,
+      icons,
       textFields,
       scrolls,
     });

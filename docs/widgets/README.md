@@ -39,7 +39,7 @@ capability is built-in, opt-in, experimental, or accepted.
 |---|---|---|---|---|---|
 | [`<button>`](elements/button.md) | Element | None | Built-in base catalog; project-pinned during incubation | Control taxonomy and some state semantics unsettled | Checked action control and browser realization implemented; known composition and accessibility gaps documented |
 | [`<scroll>`](elements/scroll.md) | Element | None | Built-in base catalog; project-pinned during incubation | No accepted widget RFC | Element and Play behavior implemented; static preview pose proposed |
-| [`<icon>`](elements/icon.md) | Element | [Icon font](integrations/icon-font.md) | Built-in default family and local families planned | Font-only realization selected before v1; permanent v1 resource model open | Checked token implemented; provisional SVG renderer remains until the font pipeline lands |
+| [`<icon>`](elements/icon.md) | Element | [Icon font](integrations/icon-font.md) | Built-in Lucide family and local families implemented | Font-only realization selected before v1; permanent v1 resource model open | Checked family/name token, strict WOFF2 pipeline, host resources, and browser realization implemented |
 | [`<img>`](elements/img.md) | Element | None | Built-in base catalog; project-pinned during incubation | Renamed from `<image>` to align the narrow primitive with HTML; no accepted widget RFC | Typed asset and accessibility contract plus native browser Editor/Play realization implemented |
 | [`<view>`](elements/view.md) | Element | None | Built-in base catalog; project-pinned during incubation | Neutral container implemented; semantic role taxonomy unsettled | Checker/Core/browser realization implemented; list role overwrite and ARIA-nonconforming tablist documented |
 
@@ -50,7 +50,7 @@ availability, decision record, implementation status, and supported renderers.
 
 | Entry | Classification | Applies to | Decision | Implementation |
 |---|---|---|---|---|
-| [Icon font](integrations/icon-font.md) | Integration | [`<icon>`](elements/icon.md) | Sole icon-resource mechanism before v1 | Font pipeline pending; current SVG table is provisional and non-conforming |
+| [Icon font](integrations/icon-font.md) | Integration | [`<icon>`](elements/icon.md) | Sole icon-resource mechanism before v1 | Built-in and local WOFF2 families implemented across checker, host, Editor, and Play |
 
 ## Entry requirements
 

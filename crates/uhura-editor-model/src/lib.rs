@@ -2363,6 +2363,7 @@ mod tests {
                 spans: BTreeMap::new(),
                 template_origins,
             }),
+            icon_fonts: None,
             previews,
             stylesheet: ".app { color: black; }".to_string(),
             lock_computed: String::new(),

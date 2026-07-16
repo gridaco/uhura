@@ -7,9 +7,10 @@ pub mod trace;
 
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use uhura_check::manifest::load_manifest;
-use uhura_check::{CheckInput, SourceInput};
+use uhura_check::{CheckInput, IconFontInput, SourceInput};
 
 use crate::fsio::walk_corpus;
 
@@ -44,6 +45,31 @@ pub fn assemble_input(root: &Path) -> Result<CheckInput, ExitCode> {
         manifest.catalog_path.clone(),
         read_opt(&manifest.catalog_path),
     );
+    let canonical_root = std::fs::canonicalize(root).ok();
+    let read_icon_bytes = |rel: &str| {
+        let root = canonical_root.as_ref()?;
+        let path = std::fs::canonicalize(root.join(rel)).ok()?;
+        path.starts_with(root)
+            .then(|| std::fs::read(path).ok())
+            .flatten()
+    };
+    let icon_font_files = manifest
+        .icons
+        .families
+        .iter()
+        .map(|(name, family)| {
+            (
+                name.clone(),
+                IconFontInput {
+                    font_path: family.font.clone(),
+                    font_bytes: read_icon_bytes(&family.font).map(Arc::<[u8]>::from),
+                    glyphs_path: family.glyphs.clone(),
+                    glyphs_text: read_icon_bytes(&family.glyphs)
+                        .and_then(|bytes| String::from_utf8(bytes).ok()),
+                },
+            )
+        })
+        .collect();
     let port_files = manifest
         .ports
         .iter()
@@ -83,6 +109,7 @@ pub fn assemble_input(root: &Path) -> Result<CheckInput, ExitCode> {
         manifest_rel_path: "uhura.toml".to_string(),
         manifest_text,
         catalog_file,
+        icon_font_files,
         port_files,
         sources,
         theme_css,

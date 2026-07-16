@@ -8,12 +8,11 @@ import type {
   RendererNode,
   TextFieldHolder,
 } from "./contracts.js";
-import { applyIcon } from "./icons.js";
-import type { IconTable } from "./icons.js";
+import type { IconFontRegistry } from "./icons.js";
 
 interface ApplyPropsContext {
   document: Document;
-  icons: IconTable;
+  icons: IconFontRegistry;
   assets: AssetAppliers;
   policy: RenderPolicy;
   holderOf(el: HTMLElement): TextFieldHolder;
@@ -164,10 +163,18 @@ export function applyProps(
 
     case "icon": {
       const name = textOf(props["name"]) ?? "";
+      const requestedFamily = textOf(props["family"]);
+      const family = requestedFamily ?? ctx.icons.defaultFamily;
       setAttr(el, "aria-hidden", "true");
-      if (el.getAttribute("data-icon") !== name) {
+      if (
+        el.getAttribute("data-icon") !== name ||
+        el.getAttribute("data-icon-family") !== family ||
+        el.getAttribute("data-icon-resource") !== ctx.icons.fingerprint
+      ) {
+        ctx.icons.apply(el, requestedFamily, name);
         setAttr(el, "data-icon", name);
-        applyIcon(ctx.document, el, ctx.icons[name]);
+        setAttr(el, "data-icon-family", family);
+        setAttr(el, "data-icon-resource", ctx.icons.fingerprint);
       }
       break;
     }
