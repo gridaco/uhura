@@ -55,7 +55,9 @@ import {
 } from "./structure-connectors.js";
 import {
   layoutInteractionMap,
+  MAP_NODE_SCALE,
   mapNodePreviewIds,
+  scaledMapNodeSize,
   type MapNodeSize,
 } from "./map-layout.js";
 import type { InteractionGraphNode } from "../protocol/types.js";
@@ -1105,6 +1107,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     model.connectorLayer.classList.remove("is-map-mode");
     shell.board.style.removeProperty("width");
     shell.board.style.removeProperty("height");
+    shell.board.style.removeProperty("--map-node-scale");
     for (const frame of model.frameById.values()) {
       frame.classList.remove("is-map-node");
       frame.style.removeProperty("left");
@@ -1133,6 +1136,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     mapPreviewIdByNode = frames;
     mapNodeFrameIds = new Set(frames.values());
     shell.board.classList.add("is-map-mode");
+    shell.board.style.setProperty("--map-node-scale", String(MAP_NODE_SCALE));
     model.connectorLayer.classList.add("is-map-mode");
     const elementByNode = new Map<string, HTMLElement>();
     for (const node of graph.nodes) {
@@ -1150,12 +1154,18 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       elementByNode.set(node.id, placeholder);
     }
     // Nodes are measured AFTER the mode class flips so the map CSS (absolute
-    // frames, hidden example rows) governs the measured footprint.
+    // frames, hidden example rows) governs the measured footprint. Frames
+    // render under a `scale(MAP_NODE_SCALE)` transform that offsetWidth/
+    // offsetHeight do NOT reflect, so the raw box scales here — positions are
+    // computed from the same visual rects getBoundingClientRect reports to
+    // the connector router and the camera fit.
     const sizeOf = (nodeId: string): MapNodeSize => {
       const element = elementByNode.get(nodeId);
       const width = element?.offsetWidth ?? 0;
       const height = element?.offsetHeight ?? 0;
-      return width > 0 && height > 0 ? { width, height } : mapFallbackSize(nodeId);
+      return scaledMapNodeSize(
+        width > 0 && height > 0 ? { width, height } : mapFallbackSize(nodeId),
+      );
     };
     const positions = layoutInteractionMap(graph, sizeOf);
     let width = 0;

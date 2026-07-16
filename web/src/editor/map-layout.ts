@@ -26,12 +26,35 @@ export interface MapNodePosition {
   column: number;
 }
 
-/** Horizontal gap between navigation-depth columns, board units. */
-export const MAP_COLUMN_GAP = 180;
+/**
+ * Map nodes render at this CSS scale (top-left origin), so a phone frame
+ * occupies a fraction of its natural footprint and the whole map fits on
+ * roughly one screen at moderate zoom. Layout positions are computed from the
+ * SCALED footprints, keeping the gaps below proportional to what is drawn.
+ */
+export const MAP_NODE_SCALE = 0.4;
+
+/**
+ * The on-screen footprint of a map node: its raw box under MAP_NODE_SCALE.
+ * `offsetWidth`/`offsetHeight` ignore CSS transforms, so callers measuring
+ * raw boxes scale them here before layout; `getBoundingClientRect` already
+ * reflects the transform and needs no adjustment.
+ */
+export const scaledMapNodeSize = (
+  size: MapNodeSize,
+  scale = MAP_NODE_SCALE,
+): MapNodeSize => ({
+  width: size.width * scale,
+  height: size.height * scale,
+});
+
+/** Horizontal gap between navigation-depth columns, board units. Sized
+ * against MAP_NODE_SCALE-scaled footprints. */
+export const MAP_COLUMN_GAP = 72;
 /** Vertical gap between page cells stacked in one column, board units. */
-export const MAP_ROW_GAP = 120;
+export const MAP_ROW_GAP = 48;
 /** Vertical gap between a page and the surfaces it presents, board units. */
-export const MAP_SURFACE_GAP = 64;
+export const MAP_SURFACE_GAP = 32;
 
 /**
  * BFS from the entry page over `navigate` edges between pages, discovering

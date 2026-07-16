@@ -389,6 +389,15 @@ export const EDITOR_STYLES = `
   .editor-board.is-map-mode .row-title { display: none; }
   .editor-board.is-map-mode .editor-frame { position: absolute; margin: 0; }
   .editor-board.is-map-mode .editor-frame:not(.is-map-node) { display: none; }
+  /* Map nodes render reduced (--map-node-scale, set from MAP_NODE_SCALE):
+     full phone frames would stack depth columns into a tall strip. The
+     top-left origin keeps style.left/top authoritative, and map-layout
+     positions from the SCALED footprint so gaps stay proportional. */
+  .editor-board.is-map-mode .editor-frame.is-map-node {
+    transform: scale(var(--map-node-scale, 1));
+    transform-origin: top left;
+    user-select: none;
+  }
   .workflow-connectors.is-map-mode .workflow-connector { display: none; }
   .workflow-connectors.is-map-mode .structure-connector.is-map-dimmed { opacity: .35; }
   /* Map information design: every edge draws as a thin, label-less line by

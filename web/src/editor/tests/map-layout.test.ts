@@ -5,9 +5,11 @@ import { test } from "vitest";
 import {
   layoutInteractionMap,
   MAP_COLUMN_GAP,
+  MAP_NODE_SCALE,
   MAP_ROW_GAP,
   MAP_SURFACE_GAP,
   mapNodePreviewIds,
+  scaledMapNodeSize,
   type MapGraph,
 } from "../map-layout.js";
 
@@ -176,6 +178,40 @@ test("duplicate and self navigate edges never distort depth", () => {
 
   assert.equal(positions.get("page:feed")?.column, 0);
   assert.equal(positions.get("page:post")?.column, 1);
+});
+
+test("scaledMapNodeSize shrinks a raw footprint by MAP_NODE_SCALE", () => {
+  assert.deepEqual(
+    scaledMapNodeSize({ width: 390, height: 844 }),
+    { width: 390 * MAP_NODE_SCALE, height: 844 * MAP_NODE_SCALE },
+  );
+  assert.deepEqual(
+    scaledMapNodeSize({ width: 100, height: 50 }, 0.5),
+    { width: 50, height: 25 },
+    "an explicit factor overrides the default",
+  );
+});
+
+test("scaled footprints compact the whole layout, gaps staying fixed", () => {
+  const scaledSize = (nodeId: string): { width: number; height: number } =>
+    scaledMapNodeSize(uniformSize(nodeId));
+  const positions = layoutInteractionMap(instagramGraph(), scaledSize);
+
+  assert.equal(
+    positions.get("page:post")?.x,
+    PAGE.width * MAP_NODE_SCALE + MAP_COLUMN_GAP,
+    "column 1 starts after the scaled entry frame plus the column gap",
+  );
+  assert.equal(
+    positions.get("page:profile")?.y,
+    PAGE.height * MAP_NODE_SCALE + MAP_ROW_GAP,
+    "rows stack by scaled heights",
+  );
+  assert.equal(
+    positions.get("surface:comments-sheet")?.y,
+    PAGE.height * MAP_NODE_SCALE + MAP_SURFACE_GAP,
+    "surfaces hang below the scaled page footprint",
+  );
 });
 
 test("an empty graph lays out nothing", () => {
