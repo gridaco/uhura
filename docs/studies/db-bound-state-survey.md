@@ -1,6 +1,7 @@
 # Database-bound state in client applications: a field survey
 
 - **Status:** Non-normative research input
+- **Lifetime:** Disposable study
 - **Method:** Desk survey of public systems, protocols, and engineering
   writing, as of July 2026. No benchmarks were run; claims about internal
   systems (Linear, Figma, Notion, Asana) rest on their public talks and
@@ -11,7 +12,7 @@
   use-case catalog.
 - **Follow-up:** [A class-differentiated state IR](state-ir-proposal.md)
   (draft 0) proposes an IR that discharges this survey's findings.
-- **Destination:** Uhura Working Group
+- **Destination:** Uhura studies
 
 A data-binding language for prototypes owns a mutable store. Nothing about
 that store says where its data lives: a counter, a draft, a feed page, and a
@@ -23,7 +24,7 @@ the client cannot see inside.
 This note deliberately ignores the current shape of Uhura and its companion
 systems, and it proposes **no syntax**. It surveys what shipping systems
 actually do, sorts what is good from what is bad, and asks of each pattern
-the working-group question: *has anyone lifted this into a declarative,
+the study question: *has anyone lifted this into a declarative,
 checkable form — and if not, why not?* The output is a taxonomy (§5) and a
 set of modelability verdicts (§6) intended as raw material for a future
 model of database-bound stores, not as a design.
@@ -699,8 +700,8 @@ to first order, *write-path and repair-path ideologies*.
 
 ### 5.3 Storage classes: binding as a property, not a paradigm
 
-The synthesis this survey supports — the concept topology the working group
-asked for — is that "database-bound" is best understood as a **storage
+The synthesis this survey supports — the concept topology the earlier design
+review asked for — is that "database-bound" is best understood as a **storage
 class of a declared store**, not as a different programming model bolted
 onto the local one. The field keeps two frameworks side by side (§3.9) and
 suffers at the seam; the systems people admire (Meteor then, the sync
@@ -761,7 +762,7 @@ type the seams; the surveyed systems, having no classes, cannot.
 
 ## 6. What can be modeled
 
-The working-group question applied to §2–§3: which patterns has the field
+The study question applied to §2–§3: which patterns has the field
 already lifted into declarative, checkable form (proof by existence), which
 submit under a constraint someone has already paid, and which resist.
 
@@ -872,7 +873,7 @@ submit under a constraint someone has already paid, and which resist.
     A bound-store class earns its complexity only where it clearly beats
     them: perceived latency, offline, and multiplayer liveness.
 
-## 8. Open questions for the working group
+## 8. Open questions for future design review
 
 - **Window-edge semantics** (§3.7): what does a reference across the
   replica edge *mean*, and what happens on screen when a row exits its

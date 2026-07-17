@@ -1,53 +1,79 @@
 # Uhura documentation
 
-- **Status:** Incubating
-- **Master specification:** [Uhura specification](spec/README.md)
-- **Widget catalogue:** [Widget catalogue and taxonomy](widgets/README.md)
-- **Foundational proposal:** [RFC 0001](rfcs/0001-project-foundation.md)
-- **Decision records and proposals:** [Uhura RFC index](rfcs/README.md)
-- **Research and stewardship:** [Uhura Working Group](working-group/README.md)
-- **Historical requirements input:** [Application-scale stress-test requirements](working-group/application-scale-stress-test.md)
+- **Status:** Stable documentation router
+- **Doctrine:** [Uhura doctrine](doctrine/README.md)
+- **Specification router:** [Uhura specifications](spec/README.md)
+- **Widget taxonomy:** [Uhura widget taxonomy](widgets/README.md)
+- **Decision history:** [Uhura RFCs](rfcs/README.md)
+- **Research:** [Uhura studies](studies/README.md)
 
-This directory is the documentation root for the standalone Uhura project.
-The project landing page provides orientation; the living specification defines
-the current target; accepted RFCs record durable decisions and rationale.
+This page classifies Uhura documents by authority and lifetime. The
+classification exists so that a useful v0 experiment cannot become permanent
+language shape merely because many pages describe it.
 
-## Authority
+## Document families
 
-Uhura does not yet have an accepted language or runtime version. Until it does,
-all normative-looking statements are proposed requirements.
+| Family | Canonical path | Lifetime | Authority |
+|---|---|---|---|
+| Doctrine | [`doctrine/`](doctrine/) | Durable, live, version-independent | Judges designs; never defines version behavior |
+| Specification router | [`spec/README.md`](spec/README.md) | Stable | Points to drafts and supported version specifications; contains no semantics |
+| Incubation drafts | [`spec/drafts/`](spec/drafts/) | Disposable | Proposed exact language models; may be replaced or deleted wholesale |
+| Widget taxonomy | [`widgets/README.md`](widgets/README.md) | Stable router; live taxonomy | Provides revisable capability vocabulary, not builtin names or contracts |
+| Widget drafts | [`widgets/drafts/`](widgets/drafts/) | Disposable | Version-scoped capability names, contracts, implementation notes, and proposals |
+| RFCs | [`rfcs/`](rfcs/) | Durable historical record; supersedable | Record decisions and rationale; do not define current behavior by themselves |
+| Study router | [`studies/README.md`](studies/README.md) | Stable | Classifies current research; contains no language semantics |
+| Study leaves | Other documents under [`studies/`](studies/) | Disposable | Preserve evidence, experiments, and unresolved ideas; no language authority |
+| Implementation and examples | Outside `docs/` | Replaceable evidence | Demonstrate behavior; do not become specification by accident |
 
-Once versioned work begins, authority will follow this order:
+There is intentionally no unversioned living specification.
 
-1. Accepted RFCs establish durable decisions.
-2. A versioned specification and executable conformance suite define observable
-   language and runtime behavior.
-3. Implementations conform to those artifacts; implementation behavior is not
-   specification by accident.
-4. Renderer, host-driver, widget-catalog, message, Spock-binding, and bundle
-   contracts remain independently versioned even when maintained here.
-5. The linker connects compatible artifacts but cannot override their semantics.
+## Current incubation snapshot
 
-Examples are non-normative unless a specification explicitly promotes them to
-conformance fixtures.
+Uhura has no complete accepted language specification or compatibility
+version.
 
-## Planned document families
+- [v0 incubation language model](spec/drafts/v0.md) describes the current
+  exact target and open questions. It is disposable.
+- [v0 widget draft](widgets/drafts/v0/README.md) records current capability
+  names, implementation gaps, and proposals. It is disposable.
+- [RFC 0002](rfcs/0002-model-driven-editor-live-updates.md) and
+  [RFC 0003](rfcs/0003-source-comments-docs-and-annotations.md) are accepted
+  historical decisions with independent implementation status.
+- [RFC 0001](rfcs/0001-project-foundation.md) remains a draft proposal; it is
+  not a foundational authority merely because other work was inspired by it.
 
-The foundation, focused proposals, and the first accepted source-language
-decision are present today. Future RFCs may establish:
+Replacing v0 does not require migrating its section structure, grammar,
+runtime tuple, widget vocabulary, or implementation topology. A later version
+must restate every behavior it adopts.
 
-- the remaining source grammar, module rules, and canonical formatting for
-  `.uhura` source;
-- the checked intermediate representation and extraction model;
-- UI machine semantics and event processing;
-- the headless core runtime ABI and snapshot format;
-- semantic widget catalogs and renderer conformance;
-- host capabilities and effect-driver protocols;
-- Spock contract imports and linking;
-- messages and localization, including whether to adopt MessageFormat 2;
-- bounded static projection for an infinite canvas; and
-- implementation language, packaging, compatibility, and release policy.
+## Authority flow
 
-These topics are intentionally not resolved merely by creating a directory.
-The [widget catalogue](widgets/README.md) provides a stable reference topology
-for cataloguing work without granting an entry normative or supported status.
+```text
+doctrine ── judges designs
+studies  ── provide disposable evidence
+RFCs     ── preserve durable decisions and rationale
+specs    ── define observable behavior for one named version
+tests    ── check conformance to that version
+```
+
+Authority does not flow backward:
+
+- an implementation or study cannot silently amend a specification;
+- an RFC does not define behavior until a version incorporates it;
+- a version does not become doctrine merely because it shipped; and
+- doctrine cannot retroactively change the behavior of an existing version.
+
+## Removal rule
+
+Stable routers may link to the currently relevant disposable subtree. Durable
+doctrine and RFC reasoning must not require a disposable leaf to remain
+available. When a draft is abandoned:
+
+1. update its stable router;
+2. copy any durable conclusion into an RFC;
+3. delete the draft body rather than keeping obsolete prose in normal
+   navigation; and
+4. use Git history when historical recovery is needed.
+
+Compatibility pointers may remain at paths already embedded in tools or
+external documents, but they must contain no copied language semantics.

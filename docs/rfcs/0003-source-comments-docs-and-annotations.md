@@ -7,8 +7,6 @@
   checked authoring metadata, and diagnostics
 - **Supersedes:** None
 - **Related work:** [RFC 0001](0001-project-foundation.md),
-  [Uhura specification](../spec/README.md),
-  [Instagram spike design](../working-group/instagram-spike-design.md), and
   [Spock RFD 0016](https://github.com/gridaco/spock/blob/main/docs/rfd/0016-doc-comments.md)
 
 ## 1. Proposal

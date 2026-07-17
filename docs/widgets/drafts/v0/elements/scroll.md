@@ -1,6 +1,8 @@
 # `<scroll>`
 
 - **Status:** Implemented element; static preview pose proposed
+- **Version scope:** v0 incubation draft
+- **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
@@ -242,7 +244,7 @@ Current and proposed conformance coverage should include:
 ## Decisions and open questions
 
 The current implementation and
-[Instagram spike design](../../working-group/instagram-spike-design.md) establish
+[Instagram spike design](../../../../studies/instagram-spike-design.md) establish
 useful evidence but do not replace an accepted widget RFC or versioned
 specification.
 
@@ -269,8 +271,8 @@ Known gaps:
 
 Current implementation references:
 
-- [Base catalog declaration](../../../examples/instagram/client/catalog/base.toml)
-- [Catalog and markup checking](../../../crates/uhura-check/src/markup.rs)
-- [Browser scroll policy](../../../web/src/play/scroll.ts)
-- [Read-only Editor renderer](../../../web/src/renderer/editor.ts)
-- [Specification ownership boundary](../../spec/README.md)
+- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
+- [Catalog and markup checking](../../../../../crates/uhura-check/src/markup.rs)
+- [Browser scroll policy](../../../../../web/src/play/scroll.ts)
+- [Read-only Editor renderer](../../../../../web/src/renderer/editor.ts)
+- [Specification router](../../../../spec/README.md)

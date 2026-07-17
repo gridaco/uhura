@@ -81,10 +81,11 @@ cargo test --workspace
 - [`crates/`](crates/) — checker, runtime, Wasm bindings, and CLI.
 - [`web/`](web/) — Editor and Play browser application.
 - [`examples/instagram/`](examples/instagram/) — full-stack Spock framework example.
-- [`docs/spec/`](docs/spec/) — living language specification.
-- [`docs/widgets/`](docs/widgets/) — widget catalogue and capability taxonomy.
-- [`docs/rfcs/`](docs/rfcs/) — accepted design decisions.
-- [`docs/working-group/`](docs/working-group/) — active design notes.
+- [`docs/doctrine/`](docs/doctrine/) — durable language doctrine and review principles.
+- [`docs/spec/`](docs/spec/) — stable router for disposable drafts and future version specifications.
+- [`docs/widgets/`](docs/widgets/) — stable capability taxonomy and version-scoped catalogues.
+- [`docs/rfcs/`](docs/rfcs/) — historical proposals and supersedable decisions.
+- [`docs/studies/`](docs/studies/) — stable research router with disposable study leaves.
 
 Authored source is canonical. Generated browser, provider, and Wasm artifacts
 are build outputs and are not committed.
@@ -97,7 +98,8 @@ policy may change while the language and toolchain are being established.
 ## Documentation
 
 - [Documentation index and authority](docs/README.md)
-- [Living specification](docs/spec/README.md)
-- [Widget catalogue and taxonomy](docs/widgets/README.md)
+- [Language doctrine](docs/doctrine/README.md)
+- [Specification router and current v0 draft](docs/spec/README.md)
+- [Widget taxonomy and current v0 draft](docs/widgets/README.md)
 - [RFC index](docs/rfcs/README.md)
-- [Working group](docs/working-group/README.md)
+- [Studies](docs/studies/README.md)

@@ -1,7 +1,9 @@
 # Instagram demo dogfood — July 2026
 
-Status: implementation feedback from the Spock-backed Uhura Play demo. This
-is feedback about the language/runtime boundary, not a proposal to move
+- **Status:** Implementation feedback from the Spock-backed Uhura Play demo
+- **Lifetime:** Disposable study
+
+This is feedback about the language/runtime boundary, not a proposal to move
 Instagram product truth into Uhura.
 
 ## Outcome and boundary

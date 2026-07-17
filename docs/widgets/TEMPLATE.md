@@ -1,6 +1,8 @@
 # Capability name
 
 - **Status:** Proposed
+- **Version scope:** Named version or disposable draft
+- **Lifetime:** Frozen with supported version | Disposable with draft
 - **Document type:** Capability | Shared facet
 - **Primary form:** Element | Surface | Pattern | Not applicable
 - **Facets:** None, or one or more of Integration and Behavior
@@ -8,7 +10,7 @@
 - **Decision:** None
 - **Specification:** None
 - **Implementation:** Unimplemented
-- **Owners:** Checker | Core | Renderer | Host | Library
+- **Owners:** Static model | Semantic runtime | Renderer | Host | Library
 - **Supported renderers:** None
 
 ## Summary
@@ -30,8 +32,9 @@ List the complete public contract that applies to this capability.
 
 ## Ownership
 
-State which facts belong to Uhura Core, the renderer, a host driver, or an
-external authority. Describe state, effects, lifecycle, and failure handling.
+State which facts belong to the Uhura semantic runtime, the renderer, a host
+driver, or an external authority. Describe state, effects, lifecycle, and
+failure handling.
 
 ## Accessibility and validation
 

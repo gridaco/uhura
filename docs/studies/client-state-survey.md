@@ -1,6 +1,7 @@
 # Client state architecture in the wild: ecosystem patterns and use cases
 
 - **Status:** Non-normative research input
+- **Lifetime:** Disposable study
 - **Method:** Desk survey of public frameworks, libraries, official
   architecture guidance, and community practice, as of July 2026.
 - **Companion:** [Database-bound state in client applications](db-bound-state-survey.md)
@@ -10,7 +11,7 @@
   companion requirements corpus at feature scale.
 - **Follow-up:** [A class-differentiated state IR](state-ir-proposal.md)
   (draft 0) proposes an IR that discharges this survey's findings.
-- **Destination:** Uhura Working Group
+- **Destination:** Uhura studies
 
 The companion survey studied how client stores bind to database authority.
 This note studies the rest of the iceberg: how working front-end developers
@@ -66,7 +67,7 @@ state referencing remote records — is the companion survey's
 
 ### 1.2 What "trying to model" means here
 
-For the working-group purpose, a use case is *modeled* when its state
+For this study, a use case is *modeled* when its state
 shape, its lifecycle, and its failure modes are expressible such that the
 signature bugs of §1.1's table become either inexpressible or visible.
 The catalog in §5 lists the concrete use cases; §4 lists the disciplines
@@ -496,7 +497,7 @@ becomes explicit — stated here as concepts, not design:
    defaults decide adoption. Disciplines that read as ceremony get
    routed around — the model's *default* path must be its safe path.
 
-## 7. Open questions for the working group
+## 7. Open questions for future design review
 
 - **How much D4 (forms) belongs in-model?** The shape is known (C6);
   the cost of owning it is large; the cost of excluding it is that every

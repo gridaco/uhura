@@ -1,6 +1,8 @@
 # `<img>`
 
 - **Status:** Implemented asset-backed image; loading, failure, and responsive-source semantics unsettled
+- **Version scope:** v0 incubation draft
+- **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
@@ -299,15 +301,15 @@ without silently growing into a cross-platform media framework.
 
 Current implementation and research references:
 
-- [Base catalog declaration](../../../examples/instagram/client/catalog/base.toml)
-- [Markup and accessibility checking](../../../crates/uhura-check/src/markup.rs)
-- [Core property evaluation](../../../crates/uhura-core/src/eval.rs)
-- [Semantic asset wire value](../../../crates/uhura-core/src/view.rs)
-- [Browser property mapping](../../../web/src/renderer/appliers.ts)
-- [Browser asset materialization](../../../web/src/renderer/assets.ts)
-- [Shared browser reconciliation](../../../web/src/renderer/reconciler.ts)
-- [Editor snapshot asset table](../../../web/src/editor/editor-state.ts)
-- [Play provider asset resolution](../../../examples/instagram/client/providers/spock.ts)
-- [Renderer policy tests](../../../web/src/renderer/tests/policies.test.ts)
-- [Asset resolution tests](../../../web/src/play/tests/assets.test.ts)
-- [Current Instagram image composition](../../../examples/instagram/client/components/post-card.uhura)
+- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
+- [Markup and accessibility checking](../../../../../crates/uhura-check/src/markup.rs)
+- [Core property evaluation](../../../../../crates/uhura-core/src/eval.rs)
+- [Semantic asset wire value](../../../../../crates/uhura-core/src/view.rs)
+- [Browser property mapping](../../../../../web/src/renderer/appliers.ts)
+- [Browser asset materialization](../../../../../web/src/renderer/assets.ts)
+- [Shared browser reconciliation](../../../../../web/src/renderer/reconciler.ts)
+- [Editor snapshot asset table](../../../../../web/src/editor/editor-state.ts)
+- [Play provider asset resolution](../../../../../examples/instagram/client/providers/spock.ts)
+- [Renderer policy tests](../../../../../web/src/renderer/tests/policies.test.ts)
+- [Asset resolution tests](../../../../../web/src/play/tests/assets.test.ts)
+- [Current Instagram image composition](../../../../../examples/instagram/client/components/post-card.uhura)
