@@ -1,6 +1,8 @@
 # `<button>`
 
 - **Status:** Implemented generic action element; control taxonomy and state semantics unsettled
+- **Version scope:** v0 incubation draft
+- **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
@@ -354,10 +356,10 @@ specialized control patterns from visual similarity.
 
 Current implementation and research references:
 
-- [Base catalog declaration](../../../examples/instagram/client/catalog/base.toml)
-- [Catalog markup checking](../../../crates/uhura-check/src/markup.rs)
-- [Shared browser property mapping](../../../web/src/renderer/appliers.ts)
-- [Shared browser activation and reconciliation](../../../web/src/renderer/reconciler.ts)
-- [Instagram button usage](../../../examples/instagram/client/components/post-card.uhura)
-- [Instagram spike element catalog](../../working-group/instagram-spike-design.md)
-- [Instagram dogfood gaps](../../working-group/instagram-demo-dogfood.md)
+- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
+- [Catalog markup checking](../../../../../crates/uhura-check/src/markup.rs)
+- [Shared browser property mapping](../../../../../web/src/renderer/appliers.ts)
+- [Shared browser activation and reconciliation](../../../../../web/src/renderer/reconciler.ts)
+- [Instagram button usage](../../../../../examples/instagram/client/components/post-card.uhura)
+- [Instagram spike element catalog](../../../../studies/instagram-spike-design.md)
+- [Instagram dogfood gaps](../../../../studies/instagram-demo-dogfood.md)

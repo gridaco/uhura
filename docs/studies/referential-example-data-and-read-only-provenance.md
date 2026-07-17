@@ -2,8 +2,9 @@
 
 - **Status:** Design note; read-only inspection is implemented, editing
   semantics are deferred
+- **Lifetime:** Disposable study
 - **Scope:** Static examples, fixture-backed data, and the read-only Editor inspector
-- **Authority:** Non-normative working-group material
+- **Authority:** Non-normative study
 - **Related:** [Instagram spike design, §6](instagram-spike-design.md#6-examples--example-defined-design)
   and [RFC 0002: model-driven Editor live updates](../rfcs/0002-model-driven-editor-live-updates.md)
 

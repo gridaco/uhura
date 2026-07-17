@@ -1,11 +1,12 @@
 # A class-differentiated state IR (draft 0)
 
-- **Status:** Working-group draft proposal — non-normative, unaccepted
+- **Status:** Study proposal — non-normative, unaccepted
+- **Lifetime:** Disposable study
 - **Inputs:** [Database-bound state in client applications](db-bound-state-survey.md)
   (cited below as **DB**), [Client state architecture in the wild](client-state-survey.md)
   (cited as **CS**), and the
   [application-scale stress test](application-scale-stress-test.md).
-- **Destination:** Uhura Working Group
+- **Destination:** Uhura studies
 
 The two surveys ended in findings; this note proposes the intermediate
 representation that models them. It is deliberately pitched at IR altitude:
@@ -15,8 +16,8 @@ the surface syntax — which needs more iteration — free to change without
 renegotiating semantics.
 
 Every fragment of IR text in this note is an **illustrative encoding**, not
-a surface syntax and not a wire format. Normatively the IR is a set of
-node kinds, well-formedness rules, and an operational model; how it is
+a surface syntax and not a wire format. Within this proposal, the IR is a set
+of node kinds, well-formedness rules, and an operational model; how it is
 spelled (JSON, binary, anything) is a serialization decision out of scope
 here.
 
@@ -484,7 +485,7 @@ cross-instance semantics open (§15) rather than pretending.
 
 ## 14. Conformance case seeds
 
-Executable before acceptance, per working-group method:
+Candidate executable evidence before acceptance:
 
 1. P1: submit → settle-ok → view equals base exactly.
 2. P2: submit → refuse → view byte-equal to never-submitted.
@@ -587,6 +588,6 @@ Non-normative encoding of the U2 walkthrough, end to end:
 }
 ```
 
-Expressions appear as strings here for readability; normatively they are
-structured expression nodes in the total language of §5.1. The wildcard
+Expressions appear as strings here for readability; within this proposal they
+are structured expression nodes in the total language of §5.1. The wildcard
 refusal arm is the declared fallback CHK-2 accepts.

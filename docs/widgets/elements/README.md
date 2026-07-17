@@ -1,25 +1,13 @@
 # Elements
 
-This directory documents semantic primitives declared by a versioned Uhura
-element catalog. Elements survive into the renderer-neutral semantic view and
-therefore require checker contracts, renderer support, and conformance cases.
+- **Status:** Stable router and working taxonomy
+- **Lifetime:** Stable navigation; classification is revisable
+- **Authority:** Working classification only
+- **Current draft:** [v0 element catalogue](../drafts/v0/README.md#elements)
 
-An element document does not replace its machine-readable catalog declaration.
-It explains the declaration's semantics, accessibility rules, realization, and
-compatibility requirements.
+An element is a semantic primitive declared by a versioned Uhura catalogue.
+It survives into the renderer-facing semantic representation and therefore
+requires static contracts, renderer support, and conformance cases.
 
-## Catalogue
-
-- [`<button>`](button.md) — generic named action control with checked `press`
-  delivery; specialized control roles and some state semantics remain open.
-- [`<scroll>`](scroll.md) — explicit semantic viewport with renderer-owned
-  physical position and pagination observation.
-- [`<icon>`](icon.md) — checked decorative glyph token with a font-only
-  pre-v1 realization through the icon-font integration; the permanent v1
-  resource model remains open.
-- [`<img>`](img.md) — typed asset-backed image with an explicit informative or
-  decorative choice and native browser realization; responsive sources and
-  lifecycle state remain open.
-- [`<view>`](view.md) — neutral structural container and CSS layout hook;
-  current list realization forces `listitem` onto direct children, overwriting
-  existing roles, and navigation/tablist contracts remain incomplete.
+This path defines the classification, not a list of permanent builtins.
+Concrete element contracts live under a named version or disposable draft.

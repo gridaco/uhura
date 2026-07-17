@@ -1,6 +1,8 @@
 # `<icon>`
 
 - **Status:** Implemented element; font-only realization selected for pre-v1
+- **Version scope:** v0 incubation draft
+- **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** [Icon font](../integrations/icon-font.md)
@@ -214,9 +216,9 @@ The narrow contract intentionally defers:
 
 Current implementation references:
 
-- [Base catalog declaration](../../../examples/instagram/client/catalog/base.toml)
-- [Catalog and markup checking](../../../crates/uhura-check/src/markup.rs)
-- [Browser icon-font resource loader](../../../web/src/renderer/icons.ts)
-- [Checked icon-font registry](../../../crates/uhura-check/src/icon_fonts.rs)
-- [Bundled Lucide provenance](../../../resources/icon-fonts/lucide/PROVENANCE.md)
-- [Editor state protocol](../../../web/src/editor/editor-state.ts)
+- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
+- [Catalog and markup checking](../../../../../crates/uhura-check/src/markup.rs)
+- [Browser icon-font resource loader](../../../../../web/src/renderer/icons.ts)
+- [Checked icon-font registry](../../../../../crates/uhura-check/src/icon_fonts.rs)
+- [Bundled Lucide provenance](../../../../../resources/icon-fonts/lucide/PROVENANCE.md)
+- [Editor state protocol](../../../../../web/src/editor/editor-state.ts)

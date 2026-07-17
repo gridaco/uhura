@@ -1,6 +1,8 @@
 # Icon font
 
 - **Status:** Implemented pre-v1 foundation
+- **Version scope:** v0 incubation draft
+- **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Shared facet
 - **Primary form:** Not applicable
 - **Facets:** Integration

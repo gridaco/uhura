@@ -1,8 +1,9 @@
 # Application-scale stress-test requirements
 
 - **Status:** Non-normative research input
+- **Lifetime:** Disposable study
 - **Source:** An earlier internal application-scale stress study (closed)
-- **Destination:** Uhura Working Group
+- **Destination:** Uhura studies
 
 This note carries reusable evidence from an earlier internal application-scale
 stress study into Uhura without carrying forward that study's syntax or its

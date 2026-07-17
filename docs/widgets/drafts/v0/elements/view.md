@@ -1,6 +1,8 @@
 # `<view>`
 
 - **Status:** Implemented neutral container; list realization defective and semantic role refinements incomplete
+- **Version scope:** v0 incubation draft
+- **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
@@ -40,7 +42,7 @@ A component can package a composition, but its expansion still needs a catalog
 element at its root. A raw `<div onclick>` escape hatch would bypass catalog
 closure, event eligibility, renderer support, and accessibility validation.
 
-The current working-group design deliberately removed language-level
+The current v0 design deliberately removed language-level
 `column`, `row`, `stack`, `grid`, and `spacer` elements. `<view>` is the one
 generic container and CSS owns layout. That keeps the language surface small,
 but it also means the current element is not a Flutter-like portable layout
@@ -405,15 +407,15 @@ role token.
 
 Current implementation and research references:
 
-- [Base catalog declaration](../../../examples/instagram/client/catalog/base.toml)
-- [Catalog markup checking](../../../crates/uhura-check/src/markup.rs)
-- [Core semantic-node evaluation](../../../crates/uhura-core/src/eval.rs)
-- [Semantic view protocol](../../../crates/uhura-core/src/view.rs)
-- [Shared browser property mapping](../../../web/src/renderer/appliers.ts)
-- [Shared browser reconciliation](../../../web/src/renderer/reconciler.ts)
-- [Shared renderer policy tests](../../../web/src/renderer/tests/policies.test.ts)
-- [Instagram spike element catalog](../../working-group/instagram-spike-design.md)
-- [Instagram dogfood gaps](../../working-group/instagram-demo-dogfood.md)
-- [Current list composition](../../../examples/instagram/client/components/stories-tray.uhura)
-- [Current navigation composition](../../../examples/instagram/client/components/bottom-nav.uhura)
-- [Current tablist composition](../../../examples/instagram/client/app/profile/[user]/page.uhura)
+- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
+- [Catalog markup checking](../../../../../crates/uhura-check/src/markup.rs)
+- [Core semantic-node evaluation](../../../../../crates/uhura-core/src/eval.rs)
+- [Semantic view protocol](../../../../../crates/uhura-core/src/view.rs)
+- [Shared browser property mapping](../../../../../web/src/renderer/appliers.ts)
+- [Shared browser reconciliation](../../../../../web/src/renderer/reconciler.ts)
+- [Shared renderer policy tests](../../../../../web/src/renderer/tests/policies.test.ts)
+- [Instagram spike element catalog](../../../../studies/instagram-spike-design.md)
+- [Instagram dogfood gaps](../../../../studies/instagram-demo-dogfood.md)
+- [Current list composition](../../../../../examples/instagram/client/components/stories-tray.uhura)
+- [Current navigation composition](../../../../../examples/instagram/client/components/bottom-nav.uhura)
+- [Current tablist composition](../../../../../examples/instagram/client/app/profile/[user]/page.uhura)

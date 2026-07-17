@@ -1,89 +1,79 @@
-# Uhura widget catalogue
+# Uhura widget taxonomy
 
-- **Status:** Initial catalogue; implemented capabilities documented
-- **Authority:** Reference index; listing does not imply acceptance or support
-- **Master specification:** [Uhura specification](../spec/README.md)
-- **Decision records:** [Uhura RFCs](../rfcs/README.md)
-- **Research:** [Uhura Working Group](../working-group/README.md)
+- **Status:** Stable taxonomy and router
+- **Lifetime:** Stable navigation; taxonomy is live and revisable
+- **Authority:** Working classification only, never capability behavior
+- **Doctrine:** [Uhura doctrine](../doctrine/README.md)
+- **Specification router:** [Uhura specifications](../spec/README.md)
+- **Decision history:** [Uhura RFCs](../rfcs/README.md)
+- **Studies:** [Uhura studies](../studies/README.md)
 
-This directory is the canonical documentation home for Uhura UI capabilities.
-It gives elements, surfaces, reusable patterns, integrations, and cross-cutting
-behaviors one discoverable catalogue without pretending that they share one
-implementation mechanism.
+This is the canonical documentation home for classifying Uhura UI
+capabilities. It gives elements, surfaces, reusable patterns, integrations, and
+cross-cutting behaviors one discoverable topology without making any current
+element name or contract permanent.
 
 In this documentation, **widget** is an umbrella term. A **catalog element** is
-the narrower machine-readable primitive loaded by the checker. The distinction
-must remain explicit in every entry.
+the narrower machine-readable primitive recognized by a particular language
+version. The distinction must remain explicit.
+
+The classifications below are working vocabulary, not a compatibility
+contract or permanent language ontology. They may be revised when another
+topology explains the capability space better. Stable paths exist for
+navigation and tooling, not to make their current labels semantic law.
 
 ## Taxonomy
 
 Each concrete capability has one primary form and zero or more facets. A shared
-facet document may define a reusable integration or behavior contract without
-being a capability itself.
+facet may define a reusable integration or behavior without being a capability
+itself.
 
-| Role | Classification | Directory | Meaning |
+| Role | Classification | Stable directory | Meaning |
 |---|---|---|---|
-| Primary form | Element | [`elements/`](elements/) | A semantic primitive declared by a versioned element catalog and realized by a renderer. |
-| Primary form | Surface | [`surfaces/`](surfaces/) | A Core-managed presentation layer or orchestration primitive outside the element tree. |
-| Primary form | Pattern | [`patterns/`](patterns/) | A reusable composition of existing language, elements, components, and CSS that adds no primitive contract. |
-| Facet | Integration | [`integrations/`](integrations/) | A renderer or host-backed boundary with an external platform or service. |
-| Facet | Behavior | [`behaviors/`](behaviors/) | A cross-cutting contract that affects one or more capabilities or their realization. |
+| Primary form | Element | [`elements/`](elements/) | A semantic primitive declared by a versioned catalog and realized by a renderer. |
+| Primary form | Surface | [`surfaces/`](surfaces/) | A language-managed presentation layer or orchestration primitive outside the ordinary element tree. |
+| Primary form | Pattern | [`patterns/`](patterns/) | A reusable composition of existing language and capabilities that adds no primitive contract. |
+| Facet | Integration | [`integrations/`](integrations/) | A renderer- or host-backed boundary with an external platform or service. |
+| Facet | Behavior | [`behaviors/`](behaviors/) | A cross-cutting contract that affects one or more capabilities or realizations. |
 
 Primary form classifies what a capability is. Facets record additional
-contracts that may apply to any primary form. Neither axis decides whether a
-capability is built-in, opt-in, experimental, or accepted.
+contracts that may apply. Neither axis decides whether a capability is built
+in, opt-in, experimental, accepted, or implemented.
 
-## Catalogue
+## Version-scoped catalogues
 
-| Entry | Primary form | Facets | Availability | Decision | Implementation |
-|---|---|---|---|---|---|
-| [`<button>`](elements/button.md) | Element | None | Built-in base catalog; project-pinned during incubation | Control taxonomy and some state semantics unsettled | Checked action control and browser realization implemented; known composition and accessibility gaps documented |
-| [`<scroll>`](elements/scroll.md) | Element | None | Built-in base catalog; project-pinned during incubation | No accepted widget RFC | Element and Play behavior implemented; static preview pose proposed |
-| [`<icon>`](elements/icon.md) | Element | [Icon font](integrations/icon-font.md) | Built-in Lucide family and local families implemented | Font-only realization selected before v1; permanent v1 resource model open | Checked family/name token, strict WOFF2 pipeline, host resources, and browser realization implemented |
-| [`<img>`](elements/img.md) | Element | None | Built-in base catalog; project-pinned during incubation | Renamed from `<image>` to align the narrow primitive with HTML; no accepted widget RFC | Typed asset and accessibility contract plus native browser Editor/Play realization implemented |
-| [`<view>`](elements/view.md) | Element | None | Built-in base catalog; project-pinned during incubation | Neutral container implemented; semantic role taxonomy unsettled | Checker/Core/browser realization implemented; list role overwrite and ARIA-nonconforming tablist documented |
+- [v0 widget draft](drafts/v0/README.md) — current implemented and proposed
+  capability notes; disposable with the v0 incubation model.
 
-When an entry is added, list it here with its primary form, facets,
-availability, decision record, implementation status, and supported renderers.
+Exact names, properties, events, accessibility requirements, availability,
+renderer mappings, and implementation gaps belong under a named version or
+draft. A later catalogue must not edit v0 pages into a new language generation.
+It should create its own version path and may reuse only the taxonomy that
+still helps.
 
-## Shared facets
+## Stable paths
 
-| Entry | Classification | Applies to | Decision | Implementation |
-|---|---|---|---|---|
-| [Icon font](integrations/icon-font.md) | Integration | [`<icon>`](elements/icon.md) | Sole icon-resource mechanism before v1 | Built-in and local WOFF2 families implemented across checker, host, Editor, and Play |
+The taxonomy hubs and [`patterns/`](patterns/) remain stable navigation paths.
+The checker currently directs some diagnostics to `docs/widgets/patterns`, so
+that path must not become a version-specific contract.
+
+Concrete draft leaves are intentionally not stable. They may be rewritten,
+merged, or deleted with their containing draft. A durable RFC must summarize
+any rationale that needs to survive their removal.
 
 ## Entry requirements
 
-Start from [`TEMPLATE.md`](TEMPLATE.md). Every entry should state:
+Start from [`TEMPLATE.md`](TEMPLATE.md). Every concrete entry should state:
 
-- whether it documents a capability or shared facet;
-- its primary form when it is a capability, applicable facets, and
-  implementation owners;
-- whether availability is undecided, built-in, or opt-in;
-- the relevant RFC and specification status;
-- its semantic contract, including props, events, children, slots, or intents;
-- state and effect ownership;
+- its version or draft scope and lifetime;
+- primary form, facets, and implementation owners;
+- availability and decision status separately;
+- semantic contract, including properties, events, children, or slots;
+- state and external-effect ownership;
 - accessibility and static-validation requirements;
 - renderer or host requirements and fallback behavior;
 - motion and reduced-motion behavior where applicable; and
-- executable conformance coverage.
+- conformance and implementation evidence.
 
-Availability, decision status, and implementation status are separate axes. A
-prototype may be implemented without being supported, and an accepted design
-may remain unimplemented.
-
-## Authority boundary
-
-This catalogue is an index and capability reference. It does not create
-language law:
-
-1. Working-group documents hold non-normative research.
-2. RFCs record durable decisions.
-3. Once versioned work begins, a versioned specification and executable
-   conformance suite define observable behavior that implementations may claim
-   to support.
-4. Machine-readable catalogs and implementation code remain artifacts to which
-   an entry links; prose here must not silently override them.
-
-Proposed entries must say so prominently. Merely adding a document here does
-not reserve a name, add a builtin, or require renderer support.
+Adding a draft document does not reserve a name, add a builtin, or require
+renderer support.

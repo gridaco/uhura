@@ -7,9 +7,7 @@
 - **Supersedes:** The experimental static Canvas export and document-reload
   lifecycle
 - **Related work:** [RFC 0001](0001-project-foundation.md),
-  [RFC 0003](0003-source-comments-docs-and-annotations.md),
-  [Uhura specification](../spec/README.md), and
-  [read-only preview provenance](../working-group/referential-example-data-and-read-only-provenance.md)
+  [RFC 0003](0003-source-comments-docs-and-annotations.md)
 
 ## 1. Decision
 
