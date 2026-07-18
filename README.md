@@ -92,6 +92,26 @@ cargo test --workspace
 Authored source is canonical. Generated browser, provider, and Wasm artifacts
 are build outputs and are not committed.
 
+## Design research
+
+Uhura's behavioral language is being reviewed from first principles. The
+[design principles](docs/doctrine/principles.md) define the questions, while
+these references provide the current evidence:
+
+- [Language necessity and surface reuse](docs/studies/language-necessity-and-surface-reuse.md)
+  asks whether Uhura needs an independently owned language at all.
+- [Program harnesses](examples/programs/README.md) provide language-neutral
+  L0–L2 problems for comparing candidate semantics.
+- [Transactional state-machine language prior art](docs/studies/transactional-state-machine-language-prior-art.md)
+  compares Scilla, FSM-Hume, Lustre/SCADE, Kôika/Bluespec, Elm, and adjacent
+  models.
+- [Visual state-machine authoring and deterministic simulation prior art](docs/studies/visual-state-machine-authoring-prior-art.md)
+  compares Stateflow, IEC controller languages, game-engine visual scripting,
+  Photon Quantum, and relevant negative evidence.
+
+These studies are non-authoritative and disposable. They inform later
+decisions; they do not define current syntax or runtime behavior.
+
 ## Status
 
 Uhura is incubating. Its grammar, ABI, package structure, and compatibility

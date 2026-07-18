@@ -39,6 +39,14 @@ create competing doctrine.
 - [Language necessity and surface reuse](language-necessity-and-surface-reuse.md)
   asks whether Uhura needs independently owned syntax, a checked profile over
   familiar notation, an adopted kernel, or no new language layer.
+- [Transactional state-machine language prior art](transactional-state-machine-language-prior-art.md)
+  compares deterministic Mealy reactions, bounded functional automata, atomic
+  write logs, reducer-command architectures, and communicating transitions
+  without accepting any candidate model.
+- [Visual state-machine authoring and deterministic simulation prior art](visual-state-machine-authoring-prior-art.md)
+  treats visual representation, state-machine topology, deterministic
+  evaluation, and replayable execution as separate axes across game engines,
+  industrial controllers, and simulation runtimes.
 - [Escape hatches and foreign bindings](escape-hatches-and-foreign-bindings.md)
   records the established need for explicit foreign integration while leaving
   its taxonomy, syntax, trust model, execution semantics, and implementation
