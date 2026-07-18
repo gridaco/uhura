@@ -22,6 +22,8 @@ layout and presentation; providers own authoritative data and operations.
 The full-stack Instagram project in
 [`examples/instagram/`](examples/instagram/) exercises the complete workflow;
 its Uhura source remains an independently checkable project under `client/`.
+Language-neutral [program harnesses](examples/programs/) separately pressure
+the experience-machine model without depending on widgets or rendering.
 
 ## Uhura and Spock
 
@@ -80,7 +82,7 @@ cargo test --workspace
 
 - [`crates/`](crates/) — checker, runtime, Wasm bindings, and CLI.
 - [`web/`](web/) — Editor and Play browser application.
-- [`examples/instagram/`](examples/instagram/) — full-stack Spock framework example.
+- [`examples/`](examples/) — language-design program harnesses and the full-stack Instagram example.
 - [`docs/doctrine/`](docs/doctrine/) — durable language doctrine and review principles.
 - [`docs/spec/`](docs/spec/) — stable router for disposable drafts and future version specifications.
 - [`docs/widgets/`](docs/widgets/) — stable capability taxonomy and version-scoped catalogues.

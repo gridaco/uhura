@@ -33,6 +33,8 @@ Doctrine may state:
 
 - the mission and product audience;
 - enduring ownership and honesty principles;
+- criteria for deciding which language and implementation layers Uhura should
+  own;
 - the tension between mathematical modeling and authoring ergonomics;
 - readability, compactness, accessibility, and evidence standards; and
 - questions every language generation should answer.

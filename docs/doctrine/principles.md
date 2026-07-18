@@ -48,9 +48,17 @@ The core should use the least sufficient computational power. The authoring
 surface may provide higher-level frontend concepts when their lowering and
 ownership are precise.
 
-**Ask:** Could a smaller declarative construct serve the use cases? If the
-proposal is high-level, what exact semantic runtime, reusable capability,
-renderer, host, or external-boundary contract does it denote?
+When ownership of a layer is materially at issue, compare independent
+ownership with the smallest viable reuse, adoption, or no-new-layer
+alternative in proportion to the decision's scope. Independent ownership must
+justify its marginal lifetime cost; reuse must preserve the relevant product
+and semantic guarantees rather than import ambient authority.
+
+**Ask:** Could a smaller declarative construct, existing semantic model,
+library, or checked profile serve the demonstrated problem? What measurable
+value does Uhura ownership create, and does it justify the marginal lifetime
+cost? If the proposal is high-level, what exact semantic runtime, reusable
+capability, renderer, host, or external-boundary contract does it denote?
 
 ## 5. Compress semantics, not spelling
 
@@ -71,15 +79,17 @@ forms should have similar meaning.
 **Ask:** Can a reader predict this construct from nearby source and the core
 taxonomy, or must they recover hidden global context and special cases?
 
-## 7. Make every concept pay for its topology
+## 7. Make every concept and owned layer pay for its topology
 
-A new construct affects grammar, semantics, static representation, runtime,
-renderers, hosts,
-tooling, teaching, and compatibility. Its value must be considered against
-the total language, not only the demonstration that motivated it.
+A new construct or project-owned layer affects grammar, semantics, static
+representation, runtime, renderers, hosts, tooling, ecosystem coupling,
+teaching, and compatibility. Its value must be considered against the total
+system, not only the demonstration that motivated it.
 
 **Ask:** Is this one orthogonal concept or several bundled together? Does it
 replace more conceptual weight than it adds, and where else could it live?
+Which requirement belongs to the semantic contract, source, compiler,
+runtime, renderer, or host?
 
 ## 8. Make the common correct path the shortest
 
@@ -134,8 +144,8 @@ A language proposal should contain, in proportion to its scope:
 4. a formal or operational model when behavior is involved;
 5. its lowering or boundary contract;
 6. static checks, diagnostics, and runtime consequences;
-7. alternatives at the syntax, pattern, reusable-capability, renderer, host,
-   and tooling layers;
+7. viable alternatives at the relevant ownership and boundary layers, in
+   proportion to the proposal's scope;
 8. primary prior-art sources with claims classified as formal, product or
    implementation, convergence, ergonomic, adoption, or transfer evidence;
 9. readability and semantic-compression evidence on representative tasks;
