@@ -70,14 +70,18 @@ complexity rather than removing it.
 behavior becomes implicit, and can an author still inspect, override, and
 diagnose it?
 
-## 6. Read locally and canonically
+## 6. Read and learn locally and canonically
 
 Human and agent authors should encounter one regular grammar, canonical
 formatting, stable names, explicit scope, and structured diagnostics. Similar
-forms should have similar meaning.
+forms should have similar meaning. A bounded canonical overview should be
+enough to acquire the core model and apply it to unseen tasks; familiar forms
+must not invite undeclared semantics from another language.
 
-**Ask:** Can a reader predict this construct from nearby source and the core
-taxonomy, or must they recover hidden global context and special cases?
+**Ask:** Can a new author learn this construct from the core overview, predict
+it from nearby source and the taxonomy, translate unseen intent into conforming
+source, and repair a mistake without recovering hidden global context or
+special cases?
 
 ## 7. Make every concept and owned layer pay for its topology
 
@@ -148,7 +152,8 @@ A language proposal should contain, in proportion to its scope:
    proportion to the proposal's scope;
 8. primary prior-art sources with claims classified as formal, product or
    implementation, convergence, ergonomic, adoption, or transfer evidence;
-9. readability and semantic-compression evidence on representative tasks;
+9. readability, bounded learnability, and semantic-compression evidence on
+   representative and held-out tasks;
 10. accessibility and static-preview consequences;
 11. compatibility, migration, and capability-negotiation consequences; and
 12. conformance cases that would distinguish correct implementations.

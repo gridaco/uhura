@@ -8,10 +8,10 @@
 
 Uhura is authored directly by people and software agents. Its source is not an
 incidental serialization of an editor model; it is a primary user interface.
-Readability, compactness, diagnostics, and defaults are therefore first-class
-language-design and product-quality concerns, not polish to apply after the
-engine works. A default additionally becomes part of program semantics when
-observable behavior depends on it.
+Readability, learnability, compactness, diagnostics, and defaults are therefore
+first-class language-design and product-quality concerns, not polish to apply
+after the engine works. A default additionally becomes part of program
+semantics when observable behavior depends on it.
 
 ## Readability
 
@@ -58,6 +58,68 @@ Novel syntax earns no credit through novelty. Familiar notation earns credit
 only for the knowledge, tools, and artifacts that remain safely reusable after
 Uhura's constraints are applied. Familiar spelling is a means; a checked and
 portable model remains the constraint.
+
+## Learnability: bounded acquisition and transfer
+
+Familiarity and learnability are not the same claim. Familiarity describes
+knowledge an author already has. Learnability describes whether an author with
+no assumed Uhura knowledge can acquire the language from a bounded canonical
+teaching packet, translate language-neutral intent into source that checks and
+has the intended semantics, and diagnose and repair mistakes.
+
+Review the learning curve along distinct dimensions:
+
+- **prior familiarity:** which notation, concepts, and tools may already be
+  known to the intended author;
+- **discoverability:** whether names, structure, diagnostics, and the reference
+  make the next valid construct findable;
+- **acquisition:** how much canonical instruction is needed before the author
+  can form valid programs;
+- **transfer:** whether the learned model composes on held-out problems rather
+  than only reproducing taught examples;
+- **repair:** whether a failed attempt and its diagnostics lead efficiently to
+  a conforming program; and
+- **retention:** for human authors, whether the model remains usable after time
+  away without relearning incidental rules.
+
+Familiar syntax can improve acquisition, but it can also create false friends.
+A form that resembles HTML, Svelte, JavaScript, or another language incurs a
+cost when authors import state, evaluation, scoping, or lifecycle rules that
+Uhura does not provide. A proposal must measure this negative transfer rather
+than crediting resemblance by itself.
+
+The canonical teaching packet is part of the language product. It should offer
+a compact semantic overview, a closed syntax and concept reference, a small set
+of representative examples, and the diagnostic vocabulary needed for repair.
+It must not require repository archaeology or knowledge of the current engine.
+Its exact size belongs to a versioned evaluation, but competing designs must
+receive the same information and comparable reading or context budgets.
+
+An intent-to-source trial starts from a language-neutral description of a
+program, not an example tailored to the candidate syntax. After the teaching
+packet, test previously unseen tasks and record:
+
+- instruction size and study time or context tokens;
+- first-attempt parse and check success;
+- semantic conformance, including behavior and declared limits;
+- invented constructs and semantics imported from other languages;
+- reference lookups, diagnostic quality, and repair attempts;
+- unnecessary source and concepts; and
+- transfer to new combinations of previously taught concepts.
+
+Human and agent trials are separate evidence. Human experience, study time,
+and retention interval are test conditions. For agents, undisclosed training
+exposure usually cannot be proved or excluded; the reproducible approximation
+is a clean context with a fixed teaching packet, task prompt, tool access, and
+reported model version. A plausible completion from one model is not evidence
+of learnability.
+
+The Carnegie Mellon
+[Natural Programming project](https://www.cs.cmu.edu/~NatProg/) is useful
+precedent for treating programming notation as a human-centered empirical
+design problem: study how intended authors express and debug tasks, then test
+the resulting language. Uhura extends that obligation to software agents
+without assuming that human and model learning curves are identical.
 
 ## Compactness means semantic compression
 
@@ -255,7 +317,7 @@ settled by isolated snippets. At minimum:
 7. preserve examples and checker expectations so later changes can reproduce
    the result.
 
-Agent evaluation should use held-out tasks and report parse/check success,
-semantic correctness, repair count, and unnecessary source—not merely whether
-one model generated plausible text once. Model versions and prompts are test
-conditions, not permanent language doctrine.
+Agent evaluation should use the bounded-acquisition protocol above and
+held-out tasks, not merely ask whether one model generated plausible text once.
+Model versions and prompts are test conditions, not permanent language
+doctrine.

@@ -22,7 +22,7 @@ design center.
 | Document | Theme | Purpose |
 |---|---|---|
 | [Mission and identity](mission.md) | Philosophical and technical | Defines what Uhura is for, the product bet, and the tension between a small honest model and a humane frontend language. |
-| [Authoring ergonomics](authoring.md) | Human and empirical | Defines readability, semantic compactness, good defaults, concept budgets, and how those claims should be measured. |
+| [Authoring ergonomics](authoring.md) | Human and empirical | Defines readability, bounded learnability, semantic compactness, good defaults, concept budgets, and how those claims should be measured. |
 | [Design principles](principles.md) | Mixed review rubric | Provides the questions and evidence expected when accepting, rejecting, or revising a language feature. |
 
 Documents not indexed here are not implicit doctrine.
@@ -36,7 +36,8 @@ Doctrine may state:
 - criteria for deciding which language and implementation layers Uhura should
   own;
 - the tension between mathematical modeling and authoring ergonomics;
-- readability, compactness, accessibility, and evidence standards; and
+- readability, learnability, compactness, accessibility, and evidence
+  standards; and
 - questions every language generation should answer.
 
 Doctrine must not define:
