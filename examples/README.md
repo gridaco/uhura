@@ -1,7 +1,7 @@
 # Examples
 
-This directory contains standalone program harnesses and application-scale
-evidence for Uhura.
+This directory contains standalone program harnesses, bounded application
+harnesses, and full-stack product evidence for Uhura.
 
 An example begins with a problem that exists independently of the current
 language. Its requirements must not shrink, change names, or acquire convenient
@@ -18,16 +18,19 @@ where a language or runtime succeeds, distorts the problem, or fails.
 | Path | Class | Purpose |
 | --- | --- | --- |
 | [`programs/`](programs/) | Program harnesses | Small, standalone, language-neutral transition problems used to design and compare the machine language |
-| [`instagram/`](instagram/) | Application example | A full-stack product and integration example exercising Uhura, Spock, providers, rendering, and visual authoring together |
+| [`applications/`](applications/) | Application harnesses | Bounded, language-neutral product problems used to test practical composition of the machine, `ui`, and explicit application features |
+| [`instagram/`](instagram/) | Full-stack product example | A product and integration example exercising Uhura, Spock, providers, rendering, and visual authoring together |
 
-The two classes answer different questions. Program harnesses isolate the
+The three classes answer different questions. Program harnesses isolate the
 behavioral core without depending on widgets or a renderer. Application
-examples test whether that core remains useful when embedded in a consequential
-frontend.
+harnesses freeze smaller practical problems so competing language designs can
+be compared fairly at the UI and framework boundary. Full-stack product
+examples test the broader integration and authoring workflow without pretending
+to be controlled language experiments.
 
-Repository-level program harnesses are also distinct from authored
+Repository-level harnesses are also distinct from authored
 `*.examples.uhura` modules. Those modules select static design previews for one
-Uhura project. A program harness specifies an independent problem against which
+Uhura project. A harness specifies an independent problem against which
 different language designs may be evaluated.
 
 ## Problem authority
@@ -39,9 +42,14 @@ problem statement, state and input model, transition behavior, invariants, and
 observable traces. Uhura source, checked IR, runtime fixtures, and visual shells
 are possible answer sheets. None may silently redefine the challenge.
 
-For an application example, the product promise and independently grounded
-behavior are authoritative. Existing source and screenshots are implementation
-evidence rather than permission to simplify the product.
+For an application harness, the language-neutral product behavior, ownership
+boundaries, semantic presentation oracle, lifecycle rules, and traces are
+authoritative. Widgets, screenshots, candidate source, and adapter glue are
+answer evidence rather than permission to change the problem.
+
+For a full-stack product example, the product promise and independently
+grounded behavior are authoritative. Existing source and screenshots remain
+implementation evidence rather than permission to simplify the product.
 
 This authority is local to the example. A harness can reveal a language
 requirement, but it cannot make a construct supported or normative without the
@@ -58,8 +66,18 @@ A program harness belongs here when it:
 - exposes a materially different pressure from the existing programs; and
 - remains useful if Uhura is replaced or redesigned.
 
-An application example belongs here when its product or integration problem is
-valuable independently of Uhura and its stated scope remains honest.
+An application harness belongs here when it:
+
+- describes one bounded application with value independent of Uhura;
+- crosses a materially different practical boundary from existing harnesses;
+- defines application, external-authority, host, and renderer ownership;
+- has deterministic semantic presentation and trace oracles;
+- avoids prescribing a widget system or candidate language architecture; and
+- gives every candidate the same declared host capabilities and fixtures.
+
+A full-stack product example belongs here when its product or integration
+problem is valuable independently of Uhura and its stated scope remains
+honest.
 
 Do not add examples merely to demonstrate a new keyword, widget, or convenient
 happy path. A focused implementation fixture that only guards an accepted

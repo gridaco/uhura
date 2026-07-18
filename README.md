@@ -23,7 +23,10 @@ The full-stack Instagram project in
 [`examples/instagram/`](examples/instagram/) exercises the complete workflow;
 its Uhura source remains an independently checkable project under `client/`.
 Language-neutral [program harnesses](examples/programs/) separately pressure
-the experience-machine model without depending on widgets or rendering.
+the experience-machine model without depending on widgets or rendering. The
+parallel [application harnesses](examples/applications/) test whether candidate
+models remain practical when `ui`, locations, lifecycle, and external
+settlement are composed explicitly.
 
 ## Uhura and Spock
 
@@ -82,7 +85,7 @@ cargo test --workspace
 
 - [`crates/`](crates/) — checker, runtime, Wasm bindings, and CLI.
 - [`web/`](web/) — Editor and Play browser application.
-- [`examples/`](examples/) — language-design program harnesses and the full-stack Instagram example.
+- [`examples/`](examples/) — language-design program and application harnesses, plus the full-stack Instagram example.
 - [`docs/doctrine/`](docs/doctrine/) — durable language doctrine and review principles.
 - [`docs/spec/`](docs/spec/) — stable router for disposable drafts and future version specifications.
 - [`docs/widgets/`](docs/widgets/) — stable capability taxonomy and version-scoped catalogues.
@@ -102,6 +105,8 @@ these references provide the current evidence:
   asks whether Uhura needs an independently owned language at all.
 - [Program harnesses](examples/programs/README.md) provide language-neutral
   L0–L2 problems for comparing candidate semantics.
+- [A0 Return Desk](examples/applications/a0-return-desk/README.md) provides the
+  parallel practical application-transfer problem.
 - [Transactional state-machine language prior art](docs/studies/transactional-state-machine-language-prior-art.md)
   compares Scilla, FSM-Hume, Lustre/SCADE, Kôika/Bluespec, Elm, and adjacent
   models.

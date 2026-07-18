@@ -1,8 +1,9 @@
 # Program harnesses
 
 - **Status:** Non-normative language-design corpus
-- **Current form:** Language-neutral Markdown problem specifications
-- **Implementation status:** No Uhura solutions or runtime fixtures
+- **Current form:** Language-neutral problem specifications plus
+  non-authoritative comparison answers
+- **Implementation status:** No accepted Uhura solutions or runtime fixtures
 - **Scope:** The experience-machine language, not widgets or presentation
 
 Program harnesses are small, pure, standalone problems used to design and
@@ -33,6 +34,29 @@ L2  one open, keyed machine system
 None is a widget exercise. A later visual or textual projection may make a
 program pleasant to operate, but pixels and interaction controls are never its
 oracle.
+
+## Comparison baselines
+
+| Baseline | Form | Purpose |
+| --- | --- | --- |
+| [Plain TypeScript](baselines/typescript/) | Zero-package pure functions executed directly by Bun | A familiar frontend-language control for semantic, ergonomic, learnability, and verbosity comparisons |
+
+A baseline is an answer sheet, not an authority and not a proposed Uhura
+implementation. It must preserve the same frozen behavior before its
+readability or size is compared.
+
+For apples-to-apples source measurements, count the complete authoring source
+and every helper it relies on. Exclude tests, comments, documentation, build
+configuration, generated files, boundary decoders, and compiler/runtime
+implementation from both sides. Record those surfaces separately when they
+materially affect guarantees or stewardship cost.
+Use the shared [corpus source scanner](baselines/measure-source.mjs) for raw
+line, token, and byte evidence.
+
+Do not force a baseline into a candidate's preferred abstraction. Two answers
+are comparable when they preserve the same state, inputs, outcomes,
+observations, ordering, and boundary consequences—not when their declarations
+have matching names.
 
 ## Optional comparison notation
 
@@ -149,9 +173,11 @@ previously fixed change request. This checks whether the language modeled the
 problem's concepts or merely made the original snapshot concise.
 
 A separate held-out program should validate the selected design before
-acceptance. Application-scale transfer is then tested against
-[`../instagram/`](../instagram/). Neither step permits retroactively changing
-the L0-L2 problems.
+acceptance. Practical application transfer is then tested against the
+language-neutral [A0 Return Desk](../applications/a0-return-desk/). The
+[Instagram product example](../instagram/) remains broader dogfood and
+integration evidence rather than a controlled comparison harness. None of
+these steps permits retroactively changing the L0–L2 problems.
 
 ## Relationship to specifications and conformance
 

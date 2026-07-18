@@ -39,6 +39,12 @@ create competing doctrine.
 - [Language necessity and surface reuse](language-necessity-and-surface-reuse.md)
   asks whether Uhura needs independently owned syntax, a checked profile over
   familiar notation, an adopted kernel, or no new language layer.
+- [Machine-first language, opt-in UI, and explicit framework features](machine-first-language-and-opt-in-ui.md)
+  recommends that Uhura make its core independently usable as a state-machine
+  language without a renderer, then admit web UI vocabulary through an
+  explicit, checked extension named `ui` and meta-framework semantics through
+  feature-by-feature imports; the exact activation and import syntax remain
+  open.
 - [Transactional state-machine language prior art](transactional-state-machine-language-prior-art.md)
   compares deterministic Mealy reactions, bounded functional automata, atomic
   write logs, reducer-command architectures, and communicating transitions
@@ -53,8 +59,11 @@ create competing doctrine.
   open.
 
 The Markdown-only [program harnesses](../../examples/programs/) provide the
-current language-neutral problem corpus for that work. They contain no
-candidate implementations and have no language authority.
+pure L0–L2 problem corpus. The parallel
+[application harnesses](../../examples/applications/) begin with A0 Return
+Desk, which tests practical composition with `ui` and explicit application
+features. Neither corpus contains accepted candidate implementations or has
+language authority.
 
 ## Research inputs
 

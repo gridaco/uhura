@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "path": "typescript/baseline.ts",
+      "physicalLines": 650,
+      "codeLines": 555,
+      "approximateTokens": 2671,
+      "bytes": 14824
+    }
+  ]
+}
