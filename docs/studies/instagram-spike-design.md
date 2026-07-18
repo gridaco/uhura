@@ -1,8 +1,8 @@
 # Uhura spike design — Instagram vertical slice (v3, model-driven Editor)
 
-- **Status:** Study design — non-normative, implementation-guiding
-- **Lifetime:** Disposable study
-- **Foundation:** [Draft RFC 0001](../rfcs/0001-project-foundation.md),
+- **Status:** Completed historical implementation spike — non-normative
+- **Lifetime:** Disposable historical evidence; not current design guidance
+- **Foundation at the time:** [Draft RFC 0001](../rfcs/0001-project-foundation.md),
   [v0 incubation language model](../spec/drafts/v0.md)
 - **Requirements evidence:** [Application-scale stress-test requirements](application-scale-stress-test.md)
 - **Provenance:** v1 was synthesized from seven parallel subsystem designs +
@@ -13,10 +13,23 @@
   Editor document with a versioned native read model and one browser
   application for Editor and Play.** §15 logs the direction changes.
 
-**Elevator pitch:** Uhura is a minimal Svelte without JavaScript — Svelte-
-flavored markup and bindings over a closed, total transition language and
-typed service ports, compiled by a Rust checker into a deterministic,
+**Historical spike pitch:** Uhura is a minimal Svelte without JavaScript —
+Svelte-flavored markup and bindings over a closed, total transition language
+and typed service ports, compiled by a Rust checker into a deterministic,
 replayable, headless machine. Styling is real CSS. The machine is the spec.
+
+> **Historical interpretation:** This document records the design constraints
+> used to complete one implementation spike. Its `store` split, machine and
+> event model, expression algebra, Rust/Wasm runtime shape, widget catalog, and
+> number conventions are evidence about that implementation, not defaults,
+> requirements, or constraints for the current language redesign. In
+> particular, the spike deliberately excluded floats and used integer
+> percentages, including its viewport threshold. Current doctrine's normalized
+> `0..1` convention does not make this historical record erroneous; a later
+> design may choose different semantics and must specify them independently.
+> Normative words such as “must” below govern only the completed spike target.
+> The [language-necessity study](language-necessity-and-surface-reuse.md)
+> reopens the source, parser, semantic-kernel, and renderer questions.
 
 ---
 
@@ -52,18 +65,30 @@ Out: DMs and realtime delivery, camera capture and filters, Story authoring,
 audio selection, notifications, production auth (Play only switches the dev
 actor), i18n, rich text, and recommendation ranking.
 
-### Why not Svelte itself (recorded once)
+### Why the spike did not use Svelte itself
 
-Svelte's templates and handlers are arbitrary JS: nothing is enumerable,
-provable, replayable, or headless — rendering *is* its semantics. Building
-on `svelte/compiler` would define Uhura by **subtraction** over a JS-shaped,
-non-semver-stable AST (v4→v5 rewrote it), with semantics-by-implementation
-and no Rust/wasm core. What Svelte *does* contribute is its authoring
-surface — single-file components, `{#each}`/`{#if}` blocks, moustache
-expressions, `on:` bindings, co-located `<style>` — and Uhura adopts that
-surface while owning the grammar. The three properties no existing framework
-provides, and which are the entire reason Uhura exists: total no-JS
-semantics, a deterministic headless step with traces, and typed ports.
+Standard Svelte admits ordinary JavaScript through scripts, template
+expressions, and handlers and defines a DOM-oriented component runtime. Without
+a separate checked profile, that source did not satisfy the spike's narrower
+contract: all authored state changes and effects admitted by a closed checker,
+one deterministic renderer-neutral semantic step, explicit typed ports, and
+serializable replay traces. This was a contract mismatch, not a claim that
+Svelte programs are inherently impossible to analyze, replay, or render
+headlessly.
+
+The spike did not build directly on `svelte/compiler` because replacing
+Svelte's expression, effect, component-eligibility, and rendering semantics
+would still have required an independently specified conformance boundary
+around an implementation-owned compiler interface. It did not test how much
+parser, editor, or tooling reuse a checked profile could retain.
+
+Svelte still contributed the spike's authoring surface: single-file
+components, `{#each}`/`{#if}` blocks, moustache expressions, `on:` bindings,
+and co-located `<style>`. Owning the grammar and Rust/Wasm runtime was an
+implementation choice for this spike, not proof that compiler reuse is
+unworkable or that no existing system can satisfy a future Uhura contract. The
+[language-necessity study](language-necessity-and-surface-reuse.md) preserves
+that question for redesign.
 
 ---
 
@@ -1469,9 +1494,9 @@ Catalog: third-party catalog exercise (mechanism specified, §10).
 | 21 | "Let authors leverage CSS; the token/layout taxonomy is verbose reinvention" | **Conceded.** Styling is web-native CSS (`class`, co-located `<style>`, tokens as custom properties); style-prop closure and the generated class system deleted; checker does shallow selector/rooting/existence checks only. Consequence, named plainly: renderer neutrality is retained for *semantics* (V) and relinquished for *styling* (CSS is web-targeted; a native renderer would need its own style layer). |
 | 22 | "Drop the layout taxonomy" | **Conceded.** `column/row/stack/grid/spacer` and every style prop removed; `view` (+`role`) is the only container; CSS does layout. The initial element set shrank to nine; later media dogfooding added the tenth, `video`, because playback, policy flags, and accessible labeling could not truthfully be represented by an image poster. |
 | 23 | "View should be extensible; users define their own widgets; core is just xml/html" | **Half-conceded.** Markup-shaped Svelte-flavored syntax adopted; catalog extension specified as first-class data (user-registered elements with full signatures + a renderer that implements them). **Held:** the element set stays closed-but-extensible, never raw HTML — `<div onclick>` must not typecheck, because event eligibility, inert user content, a11y contracts, and the corpus's invented-signature P0s all die otherwise. |
-| 24 | "Why not Svelte / build on its compiler" | Svelte's surface adopted (SFC shape, blocks, `on:`, keyed each, co-located styles); its compiler rejected as a foundation (JS-hosted semantics, spec-by-implementation, unstable AST, no Rust/wasm core). Recorded in §1. |
-| 25 | "Uhura store + uhura view" split | Adopted as the file anatomy: `store { }` is the model/controller (unchanged machine language); markup is the view. The reframe confirmed rather than changed the machine design. |
-| 26 | "Minimal Svelte that does not support JS" | Adopted as the project's elevator pitch — with the addition that makes it Uhura: a deterministic, replayable, headless machine and typed ports where the JS would have been. |
+| 24 | "Why not Svelte / build on its compiler" | Svelte's surface was adopted (SFC shape, blocks, `on:`, keyed each, co-located styles), but its compiler was not used because standard Svelte source and DOM runtime did not supply the spike's closed renderer-neutral step, typed-port, and replay contract. Parser and tooling reuse were not tested; the [language-necessity study](language-necessity-and-surface-reuse.md) reopens them. |
+| 25 | "Uhura store + uhura view" split | Adopted within the spike as the file anatomy: `store { }` was the model/controller; markup was the view. The reframe confirmed rather than changed the spike's machine design. |
+| 26 | "Minimal Svelte that does not support JS" | Adopted as the spike's elevator pitch, with a deterministic renderer-neutral machine, replay traces, and typed ports where authored JavaScript would otherwise be. |
 
 ### v2 — verification-pass repairs (final-gate verifier, all folded)
 

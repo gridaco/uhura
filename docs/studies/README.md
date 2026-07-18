@@ -34,6 +34,20 @@ The [design principles](../doctrine/principles.md) provide the canonical review
 questions. A study may challenge them with evidence, but it must not silently
 create competing doctrine.
 
+## Language scope and alternatives
+
+- [Language necessity and surface reuse](language-necessity-and-surface-reuse.md)
+  asks whether Uhura needs independently owned syntax, a checked profile over
+  familiar notation, an adopted kernel, or no new language layer.
+- [Escape hatches and foreign bindings](escape-hatches-and-foreign-bindings.md)
+  records the established need for explicit foreign integration while leaving
+  its taxonomy, syntax, trust model, execution semantics, and implementation
+  open.
+
+The Markdown-only [program harnesses](../../examples/programs/) provide the
+current language-neutral problem corpus for that work. They contain no
+candidate implementations and have no language authority.
+
 ## Research inputs
 
 - [Application-scale stress-test requirements](application-scale-stress-test.md)
@@ -48,8 +62,9 @@ create competing doctrine.
 
 - [A class-differentiated state IR](state-ir-proposal.md) is an unaccepted
   candidate model derived from the surveys.
-- [Instagram v0 spike design](instagram-spike-design.md) records one
-  implementation-guiding language/runtime topology.
+- [Instagram v0 spike design](instagram-spike-design.md) records the completed
+  historical language/runtime topology that guided the implementation spike;
+  it is evidence rather than current redesign guidance.
 - [Instagram demo dogfood](instagram-demo-dogfood.md) records feedback from
   exercising that topology.
 - [Referential example data and read-only preview provenance](referential-example-data-and-read-only-provenance.md)

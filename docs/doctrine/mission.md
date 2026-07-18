@@ -18,6 +18,19 @@ interactions, and derived presentation. In product language, **Uhura is a
 state-machine builder**. The hypothesis should be tested through each language
 generation, not protected from contrary evidence.
 
+Uhura's identity rests first in the programs and behavior it admits, not in
+inventing distinctive spelling. Concrete syntax and implementation layers are
+means rather than the product identity. In every named version, authored
+observations, state changes, and boundary interactions must be admitted only
+through specified, checkable forms governed by that version's semantic
+contract.
+
+The implementation language is not the authoring language. Lowering a closed
+program to JavaScript or another general-purpose target does not grant that
+target's ambient powers to authors. Conversely, removing an explicit script
+block does not establish determinism when mutation, effects, callbacks, or
+host authority remain available elsewhere.
+
 This does not require a finite state enumeration, one particular statechart
 notation, or one event-processing algorithm. Nor does it imply that authors
 should manually encode every gesture sample or animation frame as a
@@ -49,8 +62,8 @@ Uhura makes five connected bets:
 
 1. An explicit behavioral model makes interface behavior more checkable,
    replayable, portable, and understandable.
-2. A domain-specific language can model recurring frontend intent more
-   compactly than a general-purpose language plus libraries.
+2. A closed frontend semantic model may express recurring intent more
+   compactly and checkably than a general-purpose language plus libraries.
 3. Declarative presentation can remain independent of DOM, native-widget, and
    canvas object models.
 4. Good defaults can make the shortest program accessible and operationally
@@ -69,6 +82,8 @@ Every substantial design is reviewed on two axes.
 ### Formal honesty
 
 - Is behavior deterministic for complete declared inputs?
+- Does that guarantee follow from accepted-program semantics rather than an
+  implementation language or author discipline?
 - Is every change causally explainable from declared inputs and semantics?
 - Is each fact owned by one semantic authority?
 - Are external effects and platform mechanics kept behind explicit
@@ -111,9 +126,9 @@ welcome when it:
 4. removes conceptual repetition for authors; and
 5. preserves an escape path where real platform differences matter.
 
-The result may be language syntax, a reusable capability, a pattern, an
-external contract, or no Uhura feature at all. Adding syntax is not the default
-definition of progress.
+The result may belong in source syntax, a reused or adopted model, a reusable
+capability, a pattern, an external contract, or no Uhura-owned feature at all.
+Adding syntax is not the default definition of progress.
 
 ## Precedent is evidence, not authority
 

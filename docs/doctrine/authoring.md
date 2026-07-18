@@ -46,11 +46,18 @@ put clarity at the point of use ahead of brevity. That priority transfers even
 though Uhura is a language rather than an API: remove ceremony aggressively,
 but not the names or structure that explain ownership and behavior.
 
-Familiar structure can also lower the cost of entry. Uhura's view language can
-borrow the recognizable shape of HTML and
-[Svelte](https://svelte.dev/) without inheriting arbitrary JavaScript,
-ambient callbacks, or DOM-specific runtime semantics. Familiar spelling is a
-means; a checked and portable Uhura model remains the constraint.
+Familiar structure can also lower the cost of entry. Source familiarity and
+semantic inheritance are separate decisions. Uhura's view language can borrow
+the recognizable shape of HTML and [Svelte](https://svelte.dev/) without
+inheriting arbitrary JavaScript, ambient callbacks, or DOM-specific runtime
+semantics. It may reuse an established grammar, file envelope, parser, or
+toolchain where the admitted subset remains independently specified, closed,
+canonical, portable, and checkable.
+
+Novel syntax earns no credit through novelty. Familiar notation earns credit
+only for the knowledge, tools, and artifacts that remain safely reusable after
+Uhura's constraints are applied. Familiar spelling is a means; a checked and
+portable model remains the constraint.
 
 ## Compactness means semantic compression
 
@@ -93,6 +100,7 @@ Every first-class feature spends more than syntax. Review its cost across:
 | Semantic runtime | Does it change transition ordering, determinism, snapshots, or replay? |
 | Renderer and host | Does every target need a new capability, fallback, or negotiation rule? |
 | Tooling | Can editors, static previews, traces, and agents understand it? |
+| Ecosystem | Which tools and components remain safely reusable, what version coupling is introduced, and what claimed compatibility is only visual familiarity? |
 | Teaching | Does it overlap an existing concept or require another mental model? |
 | Evolution | What compatibility burden and future interaction space does it create? |
 
@@ -102,6 +110,16 @@ large but coherent widget contract may belong in a catalog. A niche
 composition may be better as a pattern. A physical mechanism may belong only
 to a renderer. The language should not promise every useful UI object as a
 core concept.
+
+### Surface ownership is an ergonomic question
+
+When a proposal materially changes the authoring envelope, evaluate the real
+familiarity, tooling, components, and workflows preserved after its
+constraints are applied. Independent syntax must justify its teaching,
+tooling, migration, and maintenance costs; reuse must justify its coupling by
+preserving actual capability rather than a familiar appearance. The detailed
+candidate set and comparison method belong to the study or proposal at hand,
+not permanent doctrine.
 
 ## Good defaults
 
@@ -222,13 +240,14 @@ justify that cost with domain-specific compression.
 Readability and compactness claims should be tested on a versioned corpus, not
 settled by isolated snippets. At minimum:
 
-1. choose representative tasks, including a small interaction, a form, an
-   asynchronous flow, navigation or surfaces, a collection, failure recovery,
-   motion or gesture, and restoration;
+1. choose representative tasks in proportion to the claim; a language-wide
+   corpus should eventually cover a small interaction, a form, an asynchronous
+   flow, navigation or surfaces, a collection, failure recovery, motion or
+   gesture, and restoration;
 2. include adversarial cases such as cancellation, stale outcomes, duplicate
    events, missing capabilities, reduced motion, and invalid state;
 3. compare the current language, the proposal, and the smallest viable
-   alternative on the same behavior;
+   alternatives relevant to the claim on the same behavior;
 4. record source size, named concepts, duplicated facts, edit distance,
    diagnostic distance, invalid states, and hidden defaults;
 5. test comprehension, authoring, modification, and repair separately;
