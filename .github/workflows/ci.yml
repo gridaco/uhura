@@ -212,12 +212,18 @@ jobs:
           assert isinstance(render["authoring"]["targets"], list)
           assert render["authoring"]["targets"]
           assert isinstance(render["authoring"]["entries"], list)
-          assert render["authoring"]["entries"]
+          assert render["authoring"]["entries"] == []
           assert isinstance(render["groups"], list)
           assert render["groups"]
           assert all(isinstance(preview["documentation"], dict) for preview in render["previews"])
           assert all(isinstance(preview["provenance"]["occurrences"], list) for preview in render["previews"])
-          assert any(preview["documentation"]["declarationDocId"] for preview in render["previews"])
+          assert all(
+              preview["documentation"] == {
+                  "declarationDocId": None,
+                  "exampleDocId": None,
+              }
+              for preview in render["previews"]
+          )
           assert any(preview["provenance"]["occurrences"] for preview in render["previews"])
           PY
 
