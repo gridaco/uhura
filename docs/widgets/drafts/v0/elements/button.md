@@ -6,14 +6,14 @@
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Built-in base catalog; currently project-pinned during incubation
-- **Decision:** Current spike design; no accepted widget RFC
+- **Availability:** Native element in the current canonical checker
+- **Decision:** Current experimental contract; no accepted widget RFC
 - **Specification:** Pre-specification
 - **Implementation:** Checker, semantic view, browser Editor, and Play implemented
 - **Owners:** Checker, Core, Renderer
 - **Supported renderers:** Browser Editor and Play
 
-`<button>` declares one user-invoked action. It is a system-defined catalog
+`<button>` declares one user-invoked action. It is a system-defined native
 element, not a user-authored component, an implicit form submit/reset control,
 or a visual variant such as primary, destructive, or icon-only.
 
@@ -356,10 +356,8 @@ specialized control patterns from visual similarity.
 
 Current implementation and research references:
 
-- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
-- [Catalog markup checking](../../../../../crates/uhura-check/src/markup.rs)
-- [Shared browser property mapping](../../../../../web/src/renderer/appliers.ts)
-- [Shared browser activation and reconciliation](../../../../../web/src/renderer/reconciler.ts)
-- [Instagram button usage](../../../../../examples/instagram/client/components/post-card.uhura)
+- [Native element, attribute, and event checking](../../../../../crates/uhura-check/src/checker.rs)
+- [Canonical shared projection renderer](../../../../../web/src/renderer/projection.ts)
+- [Instagram button usage](../../../../../examples/instagram/client/ui.uhura)
 - [Instagram spike element catalog](../../../../studies/instagram-spike-design.md)
 - [Instagram dogfood gaps](../../../../studies/instagram-demo-dogfood.md)

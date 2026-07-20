@@ -5,7 +5,8 @@
 - **Class:** Pure standalone program harness
 - **Subject:** Deterministic state transition, refusal, invariant preservation,
   and trace replay
-- **Implementation:** None
+- **Implementation:** None inside this language-neutral problem; executable
+  answers are indexed by the parent harness
 - **Authority:** The problem contract is authoritative for candidate
   comparison; no Uhura behavior is accepted here
 

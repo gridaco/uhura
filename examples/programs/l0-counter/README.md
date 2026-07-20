@@ -2,7 +2,8 @@
 
 - **Status:** Language-neutral program specification
 - **Level:** L0 — one local transition system
-- **Implementation:** None
+- **Implementation:** None inside this language-neutral problem; executable
+  answers are indexed by the parent harness
 - **Authority:** The problem contract is authoritative for candidate
   comparison; no Uhura behavior is accepted here
 

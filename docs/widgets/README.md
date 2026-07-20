@@ -42,8 +42,13 @@ in, opt-in, experimental, accepted, or implemented.
 
 ## Version-scoped catalogues
 
-- [v0 widget draft](drafts/v0/README.md) — current implemented and proposed
-  capability notes; disposable with the v0 incubation model.
+- [v0 widget draft](drafts/v0/README.md) — historical implemented and proposed
+  capability notes from the retired v0 language model.
+
+Uhura 0.4 does not yet have a version-scoped widget catalogue. Its
+specification and conformance suite, rather than the historical v0 subtree,
+define the currently implemented UI surface. A later 0.4 catalogue may recover
+useful capability studies without inheriting their contracts silently.
 
 Exact names, properties, events, accessibility requirements, availability,
 renderer mappings, and implementation gaps belong under a named version or

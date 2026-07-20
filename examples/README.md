@@ -28,10 +28,12 @@ be compared fairly at the UI and framework boundary. Full-stack product
 examples test the broader integration and authoring workflow without pretending
 to be controlled language experiments.
 
-Repository-level harnesses are also distinct from authored
-`*.examples.uhura` modules. Those modules select static design previews for one
-Uhura project. A harness specifies an independent problem against which
-different language designs may be evaluated.
+Repository-level harnesses are also distinct from an authored `use evidence`
+module such as the Instagram client's
+[`evidence.uhura`](instagram/client/evidence.uhura). Evidence modules define
+scenarios, checkpoints, pins, and static previews for one Uhura program. A
+harness specifies an independent problem against which different language
+designs may be evaluated.
 
 ## Problem authority
 
@@ -39,8 +41,8 @@ The language must fit the example; the example must not fit the language.
 
 For a program harness, the authoritative artifacts are its language-neutral
 problem statement, state and input model, transition behavior, invariants, and
-observable traces. Uhura source, checked IR, runtime fixtures, and visual shells
-are possible answer sheets. None may silently redefine the challenge.
+observable traces. Uhura source, checked IR, executable evidence, and visual
+shells are possible answer sheets. None may silently redefine the challenge.
 
 For an application harness, the language-neutral product behavior, ownership
 boundaries, semantic presentation oracle, lifecycle rules, and traces are

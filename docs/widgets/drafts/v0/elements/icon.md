@@ -74,8 +74,9 @@ system-font fallback, or substitution with a different meaningful icon.
 
 ## Project integration
 
-The project topology, manifest syntax, glyph-map format, locking, and font
-requirements are defined by the [Icon font integration](../integrations/icon-font.md).
+The project topology, resource-manifest syntax, glyph-map format, content
+identity, and font requirements are defined by the
+[Icon font integration](../integrations/icon-font.md).
 
 The shortest form requires no configuration:
 
@@ -214,11 +215,12 @@ The narrow contract intentionally defers:
 - semantic aliases across families; and
 - meaningful standalone icons.
 
-Current implementation references:
+Pre-0.4 implementation references (paths may now contain replacement code):
 
-- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
-- [Catalog and markup checking](../../../../../crates/uhura-check/src/markup.rs)
+- [Native element and icon-token checking](../../../../../crates/uhura-check/src/checker.rs)
+- [Supplemental resource manifest](../../../../../crates/uhura-check/src/resource_manifest.rs)
 - [Browser icon-font resource loader](../../../../../web/src/renderer/icons.ts)
 - [Checked icon-font registry](../../../../../crates/uhura-check/src/icon_fonts.rs)
 - [Bundled Lucide provenance](../../../../../resources/icon-fonts/lucide/PROVENANCE.md)
 - [Editor state protocol](../../../../../web/src/editor/editor-state.ts)
+- [Instagram icon usage](../../../../../examples/instagram/client/ui.uhura)

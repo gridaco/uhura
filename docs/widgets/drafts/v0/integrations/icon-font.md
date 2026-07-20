@@ -9,14 +9,14 @@
 - **Availability:** Built-in Lucide family and local opt-in families implemented
 - **Decision:** Font files plus checked name maps are the only pre-v1 icon resources
 - **Specification:** Pre-specification
-- **Implementation:** Checker, lock, host transport, and browser loading implemented
+- **Implementation:** Resource-manifest checker, host transport, and browser loading implemented
 - **Owners:** Foundation, Checker, Host, Renderer
 - **Applies to:** [`<icon>`](../elements/icon.md)
 - **Supported renderers:** Browser Editor and Play
 
 This integration defines how a logical `<icon>` token is backed by a font. It
-owns family configuration, name-to-codepoint maps, font validation, locking,
-transport, and renderer loading. The element contract remains in
+owns family configuration, name-to-codepoint maps, font validation, content
+identity, transport, and renderer loading. The element contract remains in
 [`<icon>`](../elements/icon.md).
 
 Before v1, this is the only supported icon-resource mechanism. Uhura projects
@@ -31,7 +31,6 @@ A local family consists of exactly one WOFF2 file and one JSON glyph map:
 ```text
 client/
 ├── uhura.toml
-├── uhura.lock
 └── icons/
     └── brand/
         ├── icons.woff2
@@ -40,6 +39,12 @@ client/
 
 Both paths are project-relative. Relative escapes, absolute paths, symlink
 escapes, and network URLs are rejected.
+
+`uhura.toml` is a closed supplemental-resource manifest. Machine entry,
+presentation, lifetime, configuration, and adapter bindings belong to
+`host.toml`; retired app, catalog, port, fixture, and Play-profile sections are
+not accepted here. A project with no supplemental resources may omit
+`uhura.toml` entirely and still receives the built-in Lucide family.
 
 Foundation families use the same resolved pair but are shipped with Uhura. The
 first built-in family is the official Lucide font from `lucide-static`:
@@ -161,7 +166,7 @@ Size and color remain CSS-owned through inherited font size and
 configuration before v1; local icon fonts are responsible for coherent em-box
 and baseline metrics.
 
-## Resolution and locking
+## Resolution and content identity
 
 The checker loads every declared family and validates its closed glyph-name
 set. The host captures the JSON and font bytes as immutable project inputs and
@@ -174,18 +179,16 @@ view does not reference it. This keeps resource coherence simple and makes a
 bad declaration fail deterministically; used-family closure, lazy loading, and
 subsetting remain later distribution optimizations.
 
-`uhura.lock` pins semantic names and presentation bytes separately:
-
-```text
-icon-glyphs brand sha256:<canonical-glyph-map>
-icon-font brand sha256:<woff2-bytes>
-```
-
 Bundled-family provenance records the upstream package version and integrity
-beside the vendored files. Rendering performs no external/package resolution
-and never rereads project paths: the browser fetches the checked manifest and
-WOFF2 only from the current Uhura host. Editor and Play receive the same pinned
-resources and work offline without third-party network access.
+beside the vendored files. Each checked glyph map and WOFF2 receives its own
+deterministic SHA-256 identity, while the complete captured project revision
+has one source fingerprint. The current canonical project setup does not use a
+separate `uhura.lock`.
+
+Rendering performs no external/package resolution and never rereads project
+paths: the browser fetches the checked manifest and WOFF2 only from the current
+Uhura host. Editor and Play receive the same content-addressed resources and
+work offline without third-party network access.
 
 Core IR, semantic views, checkpoints, traces, replay, and EditorState carry
 only normalized `{ family, name }` tokens. They never contain font URLs,
@@ -203,7 +206,7 @@ The following are build-blocking diagnostics:
 - an embedded SVG, bitmap, color, or variable-font realization;
 - malformed glyph JSON or codepoint syntax;
 - a mapped codepoint absent from `cmap` or resolving to `.notdef`; and
-- lock drift.
+- a resource-manifest section or field outside the closed assets/icons surface.
 
 A runtime font-load failure is a renderer-resource diagnostic. The renderer
 must not fall through to a system font, render tofu as if successful, select a
@@ -231,6 +234,7 @@ Conformance coverage must include:
 - rejection of embedded SVG, bitmap, color, and variable-font tables;
 - safe-path and symlink-escape rejection;
 - stable canonical glyph-map hashing and exact font-byte hashing;
+- rejection of retired runtime configuration in `uhura.toml`;
 - identical offline Editor and Play realization;
 - explicit font-load failure with no fallback; and
 - proof that codepoints and font data never enter semantic artifacts.
@@ -244,4 +248,4 @@ Conformance coverage must include:
 - inline mappings;
 - remote or package resolution;
 - font subsetting and preloading policy; and
-- a permanent v1 distribution and licensing schema.
+- a permanent v1 distribution, locking, and licensing schema.

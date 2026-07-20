@@ -6,15 +6,15 @@
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Built-in base catalog; currently project-pinned during incubation
-- **Decision:** Current spike design; no accepted widget RFC
+- **Availability:** Native element in the current canonical checker
+- **Decision:** Current experimental contract; no accepted widget RFC
 - **Specification:** Pre-specification; the roleless container is implemented, but the role taxonomy is unsettled
 - **Implementation:** Checker, semantic view, browser Editor, and Play implemented
 - **Owners:** Checker, Core, Renderer
 - **Supported renderers:** Browser Editor and Play
 
 `<view>` declares a non-interactive structural container and CSS layout hook.
-It is a system-defined catalog element, not a user-authored component, raw
+It is a system-defined native element, not a user-authored component, raw
 HTML `<div>`, transparent fragment, interactive region, or semantic viewport.
 
 The neutral container is fundamental: components and control flow eventually
@@ -407,15 +407,10 @@ role token.
 
 Current implementation and research references:
 
-- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
-- [Catalog markup checking](../../../../../crates/uhura-check/src/markup.rs)
-- [Core semantic-node evaluation](../../../../../crates/uhura-core/src/eval.rs)
-- [Semantic view protocol](../../../../../crates/uhura-core/src/view.rs)
-- [Shared browser property mapping](../../../../../web/src/renderer/appliers.ts)
-- [Shared browser reconciliation](../../../../../web/src/renderer/reconciler.ts)
-- [Shared renderer policy tests](../../../../../web/src/renderer/tests/policies.test.ts)
+- [Native element, attribute, and event checking](../../../../../crates/uhura-check/src/checker.rs)
+- [Semantic view projection](../../../../../crates/uhura-core/src/render.rs)
+- [Canonical shared projection renderer](../../../../../web/src/renderer/projection.ts)
+- [Shared projection renderer tests](../../../../../web/src/renderer/projection.test.ts)
 - [Instagram spike element catalog](../../../../studies/instagram-spike-design.md)
 - [Instagram dogfood gaps](../../../../studies/instagram-demo-dogfood.md)
-- [Current list composition](../../../../../examples/instagram/client/components/stories-tray.uhura)
-- [Current navigation composition](../../../../../examples/instagram/client/components/bottom-nav.uhura)
-- [Current tablist composition](../../../../../examples/instagram/client/app/profile/[user]/page.uhura)
+- [Current Instagram view composition](../../../../../examples/instagram/client/ui.uhura)

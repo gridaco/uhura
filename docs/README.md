@@ -29,16 +29,34 @@ There is intentionally no unversioned living specification.
 
 ## Current incubation snapshot
 
-Uhura has no complete accepted language specification or compatibility
-version.
+Uhura has one active, implemented incubation candidate, one retained
+differential baseline, and no supported compatibility version.
 
-- [v0 incubation language model](spec/drafts/v0.md) describes the current
-  exact target and open questions. It is disposable.
-- [v0 widget draft](widgets/drafts/v0/README.md) records current capability
-  names, implementation gaps, and proposals. It is disposable.
+- [Uhura 0.4](spec/drafts/0.4/) is the only active exact design. Its five
+  documents separate the source-neutral kernel, concrete source and lowering,
+  application profile, and conformance plan.
+- Uhura 0.4 is the implemented incubation candidate exercised by the checked-in
+  [program](../examples/programs/answers/uhura-0.4/) and
+  [application](../examples/applications/a0-return-desk/answers/uhura-0.4/)
+  answers, plus the canonical [Instagram project](../examples/instagram/client/).
+  Implementation evidence does not establish a supported compatibility
+  version.
+- Uhura 0.3 is the retained differential baseline exercised by the checked-in
+  [program](../examples/programs/answers/uhura-0.3/) and
+  [application](../examples/applications/a0-return-desk/answers/uhura-0.3/)
+  answers.
+- [Relay B3](spec/drafts/relay-b3/) and
+  [v0](spec/drafts/v0.md) are short historical pointers. Their former detailed
+  drafts remain in Git history rather than normal documentation navigation.
+- [v0 widget draft](widgets/drafts/v0/README.md) preserves the historical
+  capability study that preceded the 0.4 replacement. It is not current 0.4
+  behavior and remains disposable.
 - [RFC 0002](rfcs/0002-model-driven-editor-live-updates.md) and
   [RFC 0003](rfcs/0003-source-comments-docs-and-annotations.md) are accepted
   historical decisions with independent implementation status.
+- [RFC 0004](rfcs/0004-standalone-machine-core-and-source-composition.md)
+  fixes the standalone-core, explicit-`ui`, and modular-source/global-IR
+  boundary incorporated by the active candidate.
 - [RFC 0001](rfcs/0001-project-foundation.md) remains a draft proposal; it is
   not a foundational authority merely because other work was inspired by it.
 

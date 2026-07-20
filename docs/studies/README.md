@@ -77,13 +77,19 @@ language authority.
 
 ## Candidate models and implementation feedback
 
+- [Uhura 0.4](../spec/drafts/0.4/) is the active incubation candidate, not a
+  study. It consolidates the retained kernel, revised familiar source,
+  compile-time composition, application boundary, and validation plan.
+- [Relay B3](../spec/drafts/relay-b3/) is the historical experiment that
+  preceded the experimental Uhura 0.3 engine. Its short pointer remains under
+  `spec/drafts`; the detailed record is in Git history.
 - [A class-differentiated state IR](state-ir-proposal.md) is an unaccepted
   candidate model derived from the surveys.
 - [Instagram v0 spike design](instagram-spike-design.md) records the completed
   historical language/runtime topology that guided the implementation spike;
   it is evidence rather than current redesign guidance.
-- [Instagram demo dogfood](instagram-demo-dogfood.md) records feedback from
-  exercising that topology.
+- [Instagram demo dogfood](instagram-demo-dogfood.md) records historical
+  feedback from exercising that topology.
 - [Referential example data and read-only preview provenance](referential-example-data-and-read-only-provenance.md)
   records one preview-model experiment.
 

@@ -1,6 +1,6 @@
 # Machine-first language, opt-in UI, and explicit framework features
 
-- **Status:** Non-normative redesign recommendation with fixed inputs
+- **Status:** Historical research input incorporated by RFC 0004
 - **Lifetime:** Disposable study
 - **Scope:** Language topology and candidate constraints, not exact grammar,
   framework catalogue, widgets, or implementation
@@ -14,9 +14,10 @@
 - **Fixed inputs:** The extension is named `ui`; web is its only supported
   presentation target; meta-framework semantics are imported feature by feature
   rather than activated ambiently
-- **Authority:** Research only; the fixed inputs constrain the upcoming
-  candidate exercise but do not define current version behavior or choose an
-  activation or import syntax
+- **Decision:** [RFC 0004](../rfcs/0004-standalone-machine-core-and-source-composition.md)
+- **Active candidate:** [Uhura 0.4](../spec/drafts/0.4/)
+- **Authority:** Research only; RFC 0004 owns the adopted boundary and the
+  active candidate owns its proposed exact source
 
 ## Recommendation
 
@@ -207,23 +208,21 @@ and functions above are illustrative, not a proposed Uhura kernel.
 
 ### Relationship to current doctrine
 
-This study is a candidate revision, not current doctrine. The current
-[mission](../doctrine/mission.md) describes Uhura as frontend-dedicated and
-names derived presentation as an enduring plane. This recommendation remains
-compatible with presentation being downstream whenever a program activates
-it, but it challenges the claim that every Uhura program is necessarily a
-frontend program.
+RFC 0004 adopted this study's distinction and the
+[mission](../doctrine/mission.md) now describes Uhura as a frontend-focused
+builder system built on a standalone machine language. Presentation remains
+downstream whenever a program activates it, but it is no longer a prerequisite
+of a complete core program.
 
 The core-language boundary does not require the Uhura product, examples, or
 distribution to become domain-neutral. Uhura may remain unusually good at
 building interfaces while its core calculus is useful and testable without
 one. Product focus and language dependency are different decisions.
 
-Candidate review must decide whether frontend dedication names the product and
-standard distribution while the core remains presentation-independent, or
-whether supported non-UI uses require a broader mission. If this recommendation
-survives that review, doctrine must be revised explicitly through its stated
-change path. The project should not silently claim both meanings.
+The adopted interpretation is that frontend dedication names the product and
+standard distribution while the core remains presentation-independent. This
+does not turn Uhura into a general-purpose language or require the product to
+support non-UI application domains.
 
 ## Fixed name and target
 
