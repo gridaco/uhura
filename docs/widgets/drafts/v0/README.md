@@ -34,6 +34,7 @@ No later language generation inherits these names or contracts by default.
 | Entry | Facets | Availability | Decision | Implementation |
 |---|---|---|---|---|
 | [Sheet](surfaces/sheet.md) | None | Built-in surface machinery; the default modality | Structural lifecycle per the spike design; modality validation and motion unsettled | Parser, checker steering, Core surface stack, and browser scrim/Escape/focus realization implemented |
+| [Dialog](surfaces/dialog.md) | None | Proposed; named by a checker steering note only | No design: legal modality set, presentation, and dismissal policy all open | Generic surface machinery would accept `modality dialog`; no dialog presentation, validation, or corpus usage exists |
 
 ## Integrations
 
