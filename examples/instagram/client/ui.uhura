@@ -184,6 +184,15 @@ pub fn profile_tabs_label(tab: ProfileTab) -> Text {
   }
 }
 
+pub fn profile_empty_label(tab: ProfileTab) -> Text {
+  match tab {
+    ProfileTab::Posts => "No posts yet.",
+    ProfileTab::Reels => "No reels yet.",
+    ProfileTab::Tagged => "No tagged posts yet.",
+    ProfileTab::Saved => "Posts you save will appear here.",
+  }
+}
+
 pub ui FeedPage for Instagram(view) {
   <view class="screen instagram-app">
     {#if view.page is Page::None}
@@ -441,19 +450,22 @@ pub ui FeedPage for Instagram(view) {
         {#if view.page is Page::Search}
           <view class="screen search-page">
             <view class="search-head">
-              <textfield
-                value={view.search_query}
-                label="Search people"
-                placeholder="Search"
-                on change -> SearchChanged(event.text)
-              />
-              <button
-                label="Search"
-                disabled={view.search_query == ""}
-                on press -> SubmitSearch
-              >
-                <icon name="search"/>
-              </button>
+              <text class="search-title">Explore</text>
+              <view class="search-controls">
+                <textfield
+                  value={view.search_query}
+                  label="Search people"
+                  placeholder="Search"
+                  on change -> SearchChanged(event.text)
+                />
+                <button
+                  label="Search"
+                  disabled={view.search_query == ""}
+                  on press -> SubmitSearch
+                >
+                  <icon name="search"/>
+                </button>
+              </view>
             </view>
             {#if view.authority is Authority::Loading}
               <view class="fill-center">
@@ -618,6 +630,9 @@ pub ui FeedPage for Instagram(view) {
           {:else}
             {#if view.page is Page::Reels}
               <view class="screen reels-page">
+                <view class="reels-head">
+                  <text class="title">Reels</text>
+                </view>
                 {#if view.authority is Authority::Loading}
                   <view class="fill-center">
                     <text class="muted">Loading Reels…</text>
@@ -685,7 +700,9 @@ pub ui FeedPage for Instagram(view) {
                               </view>
                               <view class="reel-actions">
                                 <button
+                                  class="reel-action"
                                   label={like_label(effective_post_flag(post.viewer_liked, view.like_overlay, post.id))}
+                                  pressed={effective_post_flag(post.viewer_liked, view.like_overlay, post.id)}
                                   busy={view.like_pending.contains(post.id)}
                                   on press -> ToggleLike(post.id, !effective_post_flag(post.viewer_liked, view.like_overlay, post.id))
                                 >
@@ -699,7 +716,9 @@ pub ui FeedPage for Instagram(view) {
                                   <icon name="message-circle"/>
                                 </button>
                                 <button
+                                  class="reel-action reel-save-action"
                                   label={save_label(effective_post_flag(post.viewer_saved, view.save_overlay, post.id))}
+                                  pressed={effective_post_flag(post.viewer_saved, view.save_overlay, post.id)}
                                   busy={view.save_pending.contains(post.id)}
                                   on press -> ToggleSave(post.id, !effective_post_flag(post.viewer_saved, view.save_overlay, post.id))
                                 >
@@ -745,12 +764,14 @@ pub ui FeedPage for Instagram(view) {
                       }}
                         <scroll class="post-scroll">
                           <view class="post-card">
-                            <img
-                              class="avatar"
-                              src={post_for(data, id).author.avatar.src}
-                              alt={post_for(data, id).author.avatar.alt}
-                            />
-                            <text class="username">{post_for(data, id).author.username}</text>
+                            <view class="author-row">
+                              <img
+                                class="avatar"
+                                src={post_for(data, id).author.avatar.src}
+                                alt={post_for(data, id).author.avatar.alt}
+                              />
+                              <text class="username">{post_for(data, id).author.username}</text>
+                            </view>
                             {#if post_for(data, id).media is Media::Image {
                               image: media,
                             }}
@@ -792,28 +813,39 @@ pub ui FeedPage for Instagram(view) {
                               {/if}
                             {/if}
                             <view class="action-row">
+                              <view class="action-primary">
+                                <button
+                                  class="icon-action"
+                                  label={like_label(effective_post_flag(post_for(data, id).viewer_liked, view.like_overlay, id))}
+                                  pressed={effective_post_flag(post_for(data, id).viewer_liked, view.like_overlay, id)}
+                                  busy={view.like_pending.contains(id)}
+                                  on press -> ToggleLike(id, !effective_post_flag(post_for(data, id).viewer_liked, view.like_overlay, id))
+                                >
+                                  <icon name="heart"/>
+                                </button>
+                                <button
+                                  class="icon-action"
+                                  label="Comments"
+                                  on press -> OpenComments(id)
+                                >
+                                  <icon name="message-circle"/>
+                                </button>
+                              </view>
                               <button
-                                label="Like"
-                                busy={view.like_pending.contains(id)}
-                                on press -> ToggleLike(id, !effective_post_flag(post_for(data, id).viewer_liked, view.like_overlay, id))
-                              >
-                                <icon name="heart"/>
-                              </button>
-                              <button
-                                label="Comments"
-                                on press -> OpenComments(id)
-                              >
-                                <icon name="message-circle"/>
-                              </button>
-                              <button
-                                label="Save"
+                                class="icon-action save-action"
+                                label={save_label(effective_post_flag(post_for(data, id).viewer_saved, view.save_overlay, id))}
+                                pressed={effective_post_flag(post_for(data, id).viewer_saved, view.save_overlay, id)}
                                 busy={view.save_pending.contains(id)}
                                 on press -> ToggleSave(id, !effective_post_flag(post_for(data, id).viewer_saved, view.save_overlay, id))
                               >
                                 <icon name="bookmark"/>
                               </button>
                             </view>
-                            <text>{post_for(data, id).caption}</text>
+                            <text class="likes">{post_for(data, id).like_count} likes</text>
+                            <view class="caption-row">
+                              <text class="caption-author">{post_for(data, id).author.username}</text>
+                              <text class="caption">{post_for(data, id).caption}</text>
+                            </view>
                           </view>
                         </scroll>
                       {/if}
@@ -825,6 +857,23 @@ pub ui FeedPage for Instagram(view) {
                   user: user,
                 }}
                   <view class="screen profile-page">
+                    <view class="top-bar">
+                      {#if user != USER_MIRA}
+                        <button
+                          label="Back"
+                          on press -> GoBack
+                        >
+                          <icon name="chevron-left"/>
+                        </button>
+                      {/if}
+                      {#if view.authority is Authority::Ready {
+                        data: data,
+                      }}
+                        <text class="title">{profile_for(data, user).user.username}</text>
+                      {:else}
+                        <text class="title">Profile</text>
+                      {/if}
+                    </view>
                     {#if view.authority is Authority::Loading}
                       <view class="fill-center">
                         <text class="muted">Loading profile…</text>
@@ -849,43 +898,52 @@ pub ui FeedPage for Instagram(view) {
                                   alt={profile_for(data, user).user.avatar.alt}
                                 />
                                 <view class="stats">
-                                  <text>{profile_for(data, user).post_count} Posts</text>
+                                  <view class="stat">
+                                    <text class="stat-num">{profile_for(data, user).post_count}</text>
+                                    <text class="stat-name">Posts</text>
+                                  </view>
                                   <button
+                                    class="stat"
                                     label="Followers"
                                     on press -> OpenFollowers(user)
                                   >
-                                    <text>{profile_for(data, user).follower_count} Followers</text>
+                                    <text class="stat-num">{profile_for(data, user).follower_count}</text>
+                                    <text class="stat-name">Followers</text>
                                   </button>
                                   <button
+                                    class="stat"
                                     label="Following"
                                     on press -> OpenFollowing(user)
                                   >
-                                    <text>{profile_for(data, user).following_count} Following</text>
+                                    <text class="stat-num">{profile_for(data, user).following_count}</text>
+                                    <text class="stat-name">Following</text>
                                   </button>
                                 </view>
                               </view>
                               <text class="display-name">{profile_for(data, user).user.display_name}</text>
-                              <text class="muted">{profile_for(data, user).user.username}</text>
-                              <text>{profile_for(data, user).bio}</text>
-                              {#if user != data.viewer.id}
-                                <button
-                                  class="primary-button"
-                                  label={follow_label(effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))}
-                                  busy={view.follow_pending.contains(user)}
-                                  on press -> ToggleFollow(user, !effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))
-                                >
-                                  <text>{follow_label(effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))}</text>
-                                </button>
-                              {/if}
-                              {#if user == data.viewer.id}
-                                <button
-                                  class="secondary-button"
-                                  label="Create a new post"
-                                  on press -> SelectTab(Section::Create)
-                                >
-                                  <text>New post</text>
-                                </button>
-                              {/if}
+                              <text class="profile-handle">{profile_for(data, user).user.username}</text>
+                              <text class="bio">{profile_for(data, user).bio}</text>
+                              <view class="profile-actions">
+                                {#if user != data.viewer.id}
+                                  <button
+                                    class="primary-button profile-action"
+                                    label={follow_label(effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))}
+                                    busy={view.follow_pending.contains(user)}
+                                    on press -> ToggleFollow(user, !effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))
+                                  >
+                                    <text>{follow_label(effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))}</text>
+                                  </button>
+                                {/if}
+                                {#if user == data.viewer.id}
+                                  <button
+                                    class="secondary-button profile-action"
+                                    label="Create a new post"
+                                    on press -> SelectTab(Section::Create)
+                                  >
+                                    <text>New post</text>
+                                  </button>
+                                {/if}
+                              </view>
                             </view>
                             <view
                               class="profile-tabs"
@@ -922,6 +980,11 @@ pub ui FeedPage for Instagram(view) {
                                 </button>
                               {/if}
                             </view>
+                            {#if tiles_for(profile_for(data, user), view.profile_tab).size == 0}
+                              <view class="profile-empty fill-center pad-lg">
+                                <text class="muted">{profile_empty_label(view.profile_tab)}</text>
+                              </view>
+                            {/if}
                             <view class="profile-grid">
                               {#each tiles_for(profile_for(data, user), view.profile_tab) as tile (tile.post)}
                                 <region
@@ -1134,46 +1197,49 @@ pub ui FeedPage for Instagram(view) {
         role="navigation"
         class="bottom-nav"
       >
-        <button
-          label="Feed"
-          current={feed_current(view.page)}
-          on press -> SelectTab(Section::Feed)
-        >
-          <icon name="house"/>
-          <text>Home</text>
-        </button>
-        <button
-          label="Search"
-          current={search_current(view.page)}
-          on press -> SelectTab(Section::Search)
-        >
-          <icon name="search"/>
-          <text>Search</text>
-        </button>
-        <button
-          label="Create"
-          current={create_current(view.page)}
-          on press -> SelectTab(Section::Create)
-        >
-          <icon name="square-plus"/>
-          <text>Create</text>
-        </button>
-        <button
-          label="Reels"
-          current={reels_current(view.page)}
-          on press -> SelectTab(Section::Reels)
-        >
-          <icon name="clapperboard"/>
-          <text>Reels</text>
-        </button>
-        <button
-          label="Profile"
-          current={profile_current(view.page)}
-          on press -> SelectTab(Section::Profile)
-        >
-          <icon name="user-round"/>
-          <text>Profile</text>
-        </button>
+        <text class="nav-brand">Instagram</text>
+        <view class="nav-items">
+          <button
+            label="Feed"
+            current={feed_current(view.page)}
+            on press -> SelectTab(Section::Feed)
+          >
+            <icon name="house"/>
+            <text class="nav-label">Home</text>
+          </button>
+          <button
+            label="Search"
+            current={search_current(view.page)}
+            on press -> SelectTab(Section::Search)
+          >
+            <icon name="search"/>
+            <text class="nav-label">Search</text>
+          </button>
+          <button
+            label="Create"
+            current={create_current(view.page)}
+            on press -> SelectTab(Section::Create)
+          >
+            <icon name="square-plus"/>
+            <text class="nav-label">Create</text>
+          </button>
+          <button
+            label="Reels"
+            current={reels_current(view.page)}
+            on press -> SelectTab(Section::Reels)
+          >
+            <icon name="clapperboard"/>
+            <text class="nav-label">Reels</text>
+          </button>
+          <button
+            label="Profile"
+            current={profile_current(view.page)}
+            on press -> SelectTab(Section::Profile)
+          >
+            <icon name="user-round"/>
+            <text class="nav-label">Profile</text>
+          </button>
+        </view>
       </view>
     {/if}
     {#if view.comments_post is Some(post)}
@@ -1451,21 +1517,28 @@ pub ui PostPage for Instagram(view) {
                 {/if}
               {/if}
               <view class="action-row">
+                <view class="action-primary">
+                  <button
+                    class="icon-action"
+                    label={like_label(effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))}
+                    pressed={effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id)}
+                    busy={view.like_pending.contains(post_for_page(data, view.page).id)}
+                    on press -> ToggleLike(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))
+                  >
+                    <icon name="heart"/>
+                  </button>
+                  <button
+                    class="icon-action"
+                    label="Comments"
+                    on press -> OpenComments(post_for_page(data, view.page).id)
+                  >
+                    <icon name="message-circle"/>
+                  </button>
+                </view>
                 <button
-                  label="Like"
-                  busy={view.like_pending.contains(post_for_page(data, view.page).id)}
-                  on press -> ToggleLike(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))
-                >
-                  <icon name="heart"/>
-                </button>
-                <button
-                  label="Comments"
-                  on press -> OpenComments(post_for_page(data, view.page).id)
-                >
-                  <icon name="message-circle"/>
-                </button>
-                <button
-                  label="Save"
+                  class="icon-action save-action"
+                  label={save_label(effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))}
+                  pressed={effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id)}
                   busy={view.save_pending.contains(post_for_page(data, view.page).id)}
                   on press -> ToggleSave(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))
                 >
@@ -1473,7 +1546,10 @@ pub ui PostPage for Instagram(view) {
                 </button>
               </view>
               <text class="likes">{post_for_page(data, view.page).like_count} likes</text>
-              <text>{post_for_page(data, view.page).caption}</text>
+              <view class="caption-row">
+                <text class="caption-author">{post_for_page(data, view.page).author.username}</text>
+                <text class="caption">{post_for_page(data, view.page).caption}</text>
+              </view>
             </view>
           </scroll>
         {/if}
@@ -1484,6 +1560,27 @@ pub ui PostPage for Instagram(view) {
 
 pub ui ProfilePage for Instagram(view) {
   <view class="screen profile-page">
+    <view class="top-bar">
+      {#if view.page is Page::Profile {
+        user: user,
+      }}
+        {#if user != USER_MIRA}
+          <button
+            label="Back"
+            on press -> GoBack
+          >
+            <icon name="chevron-left"/>
+          </button>
+        {/if}
+      {/if}
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        <text class="title">{profile_for_page(data, view.page).user.username}</text>
+      {:else}
+        <text class="title">Profile</text>
+      {/if}
+    </view>
     {#if view.authority is Authority::Loading}
       <view class="fill-center">
         <text class="muted">Loading profile…</text>
@@ -1508,14 +1605,23 @@ pub ui ProfilePage for Instagram(view) {
                   alt={profile_for_page(data, view.page).user.avatar.alt}
                 />
                 <view class="stats">
-                  <text>{profile_for_page(data, view.page).post_count} Posts</text>
-                  <text>{profile_for_page(data, view.page).follower_count} Followers</text>
-                  <text>{profile_for_page(data, view.page).following_count} Following</text>
+                  <view class="stat">
+                    <text class="stat-num">{profile_for_page(data, view.page).post_count}</text>
+                    <text class="stat-name">Posts</text>
+                  </view>
+                  <view class="stat">
+                    <text class="stat-num">{profile_for_page(data, view.page).follower_count}</text>
+                    <text class="stat-name">Followers</text>
+                  </view>
+                  <view class="stat">
+                    <text class="stat-num">{profile_for_page(data, view.page).following_count}</text>
+                    <text class="stat-name">Following</text>
+                  </view>
                 </view>
               </view>
               <text class="display-name">{profile_for_page(data, view.page).user.display_name}</text>
-              <text class="muted">{profile_for_page(data, view.page).user.username}</text>
-              <text>{profile_for_page(data, view.page).bio}</text>
+              <text class="profile-handle">{profile_for_page(data, view.page).user.username}</text>
+              <text class="bio">{profile_for_page(data, view.page).bio}</text>
             </view>
             <view
               class="profile-tabs"
@@ -1550,6 +1656,11 @@ pub ui ProfilePage for Instagram(view) {
                 <icon name="bookmark"/>
               </button>
             </view>
+            {#if tiles_for(profile_for_page(data, view.page), view.profile_tab).size == 0}
+              <view class="profile-empty fill-center pad-lg">
+                <text class="muted">{profile_empty_label(view.profile_tab)}</text>
+              </view>
+            {/if}
             <view class="profile-grid">
               {#each tiles_for(profile_for_page(data, view.page), view.profile_tab) as tile (tile.post)}
                 <region
@@ -1677,6 +1788,9 @@ pub ui FollowingPage for Instagram(view) {
 
 pub ui ReelsPage for Instagram(view) {
   <view class="screen reels-page">
+    <view class="reels-head">
+      <text class="title">Reels</text>
+    </view>
     {#if view.authority is Authority::Loading}
       <view class="fill-center">
         <text class="muted">Loading Reels…</text>
@@ -1751,7 +1865,9 @@ pub ui ReelsPage for Instagram(view) {
                   </view>
                   <view class="reel-actions">
                     <button
-                      label="Like"
+                      class="reel-action"
+                      label={like_label(effective_post_flag(post.viewer_liked, view.like_overlay, post.id))}
+                      pressed={effective_post_flag(post.viewer_liked, view.like_overlay, post.id)}
                       busy={view.like_pending.contains(post.id)}
                       on press -> ToggleLike(post.id, !effective_post_flag(post.viewer_liked, view.like_overlay, post.id))
                     >
@@ -1766,7 +1882,9 @@ pub ui ReelsPage for Instagram(view) {
                       <text>{post.comment_count}</text>
                     </button>
                     <button
-                      label="Save"
+                      class="reel-action reel-save-action"
+                      label={save_label(effective_post_flag(post.viewer_saved, view.save_overlay, post.id))}
+                      pressed={effective_post_flag(post.viewer_saved, view.save_overlay, post.id)}
                       busy={view.save_pending.contains(post.id)}
                       on press -> ToggleSave(post.id, !effective_post_flag(post.viewer_saved, view.save_overlay, post.id))
                     >
@@ -1786,19 +1904,22 @@ pub ui ReelsPage for Instagram(view) {
 pub ui SearchPage for Instagram(view) {
   <view class="screen search-page">
     <view class="search-head">
-      <textfield
-        value={view.search_query}
-        label="Search people"
-        placeholder="Search"
-        on change -> SearchChanged(event.text)
-      />
-      <button
-        label="Search"
-        disabled={view.search_query == ""}
-        on press -> SubmitSearch
-      >
-        <icon name="search"/>
-      </button>
+      <text class="search-title">Explore</text>
+      <view class="search-controls">
+        <textfield
+          value={view.search_query}
+          label="Search people"
+          placeholder="Search"
+          on change -> SearchChanged(event.text)
+        />
+        <button
+          label="Search"
+          disabled={view.search_query == ""}
+          on press -> SubmitSearch
+        >
+          <icon name="search"/>
+        </button>
+      </view>
     </view>
     {#if view.authority is Authority::Loading}
       <view class="fill-center">
@@ -1848,17 +1969,22 @@ pub ui SearchPage for Instagram(view) {
                     class="connection-list"
                   >
                     {#each data.search_people as person (person.user.id)}
-                      <view class="connection-row">
-                        <img
-                          class="avatar"
-                          src={person.user.avatar.src}
-                          alt={person.user.avatar.alt}
-                        />
-                        <view class="connection-copy">
-                          <text class="username">{person.user.username}</text>
-                          <text class="muted">{person.user.display_name}</text>
+                      <region
+                        label={person.user.username}
+                        on activate -> OpenProfile(person.user.id)
+                      >
+                        <view class="connection-row">
+                          <img
+                            class="avatar"
+                            src={person.user.avatar.src}
+                            alt={person.user.avatar.alt}
+                          />
+                          <view class="connection-copy">
+                            <text class="username">{person.user.username}</text>
+                            <text class="muted">{person.user.display_name}</text>
+                          </view>
                         </view>
-                      </view>
+                      </region>
                     {/each}
                   </view>
                 {:else}
@@ -1971,46 +2097,49 @@ pub ui BottomNav for Instagram(view) {
     role="navigation"
     class="bottom-nav"
   >
-    <button
-      label="Feed"
-      current={feed_current(view.page)}
-      on press -> SelectTab(Section::Feed)
-    >
-      <icon name="house"/>
-      <text>Home</text>
-    </button>
-    <button
-      label="Search"
-      current={search_current(view.page)}
-      on press -> SelectTab(Section::Search)
-    >
-      <icon name="search"/>
-      <text>Search</text>
-    </button>
-    <button
-      label="Create"
-      current={create_current(view.page)}
-      on press -> SelectTab(Section::Create)
-    >
-      <icon name="square-plus"/>
-      <text>Create</text>
-    </button>
-    <button
-      label="Reels"
-      current={reels_current(view.page)}
-      on press -> SelectTab(Section::Reels)
-    >
-      <icon name="clapperboard"/>
-      <text>Reels</text>
-    </button>
-    <button
-      label="Profile"
-      current={profile_current(view.page)}
-      on press -> SelectTab(Section::Profile)
-    >
-      <icon name="user-round"/>
-      <text>Profile</text>
-    </button>
+    <text class="nav-brand">Instagram</text>
+    <view class="nav-items">
+      <button
+        label="Feed"
+        current={feed_current(view.page)}
+        on press -> SelectTab(Section::Feed)
+      >
+        <icon name="house"/>
+        <text class="nav-label">Home</text>
+      </button>
+      <button
+        label="Search"
+        current={search_current(view.page)}
+        on press -> SelectTab(Section::Search)
+      >
+        <icon name="search"/>
+        <text class="nav-label">Search</text>
+      </button>
+      <button
+        label="Create"
+        current={create_current(view.page)}
+        on press -> SelectTab(Section::Create)
+      >
+        <icon name="square-plus"/>
+        <text class="nav-label">Create</text>
+      </button>
+      <button
+        label="Reels"
+        current={reels_current(view.page)}
+        on press -> SelectTab(Section::Reels)
+      >
+        <icon name="clapperboard"/>
+        <text class="nav-label">Reels</text>
+      </button>
+      <button
+        label="Profile"
+        current={profile_current(view.page)}
+        on press -> SelectTab(Section::Profile)
+      >
+        <icon name="user-round"/>
+        <text class="nav-label">Profile</text>
+      </button>
+    </view>
   </view>
 }
 
@@ -2338,7 +2467,9 @@ pub ui ReelCard for Instagram(view) {
         </view>
         <view class="reel-actions">
           <button
-            label="Like"
+            class="reel-action"
+            label={like_label(effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))}
+            pressed={effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id)}
             busy={view.like_pending.contains(post_for_page(data, view.page).id)}
             on press -> ToggleLike(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))
           >
@@ -2352,7 +2483,9 @@ pub ui ReelCard for Instagram(view) {
             <icon name="message-circle"/>
           </button>
           <button
-            label="Save"
+            class="reel-action reel-save-action"
+            label={save_label(effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))}
+            pressed={effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id)}
             busy={view.save_pending.contains(post_for_page(data, view.page).id)}
             on press -> ToggleSave(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))
           >

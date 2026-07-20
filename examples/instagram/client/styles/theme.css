@@ -85,7 +85,7 @@ body {
 }
 
 /* shared utilities the slice names in class= */
-.screen { display: flex; flex-direction: column; block-size: 100%; }
+.screen { display: flex; flex-direction: column; min-block-size: 0; block-size: 100%; }
 .fill-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .row-center { display: flex; align-items: center; justify-content: center; padding: var(--space-3); }
 .stack-sm { gap: var(--space-2); }
@@ -98,7 +98,7 @@ body {
 /* The desktop prototype is an application layout, not a stretched phone.
    Navigation becomes a persistent Instagram-style rail; content retains
    readable widths. Story intentionally stays full-bleed. */
-#uh-frame[data-frame="desktop"] .screen:not(.story-page) {
+#uh-frame[data-frame="desktop"] .instagram-app:has(> .bottom-nav) {
   position: relative;
   padding-inline-start: var(--nav-rail-width);
 }
@@ -161,19 +161,27 @@ body {
   font-size: 25px;
 }
 
-#uh-frame[data-frame="desktop"] .screen:not(.story-page):not(.reels-page) > :not(.bottom-nav) {
+#uh-frame[data-frame="desktop"] .reels-page + .bottom-nav .nav-items .uh-button {
+  color: var(--color-ink-subtle);
+}
+
+#uh-frame[data-frame="desktop"] .reels-page + .bottom-nav .nav-items .uh-button[aria-current="true"] {
+  color: var(--color-ink);
+}
+
+#uh-frame[data-frame="desktop"] .instagram-app > .screen:not(.story-page):not(.reels-page) > * {
   inline-size: 100%;
   max-inline-size: var(--content-wide);
   margin-inline: auto;
 }
 
-#uh-frame[data-frame="desktop"] .feed-page > :not(.bottom-nav),
-#uh-frame[data-frame="desktop"] .post-page > :not(.bottom-nav),
-#uh-frame[data-frame="desktop"] .people-page > :not(.bottom-nav) {
+#uh-frame[data-frame="desktop"] .instagram-app > .feed-page > *,
+#uh-frame[data-frame="desktop"] .instagram-app > .post-page > *,
+#uh-frame[data-frame="desktop"] .instagram-app > .connections-page > * {
   max-inline-size: var(--content-narrow);
 }
 
-#uh-frame[data-frame="desktop"] .create-page > :not(.bottom-nav) {
+#uh-frame[data-frame="desktop"] .instagram-app > .create-page > * {
   max-inline-size: 720px;
 }
 
@@ -187,14 +195,14 @@ body {
 
 /* Reels remains an immersive black surface, but a desktop-sized video should
    not stretch across the full workspace beside the rail. */
-#uh-frame[data-frame="desktop"] .reels-page > :not(.bottom-nav):not(.reels-head) {
+#uh-frame[data-frame="desktop"] .instagram-app > .reels-page > :not(.reels-head) {
   inline-size: 100%;
   max-inline-size: 520px;
   margin-inline: auto;
 }
 
 #uh-frame[data-frame="desktop"] .reels-page .reels-head {
-  inset-inline: var(--nav-rail-width) 0;
+  inset-inline: 0;
 }
 
 #uh-frame[data-frame="desktop"] .reels-page .reels-head .title {
@@ -204,7 +212,7 @@ body {
 }
 
 #uh-frame[data-frame="desktop"] .reels-page > .notice-bar {
-  inset-inline-start: var(--nav-rail-width);
+  inset-inline-start: 0;
 }
 
 #uh-frame[data-frame="desktop"] .reel-card .reel-media {
@@ -231,10 +239,23 @@ body {
   block-size: 100%;
 }
 
+.instagram-app {
+  position: relative;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.instagram-app > .screen {
+  flex: 1;
+  min-block-size: 0;
+  block-size: auto;
+}
+
 .feed-head,
 .create-head,
 .detail-bar,
-.search-head {
+.search-head,
+.top-bar {
   flex: none;
   display: flex;
   align-items: center;
@@ -273,6 +294,13 @@ body {
   justify-content: center;
 }
 
+.feed-head-actions > .uh-region {
+  display: grid;
+  place-items: center;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+}
+
 .viewer-avatar,
 .avatar {
   inline-size: 32px;
@@ -291,6 +319,21 @@ body {
 .create-form {
   flex: 1;
   min-block-size: 0;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.feed-scroll::-webkit-scrollbar,
+.post-scroll::-webkit-scrollbar,
+.profile-scroll::-webkit-scrollbar,
+.search-scroll::-webkit-scrollbar,
+.connection-list::-webkit-scrollbar,
+.reels-scroll::-webkit-scrollbar,
+.comment-list::-webkit-scrollbar,
+.create-form::-webkit-scrollbar,
+.stories-tray::-webkit-scrollbar {
+  display: none;
 }
 
 .feed-empty {
@@ -317,13 +360,22 @@ body {
 
 .stories-tray {
   flex: none;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
   border-block-end: 1px solid var(--color-line);
+  -webkit-overflow-scrolling: touch;
 }
 
 .ring-row {
   display: flex;
+  min-inline-size: 100%;
+  inline-size: max-content;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
+}
+
+.ring-row > .uh-region {
+  flex: none;
 }
 
 .ring-item {
@@ -387,7 +439,14 @@ body {
   padding-inline: var(--space-2);
 }
 
-.liked { color: var(--color-accent); }
+.icon-action[aria-pressed="true"]:not(.save-action) {
+  color: var(--color-accent);
+}
+
+.icon-action[aria-pressed="true"] .uh-icon {
+  transform: scale(1.06);
+}
+
 .save-action { margin-inline-start: auto; }
 
 .post-card .likes {
@@ -426,7 +485,6 @@ body {
 .posted-label {
   color: var(--color-ink-subtle);
   font-size: var(--type-xs);
-  text-transform: uppercase;
 }
 
 .bottom-nav {
@@ -440,24 +498,50 @@ body {
   background: var(--color-surface);
 }
 
-.bottom-nav > .uh-button {
+.bottom-nav .nav-brand,
+.bottom-nav .nav-label {
+  display: none;
+}
+
+.bottom-nav .nav-items {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  min-inline-size: 0;
+}
+
+.bottom-nav .nav-items .uh-button {
   flex: 1;
   justify-content: center;
   min-inline-size: 44px;
   min-block-size: 44px;
-  gap: var(--space-1);
-  padding: var(--space-1);
+  padding: var(--space-2);
+  color: var(--color-ink-subtle);
 }
 
-.bottom-nav > .uh-button > .uh-text {
-  flex: none;
-  overflow-wrap: normal;
-  white-space: nowrap;
-  font-size: var(--type-xs);
+.bottom-nav .nav-items .uh-button[aria-current="true"] {
+  color: var(--color-ink);
 }
 
-.bottom-nav > .uh-button[aria-current="true"] {
-  font-weight: 700;
+.bottom-nav .nav-items .uh-button[aria-current="true"] .uh-icon {
+  transform: scale(1.08);
+}
+
+.reels-page + .bottom-nav {
+  position: absolute;
+  inset: auto 0 0;
+  color: var(--color-on-media);
+  background: linear-gradient(to top, rgb(0 0 0 / 72%), transparent);
+  border-block-start: 0;
+}
+
+.reels-page + .bottom-nav .nav-items .uh-button {
+  color: rgb(255 255 255 / 78%);
+}
+
+.reels-page + .bottom-nav .nav-items .uh-button[aria-current="true"] {
+  color: var(--color-on-media);
 }
 
 .create-page .upload-mark {
@@ -535,6 +619,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
 }
 
 .stat-num,
@@ -550,9 +637,13 @@ body {
 }
 
 .profile-tabs {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
   display: flex;
   justify-content: space-around;
   border-block: 1px solid var(--color-line);
+  background: var(--color-surface);
 }
 
 .profile-tabs .uh-button {
@@ -562,7 +653,8 @@ body {
   border-radius: 0;
 }
 
-.profile-tabs .uh-button[aria-current="true"] {
+.profile-tabs .uh-button[aria-current="true"],
+.profile-tabs .uh-button[aria-pressed="true"] {
   box-shadow: inset 0 -2px 0 var(--color-ink);
 }
 
@@ -573,10 +665,15 @@ body {
   gap: 2px;
 }
 
+.profile-empty {
+  min-block-size: 240px;
+  text-align: center;
+}
+
 .profile-grid .grid-tile,
 .explore-grid .grid-tile {
   inline-size: 100%;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 1;
   object-fit: cover;
 }
 
@@ -584,6 +681,27 @@ body {
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-3);
+}
+
+.search-title {
+  font-size: var(--type-xl);
+  font-weight: 700;
+}
+
+.search-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.search-controls .uh-textfield {
+  flex: 1;
+}
+
+.search-controls .uh-button {
+  flex: none;
+  min-inline-size: 44px;
+  justify-content: center;
 }
 
 .connection-row {
@@ -620,6 +738,16 @@ body {
   background: #050505;
 }
 
+.reels-head {
+  pointer-events: none;
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 4;
+  padding: var(--space-4);
+  color: var(--color-on-media);
+  background: linear-gradient(to bottom, rgb(0 0 0 / 55%), transparent);
+}
+
 .reels-page .muted { color: rgb(255 255 255 / 80%); }
 
 .reels-scroll {
@@ -638,6 +766,10 @@ body {
   background: #050505;
   scroll-snap-align: start;
   scroll-snap-stop: always;
+}
+
+.reels-scroll > .reel-card {
+  block-size: 100%;
 }
 
 .reel-card > * { grid-area: 1 / 1; }
@@ -678,6 +810,14 @@ body {
 }
 
 .reel-actions { align-items: center; }
+
+.reel-action[aria-pressed="true"]:not(.reel-save-action) {
+  color: var(--color-accent);
+}
+
+.reel-action[aria-pressed="true"] .uh-icon {
+  transform: scale(1.06);
+}
 
 .story-page {
   color: var(--color-on-media);
