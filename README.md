@@ -7,11 +7,9 @@ An Uhura machine defines configuration, owned state, typed inputs, atomic
 reactions, ordered commands, and a pure public observation. The checker
 validates that complete program before it runs. The active 0.4 frontend
 evaluates Rust-shaped core source and explicit `use uhura::ui;` Web
-presentation without changing that semantic boundary. Separately versioned
-evidence adds source-authored scenarios, checkpoints, pins, and static
-examples without creating a second execution model. The retained 0.3 frontend
-is a differential and compatibility baseline, not the current authoring
-surface.
+presentation without changing that semantic boundary. Evidence uses the same
+frontend and adds source-authored scenarios, checkpoints, pins, and static
+examples without creating a second execution model.
 
 Uhura owns experience behavior, not pixels or product truth. The browser owns
 layout and presentation; admitted adapters own browser capabilities and access
@@ -103,6 +101,7 @@ fixture-script language or an alternate runtime.
 - [`docs/doctrine/`](docs/doctrine/) — durable language doctrine and review principles.
 - [`docs/spec/`](docs/spec/) — stable router for disposable drafts and future version specifications.
 - [`docs/widgets/`](docs/widgets/) — stable capability taxonomy and version-scoped catalogues.
+- [`docs/implementation/`](docs/implementation/) — current non-normative code ownership and contributor change routes.
 - [`docs/rfcs/`](docs/rfcs/) — historical proposals and supersedable decisions.
 - [`docs/studies/`](docs/studies/) — stable research router with disposable study leaves.
 
@@ -125,13 +124,12 @@ these references provide the current evidence:
   L0–L2 problems for comparing candidate semantics.
 - [A0 Return Desk](examples/applications/a0-return-desk/README.md) provides the
   parallel practical application-transfer problem.
-- [Uhura 0.3](examples/programs/answers/uhura-0.3/) and
-  [Uhura 0.4](examples/programs/answers/uhura-0.4/) answers exercise the same
-  retained engine against L0–L2; the application harnesses carry the
-  corresponding A0 answers. [Relay B3](docs/spec/drafts/relay-b3/) is the short
-  historical pointer for the experiment that preceded this shape. It is not a
-  runtime, module, authored language, or product boundary. Neither executable
-  answer is a stable compatibility release.
+- [Uhura 0.4](examples/programs/answers/uhura-0.4/) exercises the current
+  candidate against L0–L2; the application harness carries the corresponding
+  A0 answer. [Relay B3](docs/spec/drafts/relay-b3/) is the short historical
+  pointer for the experiment that preceded this shape. It is not a runtime,
+  module, authored language, or product boundary. Retired source remains
+  recoverable from Git history rather than executable in the current tree.
 - [Transactional state-machine language prior art](docs/studies/transactional-state-machine-language-prior-art.md)
   compares Scilla, FSM-Hume, Lustre/SCADE, Kôika/Bluespec, Elm, and adjacent
   models.
@@ -152,6 +150,7 @@ policy may change while the language and toolchain are being established.
 - [Documentation index and authority](docs/README.md)
 - [Language doctrine](docs/doctrine/README.md)
 - [Specification router and historical design drafts](docs/spec/README.md)
-- [Widget taxonomy and historical v0 draft](docs/widgets/README.md)
+- [Widget taxonomy and version-scoped catalogues](docs/widgets/README.md)
+- [Current implementation map](docs/implementation/README.md)
 - [RFC index](docs/rfcs/README.md)
 - [Studies](docs/studies/README.md)

@@ -3,7 +3,6 @@
 - **Status:** Executable, disposable language-design candidate
 - **Compatibility:** None; `0.4` is a candidate identity, not a released
   compatibility version
-- **Differential baseline:** Uhura 0.3
 - **Doctrine:** [Uhura doctrine](../../../doctrine/README.md)
 - **Core/topology decision:**
   [RFC 0004](../../../rfcs/0004-standalone-machine-core-and-source-composition.md)
@@ -11,9 +10,8 @@
   [A0 Return Desk](../../../../examples/applications/a0-return-desk/)
 
 This directory is the single active exact design for the next Uhura language
-experiment. It preserves the tested 0.3 reaction kernel while replacing the
-hybrid 0.3 authoring grammar with one coherent surface and adding checked
-source composition.
+experiment. It defines one coherent source surface, one transaction model, and
+checked source composition.
 
 The candidate starts from one observation:
 
@@ -115,6 +113,7 @@ keeps an equal-budget TypeScript-shaped challenger as a control.
 | [Core grammar](grammar.ebnf) | Exact lexical rules, precedence, and accepted core phrase structure |
 | [Project and identity](project.md) | Manifest, module map, dependency lock, resolution, semantic identity, and provenance |
 | [Application profile](application.md) | `ui`, framework features, host authority, evidence, static examples, and editor-facing projection |
+| [Checked UI catalogue](../../../widgets/drafts/0.4/) | Executable incubation element, attribute, constraint, and event vocabulary used by the `ui` profile |
 | [Conformance](conformance.md) | L0–L2, A0, source-composition equivalence, negative checks, acquisition tests, migration, and implementation gates |
 | [Acquisition packet](acquisition/) | Controlled Rust-shaped versus TypeScript-shaped familiarity and transfer trial |
 
@@ -163,12 +162,9 @@ The compiled program is global because a complete program is necessarily one
 value. That fact does not make every authored name globally visible or every
 state path globally writable.
 
-## Baseline and history
+## History
 
-Uhura 0.3 remains the executable differential baseline while 0.4 is incubated;
-it is no longer the current authoring frontend. The historical
-[Relay B3 record](../relay-b3/) explains how the retained transaction model
-was reached; it is not a second runtime or current syntax authority.
-
-No 0.3 source is promised automatic migration. A migration tool is useful only
-after this candidate's surface and semantic equivalence tests are accepted.
+The historical [Relay B3 record](../relay-b3/) explains how the transaction
+model was reached; it is not a second runtime or current syntax authority.
+Retired source frontends and migration modes are deliberately absent from the
+current toolchain.

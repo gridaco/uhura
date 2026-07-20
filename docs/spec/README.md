@@ -11,19 +11,18 @@ an explicitly disposable draft.
 
 ## Current state
 
-Uhura has one implemented active candidate, one retained executable
-differential baseline, and no supported compatibility version.
+Uhura has one implemented active candidate and no supported compatibility
+version.
 
 - [Uhura 0.4 incubation candidate](drafts/0.4/) — the single active exact
-  design and implemented frontend. It retains the 0.3 transactional kernel,
-  adopts a Rust-shaped machine surface plus Svelte-shaped `ui`, and defines
-  modular source composition that lowers to one global semantic machine IR.
-- Uhura 0.3 — the retained executable differential and compatibility baseline.
-  Its implemented behavior is comparison evidence, not the current authoring
-  surface or a stable compatibility contract.
+  design and implemented frontend. It uses a Rust-shaped machine surface plus
+  Svelte-shaped `ui`, and defines modular source composition that lowers to one
+  global semantic machine IR.
+- Retired source frontends have no admission path in the current toolchain.
+  Earlier experiments remain available through Git history.
 - [Relay B3 historical record](drafts/relay-b3/) — a short provenance pointer
-  for the experiment that produced the 0.3 kernel. Git history retains its
-  former detailed candidate documents.
+  for the experiment that produced the current transaction model. Git history
+  retains its former detailed candidate documents.
 - [v0 historical pointer](drafts/v0.md) — the retired UI-first experiment.
 - [RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md) — accepted
   source-metadata decision reconciled with the 0.4 grammar; its checked

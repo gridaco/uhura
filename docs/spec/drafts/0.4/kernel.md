@@ -150,8 +150,8 @@ from a port remains a later FIFO input.
 ## Values and totality
 
 This section is the normative 0.4 value and harness-prelude contract. It
-retains the 0.3 domains and canonical typed encoding, while deliberately
-removing accidental observation of map or set storage order.
+defines the canonical typed encoding while deliberately removing accidental
+observation of map or set storage order.
 
 ### Scalar domains
 

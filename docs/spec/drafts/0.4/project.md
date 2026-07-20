@@ -241,26 +241,26 @@ ResolvedSource {
 Source contains no language or module header. A framework may generate this
 map, but the checked resolver input remains this explicit closed map.
 
-### `[evidence]`
+### `[evidence.modules]`
 
-`evidence` is optional and admits exactly one required non-empty `sources`
-array. Every entry is a distinct safe project-relative `.uhura` file and
-cannot also occur in `[modules]`:
+`evidence.modules` is optional and maps logical evidence-module paths to
+physical source files with the same path rules as `[modules]`. Every value is
+a distinct safe project-relative `.uhura` file and cannot also occur in
+`[modules]`:
 
 ```toml
-[evidence]
-sources = ["evidence/programs.uhura"]
+[evidence.modules]
+programs = "evidence/programs.uhura"
 ```
 
-These are tooling sources using the separately versioned, unchanged 0.3
-evidence vocabulary described by the
-[application profile](application.md#6-evidence-and-static-examples). They
-may import public declarations from the resolved 0.4 package, but they are not
-0.4 core modules, cannot contribute a machine, type, value, UI declaration, or
-host authority, and do not enter `MachineProgramId` or `PresentationId`.
-Their scenarios, pins, checkpoints, and registrations retain their existing
-evidence identities. Omission is the canonical empty evidence set; an empty
-table or array is rejected.
+These tooling modules use the same 0.4 lexer, parser, expressions, imports, and
+source identity as core modules. Their manifest role is the capability
+boundary: they may declare only scenarios, checkpoints, and examples, and may
+import public declarations from the resolved package plus compiler-provided
+`uhura` contracts. They cannot contribute a machine, type, value, UI
+declaration, re-export, external package authority, or host authority, and do
+not enter `MachineProgramId` or `PresentationId`. Omission is the canonical
+empty evidence set; an empty table is rejected.
 
 ### `[dependencies]`
 

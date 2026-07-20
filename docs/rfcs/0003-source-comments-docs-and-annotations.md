@@ -109,10 +109,10 @@ The historical mapping is explicit:
 | `{#match}` block | Removed; 0.4 uses core `match` expressions and does not annotate an expression as a markup occurrence |
 
 Git history preserves the original spelling and rationale; this reconciliation
-does not pretend those forms were always 0.4 forms. `.examples.uhura` remains
-a separately versioned evidence language. Its file and example documentation
-rules below are retained until that evidence grammar receives its own
-replacement RFC.
+does not pretend those forms were always 0.4 forms. Evidence now uses the same
+0.4 frontend under a manifest-enforced tooling role. Its file and example
+documentation rules below remain part of this RFC's accepted metadata
+decision.
 
 ## 2. Motivation
 

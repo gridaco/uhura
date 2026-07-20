@@ -1,18 +1,21 @@
 # Icon font
 
-- **Status:** Implemented pre-v1 foundation
+- **Status:** Historical snapshot of the implemented pre-v1 foundation
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Shared facet
 - **Primary form:** Not applicable
 - **Facets:** Integration
-- **Availability:** Built-in Lucide family and local opt-in families implemented
+- **Availability:** Built-in Lucide family and local opt-in families were implemented in v0
 - **Decision:** Font files plus checked name maps are the only pre-v1 icon resources
 - **Specification:** Pre-specification
-- **Implementation:** Resource-manifest checker, host transport, and browser loading implemented
+- **Implementation:** Historically implemented across resource checking, host transport, and browser loading
 - **Owners:** Foundation, Checker, Host, Renderer
 - **Applies to:** [`<icon>`](../elements/icon.md)
 - **Supported renderers:** Browser Editor and Play
+
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
 
 This integration defines how a logical `<icon>` token is backed by a font. It
 owns family configuration, name-to-codepoint maps, font validation, content
@@ -182,7 +185,7 @@ subsetting remain later distribution optimizations.
 Bundled-family provenance records the upstream package version and integrity
 beside the vendored files. Each checked glyph map and WOFF2 receives its own
 deterministic SHA-256 identity, while the complete captured project revision
-has one source fingerprint. The current canonical project setup does not use a
+has one source fingerprint. The retired v0 project setup did not use a
 separate `uhura.lock`.
 
 Rendering performs no external/package resolution and never rereads project

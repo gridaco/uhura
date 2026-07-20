@@ -4,6 +4,7 @@
 - **Doctrine:** [Uhura doctrine](doctrine/README.md)
 - **Specification router:** [Uhura specifications](spec/README.md)
 - **Widget taxonomy:** [Uhura widget taxonomy](widgets/README.md)
+- **Implementation map:** [Current implementation and change boundaries](implementation/README.md)
 - **Decision history:** [Uhura RFCs](rfcs/README.md)
 - **Research:** [Uhura studies](studies/README.md)
 
@@ -20,6 +21,7 @@ language shape merely because many pages describe it.
 | Incubation drafts | [`spec/drafts/`](spec/drafts/) | Disposable | Proposed exact language models; may be replaced or deleted wholesale |
 | Widget taxonomy | [`widgets/README.md`](widgets/README.md) | Stable router; live taxonomy | Provides revisable capability vocabulary, not builtin names or contracts |
 | Widget drafts | [`widgets/drafts/`](widgets/drafts/) | Disposable | Version-scoped capability names, contracts, implementation notes, and proposals |
+| Implementation map | [`implementation/README.md`](implementation/README.md) | Live and replaceable | Records current code ownership and contributor routes; defines no language behavior |
 | RFCs | [`rfcs/`](rfcs/) | Durable historical record; supersedable | Record decisions and rationale; do not define current behavior by themselves |
 | Study router | [`studies/README.md`](studies/README.md) | Stable | Classifies current research; contains no language semantics |
 | Study leaves | Other documents under [`studies/`](studies/) | Disposable | Preserve evidence, experiments, and unresolved ideas; no language authority |
@@ -29,8 +31,8 @@ There is intentionally no unversioned living specification.
 
 ## Current incubation snapshot
 
-Uhura has one active, implemented incubation candidate, one retained
-differential baseline, and no supported compatibility version.
+Uhura has one active, implemented incubation candidate and no supported
+compatibility version.
 
 - [Uhura 0.4](spec/drafts/0.4/) is the only active exact design. Its five
   documents separate the source-neutral kernel, concrete source and lowering,
@@ -41,10 +43,16 @@ differential baseline, and no supported compatibility version.
   answers, plus the canonical [Instagram project](../examples/instagram/client/).
   Implementation evidence does not establish a supported compatibility
   version.
-- Uhura 0.3 is the retained differential baseline exercised by the checked-in
-  [program](../examples/programs/answers/uhura-0.3/) and
-  [application](../examples/applications/a0-return-desk/answers/uhura-0.3/)
-  answers.
+- The [Uhura 0.4 checked UI catalogue](widgets/drafts/0.4/) records the active
+  candidate's finite element, attribute, constraint, and event vocabulary. It
+  is executable incubation material, not a supported or stable widget API.
+- The executable [diagnostic registry](../crates/uhura-base/src/codes.rs)
+  documents the retained `R1xxx`/`R3xxx` machine families, original
+  `UHnxxx` toolchain families, and 0.4 parser rules. Consumers identify a
+  diagnostic by its `(code, rule)` pair; a shared compatibility code is not
+  the complete identity.
+- Retired Uhura source is not executable or accepted by the current toolchain.
+  Git history is the archive for earlier experiments.
 - [Relay B3](spec/drafts/relay-b3/) and
   [v0](spec/drafts/v0.md) are short historical pointers. Their former detailed
   drafts remain in Git history rather than normal documentation navigation.

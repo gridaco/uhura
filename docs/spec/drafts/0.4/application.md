@@ -56,6 +56,10 @@ Uhura-owned widgets, CSS, checked accessibility contracts, surfaces, and
 semantic interaction bindings. It does not expose the mutable DOM object
 model to machine source.
 
+The exact finite element vocabulary currently admitted by this profile is the
+[0.4 checked UI catalogue](../../../widgets/drafts/0.4/). That catalogue is an
+executable incubation contract, not a supported or stable widget API.
+
 ## 2. Svelte-shaped presentation
 
 The candidate reuses:
@@ -63,16 +67,20 @@ The candidate reuses:
 - HTML-shaped elements and attributes;
 - `{expression}` interpolation;
 - `{#if}`, `{:else}`, and `{/if}`;
-- keyed `{#each}` repetition;
-- component-shaped composition; and
-- scoped or imported CSS according to the eventual UI grammar.
+- keyed `{#each}` repetition.
 
 A core `match` expression may appear inside an interpolation. No separate
 Svelte-like match block is selected by 0.4.
 
-The body is a pure projection of the referenced machine observation and
-explicit presentation inputs. Expressions inside braces use Uhura's
-Rust-shaped core expression language, not JavaScript. The body cannot:
+Reusable presentation invocation and scoped or imported CSS syntax are not
+selected by 0.4. A presentation-shaped tag that resolves through `use` is
+diagnosed rather than treated as a component call. Checked standard extensions
+such as `Link` and `Surface` are finite catalogue entries, not a general
+component protocol.
+
+The body is a pure projection of the referenced machine observation.
+Expressions inside braces use Uhura's Rust-shaped core expression language,
+not JavaScript. The body cannot:
 
 - mutate machine state;
 - invoke an update directly;
@@ -101,8 +109,8 @@ the required machine-input payload type, so the checker validates the entire
 bridge without creating a callback.
 
 This specimen uses the standard HTML-shaped `input` contract supplied by the
-`ui` profile, whose semantic input payload exposes `value: Text`; it does not
-assume an Uhura widget catalogue.
+`ui` profile and recorded in the checked UI catalogue. Its semantic input
+payload exposes `value: Text`.
 
 ### Refusal presentation
 
@@ -122,24 +130,23 @@ notice by definition. A domain may name a commit-policy outcome `Blocked` when
 it needs both a blocked classification and visible committed feedback; the
 policy, not the constructor's English name, decides publication.
 
-## 3. UI reuse is not state ownership
+## 3. UI declarations do not own state
 
-A UI declaration is a pure presentation unit. Reusing one does not allocate a
-machine, part, store, inbox, or semantic lifetime. It may receive:
-
-- observation values;
-- immutable presentation values;
-- event constructors or a narrower checked input interface; and
-- slots or children defined by the UI grammar.
+A 0.4 UI declaration is one named pure projection bound to one machine's
+observation type. A host or evidence example may select that declaration for a
+machine instance. Another UI declaration cannot invoke it, pass values to it,
+or supply slots or children. Naming or selecting it does not allocate a
+machine, part, store, inbox, or semantic lifetime.
 
 State ownership remains in the machine or an explicitly composed part. A
 component-local physical concern such as hover, pressed pose, caret, IME,
 measurement, or animation frame remains renderer state unless promoted through
 a named semantic contract.
 
-The exact reusable-component declaration spelling remains a UI-grammar gate.
-It must follow the Svelte-shaped parent pattern and cannot create another
-behavior language.
+Reusable UI composition remains an unselected language-design gate. Any later
+proposal must restate its value, event, child, identity, and expansion
+semantics, follow the Svelte-shaped parent pattern, and avoid creating another
+behavior or state-ownership language.
 
 ## 4. Framework features
 
@@ -344,10 +351,12 @@ or source identity.
 
 ## 6. Evidence and static examples
 
-Evidence is tooling source outside the deployment graph. The 0.4 experiment
-retains the implemented 0.3 evidence vocabulary unchanged and versions it
-separately from core source. Selecting a replacement is future work; this
-candidate does not admit two evidence spellings.
+Evidence is tooling source outside the deployment graph. It uses the same 0.4
+frontend, expression language, imports, and logical-module identity as core
+source. The manifest role is the capability boundary: evidence modules may
+declare only `scenario`, `checkpoint`, and `example`, while deployable modules
+may not declare them. There is one evidence spelling and no compatibility
+loader.
 
 Its semantic operations are:
 
@@ -426,7 +435,8 @@ remains the non-normative design input.
 
 This profile does not select:
 
-- a built-in widget catalogue;
+- a permanent or general-purpose widget system beyond the finite checked
+  incubation catalogue;
 - file-system routing;
 - server components;
 - automatic data loading;

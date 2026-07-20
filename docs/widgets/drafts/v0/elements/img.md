@@ -1,17 +1,20 @@
 # `<img>`
 
-- **Status:** Implemented asset-backed image; loading, failure, and responsive-source semantics unsettled
+- **Status:** Historical snapshot of an implemented asset-backed image
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Native element in the current canonical checker
+- **Availability:** Native element in the retired v0 checker
 - **Decision:** Renamed from `<image>` during the v0 experiment; no accepted widget RFC
 - **Specification:** Pre-specification; single-source asset-backed image implemented
-- **Implementation:** Checker, Core semantic view, host asset boundary, browser Editor, and Play implemented
+- **Implementation:** Historically implemented across the checker, Core semantic view, host asset boundary, browser Editor, and Play
 - **Owners:** Checker, Core, Renderer, Host
 - **Supported renderers:** Browser Editor and Play
+
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
 
 `<img>` declares one non-interactive image resource. It is a system-defined
 native element, not raw HTML passthrough, an SVG graphics primitive, a CSS
@@ -307,7 +310,7 @@ No current CSS convention, asset manifest field, or browser-native lifecycle
 settles these questions. The narrow `<img>` contract should remain useful
 without silently growing into a cross-platform media framework.
 
-Current implementation and research references:
+Historical implementation and research references:
 
 - [Native element and accessibility checking](../../../../../crates/uhura-check/src/checker.rs)
 - [Supplemental resource manifest](../../../../../crates/uhura-check/src/resource_manifest.rs)

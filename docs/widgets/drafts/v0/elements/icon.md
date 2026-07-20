@@ -1,17 +1,20 @@
 # `<icon>`
 
-- **Status:** Implemented element; font-only realization selected for pre-v1
+- **Status:** Historical snapshot of an implemented font-only element
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** [Icon font](../integrations/icon-font.md)
-- **Availability:** Built-in Lucide family and local font families implemented
+- **Availability:** Built-in Lucide family and local font families were implemented in v0
 - **Decision:** Before v1, `<icon>` is realized only through an icon font
 - **Specification:** Pre-specification
-- **Implementation:** Checked token, font resources, host transport, and browser realization implemented
+- **Implementation:** Historically implemented across checking, resources, host transport, and browser realization
 - **Owners:** Checker, Core, Host, Renderer
 - **Supported renderers:** Browser Editor and Play
+
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
 
 `<icon>` requests a named glyph from a configured icon-font family. It is a
 system-defined content element, not a user-authored component, SVG container,
@@ -27,7 +30,7 @@ The pre-v1 contract is deliberately narrow:
 - custom SVG, raster, native-symbol, ligature, and remote-registry sources are
   not supported.
 
-This is the bedrock contract for the current implementation phase. It does not
+This was the bedrock contract for the retired v0 implementation phase. It does not
 decide whether v1 retains font-only realization or later admits an authored
 `<svg>` primitive or other icon resources.
 

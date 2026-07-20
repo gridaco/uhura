@@ -1,17 +1,20 @@
 # `<view>`
 
-- **Status:** Implemented neutral container; list realization defective and semantic role refinements incomplete
+- **Status:** Historical snapshot of an implemented neutral container
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Native element in the current canonical checker
-- **Decision:** Current experimental contract; no accepted widget RFC
+- **Availability:** Native element in the retired v0 checker
+- **Decision:** Retired experimental contract; no accepted widget RFC
 - **Specification:** Pre-specification; the roleless container is implemented, but the role taxonomy is unsettled
-- **Implementation:** Checker, semantic view, browser Editor, and Play implemented
+- **Implementation:** Historically implemented in the checker, semantic view, browser Editor, and Play
 - **Owners:** Checker, Core, Renderer
 - **Supported renderers:** Browser Editor and Play
+
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
 
 `<view>` declares a non-interactive structural container and CSS layout hook.
 It is a system-defined native element, not a user-authored component, raw
@@ -405,7 +408,7 @@ An accepted view/widget RFC should preserve the neutral, non-interactive
 container while moving stronger semantic promises out of an under-validated
 role token.
 
-Current implementation and research references:
+Historical implementation and research references:
 
 - [Native element, attribute, and event checking](../../../../../crates/uhura-check/src/checker.rs)
 - [Semantic view projection](../../../../../crates/uhura-core/src/render.rs)

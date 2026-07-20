@@ -152,44 +152,10 @@ pub machine BoundedCounter {
 }
 ```
 
-This is not pseudocode. Its intended lowering preserves the 0.3 configuration,
-state, observation, and reaction calculus. Protocol spelling and program
-identity may differ; differential comparison uses the explicit constructor
-map in the fixture. The frozen observation labels remain snake_case.
-
-### 0.3 to 0.4 surface map
-
-| Uhura 0.3 | Uhura 0.4 | Semantic result |
-| --- | --- | --- |
-| `language uhura 0.3` | Manifest `language = "0.4"` | Project language identity |
-| `module app.x@1` | Manifest/package identity plus source module | Resolved module identity |
-| Implicitly public top level | Explicit `pub` | Visibility |
-| `key TaskId over Text` | `key TaskId(Text);` | Nominal key |
-| `fn f(x: T) -> U = value` | `fn f(x: T) -> U { value }` | Named pure function |
-| `input = \| increment` | `events { Increment }` | Local input sum |
-| `command = Never` | Omit `commands` | Empty local command sum |
-| `command = \| start(T)` | `commands { Start(value: T) }` | Local command sum |
-| `accepted commit` | `commit Accepted` | Outcome constructor and policy |
-| `derive x: T = value` | `computed x: T = value` | Pure derived binding |
-| `const limit: Nat = 2` | `const LIMIT: Nat = 2;` | Closed immutable constant |
-| `observe { x = x }` | `observe { x }` | Observation field |
-| Local `let` | `let value = expression;` | Immutable local binding |
-| `set count = value` | `count = value;` | Owned draft-state update |
-| `finish accepted` | Tail `Accepted` | Terminal outcome selection |
-| `on x = transition(...)` | `on x { transition(...) }` | Handler delegation |
-| `record with { field: value }` | `Record { field: value, ..record }` | Closed record update |
-| `and`, `or`, `not` | `&&`, `\|\|`, `!` | Boolean operations |
-| `if c then a else b` | `if c { a } else { b }` | Conditional value |
-| `port x: Contract(config)` | `port x = Contract { config };` | Port requirement |
-
-The first two rows change source and package metadata, not the reaction
-calculus. Every other row must have a direct semantic-equivalence test.
-UpperCamelCase protocol variants intentionally change source symbols; a
-differential fixture maps them to the corresponding 0.3 constructors rather
-than claiming equal raw IR or program identity. Composed parts are a new
-source-composition feature, not a spelling migration;
-flat-versus-part behavior is tested under an explicit path mapping rather than
-claiming identical program identity.
+This is not pseudocode. It lowers to the source-neutral reaction kernel
+specified by this candidate. The frozen observation labels remain snake_case.
+Conformance is defined by the language-neutral harness behavior and exact 0.4
+checks, not by acceptance of an earlier source spelling.
 
 ## 3. Project and module envelope
 
@@ -942,8 +908,8 @@ commands {
 }
 ```
 
-Omitting `commands` means the local command family is empty. The 0.3
-`command = Never` spelling is removed. Ports may still contribute commands.
+Omitting `commands` means the local command family is empty. Ports may still
+contribute commands.
 
 ### Ports
 
@@ -1562,8 +1528,8 @@ The source checker rejects:
     escape, unsupported numeric spelling, or token sequence outside the
     normative grammar.
 
-The compiler, runtime, and differential conformance suite must additionally
-prove properties that cannot be rejected from one source fixture:
+The compiler, runtime, and conformance suite must additionally prove
+properties that cannot be rejected from one source fixture:
 
 - admission of the complete composed program is atomic;
 - every diagnostic and editor node retains authored source provenance; and
@@ -1675,7 +1641,7 @@ them. The in-tree implementation now establishes that:
 - the checked-in complete 0.4 L0, L1, and L2 fixture parses, formats,
   reparses, lowers, and executes under this grammar;
 - explicit modules, locked vendored packages, parts, dependencies, ports, and
-  the `ui` profile lower through the retained machine kernel rather than a
+  the `ui` profile lower through the machine kernel rather than a
   parallel runtime;
 - A0 is admitted with its complete 12-preview evidence corpus alongside a
   separately executable, language-independent reference oracle; and

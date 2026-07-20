@@ -12,14 +12,10 @@ choose behavior by itself.
 
 ## 1. Baseline rule
 
-Uhura 0.3 is the executable differential baseline. The 0.4 implementation
-changes the source frontend and source-composition checker while retaining the
-semantic machine IR and reference interpreter wherever the candidate says the
-meaning is unchanged.
-
-The checked-in 0.3 answer sources remain comparison artifacts. They are not
-silently rewritten and are never accepted by a 0.4-only parser unless an
-explicit migration mode is selected.
+The language-neutral L0–L2 and A0 problem statements are the behavioral
+baselines. Uhura 0.4 has one source frontend, one project admission path, and
+one canonical runtime. Retired source spellings, migration modes, and
+differential compatibility loaders are outside the conformance surface.
 
 ## 2. Required harnesses
 
@@ -32,8 +28,7 @@ Must prove:
 - boundary no-op commits;
 - exact observation labels and values;
 - invariant preservation; and
-- differential semantic equivalence with the 0.3 answer under an explicit
-  protocol-constructor spelling map.
+- exact agreement with the frozen canonical and adversarial traces.
 
 ### L1 — river crossing
 
@@ -241,7 +236,7 @@ has its own isolated fixture. In particular, coverage must distinguish:
 Diagnostics must identify the authored concept, not only the flattened field or
 generated constructor.
 
-### Runtime, artifact, and differential probes
+### Runtime and artifact probes
 
 Separate probes must establish:
 
@@ -353,7 +348,7 @@ second UI parser does not pass.
 4. Lower monolithic L0–L2 with package-global public identities, stable
    semantic node/site identities, a separate provenance sidecar, and the
    final `MachineProgramId` projection.
-5. Execute differential 0.3/0.4 traces and the monolithic identity gates.
+5. Execute the frozen L0–L2 traces and the monolithic identity gates.
 6. Add the full logical-module map, `use`/`pub use`, vendored dependency
    resolution, and `uhura.lock`.
 7. Pass file-layout, module-rename, dependency-alias, integrity, and
@@ -363,8 +358,7 @@ second UI parser does not pass.
 9. Pass flat-versus-part behavior, canonical aggregate-order, and deployment
    identity probes.
 10. Add the `ui` profile, framework `use` declarations, presentation identity,
-    UI provenance, and the explicit compatibility loader for separately
-    versioned evidence sources.
+    UI provenance, and native evidence modules under their manifest role.
 11. Port A0 and preserve its oracle comparison.
 12. Port Instagram and validate Editor and Play.
 13. Repeat acquisition, repair, and controlled-change trials against the
@@ -431,9 +425,9 @@ Before Instagram, the implementation must:
 
 ## 8. Selection bar
 
-The candidate is worth replacing 0.3 only if it:
+The candidate remains worth carrying forward only if it:
 
-- preserves every retained kernel guarantee;
+- preserves every declared kernel guarantee;
 - makes L0–L2 at least as clear and no less exact;
 - makes A0 and Instagram materially easier to navigate and change;
 - reduces hybrid or one-off syntax;

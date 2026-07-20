@@ -1,23 +1,26 @@
 # `<scroll>`
 
-- **Status:** Implemented element; static preview pose proposed
+- **Status:** Historical snapshot of an implemented element; static preview pose was proposed
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Native element in the current canonical checker
-- **Decision:** Current experimental contract; no accepted widget RFC
+- **Availability:** Native element in the retired v0 checker
+- **Decision:** Retired experimental contract; no accepted widget RFC
 - **Specification:** Pre-specification; physical position is renderer-owned
-- **Implementation:** Checker, semantic view, browser Editor, and Play implemented; preview pose unimplemented
+- **Implementation:** Historically implemented in the checker, semantic view, browser Editor, and Play; preview pose was not implemented
 - **Owners:** Checker, Core, Renderer
 - **Supported renderers:** Browser Editor and Play
+
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
 
 `<scroll>` declares a semantic viewport. It is a native element, not a
 user-authored component, and source cannot invent its properties or events.
 
-The current checker supplies this closed contract directly. Instagram no
-longer carries an app-local element catalog.
+The retired v0 checker supplied this closed contract directly. Its Instagram
+example no longer carried an app-local element catalog.
 
 ## Why Uhura needs an explicit scroll element
 
@@ -242,7 +245,7 @@ Current and proposed conformance coverage should include:
 
 ## Decisions and open questions
 
-The current implementation and
+The pre-0.4 implementation and
 [Instagram spike design](../../../../studies/instagram-spike-design.md) establish
 useful evidence but do not replace an accepted widget RFC or versioned
 specification.
