@@ -29,6 +29,12 @@ No later language generation inherits these names or contracts by default.
 | [`<pager>`](elements/pager.md) | None | Built-in base catalogue during incubation | Uncontrolled paging implemented; `page-change` and indicator semantics unsettled | Checked keyed-each viewport and browser scroll-snap realization implemented; `page-change` declared but wired in no renderer |
 | [`<video>`](elements/video.md) | None | Built-in base catalogue during incubation | In the catalogue; a stale checker note still calls it deferred — adjudication pending | Checked eight-prop playback contract, Play playback, and pinned Editor poster-only pose implemented; no playback events or captions |
 
+## Surfaces
+
+| Entry | Facets | Availability | Decision | Implementation |
+|---|---|---|---|---|
+| [Sheet](surfaces/sheet.md) | None | Built-in surface machinery; the default modality | Structural lifecycle per the spike design; modality validation and motion unsettled | Parser, checker steering, Core surface stack, and browser scrim/Escape/focus realization implemented |
+
 ## Integrations
 
 | Entry | Applies to | Decision | Implementation |
