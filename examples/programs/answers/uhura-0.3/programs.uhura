@@ -1,0 +1,439 @@
+language uhura 0.3
+module examples.programs.uhura_0_3@1
+
+
+machine BoundedCounter {
+  config {
+    minimum: Int
+    maximum: Int
+    initial: Int
+  }
+
+  require minimum <= initial and initial <= maximum
+
+  input =
+    | increment
+    | decrement
+    | reset
+
+  command = Never
+
+  outcome =
+    | accepted commit
+
+  state {
+    count: Int = initial
+  }
+
+  invariant minimum <= count and count <= maximum
+
+  observe {
+    count = count
+    at_minimum = count == minimum
+    at_maximum = count == maximum
+  }
+
+  on increment {
+    set count = min(count + 1, maximum)
+    finish accepted
+  }
+
+  on decrement {
+    set count = max(count - 1, minimum)
+    finish accepted
+  }
+
+  on reset {
+    set count = initial
+    finish accepted
+  }
+}
+
+
+machine RiverCrossing {
+  type Side = left | right
+  type Entity = farmer | wolf | goat | cabbage
+  type Cargo = wolf | goat | cabbage
+  type Violation = wolf_with_goat | goat_with_cabbage
+  type Status = in_progress | solved
+
+  type Crossing = {
+    passenger: Option<Cargo>,
+    departure: Side,
+    arrival: Side,
+  }
+
+  type Refusal =
+    | passenger_not_with_farmer(Cargo)
+    | unsafe(NonEmpty<Violation>)
+
+  input =
+    | cross(passenger: Option<Cargo>)
+
+  command = Never
+
+  outcome =
+    | accepted(Crossing) commit
+    | refused(Refusal) abort
+
+  state {
+    positions: Table<Entity, Side> = {
+      farmer: left,
+      wolf: left,
+      goat: left,
+      cabbage: left,
+    }
+  }
+
+  fn entity(cargo: Cargo) -> Entity =
+    match cargo {
+      wolf => wolf
+      goat => goat
+      cabbage => cabbage
+    }
+
+  fn opposite(side: Side) -> Side =
+    match side {
+      left => right
+      right => left
+    }
+
+  fn violations(at: Table<Entity, Side>) -> Seq<Violation> =
+    collect [
+      when at[wolf] == at[goat] and at[farmer] != at[wolf]
+        => wolf_with_goat
+      when at[goat] == at[cabbage] and at[farmer] != at[goat]
+        => goat_with_cabbage
+    ]
+
+  invariant violations(positions).is_empty
+
+  observe {
+    positions = positions
+    status: Status =
+      if positions.values.all(side => side == right)
+      then solved
+      else in_progress
+  }
+
+  on cross(passenger) {
+    let departure = positions[farmer]
+
+    if passenger is some(cargo)
+      and positions[entity(cargo)] != departure
+    {
+      finish refused(passenger_not_with_farmer(cargo))
+    }
+
+    let arrival = opposite(departure)
+    let farmer_moved = positions.set(farmer, arrival)
+    let candidate =
+      match passenger {
+        none => farmer_moved
+        some(cargo) => farmer_moved.set(entity(cargo), arrival)
+      }
+
+    match NonEmpty.from(violations(candidate)) {
+      some(harms) =>
+        finish refused(unsafe(harms))
+
+      none => {
+        set positions = candidate
+        finish accepted({
+          passenger: passenger,
+          departure: departure,
+          arrival: arrival,
+        })
+      }
+    }
+  }
+}
+
+
+machine KeyedTaskSupervisor {
+  const limit: Nat = 2
+
+  key TaskId over Text
+
+  type Terminal = success | failure
+
+  type Phase =
+    | queued
+    | running(attempt: PositiveInt, progress: Ratio)
+    | succeeded
+    | failed
+    | cancelled
+
+  type Task = {
+    phase: Phase,
+    started: Nat,
+  }
+
+  input =
+    | submit(task: TaskId)
+    | cancel(task: TaskId)
+    | retry(task: TaskId)
+    | progress(task: TaskId, attempt: Int, value: BoundaryNumber)
+    | succeed(task: TaskId, attempt: Int)
+    | fail(task: TaskId, attempt: Int)
+
+  command =
+    | start(task: TaskId, attempt: PositiveInt)
+    | cancel(task: TaskId, attempt: PositiveInt)
+
+  outcome =
+    | accepted commit
+    | duplicate abort
+    | stale abort
+    | invalid abort
+
+  state {
+    tasks: Map<TaskId, Task> = Map.empty
+    queue: Seq<TaskId> = []
+  }
+
+  derive running_count: Nat =
+    tasks.values.count(task => task.phase is running(_, _))
+
+  invariant {
+    running_count <= limit,
+    queue.unique,
+    queue.all(id => tasks.get(id) is some({ phase: queued, ... })),
+    tasks.entries.all((id, task) =>
+      (task.phase is queued) == queue.contains(id)
+    ),
+    queue.is_empty or running_count == limit,
+    tasks.values.all(task =>
+      match task.phase {
+        running(attempt, _) =>
+          task.started == attempt
+        _ => true
+      }
+    ),
+  }
+
+  observe {
+    tasks = tasks
+    queue = queue
+    running: Set<{
+      task: TaskId,
+      attempt: PositiveInt,
+      progress: Ratio,
+    }> = Set {
+      for (id, task) in tasks.entries
+      when task.phase is running(attempt, progress)
+      yield { task: id, attempt: attempt, progress: progress }
+    }
+    available_capacity: Nat = limit - running_count
+  }
+
+  transition resolve_terminal(
+    id: TaskId,
+    attempt: Int,
+    terminal: Terminal,
+  ) {
+    if attempt <= 0 {
+      finish invalid
+    }
+
+    let task =
+      match tasks.get(id) {
+        none => finish invalid
+        some(task) => task
+      }
+
+    if attempt > task.started {
+      finish invalid
+    }
+
+    if attempt < task.started {
+      finish stale
+    }
+
+    match task.phase {
+      running(current_attempt, _) => {
+        if current_attempt != attempt {
+          unreachable
+        }
+
+        let phase: Phase =
+          match terminal {
+            success => succeeded
+            failure => failed
+          }
+
+        set tasks = tasks.put(id, task with { phase: phase })
+        finish accepted
+      }
+
+      succeeded => {
+        if terminal == success {
+          finish duplicate
+        }
+        finish stale
+      }
+
+      failed => {
+        if terminal == failure {
+          finish duplicate
+        }
+        finish stale
+      }
+
+      queued | cancelled =>
+        finish stale
+    }
+  }
+
+  on submit(id) {
+    match tasks.get(id) {
+      some(_) =>
+        finish invalid
+
+      none => {
+        set tasks = tasks.put(id, {
+          phase: queued,
+          started: 0,
+        })
+        set queue = queue.append(id)
+        finish accepted
+      }
+    }
+  }
+
+  on cancel(id) {
+    match tasks.get(id) {
+      none =>
+        finish invalid
+
+      some(task) =>
+        match task.phase {
+          queued => {
+            set queue = queue.without(id)
+            set tasks = tasks.put(
+              id,
+              task with { phase: cancelled },
+            )
+            finish accepted
+          }
+
+          running(attempt, _) => {
+            set tasks = tasks.put(
+              id,
+              task with { phase: cancelled },
+            )
+            emit cancel(id, attempt)
+            finish accepted
+          }
+
+          cancelled =>
+            finish duplicate
+
+          succeeded | failed =>
+            finish invalid
+        }
+    }
+  }
+
+  on retry(id) {
+    match tasks.get(id) {
+      none =>
+        finish invalid
+
+      some(task) =>
+        match task.phase {
+          failed | cancelled => {
+            set tasks = tasks.put(
+              id,
+              task with { phase: queued },
+            )
+            set queue = queue.append(id)
+            finish accepted
+          }
+
+          queued | running(_, _) | succeeded =>
+            finish invalid
+        }
+    }
+  }
+
+  on progress(id, attempt, value) {
+    if attempt <= 0 {
+      finish invalid
+    }
+
+    let next =
+      match Ratio.from(value) {
+        none => finish invalid
+        some(progress) => progress
+      }
+
+    let task =
+      match tasks.get(id) {
+        none => finish invalid
+        some(task) => task
+      }
+
+    if attempt > task.started {
+      finish invalid
+    }
+
+    if attempt < task.started {
+      finish stale
+    }
+
+    match task.phase {
+      running(current_attempt, current) => {
+        if current_attempt != attempt {
+          unreachable
+        }
+        if next < current {
+          finish stale
+        }
+        if next == current {
+          finish duplicate
+        }
+
+        set tasks = tasks.put(
+          id,
+          task with { phase: running(attempt, next) },
+        )
+        finish accepted
+      }
+
+      queued | succeeded | failed | cancelled =>
+        finish stale
+    }
+  }
+
+  on succeed(id, attempt) =
+    resolve_terminal(id, attempt, success)
+
+  on fail(id, attempt) =
+    resolve_terminal(id, attempt, failure)
+
+  before commit {
+    while running_count < limit
+      and queue.uncons is some({ head: id, tail: rest })
+      decreases queue.size
+    {
+      let task =
+        match tasks.get(id) {
+          none => unreachable
+          some(task) => task
+        }
+
+      let attempt: PositiveInt = task.started + 1
+
+      set queue = rest
+      set tasks = tasks.put(
+        id,
+        task with {
+          phase: running(attempt, 0),
+          started: attempt,
+        },
+      )
+      emit start(id, attempt)
+    }
+  }
+}

@@ -1,0 +1,387 @@
+language uhura 0.3
+module app.return_desk.web@1
+
+use ui
+
+import {
+  LineId,
+  Location,
+  Order,
+  Reason,
+  ReturnDraft,
+  ReturnDesk,
+  ReturnMethod,
+  Step,
+  order_100,
+  return_routes,
+} from "app.return_desk.machine@1"
+import { Token } from "uhura.boundary@1"
+import { Link } from "uhura.web_router@1"
+import { Surface } from "uhura.ui_surface@1"
+
+
+fn selected_quantity(
+  draft: Option<ReturnDraft>,
+  line: LineId,
+) -> Int =
+  match draft {
+    none => 0
+    some(draft) =>
+      match draft.selections.get(line) {
+        none => 0
+        some(selection) => selection.quantity
+      }
+  }
+
+fn selected_reason(
+  draft: Option<ReturnDraft>,
+  line: LineId,
+) -> Option<Reason> =
+  match draft {
+    none => none
+    some(draft) =>
+      match draft.selections.get(line) {
+        none => none
+        some(selection) => selection.reason
+      }
+  }
+
+fn has_current_line(
+  order: Option<Order>,
+  line: LineId,
+) -> Bool =
+  match order {
+    none => false
+    some(order) => order.lines.get(line) is some(_)
+  }
+
+fn reason_label(value: Reason) -> Text =
+  match value {
+    damaged => "Damaged"
+    not_needed => "Not needed"
+  }
+
+fn method_label(value: ReturnMethod) -> Text =
+  match value {
+    drop_off => "Drop off"
+    pickup => "Pickup"
+  }
+
+fn selected_reason_label(
+  value: Option<Reason>,
+) -> Text =
+  match value {
+    none => "not selected"
+    some(reason) => reason_label(reason)
+  }
+
+fn selected_method_label(
+  value: Option<ReturnMethod>,
+) -> Text =
+  match value {
+    none => "not selected"
+    some(method) => method_label(method)
+  }
+
+fn location_label(value: Option<Location>) -> Text =
+  match value {
+    none => "no delivered location"
+    some(flow(_, none)) => "return flow, missing step"
+    some(flow(_, some(step))) => step
+    some(order(_)) => "order"
+    some(receipt(_)) => "receipt"
+  }
+
+
+ui ReturnDeskWeb for ReturnDesk(view) {
+  <main aria-label="Return desk">
+    {#match view.page}
+      {#case no_location}
+        <p>No return location is active.</p>
+
+      {#case normalizing_to(target)}
+        <p>
+          Delivered location: {location_label(view.location)}.
+          Required target: {location_label(some(target))}.
+        </p>
+
+      {#case items_page}
+        <h1>Choose items</h1>
+
+        {#match view.order}
+          {#case none}
+            <p>Waiting for order information…</p>
+
+          {#case some(order)}
+            {#each order.lines.entries_by_key as (id, line) (id)}
+              <section>
+                <h2>{line.title}</h2>
+
+                <label>
+                  Quantity
+                  <input
+                    type="number"
+                    min={0}
+                    max={line.returnable_quantity}
+                    value={selected_quantity(view.draft, id)}
+                    disabled={
+                      not view.actions.quantity_lines.contains(id)
+                    }
+                    on change ->
+                      choose_quantity(id, event.number)
+                  />
+                </label>
+
+                <fieldset
+                  disabled={
+                    not view.actions.reason_lines.contains(id)
+                  }
+                >
+                  <legend>Reason</legend>
+
+                  <button
+                    aria-pressed={
+                      selected_reason(view.draft, id)
+                        == some(damaged)
+                    }
+                    disabled={
+                      selected_reason(view.draft, id)
+                        == some(damaged)
+                    }
+                    on press ->
+                      choose_reason(id, known(damaged))
+                  >
+                    Damaged
+                  </button>
+
+                  <button
+                    aria-pressed={
+                      selected_reason(view.draft, id)
+                        == some(not_needed)
+                    }
+                    disabled={
+                      selected_reason(view.draft, id)
+                        == some(not_needed)
+                    }
+                    on press ->
+                      choose_reason(id, known(not_needed))
+                  >
+                    Not needed
+                  </button>
+                </fieldset>
+
+                <button
+                  disabled={
+                    not view.actions.policy_lines.contains(id)
+                  }
+                  on press -> open_policy(id)
+                >
+                  Return policy
+                </button>
+              </section>
+            {/each}
+        {/match}
+
+        {#if view.draft is some(draft)}
+          {#each
+            draft.selections.entries_by_key
+            as (line, selection)
+            (line)
+          }
+            {#if not has_current_line(view.order, line)}
+              <p>
+                Removed item {line.value}: retained draft quantity
+                {selection.quantity},
+                reason {selected_reason_label(selection.reason)}.
+              </p>
+            {/if}
+          {/each}
+        {/if}
+
+        {#if view.conflict is some(conflict)}
+          <p>
+            The order source changed from revision
+            {conflict.draft_revision}
+            to {conflict.observed_revision}.
+          </p>
+        {/if}
+
+        {#if view.actions.restart}
+          <button
+            on press -> restart_from_current_order
+          >
+            Restart from current order
+          </button>
+        {/if}
+
+        <button
+          disabled={not view.actions.steps.contains(method)}
+          on press -> go_to_step(known(method))
+        >
+          Continue to method
+        </button>
+
+        <button
+          disabled={not view.actions.steps.contains(review)}
+          on press -> go_to_step(known(review))
+        >
+          Continue to review
+        </button>
+
+      {#case method_page}
+        <h1>Choose a return method</h1>
+
+        <button
+          aria-pressed={
+            view.draft is some({ method: some(drop_off), ... })
+          }
+          disabled={not view.actions.methods.contains(drop_off)}
+          on press -> choose_method(known(drop_off))
+        >
+          Drop off
+        </button>
+
+        <button
+          aria-pressed={
+            view.draft is some({ method: some(pickup), ... })
+          }
+          disabled={not view.actions.methods.contains(pickup)}
+          on press -> choose_method(known(pickup))
+        >
+          Pickup
+        </button>
+
+        <button
+          disabled={not view.actions.steps.contains(items)}
+          on press -> go_to_step(known(items))
+        >
+          Back to items
+        </button>
+
+        <button
+          disabled={not view.actions.steps.contains(review)}
+          on press -> go_to_step(known(review))
+        >
+          Continue to review
+        </button>
+
+      {#case review_page}
+        <h1>Review return</h1>
+
+        {#if view.draft is some(draft)}
+          <dl>
+            <dt>Order</dt>
+            <dd>{draft.order.value}</dd>
+
+            <dt>Revision</dt>
+            <dd>{draft.base_revision}</dd>
+
+            <dt>Method</dt>
+            <dd>{selected_method_label(draft.method)}</dd>
+          </dl>
+
+          {#each
+            draft.selections.entries_by_key
+            as (line, selection)
+            (line)
+          }
+            <p>
+              {line.value}: {selection.quantity},
+              {selected_reason_label(selection.reason)}
+            </p>
+          {/each}
+        {/if}
+
+        <button
+          disabled={not view.actions.steps.contains(items)}
+          on press -> go_to_step(known(items))
+        >
+          Back to items
+        </button>
+
+        <button
+          disabled={not view.actions.steps.contains(method)}
+          on press -> go_to_step(known(method))
+        >
+          Back to method
+        </button>
+
+        <button
+          disabled={not view.actions.submit}
+          on press -> submit
+        >
+          Submit return
+        </button>
+
+      {#case order_page}
+        <h1>Order order-100</h1>
+
+        {#if view.completion_notice is some(return_id)}
+          <p>Your return completed.</p>
+
+          <Link
+            routes={return_routes}
+            to={receipt(return_id)}
+            disabled={not view.actions.follow_receipt}
+            on follow -> follow_receipt_link
+          >
+            View return receipt
+          </Link>
+        {/if}
+
+      {#case receipt_page(return_id)}
+        <h1>Return completed</h1>
+        <p>Receipt {return_id.value}</p>
+    {/match}
+
+    {#if
+      view.page is items_page
+        or view.page is method_page
+        or view.page is review_page
+        or view.page is receipt_page(_)
+    }
+      <Link
+        routes={return_routes}
+        to={order(order_100)}
+        disabled={not view.actions.follow_order}
+        on follow -> follow_order_link
+      >
+        View order
+      </Link>
+    {/if}
+
+    {#match view.submission}
+      {#case idle}
+        <p>Ready to submit.</p>
+      {#case pending(request)}
+        <p>Submitting request {request.id.value}…</p>
+      {#case refused(_, required)}
+        <p>
+          The service requires order revision {required}.
+        </p>
+      {#case unavailable_for(_)}
+        <p>Submission is unavailable. You may retry.</p>
+      {#case completed(_, return_id)}
+        <p>Return {return_id.value} completed.</p>
+    {/match}
+
+    {#if view.policy is some(policy)}
+      <Surface key={policy.instance}>
+        <h2>{policy.title}</h2>
+        <p>Item {policy.line.value}</p>
+        <p>{policy.summary}</p>
+
+        <button
+          disabled={
+            view.actions.dismiss_surface
+              != some(policy.instance)
+          }
+          on press ->
+            dismiss_policy(policy.instance)
+        >
+          Close policy
+        </button>
+      </Surface>
+    {/if}
+  </main>
+}

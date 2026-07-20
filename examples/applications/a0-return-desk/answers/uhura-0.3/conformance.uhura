@@ -1,0 +1,685 @@
+language uhura 0.3
+module app.return_desk.conformance@1
+
+use evidence
+
+import {
+  LineId,
+  Location,
+  OrderId,
+  OrderWire,
+  Reason,
+  RequestId,
+  ReturnDesk,
+  ReturnId,
+  ReturnMethod,
+  Step,
+  SurfaceId,
+  lamp,
+  mug,
+  order_100,
+  return_routes,
+} from "app.return_desk.machine@1"
+import { Token } from "uhura.boundary@1"
+import { Observation } from "uhura.observation@1"
+import { RequestPort } from "uhura.ports@1"
+import { Router } from "uhura.web_router@1"
+
+
+const order_7: OrderWire = {
+  id: order_100,
+  revision: 7,
+  lines: [
+    {
+      id: lamp,
+      title: "Desk lamp",
+      purchased_quantity: 2,
+      returnable_quantity: 2,
+      policy_summary:
+        "Return the lamp in protective packaging.",
+    },
+    {
+      id: mug,
+      title: "Stoneware mug",
+      purchased_quantity: 1,
+      returnable_quantity: 1,
+      policy_summary:
+        "Wrap the mug to prevent breakage in transit.",
+    },
+  ],
+  allowed_methods: ["drop-off", "pickup"],
+}
+
+const order_8: OrderWire = {
+  id: order_100,
+  revision: 8,
+  lines: [
+    {
+      id: lamp,
+      title: "Desk lamp",
+      purchased_quantity: 2,
+      returnable_quantity: 0,
+      policy_summary:
+        "Return the lamp in protective packaging.",
+    },
+    {
+      id: mug,
+      title: "Stoneware mug",
+      purchased_quantity: 1,
+      returnable_quantity: 1,
+      policy_summary:
+        "Wrap the mug to prevent breakage in transit.",
+    },
+  ],
+  allowed_methods: ["drop-off", "pickup"],
+}
+
+const order_9_without_lamp: OrderWire = {
+  id: order_100,
+  revision: 9,
+  lines: [
+    {
+      id: mug,
+      title: "Stoneware mug",
+      purchased_quantity: 1,
+      returnable_quantity: 1,
+      policy_summary:
+        "Wrap the mug to prevent breakage in transit.",
+    },
+  ],
+  allowed_methods: ["drop-off", "pickup"],
+}
+
+const items_location: Location =
+  flow(order_100, some("items"))
+const method_location: Location =
+  flow(order_100, some("method"))
+const review_location: Location =
+  flow(order_100, some("review"))
+const order_location: Location = order(order_100)
+const return_900: ReturnId = ReturnId("return-900")
+const receipt_location: Location = receipt(return_900)
+
+
+scenario canonical for ReturnDesk {
+  bind router = Router.fixture(return_routes)
+  bind orders = Observation.fixture()
+  bind returns = RequestPort.fixture()
+
+  start
+  expect observation {
+    location: none,
+    order: none,
+    draft: none,
+    ...
+  }
+
+  deliver router.changed(review_location)
+  expect accepted commands [
+    router.replace(items_location),
+  ]
+
+  deliver router.changed(items_location)
+  expect accepted commands []
+  pin waiting_at_items
+
+  deliver orders.observed(order_7)
+  expect accepted commands []
+
+  send choose_quantity(lamp, finite(1))
+  expect accepted commands []
+  pin incomplete_items
+
+  send choose_reason(lamp, known(damaged))
+  expect accepted commands []
+  pin complete_items
+
+  send open_policy(lamp)
+  expect accepted commands []
+  pin open_policy_surface
+
+  send dismiss_policy(SurfaceId(1))
+  expect accepted commands []
+
+  send go_to_step(known(method))
+  expect accepted commands [
+    router.push(method_location),
+  ]
+
+  deliver router.changed(method_location)
+  expect accepted commands []
+
+  send choose_method(known(drop_off))
+  expect accepted commands []
+  pin method_selection
+
+  send go_to_step(known(review))
+  expect accepted commands [
+    router.push(review_location),
+  ]
+
+  deliver router.changed(review_location)
+  expect accepted commands []
+  pin review
+
+  send submit
+  expect accepted commands [
+    returns.request(
+      RequestId(1),
+      {
+        order: order_100,
+        expected_revision: 7,
+        selections: {
+          lamp: {
+            quantity: 1,
+            reason: damaged,
+          },
+        },
+        method: drop_off,
+      },
+    ),
+  ]
+  pin request_1_pending
+
+  send submit
+  expect duplicate commands []
+
+  deliver router.changed(method_location)
+  expect accepted commands []
+
+  deliver returns.settled(
+    RequestId(1),
+    refused_order_changed(8),
+  )
+  expect accepted commands []
+  pin domain_refusal
+
+  deliver orders.observed(order_8)
+  expect accepted commands [
+    router.replace(items_location),
+  ]
+  pin source_changed_conflict
+
+  deliver router.changed(items_location)
+  expect accepted commands []
+
+  send restart_from_current_order
+  expect accepted commands []
+  pin restarted_at_revision_8
+
+  send choose_quantity(mug, finite(1))
+  expect accepted commands []
+
+  send choose_reason(mug, known(not_needed))
+  expect accepted commands []
+
+  send go_to_step(known(method))
+  expect accepted commands [
+    router.push(method_location),
+  ]
+
+  deliver router.changed(method_location)
+  expect accepted commands []
+
+  send choose_method(known(pickup))
+  expect accepted commands []
+
+  send go_to_step(known(review))
+  expect accepted commands [
+    router.push(review_location),
+  ]
+
+  deliver router.changed(review_location)
+  expect accepted commands []
+
+  send submit
+  expect accepted commands [
+    returns.request(
+      RequestId(2),
+      {
+        order: order_100,
+        expected_revision: 8,
+        selections: {
+          mug: {
+            quantity: 1,
+            reason: not_needed,
+          },
+        },
+        method: pickup,
+      },
+    ),
+  ]
+
+  deliver router.changed(method_location)
+  expect accepted commands []
+  pin request_2_pending_after_back
+
+  deliver returns.settled(
+    RequestId(2),
+    accepted("return-900"),
+  )
+  expect accepted commands [
+    router.replace(receipt_location),
+  ]
+
+  deliver router.changed(receipt_location)
+  expect accepted commands []
+  pin receipt
+
+  deliver returns.settled(
+    RequestId(2),
+    accepted("return-900"),
+  )
+  expect stale commands []
+}
+
+
+scenario complete_items_without_method
+  from canonical::complete_items
+{
+  deliver router.changed(review_location)
+  expect accepted commands [
+    router.replace(method_location),
+  ]
+}
+
+scenario missing_and_unknown_step for ReturnDesk {
+  bind router = Router.fixture(return_routes)
+  bind orders = Observation.fixture()
+  bind returns = RequestPort.fixture()
+
+  start
+
+  deliver router.changed(
+    flow(order_100, none),
+  )
+  expect accepted commands [
+    router.replace(items_location),
+  ]
+
+  deliver router.changed(
+    flow(order_100, some("unknown")),
+  )
+  expect accepted commands [
+    router.replace(items_location),
+  ]
+}
+
+scenario browser_forward_after_restart
+  from canonical::restarted_at_revision_8
+{
+  deliver router.changed(review_location)
+  expect accepted commands [
+    router.replace(items_location),
+  ]
+}
+
+scenario stale_order_revision
+  from canonical::source_changed_conflict
+{
+  deliver orders.observed(order_7)
+  expect stale commands []
+}
+
+scenario removed_selected_line
+  from canonical::open_policy_surface
+{
+  deliver orders.observed(order_9_without_lamp)
+  expect accepted commands []
+  expect observation {
+    policy: none,
+    conflict: some(_),
+    ...
+  }
+  expect observation where
+    draft is some(current)
+      and current.selections.get(lamp) is some(_)
+}
+
+scenario stale_surface_cannot_close_newer
+  from canonical::open_policy_surface
+{
+  send go_to_step(known(method))
+  expect accepted commands [
+    router.push(method_location),
+  ]
+
+  deliver router.changed(method_location)
+  expect accepted commands []
+
+  deliver router.changed(items_location)
+  expect accepted commands []
+
+  send open_policy(mug)
+  expect accepted commands []
+
+  send dismiss_policy(SurfaceId(1))
+  expect stale commands []
+
+  expect observation {
+    policy: some({
+      line: mug,
+      ...
+    }),
+    ...
+  }
+  pin newer_surface_after_stale_dismiss
+}
+
+scenario unavailable_then_retry
+  from canonical::request_1_pending
+{
+  deliver returns.settled(
+    RequestId(1),
+    unavailable,
+  )
+  expect accepted commands []
+  pin retryable_unavailability
+
+  send submit
+  expect accepted commands [
+    returns.request(
+      RequestId(2),
+      {
+        order: order_100,
+        expected_revision: 7,
+        selections: {
+          lamp: {
+            quantity: 1,
+            reason: damaged,
+          },
+        },
+        method: drop_off,
+      },
+    ),
+  ]
+}
+
+scenario invalid_refusal_keeps_pending
+  from canonical::request_1_pending
+{
+  deliver returns.settled(
+    RequestId(1),
+    refused_order_changed(7),
+  )
+  expect invalid(invalid_refusal_revision)
+    commands []
+  expect inspection {
+    submission: pending({
+      id: RequestId(1),
+      ...
+    }),
+    ...
+  }
+}
+
+scenario malformed_settlement_precedes_stale
+  from canonical::request_1_pending
+{
+  deliver returns.settled(
+    RequestId(99),
+    refused_order_changed(0),
+  )
+  expect invalid(invalid_refusal_revision)
+    commands []
+
+  deliver returns.settled(
+    RequestId(99),
+    accepted(""),
+  )
+  expect invalid(invalid_return_id)
+    commands []
+
+  expect inspection {
+    submission: pending({
+      id: RequestId(1),
+      ...
+    }),
+    ...
+  }
+}
+
+scenario fence_requires_observation_and_restart
+  from canonical::domain_refusal
+{
+  deliver router.changed(review_location)
+  expect accepted commands []
+
+  send submit
+  expect blocked(source_changed) commands []
+
+  deliver router.changed(items_location)
+  expect accepted commands []
+
+  send choose_quantity(lamp, finite(2))
+  expect blocked(source_changed) commands []
+
+  deliver orders.observed(order_8)
+  expect accepted commands []
+
+  send choose_quantity(mug, finite(1))
+  expect blocked(source_changed) commands []
+
+  send restart_from_current_order
+  expect accepted commands []
+}
+
+scenario late_acceptance_outside_flow
+  from canonical::request_1_pending
+{
+  deliver router.changed(order_location)
+  expect accepted commands []
+
+  deliver returns.settled(
+    RequestId(1),
+    accepted("return-900"),
+  )
+  expect accepted commands []
+  pin completion_notice_outside_flow
+
+  send follow_receipt_link
+  expect accepted commands [
+    router.push(receipt_location),
+  ]
+
+  deliver router.changed(receipt_location)
+  expect accepted commands []
+  expect observation {
+    completion_notice: none,
+    ...
+  }
+
+  send follow_order_link
+  expect accepted commands [
+    router.push(order_location),
+  ]
+
+  deliver router.changed(order_location)
+  expect accepted commands []
+  expect observation {
+    completion_notice: none,
+    ...
+  }
+}
+
+scenario unknown_and_conflicting_settlements
+  from canonical::request_1_pending
+{
+  deliver returns.settled(
+    RequestId(99),
+    accepted("return-unknown"),
+  )
+  expect stale commands []
+
+  deliver returns.settled(
+    RequestId(1),
+    accepted("return-900"),
+  )
+  expect accepted commands [
+    router.replace(receipt_location),
+  ]
+
+  deliver returns.settled(
+    RequestId(1),
+    refused_order_changed(8),
+  )
+  expect stale commands []
+}
+
+scenario old_flow_after_completion
+  from canonical::receipt
+{
+  deliver router.changed(review_location)
+  expect accepted commands [
+    router.replace(receipt_location),
+  ]
+
+  deliver router.changed(review_location)
+  expect duplicate commands []
+}
+
+scenario receipt_replacement_superseded
+  from canonical::request_1_pending
+{
+  deliver returns.settled(
+    RequestId(1),
+    accepted("return-900"),
+  )
+  expect accepted commands [
+    router.replace(receipt_location),
+  ]
+
+  deliver router.changed(order_location)
+  expect accepted commands []
+  expect observation {
+    completion_notice: some(return_900),
+    actions: {
+      follow_receipt: true,
+      ...
+    },
+    ...
+  }
+
+  send follow_receipt_link
+  expect accepted commands [
+    router.push(receipt_location),
+  ]
+}
+
+scenario repeated_normalization for ReturnDesk {
+  bind router = Router.fixture(return_routes)
+  bind orders = Observation.fixture()
+  bind returns = RequestPort.fixture()
+
+  start
+
+  deliver router.changed(review_location)
+  expect accepted commands [
+    router.replace(items_location),
+  ]
+
+  deliver router.changed(review_location)
+  expect duplicate commands []
+}
+
+scenario one_navigation_intent
+  from canonical::complete_items
+{
+  send go_to_step(known(method))
+  expect accepted commands [
+    router.push(method_location),
+  ]
+
+  send go_to_step(known(method))
+  expect duplicate commands []
+
+  send follow_order_link
+  expect blocked(navigation_pending) commands []
+
+  deliver router.changed(method_location)
+  expect accepted commands []
+
+  send go_to_step(known(items))
+  expect accepted commands [
+    router.push(items_location),
+  ]
+}
+
+
+example waiting_at_items =
+  canonical::waiting_at_items
+
+example incomplete_items =
+  canonical::incomplete_items
+
+example complete_items =
+  canonical::complete_items
+
+example method_selection =
+  canonical::method_selection
+
+example review =
+  canonical::review
+
+example open_policy_surface =
+  canonical::open_policy_surface
+
+example pending_after_back =
+  canonical::request_2_pending_after_back
+
+example source_changed_conflict =
+  canonical::source_changed_conflict
+
+example domain_refusal =
+  canonical::domain_refusal
+
+example retryable_unavailability =
+  unavailable_then_retry::retryable_unavailability
+
+example completion_notice_outside_flow =
+  late_acceptance_outside_flow::
+    completion_notice_outside_flow
+
+example receipt =
+  canonical::receipt
+
+
+checkpoint request_2_pending =
+  canonical::request_2_pending_after_back
+
+scenario replay_accepted_suffix
+  from request_2_pending
+{
+  expect restore commands []
+
+  deliver returns.settled(
+    RequestId(2),
+    accepted("return-900"),
+  )
+  expect accepted commands [
+    router.replace(receipt_location),
+  ]
+
+  deliver router.changed(receipt_location)
+  expect accepted commands []
+  pin replay_final
+}
+
+scenario replay_accepted_suffix_again
+  from request_2_pending
+{
+  expect restore commands []
+
+  deliver returns.settled(
+    RequestId(2),
+    accepted("return-900"),
+  )
+  expect accepted commands [
+    router.replace(receipt_location),
+  ]
+
+  deliver router.changed(receipt_location)
+  expect accepted commands []
+  expect snapshot ==
+    replay_accepted_suffix::replay_final
+}
