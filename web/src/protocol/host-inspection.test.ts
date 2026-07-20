@@ -10,7 +10,6 @@ import {
 } from "./interaction-graph.js";
 import {
   UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-  UHURA_SEMANTIC_IR_HASH_PROTOCOL,
 } from "./machine.js";
 
 const machine = "example@1::Counter";
@@ -21,9 +20,33 @@ const node = {
   machine,
   label: machine,
 } as const;
+const provenance = {
+  protocol: "uhura-provenance/0",
+  sources: [{
+    source: 0,
+    package: "example@1",
+    module: "app",
+    path: "app.uhura",
+    sha256: "c".repeat(64),
+    bytes: 100,
+  }],
+  occurrences: [{
+    node: "d".repeat(64),
+    source: 0,
+    start: 0,
+    end: 10,
+    role: "definition",
+    owner: "root",
+  }],
+  topology: {
+    protocol: "uhura-authored-interaction-topology/0",
+    nodes: [],
+    edges: [],
+  },
+} as const;
 const artifact = {
   protocol: UHURA_HOST_INSPECTION_PROTOCOL,
-  identityProtocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+  identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
   entry: "app",
   machine,
   presentation: null,
@@ -37,10 +60,10 @@ const artifact = {
     sha256: "c".repeat(64),
     bytes: 100,
   }],
-  provenance: null,
+  provenance,
   interactionGraph: {
     protocol: UHURA_INTERACTION_GRAPH_PROTOCOL,
-    identity_protocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+    identity_protocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
     machine_program_hashes: { [machine]: hash },
     presentation_hashes: {},
     outcome_policies: {},
@@ -70,50 +93,17 @@ describe("Uhura host inspection", () => {
     expect(decoded.interactionGraph.nodes[0]?.kind).toBe("machine");
     expect(decoded.graphSources.nodes[0]?.sources[0]?.path).toBe("app.uhura");
 
-    const current = decodeHostInspection({
-      ...artifact,
-      identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-      interactionGraph: {
-        ...artifact.interactionGraph,
-        identity_protocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-      },
-    });
-    expect(current.identityProtocol).toBe(UHURA_MACHINE_PROGRAM_ID_PROTOCOL);
+    expect(decoded.identityProtocol).toBe(UHURA_MACHINE_PROGRAM_ID_PROTOCOL);
     expect(() =>
       decodeHostInspection({
         ...artifact,
-        identityProtocol: "uhura-unrecognized-identity/9",
+        identityProtocol: "uhura-semantic-ir-hash/0",
       })
     ).toThrow(/identityProtocol must be/u);
   });
 
   it("joins semantic provenance to the accepted physical source inventory", () => {
-    const provenance = {
-      protocol: "uhura-provenance/0",
-      sources: [{
-        source: 0,
-        package: "example@1",
-        module: "app",
-        path: "app.uhura",
-        sha256: "c".repeat(64),
-        bytes: 100,
-      }],
-      occurrences: [{
-        node: "d".repeat(64),
-        source: 0,
-        start: 0,
-        end: 10,
-        role: "definition",
-        owner: "root",
-      }],
-      topology: {
-        protocol: "uhura-authored-interaction-topology/0",
-        nodes: [],
-        edges: [],
-      },
-    } as const;
-    expect(decodeHostInspection({ ...artifact, provenance }).provenance)
-      .toEqual(provenance);
+    expect(decodeHostInspection(artifact).provenance).toEqual(provenance);
     expect(() =>
       decodeHostInspection({
         ...artifact,

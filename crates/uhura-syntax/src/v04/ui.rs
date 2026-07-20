@@ -838,11 +838,11 @@ impl UiParser<'_> {
     }
 
     fn error(&mut self, message: impl Into<String>, span: Span) {
-        self.diagnostics.push(ParseDiagnostic {
-            kind: ParseDiagnosticKind::InvalidUi,
-            message: message.into(),
+        self.diagnostics.push(ParseDiagnostic::new(
+            ParseDiagnosticKind::InvalidUi,
+            message,
             span,
-        });
+        ));
     }
 }
 

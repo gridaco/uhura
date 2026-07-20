@@ -1,6 +1,6 @@
-# The Uhura spike workspace. Cargo language commands are independently
-# buildable; browser assets are separate build/package products (RFC 0002).
-# Design: docs/working-group/instagram-spike-design.md.
+# The Uhura workspace. Cargo language commands are independently buildable;
+# browser assets are separate build/package products (RFC 0002).
+# Active incubation design: docs/spec/drafts/0.4/README.md.
 [workspace]
 resolver = "3"
 members = ["crates/*"]

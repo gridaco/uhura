@@ -172,7 +172,9 @@ impl<'a> Builder<'a> {
         let mut declarations = BTreeMap::new();
         for module in modules {
             for declaration in &module.declarations {
-                let (name, _, _) = declaration_header(declaration);
+                let Some((name, _, _)) = declaration_header(declaration) else {
+                    continue;
+                };
                 declarations.insert(
                     (module.identity.module.clone(), name.text.clone()),
                     DeclarationRef { declaration },
@@ -279,7 +281,9 @@ impl<'a> Builder<'a> {
         module: &ast::Module,
         declaration: &ast::Declaration,
     ) -> Result<(), V04ProvenanceBuildError> {
-        let (name, visibility, kind) = declaration_header(declaration);
+        let Some((name, visibility, kind)) = declaration_header(declaration) else {
+            return Ok(());
+        };
         if visibility != ast::Visibility::Public {
             return Ok(());
         }
@@ -361,6 +365,9 @@ impl<'a> Builder<'a> {
                 )?;
             }
             ast::DeclarationKind::Key(_) | ast::DeclarationKind::Const(_) => {}
+            ast::DeclarationKind::Scenario(_)
+            | ast::DeclarationKind::Example(_)
+            | ast::DeclarationKind::Checkpoint(_) => {}
         }
         Ok(())
     }
@@ -1195,12 +1202,12 @@ impl<'a> Builder<'a> {
     }
 
     fn public_owner(&self, declaration: &ast::Declaration) -> Option<String> {
-        let (name, visibility, _) = declaration_header(declaration);
+        let (name, visibility, _) = declaration_header(declaration)?;
         (visibility == ast::Visibility::Public).then(|| format!("{}::{}", self.package, name.text))
     }
 
     fn public_declaration_node(&self, declaration: &ast::Declaration) -> Option<String> {
-        let (name, visibility, kind) = declaration_header(declaration);
+        let (name, visibility, kind) = declaration_header(declaration)?;
         (visibility == ast::Visibility::Public).then(|| {
             self.public_declaration_node_for_owner(
                 &format!("{}::{}", self.package, name.text),
@@ -1302,8 +1309,8 @@ fn next(value: &mut usize) -> usize {
 
 fn declaration_header(
     declaration: &ast::Declaration,
-) -> (&ast::Identifier, ast::Visibility, &'static str) {
-    match &declaration.kind {
+) -> Option<(&ast::Identifier, ast::Visibility, &'static str)> {
+    Some(match &declaration.kind {
         ast::DeclarationKind::Machine(value) => (&value.name, value.visibility, "machine"),
         ast::DeclarationKind::Part(value) => (&value.name, value.visibility, "part"),
         ast::DeclarationKind::Ui(value) => (&value.name, value.visibility, "ui"),
@@ -1312,7 +1319,10 @@ fn declaration_header(
         ast::DeclarationKind::Key(value) => (&value.name, value.visibility, "key"),
         ast::DeclarationKind::Const(value) => (&value.name, value.visibility, "const"),
         ast::DeclarationKind::Function(value) => (&value.name, value.visibility, "function"),
-    }
+        ast::DeclarationKind::Scenario(_)
+        | ast::DeclarationKind::Example(_)
+        | ast::DeclarationKind::Checkpoint(_) => return None,
+    })
 }
 
 fn singular_type_name(path: &ast::TypePath) -> Option<&str> {

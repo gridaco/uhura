@@ -116,6 +116,7 @@ impl Program {
             )));
         }
         let machine = self
+            .machine_program
             .machines
             .get(&instance.machine)
             .ok_or_else(|| RenderError("instance machine is absent from the program".into()))?;
@@ -172,6 +173,7 @@ impl Program {
             .get(binding_id)
             .ok_or_else(|| RenderError(format!("unknown UI event binding `{binding_id}`")))?;
         let machine = self
+            .machine_program
             .machines
             .get(&instance.machine)
             .ok_or_else(|| RenderError("instance machine is absent from the program".into()))?;
@@ -182,7 +184,7 @@ impl Program {
         let mut locals = binding.locals.clone();
         locals.insert("event".into(), event);
         evaluate_with_locals(
-            self,
+            &self.machine_program,
             machine,
             &instance.configuration,
             &state,
@@ -344,7 +346,7 @@ impl Projector<'_> {
                 ..
             } => {
                 let (matches, bindings) = evaluate_condition_with_locals(
-                    self.program,
+                    &self.program.machine_program,
                     self.machine,
                     &self.instance.configuration,
                     &self.state,
@@ -404,8 +406,8 @@ impl Projector<'_> {
                     let mut scoped = locals.clone();
                     scoped.extend(bindings);
                     // The checker restricts repetition keys to scalar values
-                    // or nominal wrappers over scalar values, whose legacy
-                    // canonical bytes are injective for this checked domain.
+                    // or nominal wrappers over scalar values, whose canonical
+                    // bytes are injective for this checked domain.
                     let identity = self.eval(key, &scoped)?.canonical_bytes();
                     if !identities.insert(identity.clone()) {
                         return Err(RenderError(
@@ -442,7 +444,7 @@ impl Projector<'_> {
         locals: &BTreeMap<String, Value>,
     ) -> Result<Value, RenderError> {
         evaluate_with_locals(
-            self.program,
+            &self.program.machine_program,
             self.machine,
             &self.instance.configuration,
             &self.state,
@@ -755,7 +757,7 @@ mod tests {
     fn duplicate_each_program(children: Vec<UiNode>, keys: &[i64]) -> (Program, Instance) {
         let source = SourceRef::synthetic("test/rows");
         let mut program = Program::new();
-        program.machines.insert(
+        program.machine_program.machines.insert(
             MACHINE.into(),
             Machine {
                 id: MACHINE.into(),

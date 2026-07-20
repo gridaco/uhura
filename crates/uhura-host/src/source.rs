@@ -79,16 +79,6 @@ impl ProjectSourceFiles {
         Ok(sources)
     }
 
-    pub(crate) fn retired_relay_sources(&self) -> Vec<String> {
-        self.entries
-            .keys()
-            .filter(|path| {
-                path.extension().and_then(|extension| extension.to_str()) == Some("relay")
-            })
-            .map(|path| portable_path(path))
-            .collect()
-    }
-
     pub(crate) fn duplicate_sources(&self) -> Vec<Vec<String>> {
         let mut by_origin = BTreeMap::<&Path, Vec<String>>::new();
         for (logical, origin) in &self.origins {
@@ -231,17 +221,6 @@ impl ProjectSourceSnapshot {
     #[must_use]
     pub fn source_revision_id(&self) -> &str {
         &self.source_revision_id
-    }
-
-    pub(crate) fn has_retired_relay_corpus(&self) -> bool {
-        !self.files.retired_relay_sources().is_empty()
-            || self.failures.iter().any(|failure| {
-                failure
-                    .path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    == Some("relay")
-            })
     }
 
     pub(crate) fn validate_for_build(&self) -> Result<(), serde_json::Value> {
@@ -572,7 +551,7 @@ mod tests {
             std::env::temp_dir().join(format!("uhura-source-capture-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("build")).unwrap();
-        std::fs::write(root.join("machine.uhura"), "language uhura 0.3\n").unwrap();
+        std::fs::write(root.join("machine.uhura"), "language uhura 0.4\n").unwrap();
         std::fs::write(root.join("build/stale.uhura"), "invalid").unwrap();
 
         let snapshot = capture_project_snapshot(&root);
@@ -582,7 +561,7 @@ mod tests {
             snapshot.source_revision_id(),
             uhura_core::source_revision_id(
                 snapshot.files.case_insensitive,
-                [("machine.uhura", b"language uhura 0.3\n".as_slice())],
+                [("machine.uhura", b"language uhura 0.4\n".as_slice())],
             )
             .unwrap()
         );

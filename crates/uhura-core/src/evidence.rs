@@ -13,7 +13,6 @@ use uhura_port::{
     SINK_PORT_CONTRACT_HASH,
 };
 
-use super::codec::{hash, hex};
 use super::ir::{
     EvidenceRef, EvidenceStep, Expr, Machine, PortDef, Program, Scenario, ScenarioOrigin, SourceRef,
 };
@@ -157,15 +156,19 @@ impl<'program> EvidenceRunner<'program> {
                 machine,
                 configuration,
             } => {
-                self.program.machines.get(machine).ok_or_else(|| {
-                    Failure::at(
-                        EvidenceFailureCode::UnknownMachine,
-                        &scenario.id,
-                        None,
-                        &scenario.source,
-                        format!("unknown evidence machine `{machine}`"),
-                    )
-                })?;
+                self.program
+                    .machine_program
+                    .machines
+                    .get(machine)
+                    .ok_or_else(|| {
+                        Failure::at(
+                            EvidenceFailureCode::UnknownMachine,
+                            &scenario.id,
+                            None,
+                            &scenario.source,
+                            format!("unknown evidence machine `{machine}`"),
+                        )
+                    })?;
                 Ok(ScenarioContext {
                     machine: machine.clone(),
                     configuration: configuration.clone(),
@@ -308,6 +311,7 @@ impl<'program> EvidenceRunner<'program> {
                 let instance_id = format!("evidence:{}", scenario.id);
                 let (instance, genesis) = self
                     .program
+                    .machine_program
                     .admit(
                         &execution.context.machine,
                         execution.context.configuration.clone(),
@@ -502,7 +506,7 @@ impl<'program> EvidenceRunner<'program> {
                     .machine(&execution.context.machine)
                     .map_err(|message| failure(EvidenceFailureCode::UnknownMachine, message))?;
                 let (matches, _) = evaluate_condition_with_locals(
-                    self.program,
+                    &self.program.machine_program,
                     machine,
                     &instance.configuration,
                     &state,
@@ -593,10 +597,12 @@ impl<'program> EvidenceRunner<'program> {
     fn execute_reaction(&self, context: &mut ScenarioContext, input: Value) -> Result<(), String> {
         let mut admitted = current_instance(context)?.clone();
         self.program
+            .machine_program
             .enqueue(&mut admitted, input)
             .map_err(|error| error.to_string())?;
         let step = self
             .program
+            .machine_program
             .drain_one(&admitted)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "submitted input did not produce a reaction".to_string())?;
@@ -684,7 +690,7 @@ impl<'program> EvidenceRunner<'program> {
         let empty_state = BTreeMap::new();
         let evaluate = |value: &Expr| {
             evaluate_with_locals(
-                self.program,
+                &self.program.machine_program,
                 machine,
                 &Value::Unit,
                 &empty_state,
@@ -759,7 +765,7 @@ impl<'program> EvidenceRunner<'program> {
         let state = instance_state(instance)?;
         let machine = self.machine(&context.machine)?;
         evaluate_with_locals(
-            self.program,
+            &self.program.machine_program,
             machine,
             &instance.configuration,
             &state,
@@ -770,12 +776,13 @@ impl<'program> EvidenceRunner<'program> {
     }
 
     fn qualified_input_port(&self, machine_id: &str, value: &Value) -> Option<(String, String)> {
-        let machine = self.program.machines.get(machine_id)?;
+        let machine = self.program.machine_program.machines.get(machine_id)?;
         qualified_port_value(machine, value)
     }
 
     fn machine(&self, id: &str) -> Result<&Machine, String> {
         self.program
+            .machine_program
             .machines
             .get(id)
             .ok_or_else(|| format!("unknown machine `{id}`"))
@@ -801,43 +808,22 @@ impl<'program> EvidenceRunner<'program> {
             next_sequence: snapshot.next_sequence,
             trace_prefix_hash: snapshot.trace_prefix_hash.clone(),
         };
-        if self.program.program_hashes.contains_key(&snapshot.machine) {
-            return self
-                .program
-                .restore(&checkpoint)
-                .map_err(|error| error.to_string());
-        }
-        // `Program::admit` defines a deterministic fallback hash for unchecked
-        // programmatic IR. Insert that same value into a temporary metadata
-        // view so restoration still goes through the sole runtime restore path.
-        let mut program = self.program.clone();
-        program
-            .program_hashes
-            .insert(snapshot.machine.clone(), expected_hash);
-        program
+        self.program
+            .machine_program
             .restore(&checkpoint)
             .map_err(|error| error.to_string())
     }
 
     fn machine_program_hash(&self, machine: &str) -> Result<String, String> {
-        if !self.program.machines.contains_key(machine) {
+        if !self.program.machine_program.machines.contains_key(machine) {
             return Err(format!("unknown machine `{machine}`"));
         }
-        Ok(self
-            .program
+        self.program
+            .machine_program
             .program_hashes
             .get(machine)
             .cloned()
-            .unwrap_or_else(|| {
-                hex(&hash(
-                    "machine-program",
-                    &[
-                        b"uhura 0.3".to_vec(),
-                        machine.as_bytes().to_vec(),
-                        self.program.to_canonical_string().into_bytes(),
-                    ],
-                ))
-            }))
+            .ok_or_else(|| format!("machine `{machine}` has no frozen machine-program hash"))
     }
 
     fn resolve_reference<'pins>(
@@ -1597,7 +1583,10 @@ mod tests {
             before_commit: Vec::new(),
             source: source("machine.counter", 1),
         };
-        program.machines.insert(machine_id.clone(), machine);
+        program
+            .machine_program
+            .machines
+            .insert(machine_id.clone(), machine);
         program.freeze_program_hashes();
 
         let audit_fixture = EvidenceStep::Bind {
@@ -1818,6 +1807,7 @@ mod tests {
         let mut program = counter_program();
         let configuration = Value::record([("seed".into(), Value::int(7))]).unwrap();
         program
+            .machine_program
             .machines
             .get_mut("example.counter@1::Counter")
             .expect("counter machine")
@@ -1871,6 +1861,19 @@ mod tests {
         assert_eq!(failure.source_id, "canonical.start");
         assert_eq!(failure.source, source("canonical.start", 11));
         assert!(!report.artifacts.pins.contains_key("canonical::after_one"));
+    }
+
+    #[test]
+    fn evidence_requires_a_frozen_current_machine_identity() {
+        let mut program = counter_program();
+        program.machine_program.program_hashes.clear();
+
+        let report = EvidenceRunner::new(&program).run();
+        assert!(!report.passed);
+        assert!(report.failures.iter().any(|failure| {
+            failure.code == EvidenceFailureCode::AdmissionFailed
+                && failure.message.contains("no frozen machine-program hash")
+        }));
     }
 
     #[test]

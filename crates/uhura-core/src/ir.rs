@@ -5,15 +5,12 @@ use serde::{Deserialize, Serialize};
 use super::value::{IntegerKind, Value};
 
 pub const IR_PROTOCOL: &str = "uhura-ir/1";
-pub const SEMANTIC_IR_IDENTITY_PROTOCOL: &str = "uhura-semantic-ir-hash/0";
+pub const LANGUAGE: &str = "uhura 0.4";
 pub const MACHINE_PROGRAM_ID_PROTOCOL: &str = "uhura-machine-program/0";
 pub const MACHINE_UI_INTERFACE_ID_PROTOCOL: &str = "uhura-machine-ui-interface/0";
 pub const PRESENTATION_ID_PROTOCOL: &str = "uhura-presentation/0";
+pub const EVIDENCE_ID_PROTOCOL: &str = "uhura-evidence/0";
 pub const DEPLOYMENT_ID_PROTOCOL: &str = "uhura-deployment/0";
-
-fn default_identity_protocol() -> String {
-    SEMANTIC_IR_IDENTITY_PROTOCOL.into()
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceRef {
@@ -307,14 +304,16 @@ impl Machine {
     }
 }
 
+/// The source-neutral executable machine program.
+///
+/// This value owns everything required by typed-value validation and the
+/// deterministic runtime. Presentation, routing, and evidence remain
+/// application concerns on [`Program`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Program {
+pub struct MachineProgram {
     pub protocol: String,
     pub language: String,
-    /// Versioned identity mechanism used by this artifact. Uhura 0.3 retains
-    /// its prototype semantic-IR projection; 0.4 uses the final
-    /// module-layout-independent machine-program projection.
-    #[serde(default = "default_identity_protocol")]
+    /// Module-layout-independent identity mechanism used by this artifact.
     pub identity_protocol: String,
     pub modules: Vec<String>,
     pub types: BTreeMap<String, TypeDef>,
@@ -325,22 +324,31 @@ pub struct Program {
     pub machines: BTreeMap<String, Machine>,
     /// Exact public Part declarations statically composed into each machine.
     ///
-    /// This is source-neutral identity material for Uhura 0.4 only. Static
-    /// composition lowers to one aggregate machine, so the runtime does not
-    /// schedule or checkpoint these declaration identities.
+    /// Static composition lowers to one aggregate machine, so the runtime does
+    /// not schedule or checkpoint these declaration identities.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub composed_part_declarations: BTreeMap<String, BTreeSet<String>>,
-    /// Verifiable derivation frames for every runtime-observable Uhura 0.4
-    /// fault site. The map key is the resulting `SiteId`.
+    /// Verifiable derivation frames for every runtime-observable fault site.
+    /// The map key is the resulting `SiteId`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub site_identities: BTreeMap<String, SiteIdentityFrame>,
+    pub program_hashes: BTreeMap<String, String>,
+}
+
+/// One complete checked application artifact.
+///
+/// `machine_program` is flattened deliberately: `uhura-ir/1` is the current
+/// wire contract for one complete application.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Program {
+    #[serde(flatten)]
+    pub machine_program: MachineProgram,
     #[serde(default)]
     pub presentations: BTreeMap<String, Presentation>,
     #[serde(default)]
     pub evidence: EvidenceSuite,
     #[serde(default)]
     pub route_tables: BTreeMap<String, uhura_port::RouteTable>,
-    pub program_hashes: BTreeMap<String, String>,
     #[serde(default)]
     pub presentation_hashes: BTreeMap<String, String>,
     #[serde(default)]
@@ -352,12 +360,12 @@ struct ProfileHashes {
     evidence: BTreeMap<String, String>,
 }
 
-impl Program {
+impl MachineProgram {
     pub fn new() -> Self {
         Self {
             protocol: IR_PROTOCOL.into(),
-            language: "uhura 0.3".into(),
-            identity_protocol: default_identity_protocol(),
+            language: LANGUAGE.into(),
+            identity_protocol: MACHINE_PROGRAM_ID_PROTOCOL.into(),
             modules: Vec::new(),
             types: BTreeMap::new(),
             constants: BTreeMap::new(),
@@ -366,12 +374,7 @@ impl Program {
             machines: BTreeMap::new(),
             composed_part_declarations: BTreeMap::new(),
             site_identities: BTreeMap::new(),
-            presentations: BTreeMap::new(),
-            evidence: EvidenceSuite::default(),
-            route_tables: BTreeMap::new(),
             program_hashes: BTreeMap::new(),
-            presentation_hashes: BTreeMap::new(),
-            evidence_hashes: BTreeMap::new(),
         }
     }
 
@@ -379,18 +382,17 @@ impl Program {
         if self.protocol != IR_PROTOCOL {
             return Err(format!("expected `{IR_PROTOCOL}`, got `{}`", self.protocol));
         }
-        match (self.language.as_str(), self.identity_protocol.as_str()) {
-            ("uhura 0.3", SEMANTIC_IR_IDENTITY_PROTOCOL)
-            | ("uhura 0.4", MACHINE_PROGRAM_ID_PROTOCOL) => {}
-            ("uhura 0.3" | "uhura 0.4", _) => {
-                return Err(format!(
-                    "identity protocol `{}` does not match Uhura language `{}`",
-                    self.identity_protocol, self.language
-                ));
-            }
-            _ => {
-                return Err(format!("unsupported Uhura language `{}`", self.language));
-            }
+        if self.language != LANGUAGE {
+            return Err(format!(
+                "expected Uhura language `{LANGUAGE}`, got `{}`",
+                self.language
+            ));
+        }
+        if self.identity_protocol != MACHINE_PROGRAM_ID_PROTOCOL {
+            return Err(format!(
+                "expected identity protocol `{MACHINE_PROGRAM_ID_PROTOCOL}`, got `{}`",
+                self.identity_protocol
+            ));
         }
         self.validate_v04_finite_view_boundaries()?;
         for (machine, declarations) in &self.composed_part_declarations {
@@ -398,11 +400,6 @@ impl Program {
                 return Err(format!(
                     "Uhura composed-Part identity names unknown machine `{machine}`"
                 ));
-            }
-            if self.language != "uhura 0.4" {
-                return Err(
-                    "Uhura composed-Part identity is defined only for Uhura 0.4 programs".into(),
-                );
             }
             if declarations.iter().any(|declaration| {
                 let Some((package, name)) = declaration.rsplit_once("::") else {
@@ -426,11 +423,28 @@ impl Program {
         Ok(())
     }
 
-    fn validate_v04_finite_view_boundaries(&self) -> Result<(), String> {
-        if self.language != "uhura 0.4" {
-            return Ok(());
-        }
+    /// Freezes the current machine identities without an application profile.
+    pub fn freeze_program_hashes(&mut self) {
+        self.try_freeze_program_hashes()
+            .expect("checked Uhura machine program must have hashable semantic material");
+    }
 
+    /// Fallible machine-identity recomputation for externally supplied IR.
+    pub fn try_freeze_program_hashes(&mut self) -> Result<(), String> {
+        let mut application = Program {
+            machine_program: self.clone(),
+            presentations: BTreeMap::new(),
+            evidence: EvidenceSuite::default(),
+            route_tables: BTreeMap::new(),
+            presentation_hashes: BTreeMap::new(),
+            evidence_hashes: BTreeMap::new(),
+        };
+        application.try_freeze_program_hashes()?;
+        *self = application.machine_program;
+        Ok(())
+    }
+
+    fn validate_v04_finite_view_boundaries(&self) -> Result<(), String> {
         for (id, definition) in &self.types {
             if let TypeDef::Key { underlying, .. } = definition {
                 self.validate_v04_boundary_type(underlying, &format!("key `{id}`"))?;
@@ -887,7 +901,7 @@ impl Program {
             None
         }
 
-        fn statements(language: &str, body: &[Statement]) -> Result<(), String> {
+        fn statements(body: &[Statement]) -> Result<(), String> {
             for (index, statement) in body.iter().enumerate() {
                 match statement {
                     Statement::If {
@@ -895,12 +909,12 @@ impl Program {
                         else_body,
                         ..
                     } => {
-                        statements(language, then_body)?;
-                        statements(language, else_body)?;
+                        statements(then_body)?;
+                        statements(else_body)?;
                     }
                     Statement::Match { arms, .. } => {
                         for arm in arms {
-                            statements(language, &arm.body)?;
+                            statements(&arm.body)?;
                         }
                     }
                     Statement::While {
@@ -909,12 +923,6 @@ impl Program {
                         ..
                     } => {
                         if let Some(name) = break_local {
-                            if language != "uhura 0.4" {
-                                return Err(
-                                    "compiler-private loop exits are defined only for Uhura 0.4"
-                                        .into(),
-                                );
-                            }
                             if !name
                                 .starts_with(crate::runtime::INLINE_UPDATE_LOOP_EXIT_LOCAL_PREFIX)
                             {
@@ -939,7 +947,7 @@ impl Program {
                                 ));
                             }
                         }
-                        statements(language, loop_body)?;
+                        statements(loop_body)?;
                     }
                     Statement::Let { .. }
                     | Statement::Set { .. }
@@ -954,12 +962,12 @@ impl Program {
 
         for machine in self.machines.values() {
             for transition in machine.transitions.values() {
-                statements(&self.language, &transition.body)?;
+                statements(&transition.body)?;
             }
             for handler in machine.handlers.values() {
-                statements(&self.language, &handler.body)?;
+                statements(&handler.body)?;
             }
-            statements(&self.language, &machine.before_commit)?;
+            statements(&machine.before_commit)?;
         }
         Ok(())
     }
@@ -973,60 +981,135 @@ impl Program {
                         machine.id, port.name
                     )
                 })?;
+                let expected = self.expected_standard_port_instance(port, resolved)?;
+                validate_port_contract_instance(machine, port, resolved, &expected)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn expected_standard_port_instance(
+        &self,
+        port: &PortDef,
+        resolved: &uhura_port::ContractInstance,
+    ) -> Result<uhura_port::ContractInstance, String> {
+        let boundary_types = port
+            .type_arguments
+            .iter()
+            .map(|ty| {
+                uhura_port::TypeRef::new(ty.canonical_name()).map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let contract = port
+            .contract
+            .rsplit("::")
+            .next()
+            .unwrap_or(port.contract.as_str());
+        match contract {
+            "Observation" => {
+                let [value] = boundary_types.as_slice() else {
+                    return Err(format!(
+                        "Observation port `{}` must have one type argument",
+                        port.name
+                    ));
+                };
+                uhura_port::observation_instance(value.clone()).map_err(|error| error.to_string())
+            }
+            "RequestPort" => {
+                let [id, payload, settlement] = boundary_types.as_slice() else {
+                    return Err(format!(
+                        "RequestPort port `{}` must have three type arguments",
+                        port.name
+                    ));
+                };
+                uhura_port::request_port_instance(id.clone(), payload.clone(), settlement.clone())
+                    .map_err(|error| error.to_string())
+            }
+            "SinkPort" => {
+                let [value] = boundary_types.as_slice() else {
+                    return Err(format!(
+                        "SinkPort port `{}` must have one type argument",
+                        port.name
+                    ));
+                };
+                uhura_port::sink_port_instance(value.clone()).map_err(|error| error.to_string())
+            }
+            "Router" => {
+                let [location] = boundary_types.as_slice() else {
+                    return Err(format!(
+                        "Router port `{}` must have one type argument",
+                        port.name
+                    ));
+                };
+                if !matches!(port.configuration, Some(Expr::Name { .. })) {
+                    return Err(format!(
+                        "Router port `{}` must retain its resolved route-table configuration",
+                        port.name
+                    ));
+                }
+                let routes: uhura_port::RouteTable = serde_json::from_value(
+                    resolved.configuration.as_value().clone(),
+                )
+                .map_err(|error| {
+                    format!(
+                        "Router port `{}` has invalid resolved route-table configuration: {error}",
+                        port.name
+                    )
+                })?;
+                uhura_port::router_instance(location.clone(), &routes)
+                    .map_err(|error| error.to_string())
+            }
+            other => Err(format!(
+                "Uhura port `{}` uses unsupported contract `{other}`",
+                port.name
+            )),
+        }
+    }
+}
+
+impl Program {
+    pub fn new() -> Self {
+        Self {
+            machine_program: MachineProgram::new(),
+            presentations: BTreeMap::new(),
+            evidence: EvidenceSuite::default(),
+            route_tables: BTreeMap::new(),
+            presentation_hashes: BTreeMap::new(),
+            evidence_hashes: BTreeMap::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn as_machine_program(&self) -> &MachineProgram {
+        &self.machine_program
+    }
+
+    pub fn as_machine_program_mut(&mut self) -> &mut MachineProgram {
+        &mut self.machine_program
+    }
+
+    #[must_use]
+    pub fn into_machine_program(self) -> MachineProgram {
+        self.machine_program
+    }
+
+    pub fn validate_protocol(&self) -> Result<(), String> {
+        self.machine_program.validate_protocol()?;
+        self.validate_port_contract_instances()?;
+        Ok(())
+    }
+
+    fn validate_port_contract_instances(&self) -> Result<(), String> {
+        for machine in self.machine_program.machines.values() {
+            for port in &machine.ports {
+                let resolved = port.contract_instance.as_ref().ok_or_else(|| {
+                    format!(
+                        "Uhura port `{}.{}` has no resolved contract instance",
+                        machine.id, port.name
+                    )
+                })?;
                 let expected = self.expected_standard_port_instance(port)?;
-                if resolved != &expected {
-                    return Err(format!(
-                        "Uhura port `{}.{}` contract instance differs from its checked standard contract",
-                        machine.id, port.name
-                    ));
-                }
-                if port.contract != expected.identity.to_string() {
-                    return Err(format!(
-                        "Uhura port `{}.{}` contract identity does not match its resolved instance",
-                        machine.id, port.name
-                    ));
-                }
-                if port.contract_hash != expected.content_hash {
-                    return Err(format!(
-                        "Uhura port `{}.{}` contract hash does not match its resolved instance",
-                        machine.id, port.name
-                    ));
-                }
-                let expected_arguments = expected
-                    .type_arguments
-                    .iter()
-                    .map(|argument| argument.argument.as_str())
-                    .collect::<Vec<_>>();
-                let actual_arguments = port
-                    .type_arguments
-                    .iter()
-                    .map(TypeRef::canonical_name)
-                    .collect::<Vec<_>>();
-                if actual_arguments
-                    != expected_arguments
-                        .iter()
-                        .map(|argument| (*argument).to_string())
-                        .collect::<Vec<_>>()
-                {
-                    return Err(format!(
-                        "Uhura port `{}.{}` type arguments do not match its resolved instance",
-                        machine.id, port.name
-                    ));
-                }
-                validate_lowered_contract_sum(
-                    &machine.id,
-                    &port.name,
-                    "receive",
-                    &port.receive,
-                    &expected.receive,
-                )?;
-                validate_lowered_contract_sum(
-                    &machine.id,
-                    &port.name,
-                    "send",
-                    &port.send,
-                    &expected.send,
-                )?;
+                validate_port_contract_instance(machine, port, resolved, &expected)?;
             }
         }
         Ok(())
@@ -1131,11 +1214,13 @@ impl Program {
             );
         }
         program.validate_protocol()?;
-        let supplied_program = program.program_hashes.clone();
+        let supplied_program = program.machine_program.program_hashes.clone();
         let supplied_presentations = program.presentation_hashes.clone();
         let supplied_evidence = program.evidence_hashes.clone();
         program.try_freeze_program_hashes()?;
-        if !supplied_program.is_empty() && supplied_program != program.program_hashes {
+        if !supplied_program.is_empty()
+            && supplied_program != program.machine_program.program_hashes
+        {
             return Err(
                 "Uhura machine IR machine-program hashes do not match executable semantics".into(),
             );
@@ -1155,9 +1240,7 @@ impl Program {
         Ok(program)
     }
 
-    /// Recomputes every version-selected identity from executable semantics.
-    /// Uhura 0.3 retains its prototype projection; Uhura 0.4 uses
-    /// [`MACHINE_PROGRAM_ID_PROTOCOL`].
+    /// Recomputes every current identity from executable semantics.
     ///
     /// Presentation, evidence, physical source paths, and byte spans are
     /// deliberately excluded. Semantic source identities remain because the
@@ -1171,12 +1254,17 @@ impl Program {
 
     /// Fallible identity recomputation for externally supplied IR.
     pub fn try_freeze_program_hashes(&mut self) -> Result<(), String> {
-        if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-            self.assign_v04_site_ids();
-            self.validate_v04_site_ids()?;
-            self.assign_v04_presentation_node_ids();
+        if self.machine_program.protocol != IR_PROTOCOL
+            || self.machine_program.language != LANGUAGE
+            || self.machine_program.identity_protocol != MACHINE_PROGRAM_ID_PROTOCOL
+        {
+            self.machine_program.validate_protocol()?;
         }
+        self.machine_program.assign_v04_site_ids();
+        self.machine_program.validate_v04_site_ids()?;
+        self.assign_v04_presentation_node_ids();
         let program_hashes = self
+            .machine_program
             .machines
             .iter()
             .map(|(id, machine)| {
@@ -1186,19 +1274,14 @@ impl Program {
                         format!("Uhura machine `{id}` has noncanonical semantic material: {error}")
                     })?
                     .into_bytes();
-                let domain = if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-                    MACHINE_PROGRAM_ID_PROTOCOL
-                } else {
-                    "prototype-machine-program"
-                };
                 Ok((
                     id.clone(),
-                    super::codec::hex(&super::codec::hash(domain, &[bytes])),
+                    super::codec::hex(&super::codec::hash(MACHINE_PROGRAM_ID_PROTOCOL, &[bytes])),
                 ))
             })
             .collect::<Result<BTreeMap<_, _>, String>>()?;
         let profile_hashes = self.compute_profile_hashes(&program_hashes)?;
-        self.program_hashes = program_hashes;
+        self.machine_program.program_hashes = program_hashes;
         self.presentation_hashes = profile_hashes.presentations;
         self.evidence_hashes = profile_hashes.evidence;
         Ok(())
@@ -1214,25 +1297,17 @@ impl Program {
             .map(|(id, presentation)| {
                 let mut references = SemanticReferences::default();
                 collect_presentation_references(presentation, &mut references);
-                let material = if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-                    if presentation.id != *id {
-                        return Err(format!(
-                            "Uhura presentation map key `{id}` differs from its resolved PublicId `{}`",
-                            presentation.id
-                        ));
-                    }
-                    serde_json::json!({
-                        "binding": presentation.binding,
-                        "nodes": semantic_json(&presentation.nodes),
-                        "dependencies": self.prototype_dependency_material(references),
-                    })
-                } else {
-                    serde_json::json!({
-                        "identityProtocol": self.identity_protocol,
-                        "presentation": semantic_json(presentation),
-                        "dependencies": self.prototype_dependency_material(references),
-                    })
-                };
+                if presentation.id != *id {
+                    return Err(format!(
+                        "Uhura presentation map key `{id}` differs from its resolved PublicId `{}`",
+                        presentation.id
+                    ));
+                }
+                let material = serde_json::json!({
+                    "binding": presentation.binding,
+                    "nodes": semantic_json(&presentation.nodes),
+                    "dependencies": self.dependency_material(references),
+                });
                 let semantic_ir = uhura_base::try_to_canonical_json(&material)
                     .map_err(|error| {
                         format!(
@@ -1240,55 +1315,40 @@ impl Program {
                         )
                     })?
                     .into_bytes();
-                let interface = match self.machines.get(&presentation.machine) {
-                    Some(machine) if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL
-                        && machine.id != presentation.machine =>
-                    {
+                let interface = match self.machine_program.machines.get(&presentation.machine) {
+                    Some(machine) if machine.id != presentation.machine => {
                         return Err(format!(
                             "Uhura presentation `{id}` resolves machine key `{}` to mismatched PublicId `{}`",
                             presentation.machine, machine.id
                         ));
                     }
                     Some(machine) => {
-                        machine_ui_interface_hash(self, machine).map_err(|error| {
+                        machine_ui_interface_hash(&self.machine_program, machine).map_err(
+                            |error| {
                             format!(
                                 "Uhura presentation `{id}` has invalid machine interface type material: {error}"
                             )
-                        })?
+                        },
+                        )?
                     }
-                    None if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL => {
+                    None => {
                         return Err(format!(
                             "Uhura presentation `{id}` binds unknown resolved machine PublicId `{}`",
                             presentation.machine
                         ));
                     }
-                    None => {
-                        super::codec::hash(
-                            "prototype-ui-interface-missing-machine",
-                            &[presentation.machine.as_bytes().to_vec()],
-                        )
-                    }
                 };
-                let (domain, fields) =
-                    if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-                        (
-                            PRESENTATION_ID_PROTOCOL,
-                            vec![
-                                presentation.id.as_bytes().to_vec(),
-                                presentation.machine.as_bytes().to_vec(),
-                                interface.to_vec(),
-                                semantic_ir,
-                            ],
-                        )
-                    } else {
-                        (
-                            "prototype-presentation",
-                            vec![interface.to_vec(), semantic_ir],
-                        )
-                    };
                 Ok((
                     id.clone(),
-                    super::codec::hex(&super::codec::hash(domain, &fields)),
+                    super::codec::hex(&super::codec::hash(
+                        PRESENTATION_ID_PROTOCOL,
+                        &[
+                            presentation.id.as_bytes().to_vec(),
+                            presentation.machine.as_bytes().to_vec(),
+                            interface.to_vec(),
+                            semantic_ir,
+                        ],
+                    )),
                 ))
             })
             .collect::<Result<BTreeMap<_, _>, String>>()?;
@@ -1342,32 +1402,28 @@ impl Program {
                     }
                 }
                 let semantic_ir = uhura_base::try_to_canonical_json(&serde_json::json!({
-                    "identityProtocol": self.identity_protocol,
+                    "identityProtocol": self.machine_program.identity_protocol,
                     "machine": machine,
                     "scenarios": scenarios,
                     "examples": examples,
                     "checkpoints": checkpoints,
-                    "dependencies": self.prototype_dependency_material(references),
+                    "dependencies": self.dependency_material(references),
                 }))
                 .map_err(|error| {
                     format!("Uhura evidence for `{machine}` has noncanonical material: {error}")
                 })?
                 .into_bytes();
-                let fixture_configuration =
-                    self.prototype_fixture_configuration(&machine, &scenario_ids);
+                let fixture_configuration = self.fixture_configuration(&machine, &scenario_ids);
                 let program_hash = program_hashes
                     .get(&machine)
-                    .and_then(|hash| super::codec::decode_hex_32(hash).ok())
-                    .unwrap_or_else(|| {
-                        super::codec::hash(
-                            "prototype-evidence-missing-machine",
-                            &[machine.as_bytes().to_vec()],
-                        )
-                    });
+                    .ok_or_else(|| {
+                        format!("Uhura evidence refers to unknown machine PublicId `{machine}`")
+                    })
+                    .and_then(|hash| super::codec::decode_hex_32(hash))?;
                 Ok((
                     machine,
                     super::codec::hex(&super::codec::hash(
-                        "prototype-evidence",
+                        EVIDENCE_ID_PROTOCOL,
                         &[program_hash.to_vec(), semantic_ir, fixture_configuration],
                     )),
                 ))
@@ -1381,23 +1437,17 @@ impl Program {
 
     pub fn machine_ui_interface_hash(&self, machine_id: &str) -> Result<String, String> {
         let machine = self
+            .machine_program
             .machines
             .get(machine_id)
             .ok_or_else(|| format!("unknown Uhura machine `{machine_id}`"))?;
         Ok(super::codec::hex(&machine_ui_interface_hash(
-            self, machine,
+            &self.machine_program,
+            machine,
         )?))
     }
 
-    #[deprecated(note = "use Program::machine_ui_interface_hash")]
-    pub fn prototype_ui_interface_hash(&self, machine_id: &str) -> Result<String, String> {
-        self.machine_ui_interface_hash(machine_id)
-    }
-
-    fn prototype_dependency_material(
-        &self,
-        mut references: SemanticReferences,
-    ) -> serde_json::Value {
+    fn dependency_material(&self, mut references: SemanticReferences) -> serde_json::Value {
         let mut selected_types = BTreeSet::new();
         let mut selected_constants = BTreeSet::new();
         let mut selected_functions = BTreeSet::new();
@@ -1405,21 +1455,30 @@ impl Program {
         loop {
             let mut changed = false;
             for id in references.types.clone() {
-                if self.types.contains_key(&id) && selected_types.insert(id.clone()) {
+                if self.machine_program.types.contains_key(&id) && selected_types.insert(id.clone())
+                {
                     collect_type_definition_references(
-                        self.types.get(&id).expect("selected type exists"),
+                        self.machine_program
+                            .types
+                            .get(&id)
+                            .expect("selected type exists"),
                         &mut references,
                     );
                     changed = true;
                 }
             }
             for id in references.constants.clone() {
-                if self.constants.contains_key(&id) && selected_constants.insert(id.clone()) {
-                    if let Some(ty) = self.constant_types.get(&id) {
+                if self.machine_program.constants.contains_key(&id)
+                    && selected_constants.insert(id.clone())
+                {
+                    if let Some(ty) = self.machine_program.constant_types.get(&id) {
                         collect_type_references(ty, &mut references);
                     }
                     collect_value_references(
-                        self.constants.get(&id).expect("selected constant exists"),
+                        self.machine_program
+                            .constants
+                            .get(&id)
+                            .expect("selected constant exists"),
                         &mut references,
                     );
                     if self.route_tables.contains_key(&id) {
@@ -1429,9 +1488,14 @@ impl Program {
                 }
             }
             for id in references.functions.clone() {
-                if self.functions.contains_key(&id) && selected_functions.insert(id.clone()) {
+                if self.machine_program.functions.contains_key(&id)
+                    && selected_functions.insert(id.clone())
+                {
                     collect_function_references(
-                        self.functions.get(&id).expect("selected function exists"),
+                        self.machine_program
+                            .functions
+                            .get(&id)
+                            .expect("selected function exists"),
                         &mut references,
                     );
                     changed = true;
@@ -1450,7 +1514,8 @@ impl Program {
         let types = selected_types
             .iter()
             .filter_map(|id| {
-                self.types
+                self.machine_program
+                    .types
                     .get(id)
                     .map(|value| (id.clone(), semantic_json(value)))
             })
@@ -1458,7 +1523,8 @@ impl Program {
         let functions = selected_functions
             .iter()
             .filter_map(|id| {
-                self.functions
+                self.machine_program
+                    .functions
                     .get(id)
                     .map(|value| (id.clone(), semantic_json(value)))
             })
@@ -1466,10 +1532,10 @@ impl Program {
         let constants = selected_constants
             .iter()
             .filter_map(|id| {
-                let value = self.constants.get(id)?;
-                let ty = self.constant_types.get(id);
+                let value = self.machine_program.constants.get(id)?;
+                let ty = self.machine_program.constant_types.get(id);
                 let encoded = ty
-                    .and_then(|ty| self.canonical_value_bytes(ty, value).ok())
+                    .and_then(|ty| self.machine_program.canonical_value_bytes(ty, value).ok())
                     .map(|bytes| super::codec::hex(&bytes));
                 Some((
                     id.clone(),
@@ -1497,12 +1563,8 @@ impl Program {
         })
     }
 
-    fn prototype_fixture_configuration(
-        &self,
-        machine_id: &str,
-        scenario_ids: &BTreeSet<String>,
-    ) -> Vec<u8> {
-        let Some(machine) = self.machines.get(machine_id) else {
+    fn fixture_configuration(&self, machine_id: &str, scenario_ids: &BTreeSet<String>) -> Vec<u8> {
+        let Some(machine) = self.machine_program.machines.get(machine_id) else {
             return uhura_base::to_canonical_json(&serde_json::json!({
                 "missingMachine": machine_id,
             }))
@@ -1511,7 +1573,7 @@ impl Program {
         let empty_state = BTreeMap::new();
         let evaluate = |expression: &Expr| {
             super::runtime::evaluate_with_locals(
-                self,
+                &self.machine_program,
                 machine,
                 &Value::Unit,
                 &empty_state,
@@ -1580,30 +1642,35 @@ impl Program {
         let mut selected_constants = BTreeSet::new();
         let mut selected_functions = BTreeSet::new();
         let mut selected_routes = BTreeSet::new();
-        let machine_json = if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-            semantic_machine_json_v04(machine)
-        } else {
-            semantic_json(machine)
-        };
+        let machine_json = semantic_machine_json_v04(machine);
 
         loop {
             let mut changed = false;
             for id in references.types.clone() {
-                if self.types.contains_key(&id) && selected_types.insert(id.clone()) {
+                if self.machine_program.types.contains_key(&id) && selected_types.insert(id.clone())
+                {
                     collect_type_definition_references(
-                        self.types.get(&id).expect("selected type exists"),
+                        self.machine_program
+                            .types
+                            .get(&id)
+                            .expect("selected type exists"),
                         &mut references,
                     );
                     changed = true;
                 }
             }
             for id in references.constants.clone() {
-                if self.constants.contains_key(&id) && selected_constants.insert(id.clone()) {
-                    if let Some(ty) = self.constant_types.get(&id) {
+                if self.machine_program.constants.contains_key(&id)
+                    && selected_constants.insert(id.clone())
+                {
+                    if let Some(ty) = self.machine_program.constant_types.get(&id) {
                         collect_type_references(ty, &mut references);
                     }
                     collect_value_references(
-                        self.constants.get(&id).expect("selected constant exists"),
+                        self.machine_program
+                            .constants
+                            .get(&id)
+                            .expect("selected constant exists"),
                         &mut references,
                     );
                     if self.route_tables.contains_key(&id) {
@@ -1613,9 +1680,14 @@ impl Program {
                 }
             }
             for id in references.functions.clone() {
-                if self.functions.contains_key(&id) && selected_functions.insert(id.clone()) {
+                if self.machine_program.functions.contains_key(&id)
+                    && selected_functions.insert(id.clone())
+                {
                     collect_function_references(
-                        self.functions.get(&id).expect("selected function exists"),
+                        self.machine_program
+                            .functions
+                            .get(&id)
+                            .expect("selected function exists"),
                         &mut references,
                     );
                     changed = true;
@@ -1634,7 +1706,8 @@ impl Program {
         let types = selected_types
             .iter()
             .filter_map(|id| {
-                self.types
+                self.machine_program
+                    .types
                     .get(id)
                     .map(|value| (id.clone(), semantic_json(value)))
             })
@@ -1642,23 +1715,19 @@ impl Program {
         let functions = selected_functions
             .iter()
             .filter_map(|id| {
-                self.functions.get(id).map(|value| {
-                    let value = if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-                        semantic_function_json_v04(value)
-                    } else {
-                        semantic_json(value)
-                    };
-                    (id.clone(), value)
-                })
+                self.machine_program
+                    .functions
+                    .get(id)
+                    .map(|value| (id.clone(), semantic_function_json_v04(value)))
             })
             .collect::<BTreeMap<_, _>>();
         let constants = selected_constants
             .iter()
             .filter_map(|id| {
-                let value = self.constants.get(id)?;
-                let ty = self.constant_types.get(id);
+                let value = self.machine_program.constants.get(id)?;
+                let ty = self.machine_program.constant_types.get(id);
                 let encoded = ty
-                    .and_then(|ty| self.canonical_value_bytes(ty, value).ok())
+                    .and_then(|ty| self.machine_program.canonical_value_bytes(ty, value).ok())
                     .map(|bytes| super::codec::hex(&bytes));
                 Some((
                     id.clone(),
@@ -1680,8 +1749,8 @@ impl Program {
             .collect::<BTreeMap<_, _>>();
 
         let mut material = serde_json::json!({
-            "identityProtocol": self.identity_protocol,
-            "language": self.language,
+            "identityProtocol": self.machine_program.identity_protocol,
+            "language": self.machine_program.language,
             "machineIdentity": machine_id,
             "machine": machine_json,
             "types": types,
@@ -1690,43 +1759,25 @@ impl Program {
             "routeTables": route_tables,
             "loweringOptions": [],
         });
-        if self.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-            material
-                .as_object_mut()
-                .expect("machine material is an object")
-                .insert(
-                    "composedPartDeclarations".into(),
-                    serde_json::to_value(
-                        self.composed_part_declarations
-                            .get(machine_id)
-                            .cloned()
-                            .unwrap_or_default(),
-                    )
-                    .expect("composed Part declaration identities serialize"),
-                );
-        }
-        if self.identity_protocol == SEMANTIC_IR_IDENTITY_PROTOCOL {
-            let mut modules = BTreeSet::new();
-            modules.insert(module_identity(machine_id));
-            for id in selected_types
-                .iter()
-                .chain(selected_constants.iter())
-                .chain(selected_functions.iter())
-                .chain(selected_routes.iter())
-            {
-                modules.insert(module_identity(id));
-            }
-            material
-                .as_object_mut()
-                .expect("machine material is an object")
-                .insert(
-                    "modules".into(),
-                    serde_json::to_value(modules).expect("module identities serialize"),
-                );
-        }
+        material
+            .as_object_mut()
+            .expect("machine material is an object")
+            .insert(
+                "composedPartDeclarations".into(),
+                serde_json::to_value(
+                    self.machine_program
+                        .composed_part_declarations
+                        .get(machine_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+                .expect("composed Part declaration identities serialize"),
+            );
         material
     }
+}
 
+impl MachineProgram {
     fn assign_v04_site_ids(&mut self) {
         let identities = &mut self.site_identities;
         for (machine_id, machine) in &mut self.machines {
@@ -1821,7 +1872,9 @@ impl Program {
         }
         Ok(())
     }
+}
 
+impl Program {
     fn assign_v04_presentation_node_ids(&mut self) {
         for presentation in self.presentations.values_mut() {
             let name = presentation
@@ -1882,6 +1935,61 @@ fn validate_lowered_contract_sum(
     }
 }
 
+fn validate_port_contract_instance(
+    machine: &Machine,
+    port: &PortDef,
+    resolved: &uhura_port::ContractInstance,
+    expected: &uhura_port::ContractInstance,
+) -> Result<(), String> {
+    if resolved != expected {
+        return Err(format!(
+            "Uhura port `{}.{}` contract instance differs from its checked standard contract",
+            machine.id, port.name
+        ));
+    }
+    if port.contract != expected.identity.to_string() {
+        return Err(format!(
+            "Uhura port `{}.{}` contract identity does not match its resolved instance",
+            machine.id, port.name
+        ));
+    }
+    if port.contract_hash != expected.content_hash {
+        return Err(format!(
+            "Uhura port `{}.{}` contract hash does not match its resolved instance",
+            machine.id, port.name
+        ));
+    }
+    let expected_arguments = expected
+        .type_arguments
+        .iter()
+        .map(|argument| argument.argument.as_str())
+        .collect::<Vec<_>>();
+    let actual_arguments = port
+        .type_arguments
+        .iter()
+        .map(TypeRef::canonical_name)
+        .collect::<Vec<_>>();
+    if actual_arguments
+        != expected_arguments
+            .iter()
+            .map(|argument| (*argument).to_string())
+            .collect::<Vec<_>>()
+    {
+        return Err(format!(
+            "Uhura port `{}.{}` type arguments do not match its resolved instance",
+            machine.id, port.name
+        ));
+    }
+    validate_lowered_contract_sum(
+        &machine.id,
+        &port.name,
+        "receive",
+        &port.receive,
+        &expected.receive,
+    )?;
+    validate_lowered_contract_sum(&machine.id, &port.name, "send", &port.send, &expected.send)
+}
+
 fn result_json(result: Result<serde_json::Value, String>) -> serde_json::Value {
     match result {
         Ok(value) => serde_json::json!({ "kind": "value", "value": value }),
@@ -1891,33 +1999,14 @@ fn result_json(result: Result<serde_json::Value, String>) -> serde_json::Value {
     }
 }
 
-fn machine_ui_interface_hash(program: &Program, machine: &Machine) -> Result<[u8; 32], String> {
-    let observation_type = Program::machine_observation_type(machine);
+fn machine_ui_interface_hash(
+    program: &MachineProgram,
+    machine: &Machine,
+) -> Result<[u8; 32], String> {
+    let observation_type = MachineProgram::machine_observation_type(machine);
     let observation = super::typed::canonical_type_identity_bytes(&observation_type)
         .map_err(|error| error.to_string())?;
     let local_input = type_definition_projection(&machine.local_input)?;
-
-    // A named TypeId is only an identity. The interface profile must also
-    // cover every reachable definition, or a record/sum could change shape
-    // without invalidating a presentation compiled against that shape.
-    let mut references = SemanticReferences::default();
-    collect_type_references(&observation_type, &mut references);
-    collect_type_definition_references(&machine.local_input, &mut references);
-    let referenced_types = reachable_type_definitions(program, references)
-        .iter()
-        .filter_map(|id| program.types.get(id))
-        .map(type_definition_projection)
-        .collect::<Result<Vec<_>, _>>()?;
-    if program.identity_protocol != MACHINE_PROGRAM_ID_PROTOCOL {
-        return Ok(super::codec::hash(
-            "prototype-ui-interface",
-            &[
-                observation,
-                local_input,
-                super::codec::frame("referenced-type-list", &referenced_types),
-            ],
-        ));
-    }
 
     // The public machine input is the aggregate local sum followed by every
     // non-empty port receive sum in canonical port-name order. Send-only ports
@@ -1987,7 +2076,7 @@ fn machine_ui_interface_hash(program: &Program, machine: &Machine) -> Result<[u8
 }
 
 fn reachable_type_definitions(
-    program: &Program,
+    program: &MachineProgram,
     mut references: SemanticReferences,
 ) -> BTreeSet<String> {
     let mut selected = BTreeSet::new();
@@ -2335,89 +2424,19 @@ fn validate_deployment_text(kind: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Canonical, path-independent material for the Uhura 0.4 `DeploymentId`.
-pub fn deployment_identity_bytes_v04(
-    material: &DeploymentIdentityMaterial,
-) -> Result<Vec<u8>, String> {
+/// Canonical, path-independent material for the current `DeploymentId`.
+pub fn deployment_identity_bytes(material: &DeploymentIdentityMaterial) -> Result<Vec<u8>, String> {
     Ok(super::codec::frame(
         DEPLOYMENT_ID_PROTOCOL,
         &deployment_identity_fields(material)?,
     ))
 }
 
-pub fn deployment_hash_v04(material: &DeploymentIdentityMaterial) -> Result<String, String> {
+pub fn deployment_hash(material: &DeploymentIdentityMaterial) -> Result<String, String> {
     Ok(super::codec::hex(&super::codec::hash(
         DEPLOYMENT_ID_PROTOCOL,
         &deployment_identity_fields(material)?,
     )))
-}
-
-/// Retained compatibility projection for Uhura 0.3 hosts.
-///
-/// Uhura 0.4 hosts must use [`deployment_identity_bytes_v04`] so physical
-/// manifest paths cannot enter `DeploymentId`.
-pub fn deployment_identity_bytes(
-    machine_program_hash: &str,
-    presentation_hash: Option<&str>,
-    canonical_manifest: &[u8],
-    adapter_contracts: &[(String, String)],
-) -> Result<Vec<u8>, String> {
-    let machine = super::codec::decode_hex_32(machine_program_hash)?.to_vec();
-    let presentation = match presentation_hash {
-        Some(hash) => super::codec::frame("some", &[super::codec::decode_hex_32(hash)?.to_vec()]),
-        None => super::codec::frame("none", &[]),
-    };
-    let mut adapters = adapter_contracts.to_vec();
-    adapters.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
-    for pair in adapters.windows(2) {
-        if pair[0].0 == pair[1].0 {
-            return Err(format!("duplicate deployment adapter port `{}`", pair[0].0));
-        }
-    }
-    let adapters = adapters
-        .into_iter()
-        .map(|(port, contract_hash)| {
-            validate_deployment_text("deployment adapter port", &port)?;
-            Ok(super::codec::frame(
-                "adapter-contract",
-                &[
-                    port.into_bytes(),
-                    super::codec::decode_hex_32(&contract_hash)?.to_vec(),
-                ],
-            ))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(super::codec::frame(
-        "prototype-deployment",
-        &[
-            machine,
-            presentation,
-            canonical_manifest.to_vec(),
-            super::codec::frame("adapter-contract-list", &adapters),
-        ],
-    ))
-}
-
-pub fn deployment_hash(
-    machine_program_hash: &str,
-    presentation_hash: Option<&str>,
-    canonical_manifest: &[u8],
-    adapter_contracts: &[(String, String)],
-) -> Result<String, String> {
-    let material = deployment_identity_bytes(
-        machine_program_hash,
-        presentation_hash,
-        canonical_manifest,
-        adapter_contracts,
-    )?;
-    Ok(super::codec::hex(&super::codec::hash(
-        "prototype-deployment",
-        &[material],
-    )))
-}
-
-fn module_identity(id: &str) -> String {
-    id.split("::").next().unwrap_or(id).to_string()
 }
 
 fn semantic_json(value: &impl Serialize) -> serde_json::Value {
@@ -3475,6 +3494,12 @@ impl Default for Program {
     }
 }
 
+impl Default for MachineProgram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UnaryOp {
@@ -3658,7 +3683,7 @@ pub enum Statement {
         decreases: Expr,
         body: Vec<Statement>,
         /// Compiler-private total `Option<T>` local selected by a lexical
-        /// update return in this loop. Absent for ordinary and 0.3 loops.
+        /// update return in this loop. Absent for ordinary loops.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         break_local: Option<String>,
         source: SourceRef,
@@ -3728,17 +3753,26 @@ mod tests {
 
     fn hash_program() -> Program {
         let mut program = Program::new();
-        program.modules.push("example.hash@1".into());
-        program.types.insert(
+        program
+            .machine_program
+            .modules
+            .push("example.hash@1".into());
+        program.machine_program.types.insert(
             DATA.into(),
             TypeDef::Record {
                 id: DATA.into(),
                 fields: vec![("value".into(), TypeRef::Int)],
             },
         );
-        program.constants.insert(SEED.into(), Value::int(1));
-        program.constant_types.insert(SEED.into(), TypeRef::Int);
-        program.functions.insert(
+        program
+            .machine_program
+            .constants
+            .insert(SEED.into(), Value::int(1));
+        program
+            .machine_program
+            .constant_types
+            .insert(SEED.into(), TypeRef::Int);
+        program.machine_program.functions.insert(
             READ.into(),
             Function {
                 id: READ.into(),
@@ -3750,7 +3784,7 @@ mod tests {
         );
         let input_id = format!("{MACHINE}.Input");
         let outcome_id = format!("{MACHINE}.Outcome");
-        program.machines.insert(
+        program.machine_program.machines.insert(
             MACHINE.into(),
             Machine {
                 id: MACHINE.into(),
@@ -3824,12 +3858,14 @@ mod tests {
     fn profile_program() -> Program {
         let mut program = hash_program();
         program
+            .machine_program
             .constants
             .insert(UI_LABEL.into(), Value::Text("profile".into()));
         program
+            .machine_program
             .constant_types
             .insert(UI_LABEL.into(), TypeRef::Text);
-        program.functions.insert(
+        program.machine_program.functions.insert(
             UI_READ.into(),
             Function {
                 id: UI_READ.into(),
@@ -3842,12 +3878,14 @@ mod tests {
             },
         );
         program
+            .machine_program
             .constants
             .insert(EVIDENCE_FLAG.into(), Value::Bool(true));
         program
+            .machine_program
             .constant_types
             .insert(EVIDENCE_FLAG.into(), TypeRef::Bool);
-        program.functions.insert(
+        program.machine_program.functions.insert(
             EVIDENCE_CHECK.into(),
             Function {
                 id: EVIDENCE_CHECK.into(),
@@ -3860,6 +3898,7 @@ mod tests {
             },
         );
         let TypeDef::Sum { constructors, .. } = &mut program
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .expect("profile machine")
@@ -3931,7 +3970,7 @@ mod tests {
     }
 
     fn machine_hash(program: &Program) -> &str {
-        program.program_hashes.get(MACHINE).unwrap()
+        program.machine_program.program_hashes.get(MACHINE).unwrap()
     }
 
     fn finite_view() -> TypeRef {
@@ -3949,19 +3988,11 @@ mod tests {
     }
 
     fn hash_program_v04() -> Program {
-        let mut program = hash_program();
-        program.language = "uhura 0.4".into();
-        program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
-        program.freeze_program_hashes();
-        program
+        hash_program()
     }
 
     fn profile_program_v04() -> Program {
-        let mut program = profile_program();
-        program.language = "uhura 0.4".into();
-        program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
-        program.freeze_program_hashes();
-        program
+        profile_program()
     }
 
     #[test]
@@ -3970,7 +4001,7 @@ mod tests {
         base.validate_protocol().unwrap();
 
         let mut moved = base.clone();
-        moved.modules = vec![
+        moved.machine_program.modules = vec![
             "renamed::machine".into(),
             "split::types".into(),
             "split::functions".into(),
@@ -3981,21 +4012,35 @@ mod tests {
     }
 
     #[test]
-    fn language_and_identity_protocol_are_version_coupled() {
+    fn current_identity_protocol_is_mandatory() {
         let mut program = hash_program_v04();
-        program.identity_protocol = SEMANTIC_IR_IDENTITY_PROTOCOL.into();
+        program.machine_program.identity_protocol = "removed-identity-protocol".into();
         assert!(
             program
                 .validate_protocol()
                 .unwrap_err()
-                .contains("does not match")
+                .contains("expected identity protocol")
+        );
+    }
+
+    #[test]
+    fn retired_language_artifacts_are_rejected() {
+        let mut program = hash_program_v04();
+        program.machine_program.language = "uhura 0.3".into();
+        assert_eq!(
+            program.validate_protocol().unwrap_err(),
+            "expected Uhura language `uhura 0.4`, got `uhura 0.3`"
+        );
+        assert!(
+            program.try_freeze_program_hashes().is_err(),
+            "retired language artifacts must not enter the current identity path"
         );
     }
 
     #[test]
     fn v04_protocol_rejects_finite_views_at_every_declared_value_boundary() {
         let mut key = hash_program_v04();
-        key.types.insert(
+        key.machine_program.types.insert(
             "example.hash@1::InvalidKey".into(),
             TypeDef::Key {
                 id: "example.hash@1::InvalidKey".into(),
@@ -4006,9 +4051,11 @@ mod tests {
 
         let mut constant = hash_program_v04();
         constant
+            .machine_program
             .constants
             .insert("example.hash@1::cached".into(), Value::Seq(Vec::new()));
         constant
+            .machine_program
             .constant_types
             .insert("example.hash@1::cached".into(), finite_view());
         assert_v04_finite_view_boundary(
@@ -4018,7 +4065,12 @@ mod tests {
         );
 
         let mut configuration = hash_program_v04();
-        configuration.machines.get_mut(MACHINE).unwrap().config = TypeRef::Option {
+        configuration
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .config = TypeRef::Option {
             value: Box::new(finite_view()),
         };
         assert_v04_finite_view_boundary(
@@ -4028,8 +4080,12 @@ mod tests {
         );
 
         let mut input = hash_program_v04();
-        let TypeDef::Sum { constructors, .. } =
-            &mut input.machines.get_mut(MACHINE).unwrap().local_input
+        let TypeDef::Sum { constructors, .. } = &mut input
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .local_input
         else {
             unreachable!()
         };
@@ -4044,6 +4100,7 @@ mod tests {
 
         let mut command = hash_program_v04();
         command
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -4062,7 +4119,12 @@ mod tests {
         );
 
         let mut outcome = hash_program_v04();
-        outcome.machines.get_mut(MACHINE).unwrap().outcomes[0]
+        outcome
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .outcomes[0]
             .constructor
             .fields
             .push((Some("value".into()), finite_view()));
@@ -4074,7 +4136,7 @@ mod tests {
 
         let wrapper = "example.hash@1::EphemeralBox";
         let mut state = hash_program_v04();
-        state.types.insert(
+        state.machine_program.types.insert(
             wrapper.into(),
             TypeDef::Record {
                 id: wrapper.into(),
@@ -4086,8 +4148,13 @@ mod tests {
                 )],
             },
         );
-        state.machines.get_mut(MACHINE).unwrap().state[0].ty =
-            TypeRef::Named { id: wrapper.into() };
+        state
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .state[0]
+            .ty = TypeRef::Named { id: wrapper.into() };
         assert_v04_finite_view_boundary(
             &state,
             "machine `example.hash@1::Machine` state field `count`",
@@ -4095,7 +4162,13 @@ mod tests {
         );
 
         let mut observation = hash_program_v04();
-        observation.machines.get_mut(MACHINE).unwrap().observation[0].ty = finite_view();
+        observation
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .observation[0]
+            .ty = finite_view();
         assert_v04_finite_view_boundary(
             &observation,
             "machine `example.hash@1::Machine` observation field `count`",
@@ -4114,8 +4187,12 @@ mod tests {
             source: source("forged-port"),
         };
         let mut port_argument = hash_program_v04();
-        port_argument.machines.get_mut(MACHINE).unwrap().ports =
-            vec![forged_port(vec![finite_view()], Vec::new(), Vec::new())];
+        port_argument
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .ports = vec![forged_port(vec![finite_view()], Vec::new(), Vec::new())];
         assert_v04_finite_view_boundary(
             &port_argument,
             "port `forged` contract type argument #1",
@@ -4124,7 +4201,7 @@ mod tests {
 
         let mut port_configuration = hash_program_v04();
         let configuration_wrapper = "example.hash@1::PortConfigurationProbe";
-        port_configuration.types.insert(
+        port_configuration.machine_program.types.insert(
             configuration_wrapper.into(),
             TypeDef::Record {
                 id: configuration_wrapper.into(),
@@ -4147,6 +4224,7 @@ mod tests {
         };
         assert!(
             port_configuration
+                .machine_program
                 .v04_expression_finite_view_path(&safe_field)
                 .is_none(),
             "selecting a storable field must not reject an ephemeral sibling",
@@ -4156,7 +4234,12 @@ mod tests {
             value: Box::new(configuration_value()),
             field: "views".into(),
         });
-        port_configuration.machines.get_mut(MACHINE).unwrap().ports = vec![configured];
+        port_configuration
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .ports = vec![configured];
         assert_v04_finite_view_boundary(
             &port_configuration,
             "port `forged` configuration",
@@ -4164,7 +4247,12 @@ mod tests {
         );
 
         let mut port_receive = hash_program_v04();
-        port_receive.machines.get_mut(MACHINE).unwrap().ports = vec![forged_port(
+        port_receive
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .ports = vec![forged_port(
             Vec::new(),
             vec![ConstructorDef {
                 name: "received".into(),
@@ -4179,7 +4267,12 @@ mod tests {
         );
 
         let mut port_send = hash_program_v04();
-        port_send.machines.get_mut(MACHINE).unwrap().ports = vec![forged_port(
+        port_send
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .ports = vec![forged_port(
             Vec::new(),
             Vec::new(),
             vec![ConstructorDef {
@@ -4199,14 +4292,14 @@ mod tests {
         let wrapper = "example.hash@1::EphemeralBox";
         let function = "example.hash@1::ephemeral_identity";
         let mut program = hash_program_v04();
-        program.types.insert(
+        program.machine_program.types.insert(
             wrapper.into(),
             TypeDef::Record {
                 id: wrapper.into(),
                 fields: vec![("values".into(), finite_view())],
             },
         );
-        program.functions.insert(
+        program.machine_program.functions.insert(
             function.into(),
             Function {
                 id: function.into(),
@@ -4218,7 +4311,7 @@ mod tests {
                 source: source("ephemeral-function"),
             },
         );
-        let machine = program.machines.get_mut(MACHINE).unwrap();
+        let machine = program.machine_program.machines.get_mut(MACHINE).unwrap();
         machine.derives.push((
             "values".into(),
             finite_view(),
@@ -4270,7 +4363,7 @@ mod tests {
     fn public_ir_rejects_a_forged_recursive_finite_view_boundary_before_admission() {
         let wrapper = "example.hash@1::ForgedStoredView";
         let mut program = hash_program_v04();
-        program.types.insert(
+        program.machine_program.types.insert(
             wrapper.into(),
             TypeDef::Record {
                 id: wrapper.into(),
@@ -4282,11 +4375,17 @@ mod tests {
                 )],
             },
         );
-        program.machines.get_mut(MACHINE).unwrap().state[0].ty =
-            TypeRef::Named { id: wrapper.into() };
+        program
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .state[0]
+            .ty = TypeRef::Named { id: wrapper.into() };
         program.freeze_program_hashes();
 
         let admission_error = program
+            .machine_program
             .admit(MACHINE, Value::Unit, "forged-finite-view")
             .unwrap_err();
         assert!(
@@ -4309,7 +4408,7 @@ mod tests {
     fn v04_composed_part_public_ids_are_runtime_inert_machine_identity_material() {
         let base = hash_program_v04();
         let mut composed = base.clone();
-        composed.composed_part_declarations.insert(
+        composed.machine_program.composed_part_declarations.insert(
             MACHINE.into(),
             BTreeSet::from(["vendor.parts@1::Counter".into()]),
         );
@@ -4317,45 +4416,39 @@ mod tests {
         assert_ne!(machine_hash(&composed), machine_hash(&base));
 
         let mut other_provider = base;
-        other_provider.composed_part_declarations.insert(
-            MACHINE.into(),
-            BTreeSet::from(["vendor.other@1::Counter".into()]),
-        );
+        other_provider
+            .machine_program
+            .composed_part_declarations
+            .insert(
+                MACHINE.into(),
+                BTreeSet::from(["vendor.other@1::Counter".into()]),
+            );
         other_provider.freeze_program_hashes();
         assert_ne!(machine_hash(&other_provider), machine_hash(&composed));
     }
 
     #[test]
-    fn composed_part_identity_rejects_unknown_machines_and_legacy_programs() {
+    fn composed_part_identity_rejects_unknown_machines() {
         let mut unknown_machine = hash_program_v04();
-        unknown_machine.composed_part_declarations.insert(
-            "example.hash@1::Missing".into(),
-            BTreeSet::from(["vendor.parts@1::Counter".into()]),
-        );
+        unknown_machine
+            .machine_program
+            .composed_part_declarations
+            .insert(
+                "example.hash@1::Missing".into(),
+                BTreeSet::from(["vendor.parts@1::Counter".into()]),
+            );
         assert!(
             unknown_machine
                 .validate_protocol()
                 .unwrap_err()
                 .contains("unknown machine")
         );
-
-        let mut legacy = hash_program();
-        legacy.composed_part_declarations.insert(
-            MACHINE.into(),
-            BTreeSet::from(["vendor.parts@1::Counter".into()]),
-        );
-        assert!(
-            legacy
-                .validate_protocol()
-                .unwrap_err()
-                .contains("only for Uhura 0.4")
-        );
     }
 
     #[test]
     fn v04_hash_retains_only_stable_runtime_site_ids() {
         let mut base = hash_program_v04();
-        let machine = base.machines.get_mut(MACHINE).unwrap();
+        let machine = base.machine_program.machines.get_mut(MACHINE).unwrap();
         machine.invariants.push((
             Expr::Literal {
                 value: Value::Bool(true),
@@ -4376,10 +4469,10 @@ mod tests {
         ];
         base.freeze_program_hashes();
 
-        let invariant_id = &base.machines[MACHINE].invariants[0].1.id;
+        let invariant_id = &base.machine_program.machines[MACHINE].invariants[0].1.id;
         let Statement::Unreachable {
             source: unreachable,
-        } = &base.machines[MACHINE].handlers["ping"].body[1]
+        } = &base.machine_program.machines[MACHINE].handlers["ping"].body[1]
         else {
             unreachable!()
         };
@@ -4394,7 +4487,7 @@ mod tests {
         );
 
         let mut moved = base.clone();
-        let machine = moved.machines.get_mut(MACHINE).unwrap();
+        let machine = moved.machine_program.machines.get_mut(MACHINE).unwrap();
         machine.invariants[0].1.path = "moved.uhura".into();
         machine.invariants[0].1.start = 9_000;
         machine.invariants[0].1.end = 9_100;
@@ -4407,8 +4500,8 @@ mod tests {
 
         assert_eq!(machine_hash(&moved), machine_hash(&base));
         assert_eq!(
-            moved.machines[MACHINE].invariants[0].1.id,
-            base.machines[MACHINE].invariants[0].1.id
+            moved.machine_program.machines[MACHINE].invariants[0].1.id,
+            base.machine_program.machines[MACHINE].invariants[0].1.id
         );
     }
 
@@ -4416,6 +4509,7 @@ mod tests {
     fn public_v04_ir_rejects_an_unframed_valid_looking_site_id() {
         let mut program = hash_program_v04();
         program
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -4429,6 +4523,7 @@ mod tests {
         program.freeze_program_hashes();
 
         let Statement::Unreachable { source } = program
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -4442,7 +4537,7 @@ mod tests {
             unreachable!()
         };
         source.id = "a".repeat(64);
-        program.site_identities.clear();
+        program.machine_program.site_identities.clear();
 
         let error = Program::from_json(&program.to_canonical_string())
             .expect_err("an opaque valid-looking digest is not a canonical SiteId");
@@ -4506,7 +4601,7 @@ mod tests {
     fn machine_hash_ignores_physical_source_location_presentation_and_evidence() {
         let base = hash_program();
         let mut changed = base.clone();
-        let machine = changed.machines.get_mut(MACHINE).unwrap();
+        let machine = changed.machine_program.machines.get_mut(MACHINE).unwrap();
         machine.source.path = "/another/worktree/formatted.uhura".into();
         machine.source.start = 900;
         machine.source.end = 999;
@@ -4540,11 +4635,12 @@ mod tests {
     }
 
     #[test]
-    fn machine_hash_covers_runtime_visible_source_identity() {
+    fn machine_hash_uses_canonical_runtime_site_identity() {
         let base = hash_program();
 
         let mut reformatted = base.clone();
         let Statement::Finish { source, .. } = &mut reformatted
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -4567,6 +4663,7 @@ mod tests {
 
         let mut semantic_id_changed = base.clone();
         let Statement::Finish { source, .. } = &mut semantic_id_changed
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -4579,15 +4676,15 @@ mod tests {
         };
         source.id = "finish/renamed-semantic-site".into();
         semantic_id_changed.freeze_program_hashes();
-        assert_ne!(
+        assert_eq!(
             machine_hash(&semantic_id_changed),
             machine_hash(&base),
-            "runtime fault and receipt source ids must be closed by machine identity",
+            "authored source labels are replaced by canonical runtime site identities",
         );
     }
 
     #[test]
-    fn presentation_hash_covers_render_and_event_source_identity_only() {
+    fn presentation_hash_uses_canonical_render_and_event_identity() {
         let mut base = profile_program();
         let presentation_id = "example.hash@1::Web";
         base.presentations.get_mut(presentation_id).unwrap().nodes = vec![UiNode::Element {
@@ -4641,9 +4738,10 @@ mod tests {
         };
         source.id = "ui-button/new-render-and-event-key".into();
         semantic_id_changed.freeze_program_hashes();
-        assert_ne!(
+        assert_eq!(
             semantic_id_changed.presentation_hashes[presentation_id],
             base.presentation_hashes[presentation_id],
+            "authored source labels are replaced by canonical presentation identities",
         );
         assert_eq!(
             machine_hash(&semantic_id_changed),
@@ -4688,7 +4786,12 @@ mod tests {
         assert_eq!(moved.presentation_hashes[presentation_id], presentation);
 
         let mut implementation_changed = base.clone();
-        implementation_changed.functions.get_mut(READ).unwrap().body = Expr::Literal {
+        implementation_changed
+            .machine_program
+            .functions
+            .get_mut(READ)
+            .unwrap()
+            .body = Expr::Literal {
             value: Value::int(999),
         };
         implementation_changed.freeze_program_hashes();
@@ -4706,6 +4809,7 @@ mod tests {
 
         let mut interface_changed = base.clone();
         let TypeDef::Sum { constructors, .. } = &mut interface_changed
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -4747,12 +4851,19 @@ mod tests {
         let mut base = hash_program();
         let prefix = format!("{SEED}Extra");
         let text_identity = "example.hash@1::text-lookalike";
-        base.constants.insert(prefix.clone(), Value::int(10));
-        base.constant_types.insert(prefix.clone(), TypeRef::Int);
-        base.constants.insert(text_identity.into(), Value::int(20));
-        base.constant_types
+        base.machine_program
+            .constants
+            .insert(prefix.clone(), Value::int(10));
+        base.machine_program
+            .constant_types
+            .insert(prefix.clone(), TypeRef::Int);
+        base.machine_program
+            .constants
+            .insert(text_identity.into(), Value::int(20));
+        base.machine_program
+            .constant_types
             .insert(text_identity.into(), TypeRef::Int);
-        base.functions.insert(
+        base.machine_program.functions.insert(
             "example.hash@1::unused".into(),
             Function {
                 id: "example.hash@1::unused".into(),
@@ -4764,7 +4875,8 @@ mod tests {
                 source: source("unused"),
             },
         );
-        base.machines
+        base.machine_program
+            .machines
             .get_mut(MACHINE)
             .unwrap()
             .observation
@@ -4779,11 +4891,15 @@ mod tests {
         base.freeze_program_hashes();
 
         let mut changed = base.clone();
-        changed.constants.insert(prefix, Value::int(11));
         changed
+            .machine_program
+            .constants
+            .insert(prefix, Value::int(11));
+        changed
+            .machine_program
             .constants
             .insert(text_identity.into(), Value::int(21));
-        changed.types.insert(
+        changed.machine_program.types.insert(
             "example.hash@1::Unused".into(),
             TypeDef::Record {
                 id: "example.hash@1::Unused".into(),
@@ -4800,20 +4916,28 @@ mod tests {
 
         let mut constant_changed = base.clone();
         constant_changed
+            .machine_program
             .constants
             .insert(SEED.into(), Value::int(2));
         constant_changed.freeze_program_hashes();
         assert_ne!(machine_hash(&constant_changed), machine_hash(&base));
 
         let mut function_changed = base.clone();
-        function_changed.functions.get_mut(READ).unwrap().body = Expr::Literal {
+        function_changed
+            .machine_program
+            .functions
+            .get_mut(READ)
+            .unwrap()
+            .body = Expr::Literal {
             value: Value::int(99),
         };
         function_changed.freeze_program_hashes();
         assert_ne!(machine_hash(&function_changed), machine_hash(&base));
 
         let mut type_changed = base.clone();
-        let TypeDef::Record { fields, .. } = type_changed.types.get_mut(DATA).unwrap() else {
+        let TypeDef::Record { fields, .. } =
+            type_changed.machine_program.types.get_mut(DATA).unwrap()
+        else {
             unreachable!()
         };
         fields.push(("flag".into(), TypeRef::Bool));
@@ -4822,12 +4946,57 @@ mod tests {
     }
 
     #[test]
+    fn application_program_uses_the_flat_current_wire_contract() {
+        let program = profile_program_v04();
+        let actual = serde_json::to_value(&program).expect("application program serializes");
+        let mut expected = serde_json::to_value(program.as_machine_program())
+            .expect("machine program serializes")
+            .as_object()
+            .expect("machine program wire value is an object")
+            .clone();
+        expected.insert(
+            "presentations".into(),
+            serde_json::to_value(&program.presentations).unwrap(),
+        );
+        expected.insert(
+            "evidence".into(),
+            serde_json::to_value(&program.evidence).unwrap(),
+        );
+        expected.insert(
+            "route_tables".into(),
+            serde_json::to_value(&program.route_tables).unwrap(),
+        );
+        expected.insert(
+            "presentation_hashes".into(),
+            serde_json::to_value(&program.presentation_hashes).unwrap(),
+        );
+        expected.insert(
+            "evidence_hashes".into(),
+            serde_json::to_value(&program.evidence_hashes).unwrap(),
+        );
+
+        assert_eq!(actual, serde_json::Value::Object(expected));
+        assert!(
+            actual.get("machine_program").is_none(),
+            "the ownership boundary must not introduce a nested wire field"
+        );
+
+        let canonical = program.to_canonical_string();
+        let roundtripped = Program::from_json(&canonical).expect("canonical Program round-trip");
+        assert_eq!(roundtripped, program);
+        assert_eq!(roundtripped.to_canonical_string(), canonical);
+    }
+
+    #[test]
     fn supplied_program_hashes_are_recomputed_and_verified() {
         let program = hash_program();
         Program::from_json(&program.to_canonical_string()).unwrap();
 
         let mut forged = program;
-        forged.program_hashes.insert(MACHINE.into(), "0".repeat(64));
+        forged
+            .machine_program
+            .program_hashes
+            .insert(MACHINE.into(), "0".repeat(64));
         assert!(Program::from_json(&forged.to_canonical_string()).is_err());
     }
 
@@ -4841,7 +5010,7 @@ mod tests {
         );
 
         let mut wrong_protocol = program;
-        wrong_protocol.protocol = "uhura-ir/01".into();
+        wrong_protocol.machine_program.protocol = "uhura-ir/01".into();
         assert_eq!(
             Program::from_json(&wrong_protocol.to_canonical_string()).unwrap_err(),
             "expected `uhura-ir/1`, got `uhura-ir/01`",
@@ -4888,8 +5057,12 @@ mod tests {
         );
 
         let mut invalid_type = profile_program();
-        let TypeDef::Sum { constructors, .. } =
-            &mut invalid_type.machines.get_mut(MACHINE).unwrap().local_input
+        let TypeDef::Sum { constructors, .. } = &mut invalid_type
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .local_input
         else {
             unreachable!()
         };
@@ -4943,6 +5116,7 @@ mod tests {
 
         let mut ui_constant_changed = base.clone();
         ui_constant_changed
+            .machine_program
             .constants
             .insert(UI_LABEL.into(), Value::Text("changed helper".into()));
         ui_constant_changed.freeze_program_hashes();
@@ -4957,7 +5131,12 @@ mod tests {
         );
 
         let mut ui_function_changed = base.clone();
-        ui_function_changed.functions.get_mut(UI_READ).unwrap().body = Expr::Literal {
+        ui_function_changed
+            .machine_program
+            .functions
+            .get_mut(UI_READ)
+            .unwrap()
+            .body = Expr::Literal {
             value: Value::Text("changed function".into()),
         };
         ui_function_changed.freeze_program_hashes();
@@ -4969,6 +5148,7 @@ mod tests {
 
         let mut evidence_constant_changed = base.clone();
         evidence_constant_changed
+            .machine_program
             .constants
             .insert(EVIDENCE_FLAG.into(), Value::Bool(false));
         evidence_constant_changed.freeze_program_hashes();
@@ -4987,6 +5167,7 @@ mod tests {
 
         let mut evidence_function_changed = base.clone();
         evidence_function_changed
+            .machine_program
             .functions
             .get_mut(EVIDENCE_CHECK)
             .unwrap()
@@ -5046,7 +5227,8 @@ mod tests {
         );
         evidence_source_changed.freeze_program_hashes();
         assert_eq!(
-            evidence_source_changed.program_hashes, base.program_hashes,
+            evidence_source_changed.machine_program.program_hashes,
+            base.machine_program.program_hashes,
             "physical evidence registration sources do not affect machine identity",
         );
         assert_eq!(
@@ -5059,7 +5241,12 @@ mod tests {
         );
 
         let mut implementation_changed = base.clone();
-        implementation_changed.functions.get_mut(READ).unwrap().body = Expr::Literal {
+        implementation_changed
+            .machine_program
+            .functions
+            .get_mut(READ)
+            .unwrap()
+            .body = Expr::Literal {
             value: Value::int(77),
         };
         implementation_changed.freeze_program_hashes();
@@ -5075,6 +5262,7 @@ mod tests {
 
         let mut interface_changed = base.clone();
         let TypeDef::Sum { constructors, .. } = &mut interface_changed
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -5094,6 +5282,7 @@ mod tests {
 
         let mut referenced_interface_type_changed = base.clone();
         let TypeDef::Record { fields, .. } = referenced_interface_type_changed
+            .machine_program
             .types
             .get_mut(DATA)
             .expect("profile payload type")
@@ -5138,14 +5327,15 @@ mod tests {
         };
 
         let mut base = profile_program_v04();
-        base.types.insert(
+        base.machine_program.types.insert(
             port_data.into(),
             TypeDef::Record {
                 id: port_data.into(),
                 fields: vec![("value".into(), TypeRef::Int)],
             },
         );
-        base.machines
+        base.machine_program
+            .machines
             .get_mut(MACHINE)
             .unwrap()
             .ports
@@ -5154,8 +5344,15 @@ mod tests {
         let interface = base.machine_ui_interface_hash(MACHINE).unwrap();
 
         let mut receive_changed = base.clone();
-        receive_changed.machines.get_mut(MACHINE).unwrap().ports[0].receive[0].fields[0].1 =
-            TypeRef::Text;
+        receive_changed
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .ports[0]
+            .receive[0]
+            .fields[0]
+            .1 = TypeRef::Text;
         receive_changed.freeze_program_hashes();
         assert_ne!(
             receive_changed.machine_ui_interface_hash(MACHINE).unwrap(),
@@ -5170,6 +5367,7 @@ mod tests {
 
         let mut reachable_receive_type_changed = base.clone();
         let TypeDef::Record { fields, .. } = reachable_receive_type_changed
+            .machine_program
             .types
             .get_mut(port_data)
             .expect("port-only receive payload type")
@@ -5187,8 +5385,15 @@ mod tests {
         );
 
         let mut send_only_changed = base.clone();
-        send_only_changed.machines.get_mut(MACHINE).unwrap().ports[0].send[0].fields[0].1 =
-            TypeRef::Int;
+        send_only_changed
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .ports[0]
+            .send[0]
+            .fields[0]
+            .1 = TypeRef::Int;
         send_only_changed.freeze_program_hashes();
         assert_eq!(
             send_only_changed
@@ -5200,6 +5405,7 @@ mod tests {
 
         let mut empty_receive_added = base.clone();
         empty_receive_added
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -5230,10 +5436,7 @@ mod tests {
 
     #[test]
     fn deployment_identity_sorts_bindings_and_covers_exact_resolved_material() {
-        let mut base = profile_program();
-        base.language = "uhura 0.4".into();
-        base.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
-        base.freeze_program_hashes();
+        let base = profile_program();
         let material = DeploymentIdentityMaterial {
             machine: MACHINE.into(),
             machine_program_id: machine_hash(&base).into(),
@@ -5269,7 +5472,7 @@ mod tests {
                 content_hash: "66".repeat(32),
             }),
         };
-        let first = deployment_hash_v04(&material).unwrap();
+        let first = deployment_hash(&material).unwrap();
         assert_eq!(
             first,
             "5f3b3b1c78805a38ab9143f5dea18edc30cc006f0737a9f9743d60f3509206f2"
@@ -5282,12 +5485,12 @@ mod tests {
         );
         let mut reordered_material = material.clone();
         reordered_material.port_bindings.reverse();
-        let reordered = deployment_hash_v04(&reordered_material).unwrap();
+        let reordered = deployment_hash(&reordered_material).unwrap();
         assert_eq!(first, reordered);
 
         let mut content_changed = material.clone();
         content_changed.provider.as_mut().unwrap().content_hash = "77".repeat(32);
-        assert_ne!(first, deployment_hash_v04(&content_changed).unwrap());
+        assert_ne!(first, deployment_hash(&content_changed).unwrap());
 
         let mut configuration_changed = material.clone();
         configuration_changed
@@ -5295,17 +5498,18 @@ mod tests {
             .as_mut()
             .unwrap()
             .configuration = serde_json::json!({"endpoint": "https://other.test"});
-        assert_ne!(first, deployment_hash_v04(&configuration_changed).unwrap());
+        assert_ne!(first, deployment_hash(&configuration_changed).unwrap());
 
         let mut duplicate = material;
         duplicate.port_bindings[1].port = duplicate.port_bindings[0].port.clone();
-        assert!(deployment_hash_v04(&duplicate).is_err());
+        assert!(deployment_hash(&duplicate).is_err());
     }
 
     #[test]
     fn evidence_fixture_identity_uses_evaluated_canonical_configuration() {
         let mut program = profile_program();
         program
+            .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
@@ -5341,7 +5545,7 @@ mod tests {
                 },
             );
         let selected = BTreeSet::from([scenario_id.to_string()]);
-        let implicit_unit = program.prototype_fixture_configuration(MACHINE, &selected);
+        let implicit_unit = program.fixture_configuration(MACHINE, &selected);
 
         let EvidenceStep::Bind { fixture, .. } = &mut program
             .evidence
@@ -5357,7 +5561,7 @@ mod tests {
         };
         args.push(Expr::Literal { value: Value::Unit });
         assert_eq!(
-            program.prototype_fixture_configuration(MACHINE, &selected),
+            program.fixture_configuration(MACHINE, &selected),
             implicit_unit,
         );
 
@@ -5377,7 +5581,7 @@ mod tests {
             value: Value::Text("different".into()),
         };
         assert_ne!(
-            program.prototype_fixture_configuration(MACHINE, &selected),
+            program.fixture_configuration(MACHINE, &selected),
             implicit_unit,
         );
     }

@@ -23,7 +23,16 @@ const machine = (overrides: Partial<EditorMachine> = {}): EditorMachine => ({
     deploymentHash: "sha256:deployment",
   },
   sources: [{ path: "machine.uhura" }, { path: "web.uhura" }],
-  provenance: null,
+  provenance: {
+    protocol: "uhura-provenance/0",
+    sources: [],
+    occurrences: [],
+    topology: {
+      protocol: "uhura-authored-interaction-topology/0",
+      nodes: [],
+      edges: [],
+    },
+  },
   interactionGraph: {},
   graphSources: {},
   checkpoints: {

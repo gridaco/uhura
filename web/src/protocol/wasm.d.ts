@@ -1,4 +1,4 @@
-// Typing for the wasm-bindgen bundle `uhura dev` serves at
+// Typing for the wasm-bindgen bundle `uhura play` serves at
 // /wasm/uhura_wasm.js (built by scripts/build-wasm.sh, --target web).
 // The host tsconfig maps the runtime specifier here so a clean checkout can
 // typecheck before Wasm is built. wasm-bindgen also emits declarations with

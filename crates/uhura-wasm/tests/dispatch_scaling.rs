@@ -73,8 +73,8 @@ fn session() -> Session {
     );
     let program = checked.program.expect("counter fixture checks");
     let expected_identity = to_canonical_json(&json!({
-        "identityProtocol": program.identity_protocol,
-        "machineProgramHash": program.program_hashes[MACHINE_ID],
+        "identityProtocol": program.machine_program.identity_protocol,
+        "machineProgramHash": program.machine_program.program_hashes[MACHINE_ID],
         "presentationHash": program.presentation_hashes[PRESENTATION_ID],
     }));
     Session::new(

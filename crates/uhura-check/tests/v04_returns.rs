@@ -171,6 +171,7 @@ pub machine App {
     let canonical = program.to_canonical_string();
     let roundtripped = uhura_core::Program::from_json(&canonical).expect("canonical IR roundtrip");
     let (instance, _) = roundtripped
+        .machine_program
         .admit(
             "example.returns@1::App",
             Value::Unit,
@@ -230,8 +231,8 @@ pub machine App {
     let left = checked(&source([function_a, function_b], [handler_a, handler_b]));
     let right = checked(&source([function_b, function_a], [handler_b, handler_a]));
     assert_eq!(
-        left.program_hashes["example.returns@1::App"],
-        right.program_hashes["example.returns@1::App"],
+        left.machine_program.program_hashes["example.returns@1::App"],
+        right.machine_program.program_hashes["example.returns@1::App"],
         "independent function and handler placement must not perturb MachineProgramId"
     );
 }
@@ -272,6 +273,7 @@ pub machine App {
 "#;
     let program = checked(source);
     let (instance, _) = program
+        .machine_program
         .admit("example.returns@1::App", Value::Unit, "returns/pure")
         .expect("admission");
     assert_eq!(field(&instance.observation, "from_if"), &Value::int(7));
@@ -358,6 +360,7 @@ pub machine App {
 "#;
     let program = checked(source);
     let (instance, _) = program
+        .machine_program
         .admit("example.returns@1::App", Value::Unit, "returns/positions")
         .expect("admission");
     for (name, expected) in [
@@ -384,6 +387,7 @@ pub machine App {
 "#;
     let program = checked(source);
     let (instance, _) = program
+        .machine_program
         .admit("example.returns@1::App", Value::Unit, "returns/state-only")
         .expect("state-only admission");
     assert_eq!(field(&instance.observation, "value"), &Value::int(7));
@@ -424,6 +428,7 @@ pub machine App {
     let program = checked(source);
     let machine_id = "example.returns@1::App";
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "returns/handler")
         .expect("admission");
 
@@ -435,6 +440,7 @@ pub machine App {
         )
     };
     let duplicate = program
+        .machine_program
         .react(&instance, run(true))
         .expect("duplicate reaction");
     let ReactionResolution::Completed { outcome, .. } = &duplicate.receipt.resolution else {
@@ -447,6 +453,7 @@ pub machine App {
     );
 
     let accepted = program
+        .machine_program
         .react(&instance, run(false))
         .expect("accepted reaction");
     let ReactionResolution::Completed { outcome, .. } = &accepted.receipt.resolution else {
@@ -553,9 +560,11 @@ pub machine App {
     let program = checked(source);
     let machine_id = "example.returns@1::App";
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "returns/update-positions")
         .expect("admission");
     let result = program
+        .machine_program
         .react(
             &instance,
             Value::variant(format!("{machine_id}.Input"), "Run", Vec::new()),
@@ -608,6 +617,7 @@ pub machine App {
     let program = checked(source);
     let machine_id = "example.returns@1::App";
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "returns/update-loop")
         .expect("admission");
     let run = |stop: u64| {
@@ -622,6 +632,7 @@ pub machine App {
     };
 
     let first = program
+        .machine_program
         .react(&instance, run(3))
         .expect("first-iteration return");
     assert_eq!(
@@ -639,6 +650,7 @@ pub machine App {
     );
 
     let later = program
+        .machine_program
         .react(&instance, run(1))
         .expect("later-iteration return");
     assert_eq!(
@@ -652,6 +664,7 @@ pub machine App {
     );
 
     let fallthrough = program
+        .machine_program
         .react(&instance, run(0))
         .expect("ordinary loop fallthrough");
     assert_eq!(
@@ -670,6 +683,7 @@ pub machine App {
     let mut public_break = program.clone();
     assert!(
         public_break
+            .machine_program
             .machines
             .values_mut()
             .flat_map(|machine| machine.handlers.values_mut())
@@ -686,6 +700,7 @@ pub machine App {
     let mut forged = program.clone();
     assert!(
         forged
+            .machine_program
             .machines
             .values_mut()
             .flat_map(|machine| machine.handlers.values_mut())
@@ -763,6 +778,7 @@ pub machine App {
     );
     let machine_id = "example.returns@1::App";
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "returns/nested-loop")
         .expect("admission");
     let run = |stop: u64| {
@@ -774,6 +790,7 @@ pub machine App {
     };
 
     let selected = program
+        .machine_program
         .react(&instance, run(1))
         .expect("nested selected return");
     assert_eq!(
@@ -794,6 +811,7 @@ pub machine App {
     );
 
     let fallthrough = program
+        .machine_program
         .react(&instance, run(0))
         .expect("nested ordinary fallthrough");
     assert_eq!(

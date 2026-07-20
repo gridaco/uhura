@@ -1,7 +1,7 @@
 //! Checked icon-family registries. The checker owns names and codepoints;
 //! renderers receive only validated, content-addressed font resources.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Read};
@@ -10,7 +10,9 @@ use std::sync::{Arc, OnceLock};
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use ttf_parser::{Face, Tag};
-use uhura_base::{Ident, hash_json, sha256_hex};
+use uhura_base::{Diagnostic, FileId, Ident, Severity, Span, codes, hash_json, sha256_hex};
+use uhura_core::ir::{Expr, SourceRef, UiAttribute, UiAttributeValue, UiNode};
+use uhura_core::{Program, Value};
 use wuff::decompress_woff2_with_custom_brotli;
 
 use crate::resource_manifest::IconsConfig;
@@ -53,6 +55,238 @@ pub struct CheckedIconFonts {
 pub struct IconFontIssue {
     pub path: String,
     pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IconTokenIssue {
+    pub code: &'static str,
+    pub rule: &'static str,
+    pub source: SourceRef,
+    pub message: String,
+}
+
+/// Check every logical icon token against the exact project registry before
+/// any renderer receives the program.
+///
+/// `family` is deliberately literal before v1. `name` may be a literal or a
+/// finite expression composed from literals, constants, `if`, and `match`.
+pub fn check_program_icon_tokens(
+    program: &Program,
+    fonts: &CheckedIconFonts,
+) -> Vec<IconTokenIssue> {
+    let mut issues = Vec::new();
+    for presentation in program.presentations.values() {
+        check_icon_nodes(program, fonts, &presentation.nodes, &mut issues);
+    }
+    issues
+}
+
+fn check_icon_nodes(
+    program: &Program,
+    fonts: &CheckedIconFonts,
+    nodes: &[UiNode],
+    issues: &mut Vec<IconTokenIssue>,
+) {
+    for node in nodes {
+        match node {
+            UiNode::Element {
+                name,
+                attributes,
+                children,
+                source,
+            } => {
+                if name == "icon" {
+                    check_icon_element(program, fonts, attributes, source, issues);
+                }
+                check_icon_nodes(program, fonts, children, issues);
+            }
+            UiNode::If { children, .. } | UiNode::Each { children, .. } => {
+                check_icon_nodes(program, fonts, children, issues);
+            }
+            UiNode::Match { cases, .. } => {
+                for case in cases {
+                    check_icon_nodes(program, fonts, &case.children, issues);
+                }
+            }
+            UiNode::Text { .. } | UiNode::Interpolation { .. } => {}
+        }
+    }
+}
+
+fn check_icon_element(
+    program: &Program,
+    fonts: &CheckedIconFonts,
+    attributes: &[UiAttribute],
+    element_source: &SourceRef,
+    issues: &mut Vec<IconTokenIssue>,
+) {
+    let family_attribute = attributes
+        .iter()
+        .find(|attribute| attribute.name == "family");
+    let family = match family_attribute.map(|attribute| &attribute.value) {
+        None => fonts.default.as_str(),
+        Some(UiAttributeValue::Text { value }) => value,
+        Some(UiAttributeValue::Expression { .. } | UiAttributeValue::Event { .. }) => {
+            issues.push(IconTokenIssue {
+                code: codes::UNKNOWN_ICON_FAMILY.0,
+                rule: "uhura/dynamic-icon-family",
+                source: family_attribute.map_or_else(
+                    || element_source.clone(),
+                    |attribute| attribute.source.clone(),
+                ),
+                message: "icon `family` must be a quoted project icon-family name".into(),
+            });
+            return;
+        }
+    };
+
+    let Some((_, checked_family)) = fonts
+        .families
+        .iter()
+        .find(|(name, _)| name.as_str() == family)
+    else {
+        issues.push(IconTokenIssue {
+            code: codes::UNKNOWN_ICON_FAMILY.0,
+            rule: "uhura/unknown-icon-family",
+            source: family_attribute.map_or_else(
+                || element_source.clone(),
+                |attribute| attribute.source.clone(),
+            ),
+            message: format!("unknown checked icon family `{family}`"),
+        });
+        return;
+    };
+
+    let Some(name_attribute) = attributes.iter().find(|attribute| attribute.name == "name") else {
+        // The UI catalogue reports the more direct missing-required-attribute
+        // error. Avoid a second resource diagnostic during recovery.
+        return;
+    };
+    let names = match &name_attribute.value {
+        UiAttributeValue::Text { value } => BTreeSet::from([value.clone()]),
+        UiAttributeValue::Expression { value } => {
+            let mut names = BTreeSet::new();
+            if !finite_icon_names(program, value, &mut names) || names.is_empty() {
+                issues.push(IconTokenIssue {
+                    code: codes::UNKNOWN_ICON.0,
+                    rule: "uhura/unbounded-icon-name",
+                    source: name_attribute.source.clone(),
+                    message: "icon `name` must be a literal or a finite expression of checked glyph names"
+                        .into(),
+                });
+                return;
+            }
+            names
+        }
+        UiAttributeValue::Event { .. } => return,
+    };
+    for name in names {
+        if !checked_family
+            .glyphs
+            .keys()
+            .any(|glyph| glyph.as_str() == name)
+        {
+            issues.push(IconTokenIssue {
+                code: codes::UNKNOWN_ICON.0,
+                rule: "uhura/unknown-icon",
+                source: name_attribute.source.clone(),
+                message: format!("unknown icon glyph `{name}` in family `{family}`"),
+            });
+        }
+    }
+}
+
+/// Convert icon-registry findings into ordinary source diagnostics.
+///
+/// Hosts provide the same admitted path-to-file mapping used to compile the
+/// program. A missing source is an internal coverage failure rather than a
+/// user-authored unknown-icon error.
+pub fn icon_token_diagnostics<'a>(
+    program: &Program,
+    fonts: &CheckedIconFonts,
+    sources: impl IntoIterator<Item = (FileId, &'a str)>,
+) -> Vec<Diagnostic> {
+    let files = sources
+        .into_iter()
+        .map(|(file, path)| (path, file))
+        .collect::<BTreeMap<_, _>>();
+    let mut diagnostics = check_program_icon_tokens(program, fonts)
+        .into_iter()
+        .map(|issue| {
+            let Some(file) = files.get(issue.source.path.as_str()).copied() else {
+                return Diagnostic::new(
+                    codes::ICON_SOURCE_COVERAGE.0,
+                    codes::ICON_SOURCE_COVERAGE.1,
+                    Severity::Error,
+                    format!(
+                        "checked icon source `{}` is absent from the admitted source inventory",
+                        issue.source.path
+                    ),
+                    Span::new(FileId(0), 0, 0),
+                );
+            };
+            Diagnostic::new(
+                issue.code,
+                issue.rule,
+                Severity::Error,
+                issue.message,
+                Span::new(file, issue.source.start, issue.source.end),
+            )
+        })
+        .collect::<Vec<_>>();
+    diagnostics.sort_by(|left, right| {
+        (
+            left.span.file,
+            left.span.start,
+            left.span.end,
+            left.code,
+            left.rule,
+            left.message.as_str(),
+        )
+            .cmp(&(
+                right.span.file,
+                right.span.start,
+                right.span.end,
+                right.code,
+                right.rule,
+                right.message.as_str(),
+            ))
+    });
+    diagnostics
+}
+
+fn finite_icon_names(program: &Program, expression: &Expr, names: &mut BTreeSet<String>) -> bool {
+    if names.len() > 256 {
+        return false;
+    }
+    match expression {
+        Expr::Literal {
+            value: Value::Text(value),
+        } => {
+            names.insert(value.clone());
+            true
+        }
+        Expr::Name { name } => match program.machine_program.constants.get(name) {
+            Some(Value::Text(value)) => {
+                names.insert(value.clone());
+                true
+            }
+            _ => false,
+        },
+        Expr::If {
+            then_value,
+            else_value,
+            ..
+        } => {
+            finite_icon_names(program, then_value, names)
+                && finite_icon_names(program, else_value, names)
+        }
+        Expr::Match { arms, .. } => arms
+            .iter()
+            .all(|arm| finite_icon_names(program, &arm.value, names)),
+        Expr::Let { value, .. } => finite_icon_names(program, value, names),
+        _ => false,
+    }
 }
 
 /// Validate the built-in Lucide family and every app-local family. The

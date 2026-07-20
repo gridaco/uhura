@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use uhura_base::FileId;
 use uhura_core::{CHECKPOINT_PROTOCOL, Checkpoint, Program};
 use uhura_syntax::v04::{SourceIdentity, parse as parse_v04};
-use uhura_syntax::{SourceFile, parse_project as parse_evidence};
 
 const MACHINE_COUNT: usize = 1;
 const PRESENTATION_COUNT: usize = 18;
@@ -41,11 +39,15 @@ fn checked_instagram() -> Program {
     let evidence_path = "evidence.uhura";
     let evidence_source = std::fs::read_to_string(root.join(evidence_path))
         .unwrap_or_else(|error| panic!("{evidence_path}: {error}"));
-    let evidence = parse_evidence([SourceFile::new(
-        FileId(modules.len() as u32),
-        evidence_path,
+    let evidence = parse_v04(
+        SourceIdentity::new(
+            modules.len() as u32,
+            "app.instagram@1",
+            "evidence",
+            evidence_path,
+        ),
         &evidence_source,
-    )]);
+    );
     assert!(
         evidence.diagnostics.is_empty(),
         "Instagram evidence parse diagnostics: {:#?}",
@@ -53,7 +55,7 @@ fn checked_instagram() -> Program {
     );
 
     let checked =
-        uhura_check::check_v04_project_modules_with_evidence(&modules, &evidence.project.modules);
+        uhura_check::check_v04_project_modules_with_evidence(&modules, &[evidence.module]);
     assert!(
         checked.diagnostics.is_empty(),
         "Instagram check diagnostics: {:#?}",
@@ -67,7 +69,7 @@ fn checked_instagram() -> Program {
 #[test]
 fn instagram_is_the_current_machine_ui_and_evidence_acceptance_corpus() {
     let program = checked_instagram();
-    assert_eq!(program.machines.len(), MACHINE_COUNT);
+    assert_eq!(program.machine_program.machines.len(), MACHINE_COUNT);
     assert_eq!(program.presentations.len(), PRESENTATION_COUNT);
     assert_eq!(program.evidence.examples.len(), EXAMPLE_COUNT);
 
@@ -98,6 +100,7 @@ fn instagram_is_the_current_machine_ui_and_evidence_acceptance_corpus() {
 
         let snapshot = &artifact.snapshot;
         let instance = program
+            .machine_program
             .restore(&Checkpoint {
                 protocol: CHECKPOINT_PROTOCOL.into(),
                 instance: snapshot.instance.clone(),

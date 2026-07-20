@@ -3,23 +3,12 @@
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use uhura_base::FileId;
-use uhura_check::project_manifest::{LoadedProjectManifest, load_project_manifest};
-use uhura_syntax::{SourceId, format as format_v03, parse as parse_v03};
+use uhura_check::project_manifest::load_project_manifest;
 
 use crate::CommonArgs;
 use crate::fsio::SourceFile;
 
 pub fn run(common: &CommonArgs, check_only: bool) -> ExitCode {
-    if let Ok(retired) = crate::fsio::walk_retired_sources(&common.root)
-        && let Some(path) = retired.first()
-    {
-        eprintln!(
-            "uhura fmt: retired `.relay` source `{}`; rename it to `.uhura`",
-            path.display()
-        );
-        return ExitCode::from(2);
-    }
     let files = match crate::fsio::walk_sources(&common.root) {
         Ok(files) => files,
         Err(error) => {
@@ -60,60 +49,7 @@ pub fn run(common: &CommonArgs, check_only: bool) -> ExitCode {
         }
     };
 
-    match manifest {
-        LoadedProjectManifest::Legacy03(_) => format_v03_files(&files, check_only),
-        LoadedProjectManifest::V04(manifest) => format_v04_files(&files, &manifest, check_only),
-    }
-}
-
-fn format_v03_files(files: &[SourceFile], check_only: bool) -> ExitCode {
-    let mut broken = false;
-    let mut drifted = Vec::new();
-    for (index, file) in files.iter().enumerate() {
-        let parsed = parse_v03(
-            SourceId::new(FileId(index as u32), file.rel_path.clone()),
-            &file.text,
-        );
-        if !parsed.diagnostics.is_empty() {
-            for diagnostic in parsed.diagnostics {
-                eprintln!(
-                    "{}:{}..{}: R1001 {}",
-                    file.rel_path, diagnostic.span.start, diagnostic.span.end, diagnostic.message
-                );
-            }
-            broken = true;
-            continue;
-        }
-        let Some(module) = parsed.module else {
-            eprintln!("{}: R1001 parser produced no module", file.rel_path);
-            broken = true;
-            continue;
-        };
-        let formatted = format_v03(&module);
-        if formatted == file.text {
-            continue;
-        }
-        drifted.push(file.rel_path.clone());
-        if !check_only && let Err(error) = std::fs::write(&file.abs_path, formatted) {
-            eprintln!("uhura fmt: cannot write {}: {error}", file.rel_path);
-            return ExitCode::from(2);
-        }
-    }
-    if broken {
-        return ExitCode::from(1);
-    }
-    if check_only && !drifted.is_empty() {
-        for path in drifted {
-            println!("would reformat: {path}");
-        }
-        return ExitCode::from(1);
-    }
-    if !check_only {
-        for path in drifted {
-            println!("reformatted: {path}");
-        }
-    }
-    ExitCode::SUCCESS
+    format_v04_files(&files, &manifest, check_only)
 }
 
 fn format_v04_files(
@@ -147,8 +83,9 @@ fn format_v04_files(
         let parsed = uhura_syntax::v04::parse(identity, &file.text);
         if !parsed.diagnostics.is_empty() {
             for diagnostic in parsed.diagnostics {
+                let (code, rule) = diagnostic.kind.diagnostic_identity();
                 eprintln!(
-                    "{}:{}..{}: R1001 {}",
+                    "{}:{}..{}: {code} {rule} {}",
                     file.rel_path, diagnostic.span.start, diagnostic.span.end, diagnostic.message
                 );
             }
@@ -173,7 +110,7 @@ fn format_v04_files(
         }
     }
 
-    for physical in &manifest.evidence {
+    for (logical, physical) in &manifest.evidence {
         let Some((index, file)) = discovered.get(physical.as_str()).copied() else {
             eprintln!(
                 "{}: UH2001 mapped evidence source is missing from the project",
@@ -182,29 +119,32 @@ fn format_v04_files(
             broken = true;
             continue;
         };
-        let parsed = parse_v03(
-            SourceId::new(FileId(index as u32), file.rel_path.clone()),
-            &file.text,
+        let identity = uhura_syntax::v04::SourceIdentity::new(
+            index as u32,
+            manifest.project.package_id().to_string(),
+            logical.as_str(),
+            physical.as_str(),
         );
+        let parsed = uhura_syntax::v04::parse(identity, &file.text);
         if !parsed.diagnostics.is_empty() {
             for diagnostic in parsed.diagnostics {
+                let (code, rule) = diagnostic.kind.diagnostic_identity();
                 eprintln!(
-                    "{}:{}..{}: R1001 {}",
+                    "{}:{}..{}: {code} {rule} {}",
                     file.rel_path, diagnostic.span.start, diagnostic.span.end, diagnostic.message
                 );
             }
             broken = true;
             continue;
         }
-        let Some(module) = parsed.module else {
-            eprintln!(
-                "{}: R1001 parser produced no evidence module",
-                file.rel_path
-            );
-            broken = true;
-            continue;
+        let formatted = match uhura_syntax::v04::format(&parsed.module) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                eprintln!("{}: UH2002 {error}", file.rel_path);
+                broken = true;
+                continue;
+            }
         };
-        let formatted = format_v03(&module);
         if formatted == file.text {
             continue;
         }

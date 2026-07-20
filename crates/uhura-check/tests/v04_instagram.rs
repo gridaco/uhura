@@ -78,10 +78,23 @@ fn checks_the_complete_instagram_machine_and_ui_together() {
         checked.diagnostics.len(),
     );
     let program = checked.program.expect("complete Instagram project checks");
-    assert_eq!(program.machines.len(), 1);
+    let icon_fonts =
+        uhura_check::icon_fonts::load_icon_fonts(&Default::default(), &BTreeMap::new())
+            .expect("built-in icon registry");
+    let icon_issues = uhura_check::check_program_icon_tokens(&program, &icon_fonts);
+    assert!(
+        icon_issues.is_empty(),
+        "Instagram icon tokens must resolve before rendering:\n{icon_issues:#?}"
+    );
+    assert_eq!(program.machine_program.machines.len(), 1);
     assert_eq!(program.presentations.len(), 18);
-    assert!(program.machines.contains_key("app.instagram@1::Instagram"));
-    let machine = &program.machines["app.instagram@1::Instagram"];
+    assert!(
+        program
+            .machine_program
+            .machines
+            .contains_key("app.instagram@1::Instagram")
+    );
+    let machine = &program.machine_program.machines["app.instagram@1::Instagram"];
     assert!(
         machine
             .state

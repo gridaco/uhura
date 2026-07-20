@@ -6,6 +6,22 @@ import type {
 import { decimal, natural } from "../protocol/machine.js";
 import type { AssetAppliers } from "./assets.js";
 import type { IconFontRegistry } from "./icons.js";
+import {
+  textEvent,
+  textAttribute,
+  UNIT_EVENT,
+} from "./primitives/common.js";
+import {
+  primitiveAdapter,
+} from "./primitives/registry.js";
+import type {
+  ElementNode,
+  PrimitiveAdapter,
+  PrimitiveContext,
+  PrimitiveEventListener,
+  PrimitiveHosts,
+  RendererMode,
+} from "./primitives/types.js";
 
 export const UHURA_VIEW_PROTOCOL = "uhura-view/1" as const;
 export const UHURA_PROJECTION_SOURCES_PROTOCOL =
@@ -319,19 +335,6 @@ export const decodeProjectionSources = (
   };
 };
 
-const UNIT_EVENT: Value = {
-  $: "record",
-  fields: [],
-};
-
-const textEvent = (value: string): Value => ({
-  $: "record",
-  fields: [{
-    name: "text",
-    value: { $: "Text", value },
-  }],
-});
-
 const inputValueEvent = (value: string): Value => ({
   $: "record",
   fields: [{
@@ -398,13 +401,10 @@ const DOM_EVENT: Readonly<Record<string, string>> = {
   submit: "keydown",
 };
 
-type ElementNode = Extract<RenderNode, { readonly kind: "element" }>;
-type RendererMode = NonNullable<ProjectionRendererOptions["mode"]>;
-
 const appliedAttributes = new WeakMap<Element, Set<string>>();
 const listeners = new WeakMap<
   Element,
-  readonly { readonly type: string; readonly listener: EventListener }[]
+  readonly PrimitiveEventListener[]
 >();
 interface AppliedEventConfiguration {
   readonly mode: RendererMode;
@@ -417,74 +417,21 @@ interface AppliedEventConfiguration {
 const eventConfigurations = new WeakMap<Element, AppliedEventConfiguration>();
 const semanticElements = new WeakMap<Element, string>();
 
-const SEMANTIC_PRIMITIVES = new Set([
-  "view",
-  "scroll",
-  "pager",
-  "text",
-  "img",
-  "video",
-  "icon",
-  "button",
-  "textfield",
-  "region",
-]);
-
-const isSemanticPrimitive = (element: string): boolean =>
-  SEMANTIC_PRIMITIVES.has(element);
-
-const attribute = (
-  attributes: readonly RenderAttribute[],
-  name: string,
-): RenderAttributeValue | undefined =>
-  attributes.find((candidate) => candidate.name === name)?.value;
-
-const booleanAttribute = (
-  attributes: readonly RenderAttribute[],
-  name: string,
-): boolean | undefined => {
-  const value = attribute(attributes, name);
-  return typeof value === "boolean" ? value : undefined;
-};
-
-const textAttribute = (
-  attributes: readonly RenderAttribute[],
-  name: string,
-): string | undefined => {
-  const value = attribute(attributes, name);
-  return typeof value === "string" ? value : undefined;
-};
-
-const physicalAttribute = (
-  name: string,
-  value: RenderAttributeValue | undefined,
-): RenderAttribute | null =>
-  value === undefined ? null : { name, value };
-
-const presentBooleanAttribute = (
-  name: string,
-  value: boolean | undefined,
-): RenderAttribute | null =>
-  value === true ? { name, value: true } : null;
-
-const primitiveClass = (node: ElementNode): string => {
-  const authored = textAttribute(node.attributes, "class")?.trim();
-  return `uh-${node.element}${authored ? ` ${authored}` : ""}`;
-};
-
 /**
- * Converts the closed Uhura primitive vocabulary into physical DOM
- * attributes. Non-primitive HTML nodes deliberately bypass this translation.
+ * Delegates the closed primitive vocabulary to its adapters. Non-primitive
+ * HTML nodes deliberately retain transparent attribute passthrough.
  */
 const physicalAttributes = (
   node: ElementNode,
   mode: RendererMode,
   listItem: boolean,
 ): readonly RenderAttribute[] => {
-  if (!isSemanticPrimitive(node.element)) {
+  const adapter = primitiveAdapter(node.element);
+  let projected: readonly RenderAttribute[];
+  if (!adapter) {
     const authoredSurfaceClass =
       textAttribute(node.attributes, "class")?.trim();
-    const passthrough = node.surface
+    projected = node.surface
       ? [
         ...node.attributes.filter((candidate) => candidate.name !== "class"),
         {
@@ -495,139 +442,20 @@ const physicalAttributes = (
         },
       ]
       : [...node.attributes];
-    if (!listItem) return passthrough;
-    return [
-      ...passthrough.filter((candidate) => candidate.name !== "role"),
-      { name: "role", value: "listitem" },
-    ];
+  } else {
+    projected = adapter.attributes(node, mode);
   }
-
-  const projected: Array<RenderAttribute | null> = [
-    { name: "class", value: primitiveClass(node) },
-  ];
-  switch (node.element) {
-    case "view": {
-      const role = textAttribute(node.attributes, "role");
-      projected.push(
-        role === "list" || role === "navigation" || role === "tablist"
-          ? { name: "role", value: role }
-          : null,
-      );
-      break;
-    }
-    case "scroll":
-      projected.push({
-        name: "data-direction",
-        value: textAttribute(node.attributes, "direction") ?? "vertical",
-      });
-      break;
-    case "pager":
-      projected.push(
-        { name: "role", value: "group" },
-        physicalAttribute(
-          "aria-label",
-          textAttribute(node.attributes, "label"),
-        ),
-      );
-      break;
-    case "img":
-      projected.push({
-        name: "alt",
-        value: booleanAttribute(node.attributes, "decorative") === true
-          ? ""
-          : textAttribute(node.attributes, "alt") ?? "",
-      });
-      break;
-    case "video": {
-      const play = mode === "play";
-      projected.push(
-        physicalAttribute(
-          "aria-label",
-          textAttribute(node.attributes, "label"),
-        ),
-        presentBooleanAttribute(
-          "autoplay",
-          play && booleanAttribute(node.attributes, "autoplay") === true,
-        ),
-        presentBooleanAttribute(
-          "muted",
-          play && booleanAttribute(node.attributes, "muted") === true,
-        ),
-        presentBooleanAttribute(
-          "loop",
-          play && booleanAttribute(node.attributes, "loop") === true,
-        ),
-        presentBooleanAttribute(
-          "controls",
-          play && booleanAttribute(node.attributes, "controls") === true,
-        ),
-        presentBooleanAttribute(
-          "playsinline",
-          play && booleanAttribute(node.attributes, "playsinline") === true,
-        ),
-        mode === "editor"
-          ? { name: "data-video-preview", value: "poster" }
-          : null,
-      );
-      break;
-    }
-    case "icon":
-      projected.push({ name: "aria-hidden", value: "true" });
-      break;
-    case "button": {
-      const pressed =
-        booleanAttribute(node.attributes, "pressed")
-        ?? booleanAttribute(node.attributes, "aria-pressed");
-      projected.push(
-        { name: "type", value: "button" },
-        physicalAttribute(
-          "aria-label",
-          textAttribute(node.attributes, "label")
-            ?? textAttribute(node.attributes, "aria-label"),
-        ),
-        booleanAttribute(node.attributes, "busy") === true
-          ? { name: "aria-busy", value: "true" }
-          : null,
-        pressed === undefined
-          ? null
-          : { name: "aria-pressed", value: String(pressed) },
-        booleanAttribute(node.attributes, "current") === true
-          ? { name: "aria-current", value: "true" }
-          : null,
-        presentBooleanAttribute(
-          "disabled",
-          booleanAttribute(node.attributes, "disabled"),
-        ),
-      );
-      break;
-    }
-    case "region":
-      projected.push(
-        { name: "role", value: "button" },
-        mode === "play" ? { name: "tabindex", value: "0" } : null,
-        physicalAttribute(
-          "aria-label",
-          textAttribute(node.attributes, "label"),
-        ),
-      );
-      break;
-    case "textfield":
-    case "text":
-      break;
-  }
-  if (listItem) {
-    const roleIndex = projected.findIndex(
-      (candidate) => candidate?.name === "role",
+  if (!listItem) return projected;
+  const semanticRole = projected.find((candidate) => candidate.name === "role");
+  if (semanticRole !== undefined && semanticRole.value !== "none") {
+    throw new Error(
+      `checked Uhura lists require a neutral direct child; <${node.element}> projected role ${JSON.stringify(semanticRole.value)}`,
     );
-    if (roleIndex >= 0) {
-      projected[roleIndex] = { name: "role", value: "listitem" };
-    } else {
-      projected.push({ name: "role", value: "listitem" });
-    }
   }
-  return projected.filter(
-    (candidate): candidate is RenderAttribute => candidate !== null,
-  );
+  return [
+    ...projected.filter((candidate) => candidate.name !== "role"),
+    { name: "role", value: "listitem" },
+  ];
 };
 
 const applyAttributes = (
@@ -661,118 +489,6 @@ const applyAttributes = (
   appliedAttributes.set(element, next);
 };
 
-const attributeValue = (
-  attributes: readonly RenderAttribute[],
-  name: string,
-): string | undefined => textAttribute(attributes, name);
-
-const applyCapabilities = (
-  element: HTMLElement,
-  node: ElementNode,
-  options: ProjectionRendererOptions,
-  mode: RendererMode,
-): void => {
-  if (node.element === "img") {
-    const image = element as HTMLImageElement;
-    if (options.assets) {
-      options.assets.applyImage(
-        image,
-        attributeValue(node.attributes, "src"),
-      );
-    } else {
-      image.removeAttribute("src");
-    }
-  }
-  if (node.element === "video") {
-    const video = element as HTMLVideoElement;
-    const play = mode === "play";
-    const autoplay =
-      play && booleanAttribute(node.attributes, "autoplay") === true;
-    const muted = play && booleanAttribute(node.attributes, "muted") === true;
-    const loop = play && booleanAttribute(node.attributes, "loop") === true;
-    const controls =
-      play && booleanAttribute(node.attributes, "controls") === true;
-    const playsInline =
-      play && booleanAttribute(node.attributes, "playsinline") === true;
-    if (video.autoplay !== autoplay) video.autoplay = autoplay;
-    if (video.muted !== muted) video.muted = muted;
-    if (video.loop !== loop) video.loop = loop;
-    if (video.controls !== controls) video.controls = controls;
-    if (video.playsInline !== playsInline) video.playsInline = playsInline;
-    if (options.assets) {
-      options.assets.applyVideoSource(
-        video,
-        play ? attributeValue(node.attributes, "src") : undefined,
-      );
-      options.assets.applyVideoPoster(
-        video,
-        attributeValue(node.attributes, "poster"),
-      );
-    } else {
-      video.removeAttribute("src");
-      video.removeAttribute("poster");
-    }
-  }
-  if (node.element === "icon") {
-    const name = attributeValue(node.attributes, "name") ?? "";
-    const family = attributeValue(node.attributes, "family");
-    if (options.icons && name.length > 0) {
-      const realizedFamily = family ?? options.icons.defaultFamily;
-      if (
-        element.dataset["icon"] !== name
-        || element.dataset["iconFamily"] !== realizedFamily
-        || element.dataset["iconResource"] !== options.icons.fingerprint
-      ) {
-        options.icons.apply(element, family, name);
-        element.dataset["icon"] = name;
-        element.dataset["iconFamily"] = realizedFamily;
-        element.dataset["iconResource"] = options.icons.fingerprint;
-      }
-    } else {
-      element.textContent = "";
-      delete element.dataset["icon"];
-      delete element.dataset["iconFamily"];
-      delete element.dataset["iconResource"];
-    }
-  }
-};
-
-interface TextFieldState {
-  composing: boolean;
-  inFlight: number;
-  stash: string | undefined;
-}
-
-const textFieldStates = new WeakMap<HTMLInputElement, TextFieldState>();
-
-const textFieldState = (input: HTMLInputElement): TextFieldState => {
-  let state = textFieldStates.get(input);
-  if (!state) {
-    state = { composing: false, inFlight: 0, stash: undefined };
-    textFieldStates.set(input, state);
-  }
-  return state;
-};
-
-const dispatchTextFieldChange = (
-  input: HTMLInputElement,
-  binding: string,
-  projectionRevision: NaturalText | undefined,
-  dispatch: ProjectionRendererOptions["dispatch"],
-): void => {
-  const state = textFieldState(input);
-  state.inFlight += 1;
-  try {
-    dispatch(binding, projectionRevision, textEvent(input.value));
-  } finally {
-    state.inFlight -= 1;
-    if (state.inFlight === 0 && state.stash !== undefined) {
-      if (state.stash !== input.value) input.value = state.stash;
-      state.stash = undefined;
-    }
-  }
-};
-
 const eventAllowed = (element: HTMLElement): boolean =>
   !element.hasAttribute("disabled")
   && element.getAttribute("aria-disabled") !== "true";
@@ -787,6 +503,23 @@ const sameEventShape = (
     return candidate?.event === event.event;
   });
 
+const dispatchConfiguredEvent = (
+  element: HTMLElement,
+  eventIndex: number,
+  expectedEvent: string,
+  value: Value,
+): void => {
+  const configuration = eventConfigurations.get(element);
+  const current = configuration?.events[eventIndex];
+  if (configuration && current?.event === expectedEvent) {
+    configuration.dispatch(
+      current.binding,
+      configuration.projectionRevision,
+      value,
+    );
+  }
+};
+
 const applyEvents = (
   element: HTMLElement,
   node: ElementNode,
@@ -794,6 +527,7 @@ const applyEvents = (
   projectionRevision: NaturalText | undefined,
   options: ProjectionRendererOptions,
   mode: RendererMode,
+  adapter: PrimitiveAdapter | undefined,
 ): void => {
   const previous = eventConfigurations.get(element);
   const retainListeners =
@@ -818,60 +552,29 @@ const applyEvents = (
     return;
   }
 
-  const next: Array<{
-    readonly type: string;
-    readonly listener: EventListener;
-  }> = [];
-  for (const [eventIndex, { event }] of events.entries()) {
-    if (event === "near-end") {
-      continue;
+  const next: PrimitiveEventListener[] = [];
+  const attach = (
+    registrations: readonly PrimitiveEventListener[],
+  ): void => {
+    for (const registration of registrations) {
+      element.addEventListener(registration.type, registration.listener);
+      next.push(registration);
     }
-    if (node.element === "textfield" && event === "change") {
-      const input = element as HTMLInputElement;
-      const onInput: EventListener = (domEvent) => {
-        const composing =
-          textFieldState(input).composing
-          || ("isComposing" in domEvent && domEvent.isComposing === true);
-        if (!composing && eventAllowed(input)) {
-          const configuration = eventConfigurations.get(element);
-          const current = configuration?.events[eventIndex];
-          if (configuration && current?.event === event) {
-            dispatchTextFieldChange(
-              input,
-              current.binding,
-              configuration.projectionRevision,
-              configuration.dispatch,
-            );
-          }
-        }
-      };
-      const onCompositionStart: EventListener = () => {
-        textFieldState(input).composing = true;
-      };
-      const onCompositionEnd: EventListener = () => {
-        const state = textFieldState(input);
-        state.composing = false;
-        if (eventAllowed(input)) {
-          const configuration = eventConfigurations.get(element);
-          const current = configuration?.events[eventIndex];
-          if (configuration && current?.event === event) {
-            dispatchTextFieldChange(
-              input,
-              current.binding,
-              configuration.projectionRevision,
-              configuration.dispatch,
-            );
-          }
-        }
-      };
-      element.addEventListener("input", onInput);
-      element.addEventListener("compositionstart", onCompositionStart);
-      element.addEventListener("compositionend", onCompositionEnd);
-      next.push(
-        { type: "input", listener: onInput },
-        { type: "compositionstart", listener: onCompositionStart },
-        { type: "compositionend", listener: onCompositionEnd },
-      );
+  };
+  for (const [eventIndex, binding] of events.entries()) {
+    const { event } = binding;
+    if (adapter?.managedEvents?.includes(event)) continue;
+    const specialized = adapter?.bindEvent?.({
+      target: element,
+      node,
+      event: binding,
+      eventIndex,
+      dispatch: (value) =>
+        dispatchConfiguredEvent(element, eventIndex, event, value),
+      eventAllowed,
+    });
+    if (specialized) {
+      attach(specialized);
       continue;
     }
     const type =
@@ -891,315 +594,68 @@ const applyEvents = (
       }
       if (event === "activate-double") domEvent.preventDefault();
       if (!eventAllowed(element)) return;
-      const configuration = eventConfigurations.get(element);
-      const current = configuration?.events[eventIndex];
-      if (configuration && current?.event === event) {
-        configuration.dispatch(
-          current.binding,
-          configuration.projectionRevision,
-          eventValue(element, event),
-        );
-      }
+      dispatchConfiguredEvent(
+        element,
+        eventIndex,
+        event,
+        eventValue(element, event),
+      );
     };
-    element.addEventListener(type, listener);
-    next.push({ type, listener });
+    attach([{ type, listener }]);
   }
-  if (node.element === "region") {
-    let activationIndex = events.findIndex(
-      (candidate) => candidate.event === "activate",
-    );
-    if (activationIndex < 0) {
-      activationIndex = events.findIndex(
-        (candidate) => candidate.event === "press",
-      );
-    }
-    if (activationIndex < 0) {
-      activationIndex = events.findIndex(
-        (candidate) => candidate.event === "activate-double",
-      );
-    }
-    const activation = events[activationIndex];
-    if (activation) {
-      const listener: EventListener = (domEvent) => {
-        if (
-          !(domEvent instanceof KeyboardEvent)
-          || (domEvent.key !== "Enter" && domEvent.key !== " ")
-          || !eventAllowed(element)
-        ) {
-          return;
-        }
-        domEvent.preventDefault();
-        const configuration = eventConfigurations.get(element);
-        const current = configuration?.events[activationIndex];
-        if (configuration && current?.event === activation.event) {
-          configuration.dispatch(
-            current.binding,
-            configuration.projectionRevision,
-            UNIT_EVENT,
-          );
-        }
-      };
-      element.addEventListener("keydown", listener);
-      next.push({ type: "keydown", listener });
-    }
-  }
+  attach(adapter?.bindSupplementalEvents?.({
+    target: element,
+    node,
+    events,
+    dispatchAt: (eventIndex, value) => {
+      const expected = events[eventIndex]?.event;
+      if (expected !== undefined) {
+        dispatchConfiguredEvent(element, eventIndex, expected, value);
+      }
+    },
+    eventAllowed,
+  }) ?? []);
   listeners.set(element, next);
 };
 
-interface NearEndObservation {
-  readonly observer: IntersectionObserver;
-  readonly sentinel: HTMLElement;
-  binding: string;
-  projectionRevision: NaturalText | undefined;
-  dispatch: ProjectionRendererOptions["dispatch"];
-  armed: boolean;
-}
+const physicalTag = (element: string): string =>
+  primitiveAdapter(element)?.tag ?? element.toLowerCase();
 
-const nearEndObservations = new WeakMap<HTMLElement, NearEndObservation>();
-const activeNearEndElements = new Set<HTMLElement>();
-
-const disposeNearEnd = (element: HTMLElement): void => {
-  const observation = nearEndObservations.get(element);
-  if (!observation) return;
-  observation.observer.disconnect();
-  observation.sentinel.remove();
-  nearEndObservations.delete(element);
-  activeNearEndElements.delete(element);
-};
-
-const disposeMechanics = (root: HTMLElement): void => {
-  for (const element of [...activeNearEndElements]) {
-    if (element === root || root.contains(element)) disposeNearEnd(element);
-  }
-};
-
-const syncNearEnd = (
-  element: HTMLElement,
-  events: readonly RenderEvent[],
-  projectionRevision: NaturalText | undefined,
-  dispatch: ProjectionRendererOptions["dispatch"],
-): void => {
-  const binding = events.find((event) => event.event === "near-end")?.binding;
-  const current = nearEndObservations.get(element);
-  if (!binding) {
-    disposeNearEnd(element);
-    return;
-  }
-  if (current) {
-    current.binding = binding;
-    current.projectionRevision = projectionRevision;
-    current.dispatch = dispatch;
-    if (current.sentinel !== element.lastElementChild) {
-      element.append(current.sentinel);
-    }
-    return;
-  }
-  const Observer = element.ownerDocument.defaultView?.IntersectionObserver;
-  if (!Observer) return;
-  const sentinel = element.ownerDocument.createElement("div");
-  sentinel.dataset["uhMechanic"] = "near-end";
-  sentinel.style.cssText = "block-size:1px;flex:none;";
-  const observation: NearEndObservation = {
-    sentinel,
-    binding,
-    projectionRevision,
-    dispatch,
-    armed: true,
-    observer: new Observer((entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting && observation.armed) {
-          observation.armed = false;
-          observation.dispatch(
-            observation.binding,
-            observation.projectionRevision,
-            UNIT_EVENT,
-          );
-        } else if (!entry.isIntersecting) {
-          observation.armed = true;
-        }
-      }
-    }, { root: element, rootMargin: "100%" }),
-  };
-  nearEndObservations.set(element, observation);
-  activeNearEndElements.add(element);
-  element.append(sentinel);
-  observation.observer.observe(sentinel);
-};
-
-const isInputElement = (element: Element): element is HTMLInputElement =>
-  element.localName === "input";
-
-const directMechanic = (
-  element: HTMLElement,
-  mechanic: string,
-): HTMLElement | undefined =>
-  Array.from(element.children).find(
-    (child): child is HTMLElement =>
-      isHtmlElement(child) && child.dataset["uhMechanic"] === mechanic,
-  );
-
-const ensureTextFieldInput = (
-  wrapper: HTMLElement,
-  node: ElementNode,
-  mode: RendererMode,
-): HTMLInputElement => {
-  const existing = directMechanic(wrapper, "input");
-  const input = existing && isInputElement(existing)
-    ? existing
-    : wrapper.ownerDocument.createElement("input");
-  if (input !== existing) {
-    input.type = "text";
-    input.dataset["uhMechanic"] = "input";
-    wrapper.append(input);
-  }
-  applyAttributes(input, [
-    ...(textAttribute(node.attributes, "placeholder") === undefined
-      ? []
-      : [{
-        name: "placeholder",
-        value: textAttribute(node.attributes, "placeholder") ?? "",
-      }]),
-    ...(textAttribute(node.attributes, "label") === undefined
-      ? []
-      : [{
-        name: "aria-label",
-        value: textAttribute(node.attributes, "label") ?? "",
-      }]),
-    ...(booleanAttribute(node.attributes, "disabled") === true
-      ? [{ name: "disabled", value: true }]
-      : []),
-  ]);
-  const disabled = booleanAttribute(node.attributes, "disabled") === true;
-  const readOnly = mode === "editor";
-  if (input.disabled !== disabled) input.disabled = disabled;
-  if (input.readOnly !== readOnly) input.readOnly = readOnly;
-
-  const value = textAttribute(node.attributes, "value") ?? "";
-  const state = textFieldState(input);
-  if (mode === "editor") {
-    state.stash = undefined;
-    if (input.value !== value) input.value = value;
-  } else if (state.composing || state.inFlight > 0) {
-    state.stash = value;
-  } else {
-    state.stash = undefined;
-    if (input.value !== value) input.value = value;
-  }
-  return input;
-};
-
-const wiredPagerTracks = new WeakSet<HTMLElement>();
-
-const updatePagerDots = (
-  pager: HTMLElement,
-  track: HTMLElement,
-): void => {
-  const dots = directMechanic(pager, "dots");
-  if (!dots) return;
-  const width = track.clientWidth || 1;
-  const active = Math.min(
-    dots.children.length - 1,
-    Math.max(0, Math.round(track.scrollLeft / width)),
-  );
-  Array.from(dots.children).forEach((dot, index) => {
-    dot.classList.toggle("on", index === active);
-  });
-};
-
-const ensurePagerTrack = (
-  pager: HTMLElement,
-  node: ElementNode,
-): HTMLElement => {
-  let track = directMechanic(pager, "track");
-  if (!track) {
-    track = pager.ownerDocument.createElement("div");
-    track.className = "uh-track";
-    track.dataset["uhMechanic"] = "track";
-    pager.append(track);
-  }
-  if (!wiredPagerTracks.has(track)) {
-    track.addEventListener(
-      "scroll",
-      () => updatePagerDots(pager, track),
-      { passive: true },
-    );
-    wiredPagerTracks.add(track);
-  }
-
-  if (textAttribute(node.attributes, "indicator") === "dots") {
-    let dots = directMechanic(pager, "dots");
-    if (!dots) {
-      dots = pager.ownerDocument.createElement("div");
-      dots.className = "uh-dots";
-      dots.dataset["uhMechanic"] = "dots";
-      dots.setAttribute("aria-hidden", "true");
-      pager.append(dots);
-    }
-    while (dots.children.length > node.children.length) {
-      dots.lastElementChild?.remove();
-    }
-    while (dots.children.length < node.children.length) {
-      const dot = pager.ownerDocument.createElement("span");
-      dot.className = "uh-dot";
-      dots.append(dot);
-    }
-  } else {
-    directMechanic(pager, "dots")?.remove();
-  }
-  return track;
-};
-
-const htmlTag = (element: string): string => {
-  switch (element.toLowerCase()) {
-    case "view":
-    case "scroll":
-    case "pager":
-    case "region":
-    case "textfield":
-      return "div";
-    case "text":
-      return "p";
-    case "icon":
-      return "span";
-    default:
-      return element.toLowerCase();
-  }
-};
-
-const applyStaticScrollPosition = (
-  element: HTMLElement,
-  node: Extract<RenderNode, { readonly kind: "element" }>,
+const primitiveContext = (
   options: ProjectionRendererOptions,
-): void => {
-  if (options.mode !== "editor" || node.element !== "scroll") return;
-  const raw = attributeValue(node.attributes, "position");
-  if (raw === undefined) return;
-  const position = Number(raw);
-  if (!Number.isFinite(position) || position < 0 || position > 1) return;
-  const direction = attributeValue(node.attributes, "direction") ?? "vertical";
-  if (direction === "horizontal") {
-    element.scrollLeft = Math.round(
-      Math.max(0, element.scrollWidth - element.clientWidth) * position,
-    );
-  } else {
-    element.scrollTop = Math.round(
-      Math.max(0, element.scrollHeight - element.clientHeight) * position,
-    );
+  mode: RendererMode,
+  projectionRevision: NaturalText | undefined,
+): PrimitiveContext => ({
+  mode,
+  options,
+  projectionRevision,
+  applyAttributes,
+});
+
+const defaultHosts = (element: HTMLElement): PrimitiveHosts => ({
+  children: element.localName === "input" ? null : element,
+  events: element,
+});
+
+const disposeRealizationTree = (root: HTMLElement): void => {
+  for (const child of Array.from(root.children)) {
+    if (isHtmlElement(child)) disposeRealizationTree(child);
   }
+  const semantic = semanticElements.get(root);
+  if (semantic !== undefined) primitiveAdapter(semantic)?.dispose?.(root);
 };
 
 const elementFor = (
   document: Document,
   node: ElementNode,
 ): HTMLElement => {
-  const existingName = htmlTag(node.element);
+  const existingName = physicalTag(node.element);
   const element =
     existingName === "dialog"
       ? document.createElement("dialog")
       : document.createElement(existingName);
   element.dataset["uhuraKey"] = node.key;
   semanticElements.set(element, node.element);
-  if (element.localName === "button") (element as HTMLButtonElement).type = "button";
   if (node.surface && element.localName === "dialog") {
     element.classList.add("uhura-surface");
     element.setAttribute("aria-modal", "true");
@@ -1210,34 +666,6 @@ const elementFor = (
     });
   }
   return element;
-};
-
-const childHost = (
-  element: HTMLElement,
-  node: ElementNode,
-  mode: RendererMode,
-): {
-  readonly children: HTMLElement | null;
-  readonly events: HTMLElement;
-} => {
-  switch (node.element) {
-    case "textfield": {
-      const input = ensureTextFieldInput(element, node, mode);
-      return { children: null, events: input };
-    }
-    case "pager":
-      return {
-        children: ensurePagerTrack(element, node),
-        events: element,
-      };
-    case "img":
-    case "video":
-    case "icon":
-    case "input":
-      return { children: null, events: element };
-    default:
-      return { children: element, events: element };
-  }
 };
 
 const reconcile = (
@@ -1282,7 +710,7 @@ const reconcile = (
     } else {
       if (
         !isHtmlElement(child) ||
-        child.localName !== htmlTag(node.element)
+        child.localName !== physicalTag(node.element)
         || semanticElements.get(child) !== node.element
       ) {
         child = elementFor(document, node);
@@ -1294,14 +722,10 @@ const reconcile = (
         child,
         physicalAttributes(node, mode, parentIsList),
       );
-      if (node.element === "button") {
-        const button = child as HTMLButtonElement;
-        const disabled =
-          booleanAttribute(node.attributes, "disabled") === true;
-        if (button.disabled !== disabled) button.disabled = disabled;
-      }
-      applyCapabilities(child, node, options, mode);
-      const hosts = childHost(child, node, mode);
+      const adapter = primitiveAdapter(node.element);
+      const context = primitiveContext(options, mode, projectionRevision);
+      const hosts =
+        adapter?.hosts?.(child, node, context) ?? defaultHosts(child);
       applyEvents(
         hosts.events,
         node,
@@ -1309,6 +733,7 @@ const reconcile = (
         projectionRevision,
         options,
         mode,
+        adapter,
       );
       observed.push({ key: node.key, element: child });
       if (hosts.children) {
@@ -1320,24 +745,10 @@ const reconcile = (
           options,
           mode,
           projectionRevision,
-          node.element === "view"
-            && textAttribute(node.attributes, "role") === "list",
+          adapter?.childrenAreList?.(node) ?? false,
         );
       }
-      if (node.element === "pager") {
-        updatePagerDots(child, hosts.children ?? child);
-      }
-      if (node.element === "scroll" && mode === "play") {
-        syncNearEnd(
-          child,
-          node.events,
-          projectionRevision,
-          options.dispatch,
-        );
-      } else {
-        disposeNearEnd(child);
-      }
-      applyStaticScrollPosition(child, node, options);
+      adapter?.sync?.(child, node, hosts, context);
     }
     retained.add(child);
     if (child !== cursor) parent.insertBefore(child, cursor);
@@ -1371,7 +782,7 @@ const reconcile = (
       continue;
     }
     if (!retained.has(child)) {
-      if (isHtmlElement(child)) disposeMechanics(child);
+      if (isHtmlElement(child)) disposeRealizationTree(child);
       child.remove();
     }
   }
@@ -1409,7 +820,7 @@ export const createProjectionRenderer = (
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      disposeMechanics(options.root);
+      disposeRealizationTree(options.root);
       options.root.replaceChildren();
     },
   };

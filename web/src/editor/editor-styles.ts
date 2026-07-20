@@ -1,3 +1,5 @@
+import PRIMITIVE_BASE_STYLES from "../renderer/primitives/base.css?inline";
+
 export const EDITOR_STYLES = `
   .uhura-editor {
     --navigator-width: 240px;
@@ -642,24 +644,7 @@ export const PREVIEW_BASE_STYLES = `
   .screen-root { isolation: isolate; }
   .screen-root > * { block-size: 100%; }
   .preview-root > * { min-inline-size: 0; }
-  .uh-view { display: block; min-inline-size: 0; }
-  .uh-scroll { overflow-y: auto; overflow-x: hidden; min-block-size: 0; }
-  .uh-scroll[data-direction="horizontal"] { overflow-x: auto; overflow-y: hidden; }
-  .uh-text { margin: 0; overflow-wrap: anywhere; }
-  .uh-img { display: block; background-color: #d9d9de; }
-  .uh-video { display: block; inline-size: 100%; background: #111 center / cover no-repeat; object-fit: cover; }
-  .uh-icon { display: inline-flex; align-items: center; justify-content: center; inline-size: 1em; block-size: 1em; font-size: 24px; }
-  button.uh-button { appearance: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px; border: 0; border-radius: 8px; color: inherit; background: none; font: inherit; }
-  button.uh-button[disabled] { opacity: .35; }
-  button.uh-button[aria-busy="true"] { opacity: .6; }
-  .uh-textfield input { inline-size: 100%; padding: 8px 14px; border: 1px solid #d5d5da; border-radius: 999px; color: #222; background: #fff; font: inherit; }
-  .uh-region { display: block; }
-  .uh-pager { position: relative; }
-  .uh-pager .uh-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; }
-  .uh-pager .uh-track > * { flex: 0 0 100%; scroll-snap-align: center; }
-  .uh-dots { position: absolute; inset-block-end: 10px; inset-inline: 0; display: flex; justify-content: center; gap: 5px; }
-  .uh-dot { inline-size: 6px; block-size: 6px; border-radius: 999px; background: rgb(255 255 255 / 55%); }
-  .uh-dot.on { background: #fff; }
+  ${PRIMITIVE_BASE_STYLES}
   .uh-surface-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; isolation: isolate; }
   .uh-scrim { position: absolute; inset: 0; z-index: 0; background: rgb(0 0 0 / 40%); }
   .uh-surface { position: relative; z-index: 1; block-size: 72%; max-block-size: 72%; overflow: hidden; border-radius: 16px 16px 0 0; background: #fff; box-shadow: 0 -8px 32px rgb(0 0 0 / 35%); }

@@ -2,6 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::diagnostic::{codes, error};
+use super::types::{ConstructorInfo, Ty, TypeInfo, TypeRegistry, TypeShape, compatible, join};
+use super::ui_catalog::{
+    self, AttributeKind as UiAttributeKind, Availability as UiElementAvailability,
+    Constraint as UiConstraint, ContentModel as UiContentModel, ElementContext as UiElementContext,
+    EventContract as UiEventContract, EventPayload as UiEventPayload,
+};
+use crate::checker_ir as ast;
 use uhura_base::{Diagnostic, has_errors};
 use uhura_core::ir::{
     CommandDef, EvidenceRef as IrEvidenceRef, EvidenceStep as IrEvidenceStep, Handler as IrHandler,
@@ -18,36 +26,27 @@ use uhura_core::{
     PURE_CONTINUATION_LOCAL_PREFIX, Pattern as IrPattern, Program, TypeDef, TypeRef,
     UnaryOp as IrUnaryOp, Value,
 };
-use uhura_syntax::ast;
-
-use super::diagnostic::{codes, error};
-use super::types::{ConstructorInfo, Ty, TypeInfo, TypeRegistry, TypeShape, compatible, join};
 
 #[derive(Clone, Debug)]
-pub struct DeferredPresentation {
-    pub module: String,
-    pub declaration: ast::UiDecl,
-    pub span: ast::SourceSpan,
+pub(crate) struct DeferredPresentation {
+    pub(crate) module: String,
+    pub(crate) declaration: ast::UiDecl,
+    pub(crate) span: ast::SourceSpan,
 }
 
 #[derive(Clone, Debug)]
-pub struct DeferredEvidence {
-    pub module: String,
-    pub declaration: ast::Declaration,
+pub(crate) struct DeferredEvidence {
+    pub(crate) module: String,
+    pub(crate) declaration: ast::Declaration,
 }
 
 #[derive(Debug)]
 pub struct CheckOutput {
     pub program: Option<Program>,
     pub diagnostics: Vec<Diagnostic>,
-    /// Source-layout-sensitive semantic-node occurrences. The legacy
-    /// frontend leaves this empty; manifest-selected 0.4 checking fills it.
+    /// Source-layout-sensitive semantic-node occurrences. Callers without
+    /// source-layout metadata leave this empty.
     pub provenance: Option<uhura_core::Provenance>,
-    /// Retained even when lowering is gated, so an editor can continue to
-    /// build a structural UI view beside semantic diagnostics.
-    pub presentations: Vec<DeferredPresentation>,
-    /// Retained even when lowering is gated for the same reason.
-    pub evidence: Vec<DeferredEvidence>,
 }
 
 #[derive(Clone, Debug)]
@@ -188,20 +187,6 @@ impl Scope {
     }
 }
 
-pub fn check_project(project: &ast::Project) -> CheckOutput {
-    let physical_source_paths = project
-        .modules
-        .iter()
-        .map(|module| (module.source_id.file, module.source_id.path.clone()))
-        .collect();
-    check_project_with_import_aliases(
-        project,
-        &BTreeMap::new(),
-        &physical_source_paths,
-        SourceSemantics::Legacy03,
-    )
-}
-
 pub(crate) type ImportAliases = BTreeMap<(String, String, String), String>;
 pub(crate) type PhysicalSourcePaths = BTreeMap<u32, String>;
 
@@ -209,21 +194,9 @@ pub(crate) fn check_project_with_import_aliases(
     project: &ast::Project,
     import_aliases: &ImportAliases,
     physical_source_paths: &PhysicalSourcePaths,
-    source_semantics: SourceSemantics,
 ) -> CheckOutput {
-    let mut checker = Checker::new(
-        project,
-        import_aliases,
-        physical_source_paths,
-        source_semantics,
-    );
+    let mut checker = Checker::new(project, import_aliases, physical_source_paths);
     checker.run()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SourceSemantics {
-    Legacy03,
-    V04,
 }
 
 struct Checker<'a> {
@@ -239,7 +212,6 @@ struct Checker<'a> {
     pure_continuations: BTreeMap<String, DeferredPureContinuation>,
     lower_expr_depth: usize,
     draining_pure_continuations: bool,
-    source_semantics: SourceSemantics,
 }
 
 impl<'a> Checker<'a> {
@@ -247,7 +219,6 @@ impl<'a> Checker<'a> {
         project: &'a ast::Project,
         import_aliases: &'a ImportAliases,
         physical_source_paths: &PhysicalSourcePaths,
-        source_semantics: SourceSemantics,
     ) -> Self {
         Self {
             project,
@@ -262,7 +233,6 @@ impl<'a> Checker<'a> {
             pure_continuations: BTreeMap::new(),
             lower_expr_depth: 0,
             draining_pure_continuations: false,
-            source_semantics,
         }
     }
 
@@ -291,30 +261,26 @@ impl<'a> Checker<'a> {
         let program = if has_errors(&self.diagnostics) {
             None
         } else {
-            // A successful checker output is the canonical executable
-            // artifact. Freeze identities here so CLI IR emission, native
-            // hosts, Wasm, and tests all admit the same checked source under
-            // the same machine-program hash.
-            self.program.freeze_program_hashes();
+            // The current frontend still has to attach canonical provenance
+            // and authored fault-site identities. It freezes the complete
+            // executable artifact after that finalization step.
             Some(std::mem::take(&mut self.program))
         };
         CheckOutput {
             program,
             diagnostics: std::mem::take(&mut self.diagnostics),
             provenance: None,
-            presentations: std::mem::take(&mut self.presentations),
-            evidence: std::mem::take(&mut self.evidence),
         }
     }
 
     fn collect_modules(&mut self) {
         for module in &self.project.modules {
-            if module.language.name.value != "uhura" || module.language.version != "0.3" {
+            if module.language.name.value != "uhura" || module.language.version != "0.4" {
                 self.diagnostics.push(error(
                     codes::HEADER,
                     "uhura/header",
                     format!(
-                        "expected `language uhura 0.3`, found `language {} {}`",
+                        "expected internal Uhura kernel version `0.4`, found `language {} {}`",
                         module.language.name.value, module.language.version
                     ),
                     module.language.span,
@@ -349,7 +315,7 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
-            self.program.modules.push(id.clone());
+            self.program.machine_program.modules.push(id.clone());
             self.modules.insert(
                 id.clone(),
                 ModuleEnv {
@@ -546,6 +512,7 @@ impl<'a> Checker<'a> {
                             shape: TypeShape::Key(underlying.clone()),
                         });
                         self.program
+                            .machine_program
                             .types
                             .insert(id.clone(), TypeDef::Key { id, underlying });
                     }
@@ -554,7 +521,7 @@ impl<'a> Checker<'a> {
                             self.diagnostics.push(error(
                                 codes::UNSUPPORTED,
                                 "uhura/user-generic",
-                                "user-declared generic types are reserved but are not in Uhura 0.3",
+                                "user-declared generic types are reserved but are not supported",
                                 declaration.span,
                             ));
                             continue;
@@ -749,7 +716,7 @@ impl<'a> Checker<'a> {
     }
 
     fn check_recursion(&mut self) {
-        let functions = self.program.functions.clone();
+        let functions = self.program.machine_program.functions.clone();
         let global_ids = functions.keys().cloned().collect::<BTreeSet<_>>();
         let mut global_graph = BTreeMap::new();
         for (id, function) in &functions {
@@ -764,13 +731,13 @@ impl<'a> Checker<'a> {
                 codes::DEPENDENCY_CYCLE,
                 "uhura/recursive-function",
                 format!(
-                    "pure function `{id}` participates in a call cycle; Uhura 0.3 functions must terminate"
+                    "pure function `{id}` participates in a call cycle; Uhura functions must terminate"
                 ),
                 self.physical_span(&function.source),
             ));
         }
 
-        let machines = self.program.machines.clone();
+        let machines = self.program.machine_program.machines.clone();
         for (machine_id, machine) in machines {
             let function_ids = machine.functions.keys().cloned().collect::<BTreeSet<_>>();
             let mut function_graph = BTreeMap::new();
@@ -870,7 +837,7 @@ impl<'a> Checker<'a> {
                     shape,
                 });
                 if let TypeRef::Record { fields } = resolved {
-                    self.program.types.insert(
+                    self.program.machine_program.types.insert(
                         id.into(),
                         TypeDef::Record {
                             id: id.into(),
@@ -889,7 +856,7 @@ impl<'a> Checker<'a> {
                     id: id.into(),
                     shape: TypeShape::Sum(constructors.clone()),
                 });
-                self.program.types.insert(
+                self.program.machine_program.types.insert(
                     id.into(),
                     TypeDef::Sum {
                         id: id.into(),
@@ -898,7 +865,9 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-        if self.program.types.contains_key(id) && !self.registry.types.contains_key(id) {
+        if self.program.machine_program.types.contains_key(id)
+            && !self.registry.types.contains_key(id)
+        {
             self.diagnostics.push(error(
                 codes::UNKNOWN_TYPE,
                 "uhura/type-shape",
@@ -1021,9 +990,6 @@ impl<'a> Checker<'a> {
         span: ast::SourceSpan,
         boundary: &str,
     ) {
-        if self.source_semantics != SourceSemantics::V04 {
-            return;
-        }
         let Some(path) = finite_view_path(ty, &self.registry, &mut BTreeSet::new()) else {
             return;
         };
@@ -1182,9 +1148,11 @@ impl Checker<'_> {
                 // through constants so port configuration and evidence fixture
                 // expressions evaluate through the same ordinary name lookup.
                 self.program
+                    .machine_program
                     .constants
                     .insert(id.clone(), Value::Text(canonical));
                 self.program
+                    .machine_program
                     .constant_types
                     .insert(id.clone(), expected.clone());
                 self.program.route_tables.insert(id, routes);
@@ -1271,8 +1239,14 @@ impl Checker<'_> {
         match const_eval(&expression, &self.program) {
             Ok(value) => {
                 let id = qualify(&module.id, &declaration.name.value);
-                self.program.constants.insert(id.clone(), value);
-                self.program.constant_types.insert(id, expected);
+                self.program
+                    .machine_program
+                    .constants
+                    .insert(id.clone(), value);
+                self.program
+                    .machine_program
+                    .constant_types
+                    .insert(id, expected);
             }
             Err(message) => self.diagnostics.push(error(
                 codes::EFFECT,
@@ -1328,7 +1302,7 @@ impl Checker<'_> {
         );
         self.expect_type(&actual, &result, declaration.body.span);
         let id = qualify(&module.id, &declaration.name.value);
-        self.program.functions.insert(
+        self.program.machine_program.functions.insert(
             id.clone(),
             IrFunction {
                 id,
@@ -1840,11 +1814,7 @@ impl Checker<'_> {
                 value,
             } => {
                 let (source_ir, source_ty) = self.lower_expr(module, scope, collection, None, mode);
-                let item_ty = collection_item_type(
-                    source_ty.as_value(),
-                    self.source_semantics == SourceSemantics::V04,
-                )
-                .unwrap_or(TypeRef::Never);
+                let item_ty = collection_item_type(source_ty.as_value()).unwrap_or(TypeRef::Never);
                 let mut child = scope.child();
                 let pattern = self.lower_pattern(
                     module,
@@ -2519,17 +2489,11 @@ impl Checker<'_> {
                 "size" => Some(TypeRef::Nat),
                 "is_empty" => Some(TypeRef::Bool),
                 "entries" => Some(TypeRef::FiniteView {
-                    value: Box::new(if self.source_semantics == SourceSemantics::V04 {
-                        TypeRef::Record {
-                            fields: vec![
-                                ("key".into(), key.as_ref().clone()),
-                                ("value".into(), value.as_ref().clone()),
-                            ],
-                        }
-                    } else {
-                        TypeRef::Tuple {
-                            values: vec![key.as_ref().clone(), value.as_ref().clone()],
-                        }
+                    value: Box::new(TypeRef::Record {
+                        fields: vec![
+                            ("key".into(), key.as_ref().clone()),
+                            ("value".into(), value.as_ref().clone()),
+                        ],
                     }),
                 }),
                 "entries_by_key" => Some(TypeRef::Seq {
@@ -3225,9 +3189,7 @@ impl Checker<'_> {
             )
             | (Some(ty @ TypeRef::FiniteView { .. }), "all" | "any" | "count")
             | (Some(ty @ TypeRef::Map { .. }), "try_map_values") => {
-                let item =
-                    collection_item_type(Some(ty), self.source_semantics == SourceSemantics::V04)
-                        .unwrap_or(TypeRef::Never);
+                let item = collection_item_type(Some(ty)).unwrap_or(TypeRef::Never);
                 let result = match method {
                     "all" | "any" => TypeRef::Bool,
                     "count" => TypeRef::Nat,
@@ -3445,7 +3407,7 @@ impl Checker<'_> {
                 self.diagnostics.push(error(
                     codes::UNSUPPORTED,
                     "uhura/lambda-pattern",
-                    "Uhura 0.3 lambda parameters must be names or `_`; tuple collection entries use multiple named parameters",
+                    "Uhura lambda parameters must be names or `_`; tuple collection entries use multiple named parameters",
                     pattern.span,
                 ));
                 vec![format!("_lambda_{}", pattern.span.start)]
@@ -4300,6 +4262,7 @@ impl Checker<'_> {
                         shape: TypeShape::Key(underlying.clone()),
                     });
                     self.program
+                        .machine_program
                         .types
                         .insert(id.clone(), TypeDef::Key { id, underlying });
                 }
@@ -4394,6 +4357,7 @@ impl Checker<'_> {
             shape: TypeShape::Sum(input_constructors.clone()),
         });
         self.program
+            .machine_program
             .types
             .insert(input_def.id().to_string(), input_def.clone());
         for constructor in input_constructors {
@@ -4428,6 +4392,7 @@ impl Checker<'_> {
             shape: TypeShape::Sum(command_constructors.clone()),
         });
         self.program
+            .machine_program
             .types
             .insert(command_def.id().to_string(), command_def.clone());
         for constructor in &command_constructors {
@@ -4620,8 +4585,14 @@ impl Checker<'_> {
                     Ok(constant) => {
                         let id =
                             machine_qualify(&module.id, &declaration.name.value, &value.name.value);
-                        self.program.constants.insert(id.clone(), constant);
-                        self.program.constant_types.insert(id, expected);
+                        self.program
+                            .machine_program
+                            .constants
+                            .insert(id.clone(), constant);
+                        self.program
+                            .machine_program
+                            .constant_types
+                            .insert(id, expected);
                     }
                     Err(message) => self.diagnostics.push(error(
                         codes::EFFECT,
@@ -5036,7 +5007,7 @@ impl Checker<'_> {
             })
             .collect();
 
-        self.program.machines.insert(
+        self.program.machine_program.machines.insert(
             machine_id.clone(),
             IrMachine {
                 id: machine_id,
@@ -5205,7 +5176,7 @@ impl Checker<'_> {
             id: id.clone(),
             shape: TypeShape::Sum(constructors.clone()),
         });
-        self.program.types.insert(
+        self.program.machine_program.types.insert(
             id.clone(),
             TypeDef::Sum {
                 id: id.clone(),
@@ -5508,7 +5479,13 @@ impl Checker<'_> {
             let Some(machine_id) = self.resolve_machine(&module, &value.declaration.machine) else {
                 continue;
             };
-            let Some(machine) = self.program.machines.get(&machine_id).cloned() else {
+            let Some(machine) = self
+                .program
+                .machine_program
+                .machines
+                .get(&machine_id)
+                .cloned()
+            else {
                 self.diagnostics.push(error(
                     codes::UNKNOWN_NAME,
                     "uhura/ui-machine-unavailable",
@@ -5694,7 +5671,7 @@ impl Checker<'_> {
                                 },
                                 ast::UiAttributeValue::Expression(value) => {
                                     let expected =
-                                        ui_attribute_expected_type(element, &attribute.name);
+                                        self.ui_attribute_expected_type(element, &attribute.name);
                                     let (value, ty) = self.lower_expr(
                                         module,
                                         scope,
@@ -5714,8 +5691,12 @@ impl Checker<'_> {
                                     IrUiAttributeValue::Expression { value }
                                 }
                                 ast::UiAttributeValue::Event { event, input } => {
-                                    let event_payload =
-                                        self.check_ui_event(element, &event.value, event.span);
+                                    let event_payload = self.check_ui_event(
+                                        module,
+                                        element,
+                                        &event.value,
+                                        event.span,
+                                    );
                                     let mut event_scope = scope.child();
                                     if let Some(event_payload) = event_payload {
                                         event_scope.bind(
@@ -5822,11 +5803,7 @@ impl Checker<'_> {
                             collection.span,
                         ));
                     }
-                    let item = collection_item_type(
-                        ty.as_value(),
-                        self.source_semantics == SourceSemantics::V04,
-                    )
-                    .unwrap_or(TypeRef::Never);
+                    let item = collection_item_type(ty.as_value()).unwrap_or(TypeRef::Never);
                     let mut child = scope.child();
                     let pattern = self.lower_pattern(
                         module,
@@ -5862,17 +5839,39 @@ impl Checker<'_> {
 
     fn check_ui_event(
         &mut self,
+        module: &ModuleEnv<'_>,
         element: &ast::UiElement,
         event: &str,
         span: ast::SourceSpan,
     ) -> Option<TypeRef> {
         let name = element.name.value.as_str();
-        match (name, event) {
-            ("button", "press") | ("Link", "follow") => Some(TypeRef::Unit),
-            ("input", "input") if !input_is_static_number(element) => Some(TypeRef::Record {
-                fields: vec![("value".into(), TypeRef::Text)],
+        let catalog = self.ui_catalog();
+        let Some(spec) = catalog.element(name) else {
+            // A presentation-shaped tag is rejected once at the element
+            // boundary. Recover with Unit here so an event edge does not
+            // misleadingly imply that presentation invocation exists.
+            if matches!(module.lookup(name), Some(Export::Presentation { .. })) {
+                return Some(TypeRef::Unit);
+            }
+            self.diagnostics.push(error(
+                codes::UI,
+                "uhura/ui-event",
+                format!("`<{name}>` does not declare a checked `{event}` event"),
+                span,
+            ));
+            return None;
+        };
+        match catalog.event(spec, event, ui_element_context(element)) {
+            UiEventContract::Admitted(payload) => Some(match payload {
+                UiEventPayload::Unit => TypeRef::Unit,
+                UiEventPayload::TextField(field) => TypeRef::Record {
+                    fields: vec![(field.into(), TypeRef::Text)],
+                },
+                UiEventPayload::BoundaryNumberField(field) => TypeRef::Record {
+                    fields: vec![(field.into(), TypeRef::BoundaryNumber)],
+                },
             }),
-            ("input", "input") => {
+            UiEventContract::RequiresTextInput => {
                 self.diagnostics.push(error(
                     codes::UI,
                     "uhura/ui-event",
@@ -5881,18 +5880,7 @@ impl Checker<'_> {
                 ));
                 None
             }
-            ("scroll", "near-end")
-            | ("pager", "page-change")
-            | ("textfield", "submit")
-            | ("region", "activate")
-            | ("region", "activate-double") => Some(TypeRef::Unit),
-            ("textfield", "change") => Some(TypeRef::Record {
-                fields: vec![("text".into(), TypeRef::Text)],
-            }),
-            ("input", "change") if input_is_static_number(element) => Some(TypeRef::Record {
-                fields: vec![("number".into(), TypeRef::BoundaryNumber)],
-            }),
-            ("input", "change") => {
+            UiEventContract::RequiresNumberInput => {
                 self.diagnostics.push(error(
                     codes::UI,
                     "uhura/ui-event",
@@ -5901,7 +5889,7 @@ impl Checker<'_> {
                 ));
                 None
             }
-            _ => {
+            UiEventContract::Unknown => {
                 self.diagnostics.push(error(
                     codes::UI,
                     "uhura/ui-event",
@@ -5920,12 +5908,25 @@ impl Checker<'_> {
         span: ast::SourceSpan,
     ) {
         let name = element.name.value.as_str();
-        let native = native_ui_element(name);
-        let imported = matches!(
-            module.lookup(name),
-            Some(Export::UiElement | Export::Presentation { .. })
-        );
-        if !native && !imported {
+        let catalog = self.ui_catalog();
+        let spec = catalog.element(name);
+        let imported_ui_element = matches!(module.lookup(name), Some(Export::UiElement));
+        let imported_presentation =
+            matches!(module.lookup(name), Some(Export::Presentation { .. }));
+        let admitted = spec.is_some_and(|spec| match spec.availability {
+            UiElementAvailability::Native => true,
+            UiElementAvailability::StandardImport => imported_ui_element,
+        });
+        if imported_presentation {
+            self.diagnostics.push(error(
+                codes::UI,
+                "uhura/ui-presentation-invocation-unavailable",
+                format!(
+                    "`<{name}>` resolves to a UI presentation, but presentation invocation is not part of Uhura 0.4; inline its markup or use a checked element"
+                ),
+                element.name.span,
+            ));
+        } else if !admitted {
             self.diagnostics.push(error(
                 codes::UI,
                 "uhura/unknown-ui-element",
@@ -5933,7 +5934,10 @@ impl Checker<'_> {
                 element.name.span,
             ));
         }
-        if native_ui_void_element(name) && !element.children.is_empty() {
+        if admitted
+            && spec.is_some_and(|spec| spec.content == UiContentModel::Void)
+            && !element.children.is_empty()
+        {
             self.diagnostics.push(error(
                 codes::UI,
                 "uhura/ui-void-children",
@@ -5958,18 +5962,15 @@ impl Checker<'_> {
                 ));
             }
             let valid = match &attribute.value {
-                ast::UiAttributeValue::Event { .. } => native || imported,
-                _ if native => ui_attribute_kind(element, &attribute.name).is_some(),
-                _ if name == "Link" => {
-                    matches!(
-                        attribute.name.as_str(),
-                        "class" | "routes" | "to" | "disabled"
-                    )
+                ast::UiAttributeValue::Event { .. } => admitted,
+                _ => {
+                    admitted
+                        && spec.is_some_and(|spec| {
+                            catalog
+                                .attribute(spec, &attribute.name, ui_element_context(element))
+                                .is_some()
+                        })
                 }
-                _ if name == "Surface" => {
-                    matches!(attribute.name.as_str(), "class" | "key")
-                }
-                _ => true,
             };
             if !valid {
                 self.diagnostics.push(error(
@@ -5981,12 +5982,9 @@ impl Checker<'_> {
             }
             match &attribute.value {
                 ast::UiAttributeValue::Text(value) => {
-                    if ui_attribute_kind(element, &attribute.name)
+                    if self
+                        .ui_attribute_kind(element, &attribute.name)
                         .is_some_and(UiAttributeKind::requires_expression)
-                        || matches!(
-                            (name, attribute.name.as_str()),
-                            ("Link", "routes" | "to" | "disabled") | ("Surface", "key")
-                        )
                     {
                         self.diagnostics.push(error(
                             codes::UI,
@@ -5999,7 +5997,7 @@ impl Checker<'_> {
                         ));
                     }
                     if let Some(UiAttributeKind::StaticToken(values)) =
-                        ui_attribute_kind(element, &attribute.name)
+                        self.ui_attribute_kind(element, &attribute.name)
                         && !values.contains(&value.as_str())
                     {
                         self.diagnostics.push(error(
@@ -6016,7 +6014,7 @@ impl Checker<'_> {
                 }
                 ast::UiAttributeValue::Expression(_) => {
                     if matches!(
-                        ui_attribute_kind(element, &attribute.name),
+                        self.ui_attribute_kind(element, &attribute.name),
                         Some(UiAttributeKind::StaticToken(_))
                     ) {
                         self.diagnostics.push(error(
@@ -6033,35 +6031,122 @@ impl Checker<'_> {
                 ast::UiAttributeValue::Event { .. } => {}
             }
         }
-        for required in required_ui_attributes(name) {
-            if !seen.contains(*required) {
-                self.diagnostics.push(error(
-                    codes::UI,
-                    "uhura/missing-ui-attribute",
-                    format!("`<{name}>` requires `{required}`"),
-                    span,
-                ));
+        if admitted {
+            let spec = spec.expect("admitted UI elements have a catalogue entry");
+            for required in spec.required_attributes {
+                if !seen.contains(*required) {
+                    self.diagnostics.push(error(
+                        codes::UI,
+                        "uhura/missing-ui-attribute",
+                        format!("`<{name}>` requires `{required}`"),
+                        span,
+                    ));
+                }
             }
-        }
-        if name == "img" {
-            let alternatives =
-                usize::from(seen.contains("alt")) + usize::from(seen.contains("decorative"));
-            if alternatives != 1 {
-                self.diagnostics.push(error(
-                    codes::UI,
-                    "uhura/ui-attribute-alternative",
-                    "`<img>` requires exactly one of `alt` or `decorative`",
-                    span,
-                ));
+            for constraint in spec.constraints {
+                match constraint {
+                    UiConstraint::ExactlyOneAttribute(attributes) => {
+                        let alternatives = attributes
+                            .iter()
+                            .filter(|attribute| seen.contains(**attribute))
+                            .count();
+                        if alternatives != 1 {
+                            self.diagnostics.push(error(
+                                codes::UI,
+                                "uhura/ui-attribute-alternative",
+                                format!(
+                                    "`<{name}>` requires exactly one of {}",
+                                    attributes
+                                        .iter()
+                                        .map(|attribute| format!("`{attribute}`"))
+                                        .collect::<Vec<_>>()
+                                        .join(" or ")
+                                ),
+                                span,
+                            ));
+                        }
+                    }
+                    UiConstraint::Controlled { attribute, event }
+                        if seen.contains(*attribute) && !has_ui_event(element, event) =>
+                    {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/ui-controlled-field",
+                            format!("`<{name} {attribute}={{...}}>` must handle `{event}`"),
+                            span,
+                        ));
+                    }
+                    UiConstraint::Controlled { .. } => {}
+                    UiConstraint::AccessibleName { attributes }
+                        if !attributes.iter().any(|attribute| seen.contains(*attribute))
+                            && !ui_nodes_have_accessible_text(&element.children) =>
+                    {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/ui-accessible-name",
+                            format!(
+                                "`<{name}>` requires visible text{}",
+                                if attributes.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(
+                                        " or one of {}",
+                                        attributes
+                                            .iter()
+                                            .map(|attribute| format!("`{attribute}`"))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    )
+                                }
+                            ),
+                            span,
+                        ));
+                    }
+                    UiConstraint::AccessibleName { .. } => {}
+                    UiConstraint::NoInteractiveDescendants
+                        if ui_nodes_contain_interactive_element(&element.children, catalog) =>
+                    {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/ui-nested-interactive",
+                            format!("`<{name}>` cannot contain another interactive element"),
+                            span,
+                        ));
+                    }
+                    UiConstraint::NoInteractiveDescendants => {}
+                    UiConstraint::AtLeastOneEvent(events)
+                        if !events.iter().any(|event| has_ui_event(element, event)) =>
+                    {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/ui-missing-event",
+                            format!(
+                                "`<{name}>` requires one of {}",
+                                events
+                                    .iter()
+                                    .map(|event| format!("`on {event}`"))
+                                    .collect::<Vec<_>>()
+                                    .join(" or ")
+                            ),
+                            span,
+                        ));
+                    }
+                    UiConstraint::AtLeastOneEvent(_) => {}
+                    UiConstraint::NeutralListItems {
+                        element: item_element,
+                    } if ui_element_has_text_attribute(element, "role", "list")
+                        && !ui_nodes_are_neutral_list_items(&element.children, item_element) =>
+                    {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/ui-list-item-boundary",
+                            "`<view role=\"list\">` requires each rendered direct child to be an unroled `<view>`; nest buttons, regions, and other semantics inside that boundary",
+                            span,
+                        ));
+                    }
+                    UiConstraint::NeutralListItems { .. } => {}
+                }
             }
-        }
-        if name == "textfield" && seen.contains("value") && !has_ui_event(element, "change") {
-            self.diagnostics.push(error(
-                codes::UI,
-                "uhura/ui-controlled-field",
-                "`<textfield value={...}>` must handle `change`",
-                span,
-            ));
         }
     }
 
@@ -6072,8 +6157,7 @@ impl Checker<'_> {
         ty: &Ty,
         span: ast::SourceSpan,
     ) {
-        let name = element.name.value.as_str();
-        let valid = match ui_attribute_kind(element, attribute) {
+        let valid = match self.ui_attribute_kind(element, attribute) {
             Some(UiAttributeKind::Text | UiAttributeKind::StaticToken(_)) => {
                 matches!(ty.as_value(), Some(TypeRef::Text))
             }
@@ -6083,18 +6167,11 @@ impl Checker<'_> {
             Some(UiAttributeKind::ExactNumeric) => {
                 ty.as_value().is_some_and(|ty| self.exact_numeric_type(ty))
             }
-            None if name == "Link" && attribute == "class" => {
-                matches!(ty.as_value(), Some(TypeRef::Text))
+            Some(UiAttributeKind::Ratio) => {
+                matches!(ty.as_value(), Some(TypeRef::Ratio))
             }
-            None if name == "Link" && attribute == "disabled" => {
-                matches!(ty.as_value(), Some(TypeRef::Bool))
-            }
-            None if name == "Surface" && attribute == "class" => {
-                matches!(ty.as_value(), Some(TypeRef::Text))
-            }
-            None if name == "Surface" && attribute == "key" => {
-                ty.as_value().is_some_and(|ty| self.ui_key_type(ty))
-            }
+            Some(UiAttributeKind::Key) => ty.as_value().is_some_and(|ty| self.ui_key_type(ty)),
+            Some(UiAttributeKind::CheckedExpression) => true,
             None => true,
         };
         if !valid {
@@ -6107,6 +6184,38 @@ impl Checker<'_> {
                 ),
                 span,
             ));
+        }
+    }
+
+    fn ui_catalog(&self) -> ui_catalog::Catalog {
+        ui_catalog::current()
+    }
+
+    fn ui_attribute_kind(
+        &self,
+        element: &ast::UiElement,
+        attribute: &str,
+    ) -> Option<UiAttributeKind> {
+        let catalog = self.ui_catalog();
+        let spec = catalog.element(&element.name.value)?;
+        catalog.attribute(spec, attribute, ui_element_context(element))
+    }
+
+    fn ui_attribute_expected_type(
+        &self,
+        element: &ast::UiElement,
+        attribute: &str,
+    ) -> Option<TypeRef> {
+        match self.ui_attribute_kind(element, attribute) {
+            Some(UiAttributeKind::Text | UiAttributeKind::StaticToken(_)) => Some(TypeRef::Text),
+            Some(UiAttributeKind::Bool) => Some(TypeRef::Bool),
+            Some(UiAttributeKind::Ratio) => Some(TypeRef::Ratio),
+            Some(
+                UiAttributeKind::ExactNumeric
+                | UiAttributeKind::CheckedExpression
+                | UiAttributeKind::Key,
+            )
+            | None => None,
         }
     }
 
@@ -6144,177 +6253,6 @@ impl Checker<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum UiAttributeKind {
-    Text,
-    Bool,
-    ExactNumeric,
-    StaticToken(&'static [&'static str]),
-}
-
-impl UiAttributeKind {
-    fn requires_expression(self) -> bool {
-        matches!(self, Self::Bool | Self::ExactNumeric)
-    }
-
-    fn expected_type(self) -> Option<TypeRef> {
-        match self {
-            Self::Text | Self::StaticToken(_) => Some(TypeRef::Text),
-            Self::Bool => Some(TypeRef::Bool),
-            Self::ExactNumeric => None,
-        }
-    }
-}
-
-fn native_ui_element(name: &str) -> bool {
-    matches!(
-        name,
-        "main"
-            | "section"
-            | "header"
-            | "h1"
-            | "h2"
-            | "p"
-            | "output"
-            | "progress"
-            | "label"
-            | "fieldset"
-            | "legend"
-            | "button"
-            | "input"
-            | "dl"
-            | "dt"
-            | "dd"
-            | "view"
-            | "scroll"
-            | "pager"
-            | "text"
-            | "img"
-            | "video"
-            | "icon"
-            | "textfield"
-            | "region"
-    )
-}
-
-fn native_ui_void_element(name: &str) -> bool {
-    matches!(name, "input" | "img" | "video" | "icon" | "textfield")
-}
-
-fn native_ui_attribute_kind(element: &str, attribute: &str) -> Option<UiAttributeKind> {
-    if attribute == "class" {
-        return native_ui_element(element).then_some(UiAttributeKind::Text);
-    }
-    match element {
-        "main" | "section" | "header" | "h1" | "h2" | "p" | "output" | "label" | "legend"
-        | "dl" | "dt" | "dd" => match attribute {
-            "aria-label" => Some(UiAttributeKind::Text),
-            _ => None,
-        },
-        "fieldset" => match attribute {
-            "aria-label" => Some(UiAttributeKind::Text),
-            "disabled" => Some(UiAttributeKind::Bool),
-            _ => None,
-        },
-        "input" => match attribute {
-            "aria-label" | "type" => Some(UiAttributeKind::Text),
-            "disabled" => Some(UiAttributeKind::Bool),
-            "min" | "max" => Some(UiAttributeKind::ExactNumeric),
-            "value" => Some(UiAttributeKind::Text),
-            _ => None,
-        },
-        "progress" => match attribute {
-            "aria-label" => Some(UiAttributeKind::Text),
-            "value" | "max" => Some(UiAttributeKind::ExactNumeric),
-            _ => None,
-        },
-        "button" => match attribute {
-            "aria-label" | "label" => Some(UiAttributeKind::Text),
-            "aria-pressed" | "disabled" | "busy" | "pressed" | "current" => {
-                Some(UiAttributeKind::Bool)
-            }
-            _ => None,
-        },
-        "view" => match attribute {
-            "role" => Some(UiAttributeKind::StaticToken(&[
-                "none",
-                "list",
-                "navigation",
-                "tablist",
-            ])),
-            _ => None,
-        },
-        "scroll" => match attribute {
-            "direction" => Some(UiAttributeKind::StaticToken(&["vertical", "horizontal"])),
-            _ => None,
-        },
-        "pager" => match attribute {
-            "indicator" => Some(UiAttributeKind::StaticToken(&["none", "dots"])),
-            "label" => Some(UiAttributeKind::Text),
-            _ => None,
-        },
-        "text" => None,
-        "img" => match attribute {
-            "src" | "alt" => Some(UiAttributeKind::Text),
-            "decorative" => Some(UiAttributeKind::Bool),
-            _ => None,
-        },
-        "video" => match attribute {
-            "src" | "poster" | "label" => Some(UiAttributeKind::Text),
-            "autoplay" | "muted" | "loop" | "controls" | "playsinline" => {
-                Some(UiAttributeKind::Bool)
-            }
-            _ => None,
-        },
-        "icon" => match attribute {
-            "name" | "family" => Some(UiAttributeKind::Text),
-            _ => None,
-        },
-        "textfield" => match attribute {
-            "value" | "placeholder" | "label" => Some(UiAttributeKind::Text),
-            "disabled" => Some(UiAttributeKind::Bool),
-            _ => None,
-        },
-        "region" => match attribute {
-            "label" => Some(UiAttributeKind::Text),
-            "supplementary" => Some(UiAttributeKind::Bool),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn ui_attribute_kind(element: &ast::UiElement, attribute: &str) -> Option<UiAttributeKind> {
-    if element.name.value == "input" && attribute == "value" && input_is_static_number(element) {
-        Some(UiAttributeKind::ExactNumeric)
-    } else {
-        native_ui_attribute_kind(&element.name.value, attribute)
-    }
-}
-
-fn ui_attribute_expected_type(element: &ast::UiElement, attribute: &str) -> Option<TypeRef> {
-    ui_attribute_kind(element, attribute)
-        .and_then(UiAttributeKind::expected_type)
-        .or(match (element.name.value.as_str(), attribute) {
-            ("Link", "class") | ("Surface", "class") => Some(TypeRef::Text),
-            ("Link", "disabled") => Some(TypeRef::Bool),
-            _ => None,
-        })
-}
-
-fn required_ui_attributes(element: &str) -> &'static [&'static str] {
-    match element {
-        "Link" => &["routes", "to"],
-        "Surface" => &["key"],
-        "pager" => &["label"],
-        "img" => &["src"],
-        "video" => &["src", "label"],
-        "icon" => &["name"],
-        "textfield" | "region" => &["label"],
-        _ => &[],
-    }
-}
-
 fn has_ui_event(element: &ast::UiElement, event_name: &str) -> bool {
     element.attributes.iter().any(|attribute| {
         matches!(
@@ -6322,6 +6260,79 @@ fn has_ui_event(element: &ast::UiElement, event_name: &str) -> bool {
             ast::UiAttributeValue::Event { event, .. } if event.value == event_name
         )
     })
+}
+
+fn ui_element_has_text_attribute(
+    element: &ast::UiElement,
+    attribute_name: &str,
+    expected: &str,
+) -> bool {
+    element.attributes.iter().any(|attribute| {
+        attribute.name == attribute_name
+            && matches!(
+                &attribute.value,
+                ast::UiAttributeValue::Text(value) if value == expected
+            )
+    })
+}
+
+fn ui_nodes_are_neutral_list_items(nodes: &[ast::UiNode], item_element: &str) -> bool {
+    nodes.iter().all(|node| match &node.value {
+        ast::UiNodeKind::Text(value) => value.trim().is_empty(),
+        ast::UiNodeKind::Element(element) => {
+            element.name.value == item_element
+                && !element
+                    .attributes
+                    .iter()
+                    .any(|attribute| attribute.name == "role")
+        }
+        ast::UiNodeKind::If { children, .. } | ast::UiNodeKind::Each { children, .. } => {
+            ui_nodes_are_neutral_list_items(children, item_element)
+        }
+        ast::UiNodeKind::Match { cases, .. } => cases
+            .iter()
+            .all(|case| ui_nodes_are_neutral_list_items(&case.children, item_element)),
+        ast::UiNodeKind::Interpolation(_) => false,
+    })
+}
+
+fn ui_nodes_have_accessible_text(nodes: &[ast::UiNode]) -> bool {
+    nodes.iter().any(|node| match &node.value {
+        ast::UiNodeKind::Text(value) => !value.trim().is_empty(),
+        ast::UiNodeKind::Interpolation(_) => true,
+        ast::UiNodeKind::Element(element) => ui_nodes_have_accessible_text(&element.children),
+        ast::UiNodeKind::If { children, .. } | ast::UiNodeKind::Each { children, .. } => {
+            ui_nodes_have_accessible_text(children)
+        }
+        ast::UiNodeKind::Match { cases, .. } => cases
+            .iter()
+            .any(|case| ui_nodes_have_accessible_text(&case.children)),
+    })
+}
+
+fn ui_nodes_contain_interactive_element(
+    nodes: &[ast::UiNode],
+    catalog: ui_catalog::Catalog,
+) -> bool {
+    nodes.iter().any(|node| match &node.value {
+        ast::UiNodeKind::Element(element) => {
+            catalog.is_interactive(element.name.value.as_str())
+                || ui_nodes_contain_interactive_element(&element.children, catalog)
+        }
+        ast::UiNodeKind::If { children, .. } | ast::UiNodeKind::Each { children, .. } => {
+            ui_nodes_contain_interactive_element(children, catalog)
+        }
+        ast::UiNodeKind::Match { cases, .. } => cases
+            .iter()
+            .any(|case| ui_nodes_contain_interactive_element(&case.children, catalog)),
+        ast::UiNodeKind::Text(_) | ast::UiNodeKind::Interpolation(_) => false,
+    })
+}
+
+fn ui_element_context(element: &ast::UiElement) -> UiElementContext {
+    UiElementContext {
+        static_number_input: input_is_static_number(element),
+    }
 }
 
 fn input_is_static_number(element: &ast::UiElement) -> bool {
@@ -6449,7 +6460,13 @@ impl Checker<'_> {
                     (machine, Some(reference))
                 }
             };
-            let Some(machine) = self.program.machines.get(&machine_id).cloned() else {
+            let Some(machine) = self
+                .program
+                .machine_program
+                .machines
+                .get(&machine_id)
+                .cloned()
+            else {
                 self.diagnostics.push(error(
                     codes::EVIDENCE,
                     "uhura/evidence-machine",
@@ -6500,6 +6517,7 @@ impl Checker<'_> {
                                 match const_eval(&expression, &self.program) {
                                     Ok(value) => match self
                                         .program
+                                        .machine_program
                                         .canonicalize_value(&machine.config, &value)
                                     {
                                         Ok(value) => value,
@@ -7583,7 +7601,7 @@ impl Checker<'_> {
                 self.diagnostics.push(error(
                     codes::UNSUPPORTED,
                     "uhura/nested-terminal-control",
-                    "nested terminal control is supported only through a finite match in Uhura 0.3",
+                    "nested terminal control is supported only through a finite match",
                     controlled.span,
                 ));
                 let _ = outcome;
@@ -9023,23 +9041,17 @@ fn is_qualified_call(expression: &ast::Expr) -> bool {
     )
 }
 
-fn collection_item_type(ty: Option<&TypeRef>, map_entries_are_records: bool) -> Option<TypeRef> {
+fn collection_item_type(ty: Option<&TypeRef>) -> Option<TypeRef> {
     match ty? {
         TypeRef::Seq { value }
         | TypeRef::NonEmpty { value }
         | TypeRef::Set { value }
         | TypeRef::FiniteView { value } => Some(value.as_ref().clone()),
-        TypeRef::Map { key, value } => Some(if map_entries_are_records {
-            TypeRef::Record {
-                fields: vec![
-                    ("key".into(), key.as_ref().clone()),
-                    ("value".into(), value.as_ref().clone()),
-                ],
-            }
-        } else {
-            TypeRef::Tuple {
-                values: vec![key.as_ref().clone(), value.as_ref().clone()],
-            }
+        TypeRef::Map { key, value } => Some(TypeRef::Record {
+            fields: vec![
+                ("key".into(), key.as_ref().clone()),
+                ("value".into(), value.as_ref().clone()),
+            ],
         }),
         TypeRef::Table { key, value } => Some(TypeRef::Tuple {
             values: vec![key.as_ref().clone(), value.as_ref().clone()],
@@ -9851,6 +9863,7 @@ fn const_eval(expression: &IrExpr, program: &Program) -> Result<Value, String> {
     match expression {
         IrExpr::Literal { value } => Ok(value.clone()),
         IrExpr::Name { name } => program
+            .machine_program
             .constants
             .get(name)
             .cloned()
@@ -9911,6 +9924,7 @@ fn const_eval(expression: &IrExpr, program: &Program) -> Result<Value, String> {
                     .collect::<Result<Vec<_>, String>>()?,
             );
             program
+                .machine_program
                 .canonicalize_value(result_type, &value)
                 .map_err(|error| error.to_string())
         }
@@ -9926,6 +9940,7 @@ fn const_eval(expression: &IrExpr, program: &Program) -> Result<Value, String> {
             result_type,
             ..
         } if matches!(source.as_ref(), IrExpr::Seq { values } if values.is_empty()) => program
+            .machine_program
             .canonicalize_value(result_type, &Value::Set(Vec::new()))
             .map_err(|error| error.to_string()),
         _ => Err("expression uses runtime evaluation".into()),

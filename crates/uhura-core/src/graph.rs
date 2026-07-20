@@ -131,7 +131,7 @@ pub fn build_interaction_graph(program: &Program) -> InteractionGraph {
 /// Builds the semantic graph and its separate physical-source projection.
 pub fn build_interaction_graph_artifacts(program: &Program) -> InteractionGraphArtifacts {
     let mut builder = InteractionGraphBuilder::default();
-    for (machine_id, machine) in &program.machines {
+    for (machine_id, machine) in &program.machine_program.machines {
         builder.machine(machine_id, machine);
     }
     for (presentation_id, presentation) in &program.presentations {
@@ -156,6 +156,7 @@ struct InteractionGraphBuilder {
 impl InteractionGraphBuilder {
     fn finish(self, program: &Program) -> InteractionGraphArtifacts {
         let outcome_policies = program
+            .machine_program
             .machines
             .iter()
             .flat_map(|(machine_id, machine)| {
@@ -169,8 +170,8 @@ impl InteractionGraphBuilder {
             .collect();
         let graph = InteractionGraph {
             protocol: INTERACTION_GRAPH_PROTOCOL.into(),
-            identity_protocol: program.identity_protocol.clone(),
-            machine_program_hashes: program.program_hashes.clone(),
+            identity_protocol: program.machine_program.identity_protocol.clone(),
+            machine_program_hashes: program.machine_program.program_hashes.clone(),
             presentation_hashes: program.presentation_hashes.clone(),
             outcome_policies,
             nodes: self.nodes.into_values().collect(),
@@ -726,7 +727,7 @@ mod tests {
                 value: value.into(),
             },
         };
-        program.machines.insert(
+        program.machine_program.machines.insert(
             machine_id.clone(),
             Machine {
                 id: machine_id.clone(),
@@ -862,6 +863,7 @@ mod tests {
         );
 
         program
+            .machine_program
             .machines
             .get_mut("example@1::Counter")
             .expect("machine")
@@ -895,6 +897,12 @@ mod tests {
             .iter()
             .find(|entry| entry.edge.kind == InteractionGraphEdgeKind::Dispatches)
             .expect("dispatch provenance");
-        assert_eq!(dispatch.sources[0].id, "event");
+        assert_eq!(dispatch.sources[0].id.len(), 64);
+        assert!(
+            dispatch.sources[0]
+                .id
+                .bytes()
+                .all(|value| value.is_ascii_hexdigit())
+        );
     }
 }

@@ -68,14 +68,15 @@ impl Session {
     ) -> Result<Session, String> {
         let expected = parse_expected_identity(expected_identity_json)?;
         let program = Program::from_json(ir_json)?;
-        if program.identity_protocol != expected.protocol {
+        if program.machine_program.identity_protocol != expected.protocol {
             return Err(format!(
                 "Uhura machine identity protocol mismatch: host expected `{}`, IR declares `{}`",
-                expected.protocol, program.identity_protocol
+                expected.protocol, program.machine_program.identity_protocol
             ));
         }
         let machine = resolve_machine(&program, machine)?;
         let machine_program_hash = program
+            .machine_program
             .program_hashes
             .get(&machine)
             .expect("resolved machine has a recomputed program hash");
@@ -113,15 +114,18 @@ impl Session {
         }
         let configuration_json = parse_json(configuration_json, "configuration")?;
         let configuration_type = &program
+            .machine_program
             .machines
             .get(&machine)
             .expect("resolved machine exists")
             .config;
         let configuration = program
+            .machine_program
             .decode_wire_value(configuration_type, &configuration_json)
             .map_err(|error| format!("configuration: {error}"))?;
         let instance_identity = exact_identity(instance)?;
         let (admitted, genesis) = program
+            .machine_program
             .admit(&machine, configuration, instance_identity)
             .map_err(|error| format!("admission: {error}"))?;
         let (projection, projection_failure) =
@@ -154,6 +158,7 @@ impl Session {
     /// distinct from the canonical JSON transport returned by `genesis()`.
     pub fn semantic_genesis(&self) -> Result<String, String> {
         self.program
+            .machine_program
             .canonical_genesis_receipt_bytes(&self.machine, &self.genesis)
             .map(|bytes| hex(&bytes))
             .map_err(|error| format!("semantic genesis: {error}"))
@@ -220,6 +225,7 @@ impl Session {
     pub fn port_requirements(&self) -> String {
         let requirements = self
             .program
+            .machine_program
             .machines
             .get(&self.machine)
             .map(|machine| {
@@ -256,9 +262,11 @@ impl Session {
         let input = match parse_resolved_input(input_json) {
             Ok(input) => input,
             Err(message) => {
-                let error =
-                    self.program
-                        .reject_ingress_transport(&mut self.instance, input_json, message);
+                let error = self.program.machine_program.reject_ingress_transport(
+                    &mut self.instance,
+                    input_json,
+                    message,
+                );
                 return Err(format!("ingress: {error}"));
             }
         };
@@ -274,9 +282,11 @@ impl Session {
         {
             Ok(input) => input,
             Err(message) => {
-                let error =
-                    self.program
-                        .reject_ingress_transport(&mut self.instance, value_json, message);
+                let error = self.program.machine_program.reject_ingress_transport(
+                    &mut self.instance,
+                    value_json,
+                    message,
+                );
                 return Err(format!("ingress: {error}"));
             }
         };
@@ -350,14 +360,16 @@ impl Session {
     /// JS number.
     pub fn checkpoint(&self) -> String {
         self.program
+            .machine_program
             .checkpoint(&self.instance)
             .to_canonical_string()
     }
 
     /// Exact Uhura machine checkpoint bytes as lowercase hexadecimal.
     pub fn semantic_checkpoint(&self) -> Result<String, String> {
-        let checkpoint = self.program.checkpoint(&self.instance);
+        let checkpoint = self.program.machine_program.checkpoint(&self.instance);
         self.program
+            .machine_program
             .canonical_checkpoint_bytes(&checkpoint)
             .map(|bytes| hex(&bytes))
             .map_err(|error| format!("semantic checkpoint: {error}"))
@@ -375,9 +387,16 @@ impl Session {
         }
         let restored = self
             .program
+            .machine_program
             .restore(&checkpoint)
             .map_err(|error| format!("checkpoint: {error}"))?;
-        if self.program.checkpoint(&restored).to_canonical_string() != checkpoint_json {
+        if self
+            .program
+            .machine_program
+            .checkpoint(&restored)
+            .to_canonical_string()
+            != checkpoint_json
+        {
             return Err("checkpoint is not canonical for its checked machine types".into());
         }
         if restored.id != self.genesis.instance {
@@ -409,6 +428,7 @@ impl Session {
             .ok_or_else(|| "no Uhura machine reaction receipt exists yet".to_string())
             .and_then(|receipt| {
                 self.program
+                    .machine_program
                     .canonical_reaction_receipt_bytes(&self.machine, receipt)
                     .map(|bytes| hex(&bytes))
                     .map_err(|error| format!("semantic receipt: {error}"))
@@ -421,6 +441,7 @@ impl Session {
         self.ensure_projection_refresh_capacity()?;
         let receipt = self
             .program
+            .machine_program
             .submit_one(&mut self.instance, input)
             .map_err(|error| error.to_string())?;
         self.refresh_projection();
@@ -565,7 +586,11 @@ fn exact_identity(identity: &str) -> Result<String, String> {
 }
 
 fn resolve_machine(program: &Program, requested: &str) -> Result<String, String> {
-    resolve_named(program.machines.keys(), requested, "machine")
+    resolve_named(
+        program.machine_program.machines.keys(),
+        requested,
+        "machine",
+    )
 }
 
 fn resolve_presentation(
@@ -938,7 +963,7 @@ fn browser_inspection(session: &Session) -> Result<JsonValue, String> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(json!({
         "protocol": BROWSER_PROTOCOL,
-        "identityProtocol": session.program.identity_protocol,
+        "identityProtocol": session.program.machine_program.identity_protocol,
         "instance": session.instance.id,
         "machineProgramHash": session.instance.program_hash,
         "presentation": session.presentation,
@@ -1015,7 +1040,7 @@ mod tests {
         let presentation_id = "example.counter_web@1::counter".to_string();
         let input_type = format!("{machine_id}.Input");
         let outcome_type = format!("{machine_id}.Outcome");
-        program.machines.insert(
+        program.machine_program.machines.insert(
             machine_id.clone(),
             Machine {
                 id: machine_id.clone(),
@@ -1139,8 +1164,8 @@ mod tests {
 
     fn expected_identity(program: &Program, machine: &str, presentation: Option<&str>) -> String {
         canonical(&json!({
-            "identityProtocol": program.identity_protocol,
-            "machineProgramHash": program.program_hashes[machine],
+            "identityProtocol": program.machine_program.identity_protocol,
+            "machineProgramHash": program.machine_program.program_hashes[machine],
             "presentationHash": presentation.map(|presentation| &program.presentation_hashes[presentation]),
         }))
     }
@@ -1172,6 +1197,7 @@ mod tests {
         let instance =
             uhura_port::sink_port_instance(uhura_port::TypeRef::new("Int").unwrap()).unwrap();
         program
+            .machine_program
             .machines
             .get_mut(&machine)
             .unwrap()
@@ -1266,7 +1292,7 @@ mod tests {
     fn projection_failure_program() -> (Program, String, String) {
         let (mut program, machine, presentation) = counter_program();
         let command_type = format!("{machine}.Command");
-        let machine_definition = program.machines.get_mut(&machine).unwrap();
+        let machine_definition = program.machine_program.machines.get_mut(&machine).unwrap();
         machine_definition.local_commands.push(CommandDef {
             constructor: ConstructorDef {
                 name: "reported".into(),
@@ -1369,7 +1395,7 @@ mod tests {
         let inspection: JsonValue = serde_json::from_str(&session.inspect().unwrap()).unwrap();
         assert_eq!(
             inspection["identityProtocol"],
-            session.program.identity_protocol
+            session.program.machine_program.identity_protocol
         );
         assert_eq!(
             inspection["presentation"].as_str(),
@@ -1384,6 +1410,7 @@ mod tests {
             session.semantic_receipt().unwrap(),
             hex(&session
                 .program
+                .machine_program
                 .canonical_reaction_receipt_bytes(&session.machine, &session.instance.receipts[0],)
                 .unwrap())
         );

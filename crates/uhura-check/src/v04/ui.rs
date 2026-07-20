@@ -4,9 +4,10 @@
 //! checker. This module only translates the source-shaped 0.4 UI tree and
 //! enforces the profile's deliberately exact activation spelling.
 
-use uhura_syntax::{ast, v04};
+use uhura_syntax::v04;
 
 use super::{Adapter, ExprEnv};
+use crate::checker_ir as ast;
 use crate::diagnostic::{codes, error};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

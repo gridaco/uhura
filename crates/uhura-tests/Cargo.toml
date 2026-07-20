@@ -14,3 +14,4 @@ uhura-check = { workspace = true }
 uhura-core = { workspace = true }
 uhura-host = { workspace = true }
 cargo_metadata = { workspace = true }
+serde_json = { workspace = true }

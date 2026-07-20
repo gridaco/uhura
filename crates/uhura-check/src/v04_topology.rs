@@ -133,18 +133,20 @@ impl<'a> Builder<'a> {
         let declarations = modules
             .iter()
             .flat_map(|module| {
-                module.declarations.iter().map(move |declaration| {
-                    (
+                module.declarations.iter().filter_map(move |declaration| {
+                    declaration_name(declaration).map(|name| {
                         (
-                            module.identity.package.clone(),
-                            module.identity.module.clone(),
-                            declaration_name(declaration).to_string(),
-                        ),
-                        DeclarationRef {
-                            module,
-                            declaration,
-                        },
-                    )
+                            (
+                                module.identity.package.clone(),
+                                module.identity.module.clone(),
+                                name.to_string(),
+                            ),
+                            DeclarationRef {
+                                module,
+                                declaration,
+                            },
+                        )
+                    })
                 })
             })
             .collect();
@@ -925,8 +927,8 @@ fn qualified(owner: &str, name: &str) -> String {
     }
 }
 
-fn declaration_name(declaration: &ast::Declaration) -> &str {
-    match &declaration.kind {
+fn declaration_name(declaration: &ast::Declaration) -> Option<&str> {
+    Some(match &declaration.kind {
         ast::DeclarationKind::Machine(value) => &value.name.text,
         ast::DeclarationKind::Part(value) => &value.name.text,
         ast::DeclarationKind::Ui(value) => &value.name.text,
@@ -935,7 +937,10 @@ fn declaration_name(declaration: &ast::Declaration) -> &str {
         ast::DeclarationKind::Key(value) => &value.name.text,
         ast::DeclarationKind::Const(value) => &value.name.text,
         ast::DeclarationKind::Function(value) => &value.name.text,
-    }
+        ast::DeclarationKind::Scenario(_)
+        | ast::DeclarationKind::Example(_)
+        | ast::DeclarationKind::Checkpoint(_) => return None,
+    })
 }
 
 fn machine_catalog(machine: &str, members: &[ast::MachineMember]) -> Catalog {
@@ -1219,6 +1224,12 @@ fn collect_reads_scoped(
                 collect_reads_scoped(base, scope, lexical, output);
             }
         }
+        ast::ExpressionKind::AnonymousRecord(entries) => {
+            for entry in entries {
+                collect_reads_scoped(&entry.key, scope, lexical, output);
+                collect_reads_scoped(&entry.value, scope, lexical, output);
+            }
+        }
         ast::ExpressionKind::Block(block) => {
             collect_reads_in_block_scoped(block, scope, lexical, output);
         }
@@ -1344,7 +1355,8 @@ fn collect_pattern_bindings(pattern: &ast::Pattern, names: &mut BTreeSet<String>
                 collect_pattern_bindings(argument, names);
             }
         }
-        ast::PatternKind::Record { fields, .. } => {
+        ast::PatternKind::Record { fields, .. }
+        | ast::PatternKind::AnonymousRecord { fields, .. } => {
             for field in fields {
                 if let Some(value) = &field.pattern {
                     collect_pattern_bindings(value, names);
@@ -1426,6 +1438,12 @@ fn visit_children(expression: &ast::Expression, visitor: &mut dyn FnMut(&ast::Ex
             }
             if let Some(base) = &value.base {
                 visitor(base);
+            }
+        }
+        ast::ExpressionKind::AnonymousRecord(entries) => {
+            for entry in entries {
+                visitor(&entry.key);
+                visitor(&entry.value);
             }
         }
         ast::ExpressionKind::Call { callee, arguments } => {

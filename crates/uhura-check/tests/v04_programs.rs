@@ -29,13 +29,76 @@ fn checked_programs() -> uhura_core::Program {
 }
 
 #[test]
+fn authored_type_mismatch_is_single_precise_and_hides_private_lowering_names() {
+    let source = r#"struct User {
+  id: Int,
+}
+
+pub machine Example {
+  events {
+    Run,
+  }
+
+  outcomes {
+    commit Accepted,
+  }
+
+  state {
+    current: User = User {
+      id: 1,
+    },
+  }
+
+  observe {
+    current,
+  }
+
+  on Run {
+    current = 1;
+    Accepted
+  }
+}
+"#;
+    let parsed = parse(
+        SourceIdentity::new(17, "example@1", "example", "example.uhura"),
+        source,
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+    let output = check_v04_module(&parsed.module);
+    assert!(output.program.is_none());
+    assert_eq!(output.diagnostics.len(), 1, "{:#?}", output.diagnostics);
+    let diagnostic = &output.diagnostics[0];
+    assert_eq!(diagnostic.code, "R1004");
+    assert_eq!(diagnostic.rule, "uhura/type-mismatch");
+    assert_eq!(diagnostic.message, "expected `User`, found `Int`");
+    assert!(!diagnostic.message.contains("__uhura"));
+    assert_eq!(
+        &source[diagnostic.span.start as usize..diagnostic.span.end as usize],
+        "1"
+    );
+    assert_eq!(diagnostic.labels.len(), 1);
+    assert_eq!(
+        &source[diagnostic.labels[0].span.start as usize..diagnostic.labels[0].span.end as usize],
+        "current = 1;"
+    );
+    assert_eq!(
+        diagnostic.labels[0].message,
+        "the enclosing authored construct requires this type"
+    );
+}
+
+#[test]
 fn complete_l0_l1_l2_program_reaches_the_machine_kernel() {
     let program = checked_programs();
-    assert_eq!(program.language, "uhura 0.4");
-    assert_eq!(program.identity_protocol, MACHINE_PROGRAM_ID_PROTOCOL);
-    assert_eq!(program.modules, ["examples.programs@1"]);
+    assert_eq!(program.machine_program.language, "uhura 0.4");
+    assert_eq!(
+        program.machine_program.identity_protocol,
+        MACHINE_PROGRAM_ID_PROTOCOL
+    );
+    assert_eq!(program.machine_program.modules, ["examples.programs@1"]);
     assert_eq!(
         program
+            .machine_program
             .machines
             .keys()
             .map(String::as_str)
@@ -46,7 +109,7 @@ fn complete_l0_l1_l2_program_reaches_the_machine_kernel() {
             "examples.programs@1::RiverCrossing",
         ]
     );
-    assert_eq!(program.program_hashes.len(), 3);
+    assert_eq!(program.machine_program.program_hashes.len(), 3);
     program
         .validate_protocol()
         .expect("0.4 machine program protocol validates");
@@ -86,12 +149,14 @@ fn l0_counter_executes_commit_and_boundary_clamp() {
         ("initial".into(), Value::int(1)),
     ]);
     let (instance, _) = program
+        .machine_program
         .admit(machine, configuration, "v04/l0-counter")
         .expect("counter admission");
     assert_eq!(record_field(&instance.observation, "count"), &Value::int(1));
 
     let increment = Value::variant(format!("{machine}.Input"), "Increment", Vec::new());
     let first = program
+        .machine_program
         .react(&instance, increment.clone())
         .expect("first increment");
     assert_eq!(completed(&first.receipt).1, OutcomePolicy::Commit);
@@ -102,6 +167,7 @@ fn l0_counter_executes_commit_and_boundary_clamp() {
     );
 
     let clamped = program
+        .machine_program
         .react(&first.instance, increment)
         .expect("clamped increment");
     assert_eq!(
@@ -123,7 +189,8 @@ fn l1_river_crossing_commits_safe_move_and_aborts_unsafe_request() {
     let program = checked_programs();
     let package = "examples.programs@1";
     let machine = format!("{package}::RiverCrossing");
-    let TypeDef::Sum { constructors, .. } = &program.machines[&machine].local_input else {
+    let TypeDef::Sum { constructors, .. } = &program.machine_program.machines[&machine].local_input
+    else {
         panic!("RiverCrossing input must be a closed sum")
     };
     let cross = constructors
@@ -141,7 +208,7 @@ fn l1_river_crossing_commits_safe_move_and_aborts_unsafe_request() {
         "private Cargo must retain its owner-derived nominal identity: {cargo}"
     );
     assert!(
-        program.types.contains_key(cargo),
+        program.machine_program.types.contains_key(cargo),
         "resolved Cargo identity must exist in the public machine IR"
     );
     let option_cargo = format!("Option<{cargo}>");
@@ -157,9 +224,13 @@ fn l1_river_crossing_commits_safe_move_and_aborts_unsafe_request() {
         vec![(Some("passenger".into()), passenger)],
     );
     let (instance, _) = program
+        .machine_program
         .admit(&machine, Value::Unit, "v04/l1-river")
         .expect("river admission");
-    let safe = program.react(&instance, cross_goat).expect("safe crossing");
+    let safe = program
+        .machine_program
+        .react(&instance, cross_goat)
+        .expect("safe crossing");
     assert_eq!(completed(&safe.receipt).1, OutcomePolicy::Commit);
     assert_eq!(constructor(completed(&safe.receipt).0), "Accepted");
 
@@ -183,6 +254,7 @@ fn l1_river_crossing_commits_safe_move_and_aborts_unsafe_request() {
         vec![(Some("passenger".into()), wolf_passenger)],
     );
     let refused = program
+        .machine_program
         .react(&safe.instance, unsafe_cross)
         .expect("unsafe crossing is a declared abort");
     assert_eq!(completed(&refused.receipt).1, OutcomePolicy::Abort);
@@ -205,9 +277,13 @@ fn l2_supervisor_runs_before_commit_emits_command_and_rejects_duplicate_progress
         vec![(Some("task".into()), task.clone())],
     );
     let (instance, _) = program
+        .machine_program
         .admit(&machine, Value::Unit, "v04/l2-supervisor")
         .expect("supervisor admission");
-    let started = program.react(&instance, submit).expect("submit");
+    let started = program
+        .machine_program
+        .react(&instance, submit)
+        .expect("submit");
     assert_eq!(completed(&started.receipt).1, OutcomePolicy::Commit);
     assert_eq!(started.receipt.ordered_commands.len(), 1);
     assert_eq!(
@@ -235,12 +311,14 @@ fn l2_supervisor_runs_before_commit_emits_command_and_rejects_duplicate_progress
         ],
     );
     let advanced = program
+        .machine_program
         .react(&started.instance, progress.clone())
         .expect("progress");
     assert_eq!(completed(&advanced.receipt).1, OutcomePolicy::Commit);
     assert_eq!(constructor(completed(&advanced.receipt).0), "Accepted");
 
     let duplicate = program
+        .machine_program
         .react(&advanced.instance, progress)
         .expect("duplicate progress is a declared abort");
     assert_eq!(completed(&duplicate.receipt).1, OutcomePolicy::Abort);
@@ -273,12 +351,16 @@ fn logical_module_and_physical_path_do_not_enter_public_or_program_identity() {
     let before = check(1, "probe", "probe.uhura");
     let moved = check(9, "shared::probe", "src/shared/probe.uhura");
     assert_eq!(
-        before.machines.keys().collect::<Vec<_>>(),
-        moved.machines.keys().collect::<Vec<_>>()
+        before.machine_program.machines.keys().collect::<Vec<_>>(),
+        moved.machine_program.machines.keys().collect::<Vec<_>>()
     );
-    assert_eq!(before.program_hashes, moved.program_hashes);
+    assert_eq!(
+        before.machine_program.program_hashes,
+        moved.machine_program.program_hashes
+    );
     assert!(
         before
+            .machine_program
             .machines
             .contains_key("example.identity@1::IdentityProbe")
     );
@@ -303,7 +385,10 @@ fn whitespace_and_comment_motion_do_not_enter_l0_l2_program_identity() {
     let output = check_v04_module(&parsed.module);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let moved = output.program.expect("format-moved program");
-    assert_eq!(baseline.program_hashes, moved.program_hashes);
+    assert_eq!(
+        baseline.machine_program.program_hashes,
+        moved.machine_program.program_hashes
+    );
 }
 
 #[test]

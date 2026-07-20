@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use uhura_base::{SourceMap, Span, Value, to_canonical_json};
 use uhura_core::{
-    MACHINE_PROGRAM_ID_PROTOCOL, PROJECTION_SOURCES_PROTOCOL, Projection, RenderNode,
-    SEMANTIC_IR_IDENTITY_PROTOCOL, VIEW_PROTOCOL,
+    MACHINE_PROGRAM_ID_PROTOCOL, PROJECTION_SOURCES_PROTOCOL, Projection, Provenance, RenderNode,
+    VIEW_PROTOCOL,
 };
 
 pub use uhura_core::{ProjectionSources, RenderDocument};
@@ -53,9 +53,8 @@ pub struct MachineSidecar {
     pub identity_protocol: String,
     pub deployment: Option<MachineDeployment>,
     pub sources: serde_json::Value,
-    /// Source-layout-sensitive semantic occurrences for the checked language
-    /// frontend. Legacy projects publish JSON `null`.
-    pub provenance: serde_json::Value,
+    /// Source-layout-sensitive semantic occurrences for the checked project.
+    pub provenance: Provenance,
     pub interaction_graph: serde_json::Value,
     pub graph_sources: serde_json::Value,
     pub checkpoints: serde_json::Value,
@@ -67,7 +66,7 @@ pub struct MachineSidecarInput {
     pub identity_protocol: String,
     pub deployment: Option<MachineDeployment>,
     pub sources: serde_json::Value,
-    pub provenance: serde_json::Value,
+    pub provenance: Provenance,
     pub interaction_graph: serde_json::Value,
     pub graph_sources: serde_json::Value,
     pub checkpoints: serde_json::Value,
@@ -632,20 +631,17 @@ impl MachineSidecar {
                 "machine sidecar protocol must be `{MACHINE_SIDECAR_PROTOCOL}`"
             ));
         }
-        if !matches!(
-            self.identity_protocol.as_str(),
-            SEMANTIC_IR_IDENTITY_PROTOCOL | MACHINE_PROGRAM_ID_PROTOCOL
-        ) {
+        if self.identity_protocol != MACHINE_PROGRAM_ID_PROTOCOL {
             return invalid(format!(
-                "machine sidecar identity protocol must be `{SEMANTIC_IR_IDENTITY_PROTOCOL}` or `{MACHINE_PROGRAM_ID_PROTOCOL}`"
+                "machine sidecar identity protocol must be `{MACHINE_PROGRAM_ID_PROTOCOL}`"
             ));
         }
         if !self.sources.is_array() {
             return invalid("machine sidecar sources must be an array");
         }
-        if !self.provenance.is_null() && !self.provenance.is_object() {
-            return invalid("machine sidecar provenance must be an object or null");
-        }
+        self.provenance.validate().map_err(|error| {
+            ValidationError::Invalid(format!("invalid machine provenance: {error}"))
+        })?;
         for (field, value) in [
             ("interactionGraph", &self.interaction_graph),
             ("graphSources", &self.graph_sources),
@@ -1506,21 +1502,23 @@ mod tests {
     }
 
     #[test]
-    fn machine_sidecar_admits_only_the_closed_identity_protocols() {
+    fn machine_sidecar_admits_only_the_current_identity_protocol() {
         let sidecar = |identity: &str| {
             MachineSidecar::new(MachineSidecarInput {
                 identity_protocol: identity.into(),
                 deployment: None,
                 sources: serde_json::json!([]),
-                provenance: serde_json::Value::Null,
+                provenance: Provenance::canonical(Vec::new(), Vec::new()).unwrap(),
                 interaction_graph: serde_json::json!({}),
                 graph_sources: serde_json::json!({}),
                 checkpoints: serde_json::json!({}),
                 evidence: serde_json::json!({}),
             })
         };
-        assert!(sidecar(SEMANTIC_IR_IDENTITY_PROTOCOL).validate().is_ok());
         assert!(sidecar(MACHINE_PROGRAM_ID_PROTOCOL).validate().is_ok());
         assert!(sidecar("uhura-unrecognized-identity/9").validate().is_err());
+        let mut invalid_provenance = sidecar(MACHINE_PROGRAM_ID_PROTOCOL);
+        invalid_provenance.provenance.protocol = "uhura-provenance/retired".into();
+        assert!(invalid_provenance.validate().is_err());
     }
 }

@@ -31,7 +31,7 @@ impl Ty {
 
     pub fn display(&self) -> String {
         match self {
-            Self::Value(value) => value.canonical_name(),
+            Self::Value(value) => display_type_ref(value),
             Self::Function(params, result) => format!(
                 "({})->{}",
                 params
@@ -45,6 +45,64 @@ impl Ty {
             Self::Never => "Never".into(),
         }
     }
+}
+
+fn display_type_ref(value: &TypeRef) -> String {
+    match value {
+        TypeRef::Named { id } => authored_named_type(id),
+        TypeRef::Option { value } => format!("Option<{}>", display_type_ref(value)),
+        TypeRef::Seq { value } => format!("Seq<{}>", display_type_ref(value)),
+        TypeRef::NonEmpty { value } => format!("NonEmpty<{}>", display_type_ref(value)),
+        TypeRef::Set { value } => format!("Set<{}>", display_type_ref(value)),
+        TypeRef::Map { key, value } => {
+            format!("Map<{},{}>", display_type_ref(key), display_type_ref(value))
+        }
+        TypeRef::Table { key, value } => {
+            format!(
+                "Table<{},{}>",
+                display_type_ref(key),
+                display_type_ref(value)
+            )
+        }
+        TypeRef::FiniteView { value } => format!("FiniteView<{}>", display_type_ref(value)),
+        TypeRef::Tuple { values } => format!(
+            "({})",
+            values
+                .iter()
+                .map(display_type_ref)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        TypeRef::Record { fields } => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|(name, ty)| format!("{name}:{}", display_type_ref(ty)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        _ => value.canonical_name(),
+    }
+}
+
+fn authored_named_type(id: &str) -> String {
+    let segment = id.rsplit_once("::").map_or(id, |(_, segment)| segment);
+    for prefix in [
+        "__uhura_private_structural_",
+        "__uhura_private_",
+        "__uhura_part_private_",
+        "__uhura_external_",
+    ] {
+        if let Some(encoded) = segment.strip_prefix(prefix)
+            && let Some((fingerprint, authored)) = encoded.split_once('_')
+            && fingerprint.len() == 24
+            && fingerprint.bytes().all(|value| value.is_ascii_hexdigit())
+            && !authored.is_empty()
+        {
+            return authored.to_string();
+        }
+    }
+    id.to_string()
 }
 
 #[derive(Clone, Debug)]
@@ -228,5 +286,33 @@ pub(crate) fn join(left: &Ty, right: &Ty) -> Ty {
         }
     } else {
         Ty::Unknown
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_type_display_hides_compiler_private_identifiers_recursively() {
+        let value = Ty::value(TypeRef::Option {
+            value: Box::new(TypeRef::Named {
+                id: "example@1::__uhura_private_0123456789abcdef01234567_User".into(),
+            }),
+        });
+        assert_eq!(value.display(), "Option<User>");
+
+        let part = Ty::value(TypeRef::Named {
+            id: "example@1::__uhura_part_private_abcdef0123456789abcdef01_Notice".into(),
+        });
+        assert_eq!(part.display(), "Notice");
+    }
+
+    #[test]
+    fn diagnostic_type_display_preserves_non_generated_semantic_names() {
+        let value = Ty::value(TypeRef::Named {
+            id: "example@1::PublicType".into(),
+        });
+        assert_eq!(value.display(), "example@1::PublicType");
     }
 }

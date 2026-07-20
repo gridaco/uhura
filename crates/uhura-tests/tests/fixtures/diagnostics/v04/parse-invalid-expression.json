@@ -1,0 +1,29 @@
+{
+  "diagnostics": [
+    {
+      "code": "R1001",
+      "file": "diagnostics/parse-invalid-expression.uhura",
+      "message": "expected expression, found `;`",
+      "rule": "uhura-0.4/parse/invalid-expression",
+      "severity": "error",
+      "span": {
+        "end": {
+          "col": 27,
+          "line": 1
+        },
+        "len": 1,
+        "offset": 25,
+        "start": {
+          "col": 26,
+          "line": 1
+        }
+      }
+    }
+  ],
+  "format": "uhura-diagnostics",
+  "summary": {
+    "errors": 1,
+    "warnings": 0
+  },
+  "version": 0
+}

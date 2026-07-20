@@ -3,8 +3,8 @@
 - **Status:** Non-normative language-design corpus
 - **Current form:** Language-neutral problem specifications plus
   non-authoritative comparison answers
-- **Implementation status:** Executable Uhura 0.4 incubation candidate with a
-  retained 0.3 differential baseline; no accepted stable language version
+- **Implementation status:** Executable Uhura 0.4 incubation candidate; no
+  accepted stable language version
 - **Scope:** The experience-machine language, not widgets or presentation
 
 Program harnesses are small, pure, standalone problems used to design and
@@ -50,13 +50,12 @@ readability or size is compared.
 
 | Language | Answer | Status |
 | --- | --- | --- |
-| Uhura 0.3 | [L0–L2 source](answers/uhura-0.3/) | Executable differential baseline |
 | Uhura 0.4 | [L0–L2 source](answers/uhura-0.4/) | Executable incubation candidate; the 0.4 frontend passes the same frozen semantic traces |
 
 The 0.4 source is specified in the
 [active incubation candidate](../../docs/spec/drafts/0.4/) and checks,
-executes, checkpoints, and replays against the same frozen problems through
-the retained canonical engine.
+executes, checkpoints, and replays against the frozen problems through the
+canonical engine.
 
 Answer sheets remain subordinate to the three problem statements. Their
 presence records an executable language claim; the versioned specification

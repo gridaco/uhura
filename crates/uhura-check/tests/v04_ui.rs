@@ -150,6 +150,7 @@ fn direct_ui_profile_lowers_into_the_same_executable_program() {
     assert!(presentation.source.end > presentation.source.start);
 
     let (instance, _) = program
+        .machine_program
         .admit(machine, Value::Unit, "v04/ui")
         .expect("machine admission");
     let initial = program
@@ -185,6 +186,7 @@ fn direct_ui_profile_lowers_into_the_same_executable_program() {
     assert_eq!(fields[0].1, Value::Text("hello".into()));
 
     let reacted = program
+        .machine_program
         .react(&instance, input)
         .expect("checked UI input reacts");
     let changed = program
@@ -338,7 +340,7 @@ pub ui CompactCounterWeb for Counter(view) {
 }
 
 #[test]
-fn component_shaped_names_are_not_treated_as_native_html() {
+fn presentation_names_are_rejected_until_typed_ui_calls_exist() {
     let unknown_component = UI.replace("<main>", "<main><UnknownCard />");
     let output = checked(MACHINE, &unknown_component);
     assert!(output.program.is_none());
@@ -371,22 +373,106 @@ pub ui CardScreen for Counter(view) {
         module(2, "card", card),
         module(3, "screen", screen),
     ]);
+    assert!(output.program.is_none());
+    let diagnostic = output
+        .diagnostics
+        .iter()
+        .find(|value| value.rule == "uhura/ui-presentation-invocation-unavailable")
+        .unwrap_or_else(|| {
+            panic!(
+                "missing unavailable presentation-call diagnostic: {:#?}",
+                output.diagnostics
+            )
+        });
+    assert_eq!(diagnostic.span.file.0, 3);
+    assert!(diagnostic.message.contains("presentation invocation"));
+    assert!(
+        !output
+            .diagnostics
+            .iter()
+            .any(|value| value.rule == "uhura/unknown-ui-element"),
+        "a resolved presentation should receive the precise boundary diagnostic"
+    );
+}
+
+#[test]
+fn v04_ui_catalog_is_closed_and_scroll_position_requires_a_ratio() {
+    let valid = UI.replace(
+        "<main>",
+        r#"<main><scroll direction="horizontal" position={0.5}><p>Midway</p></scroll>"#,
+    );
+    let output = checked(MACHINE, &valid);
     assert!(
         output.diagnostics.is_empty(),
-        "component alias diagnostics: {:#?}",
+        "normalized scroll position diagnostics: {:#?}",
         output.diagnostics
     );
-    let program = output.program.expect("component-shaped import");
-    let screen = &program.presentations["example.ui@1::CardScreen"];
-    fn contains_component(nodes: &[UiNode]) -> bool {
-        nodes.iter().any(|node| match node {
-            UiNode::Element { name, children, .. } => {
-                name == "CounterCard" || contains_component(children)
-            }
-            _ => false,
-        })
+    assert!(output.program.is_some());
+
+    for (name, ui, rule) in [
+        (
+            "quoted position",
+            valid.replace("position={0.5}", "position=\"0.5\""),
+            "uhura/ui-attribute-type",
+        ),
+        (
+            "out-of-range position",
+            valid.replace("position={0.5}", "position={1.1}"),
+            "uhura/number-refinement",
+        ),
+        (
+            "unknown scroll attribute",
+            valid.replace("position={0.5}", "offset={0.5}"),
+            "uhura/invalid-ui-attribute",
+        ),
+        (
+            "invalid direction token",
+            valid.replace("direction=\"horizontal\"", "direction=\"diagonal\""),
+            "uhura/ui-attribute-value",
+        ),
+        (
+            "void icon children",
+            valid.replace(
+                "<p>Midway</p>",
+                r#"<icon name="heart"><text>invalid</text></icon>"#,
+            ),
+            "uhura/ui-void-children",
+        ),
+        (
+            "unnamed icon button",
+            valid.replace("<p>Midway</p>", r#"<button><icon name="heart"/></button>"#),
+            "uhura/ui-accessible-name",
+        ),
+        (
+            "nested interactive control",
+            valid.replace(
+                "<p>Midway</p>",
+                r#"<button label="Outer"><button label="Inner">Inner</button></button>"#,
+            ),
+            "uhura/ui-nested-interactive",
+        ),
+        (
+            "semantic list child without item boundary",
+            valid.replace(
+                "<p>Midway</p>",
+                r#"<view role="list"><region label="Open">Profile</region></view>"#,
+            ),
+            "uhura/ui-list-item-boundary",
+        ),
+        (
+            "inert interactive region",
+            valid.replace("<p>Midway</p>", r#"<region label="Open">Profile</region>"#),
+            "uhura/ui-missing-event",
+        ),
+    ] {
+        let output = checked(MACHINE, &ui);
+        assert!(output.program.is_none(), "{name} must not admit a program");
+        assert!(
+            output.diagnostics.iter().any(|value| value.rule == rule),
+            "{name}: {:#?}",
+            output.diagnostics
+        );
     }
-    assert!(contains_component(&screen.nodes));
 }
 
 #[test]
@@ -397,7 +483,10 @@ fn presentation_identity_is_separate_from_machine_behavior_and_source_layout() {
     let changed = checked(MACHINE, &changed_ui)
         .program
         .expect("changed presentation");
-    assert_eq!(baseline.program_hashes, changed.program_hashes);
+    assert_eq!(
+        baseline.machine_program.program_hashes,
+        changed.machine_program.program_hashes
+    );
     assert_ne!(baseline.presentation_hashes, changed.presentation_hashes);
 
     let moved_ui = UI.replace("crate::counter", "crate::domain");
@@ -411,7 +500,10 @@ fn presentation_identity_is_separate_from_machine_behavior_and_source_layout() {
         baseline.presentations.keys().collect::<Vec<_>>(),
         moved.presentations.keys().collect::<Vec<_>>()
     );
-    assert_eq!(baseline.program_hashes, moved.program_hashes);
+    assert_eq!(
+        baseline.machine_program.program_hashes,
+        moved.machine_program.program_hashes
+    );
     assert_eq!(baseline.presentation_hashes, moved.presentation_hashes);
 }
 
@@ -517,9 +609,11 @@ fn unrelated_earlier_declaration_does_not_shift_presentation_or_ui_target_ids() 
 
     let machine_id = "example.ui@1::Counter";
     let (baseline_instance, _) = baseline
+        .machine_program
         .admit(machine_id, Value::Unit, "v04/ui/stable-baseline")
         .expect("baseline admission");
     let (shifted_instance, _) = shifted
+        .machine_program
         .admit(machine_id, Value::Unit, "v04/ui/stable-shifted")
         .expect("shifted admission");
     let baseline_projection = baseline
@@ -621,6 +715,7 @@ pub ui ComposedWeb for Composed(view) {
     let machine = "example.ui@1::Composed";
     let presentation = "example.ui@1::ComposedWeb";
     let (instance, _) = program
+        .machine_program
         .admit(machine, Value::Unit, "v04/ui/part")
         .expect("part machine admission");
     let initial = program
@@ -639,7 +734,10 @@ pub ui ComposedWeb for Composed(view) {
         panic!("expected part input, found {input:?}");
     };
     assert_eq!(constructor, "counter.Tick");
-    let reacted = program.react(&instance, input).expect("part input reacts");
+    let reacted = program
+        .machine_program
+        .react(&instance, input)
+        .expect("part input reacts");
     let changed = program
         .project(&reacted.instance, presentation)
         .expect("changed part observation");
@@ -662,6 +760,7 @@ pub ui ComposedWeb for Composed(view) {
     };
     assert_eq!(constructor, "counter.Changed");
     let reacted = program
+        .machine_program
         .react(&reacted.instance, input)
         .expect("payload-bearing part input reacts");
     let changed = program

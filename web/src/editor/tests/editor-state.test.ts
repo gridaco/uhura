@@ -228,13 +228,22 @@ const stateFixture = (): {
     },
     machine: {
       protocol: "uhura-machine-inspection/0",
-      identityProtocol: "uhura-semantic-ir-hash/0",
+      identityProtocol: "uhura-machine-program/0",
       deployment: { machine: "example@1::App" },
       sources: [],
-      provenance: null,
+      provenance: {
+        protocol: "uhura-provenance/0",
+        sources: [],
+        occurrences: [],
+        topology: {
+          protocol: "uhura-authored-interaction-topology/0",
+          nodes: [],
+          edges: [],
+        },
+      },
       interactionGraph: {
         protocol: "uhura-interaction-graph/0",
-        identity_protocol: "uhura-semantic-ir-hash/0",
+        identity_protocol: "uhura-machine-program/0",
         machine_program_hashes: {},
         presentation_hashes: {},
         outcome_policies: {},
@@ -261,7 +270,7 @@ test("decodes the canonical projection-only EditorState/4 contract", () => {
   assert.equal(preview?.content.value.document.protocol, "uhura-view/1");
   assert.deepEqual(preview?.provenance.occurrences[0]?.anchors, ["root"]);
   assert.equal(preview?.evidence?.scenario, "ready");
-  assert.equal(state.render?.machine?.identityProtocol, "uhura-semantic-ir-hash/0");
+  assert.equal(state.render?.machine?.identityProtocol, "uhura-machine-program/0");
   assert.deepEqual(state.render?.interactionGraph.edges[0], {
     kind: "present",
     from: "page:feed",

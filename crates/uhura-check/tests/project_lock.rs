@@ -5,8 +5,8 @@ use uhura_check::project_lock::{
     package_artifact_integrity, parse_project_lock,
 };
 use uhura_check::project_manifest::{
-    DependencyAlias, LoadedProjectManifest, LogicalModulePath, PackageId, ProjectManifest,
-    ProjectPath, load_project_manifest,
+    DependencyAlias, LogicalModulePath, PackageId, ProjectManifest, ProjectPath,
+    load_project_manifest,
 };
 
 fn manifest(name: &str, module: &str, dependencies: &[(&str, &str, u64, &str)]) -> ProjectManifest {
@@ -31,10 +31,7 @@ main = {module:?}
 {dependencies}
 "#
     );
-    let LoadedProjectManifest::V04(manifest) = load_project_manifest(&text).unwrap() else {
-        panic!("test manifest must select 0.4");
-    };
-    manifest
+    load_project_manifest(&text).unwrap()
 }
 
 fn capture(

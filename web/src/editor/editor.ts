@@ -68,6 +68,7 @@ import {
   loadIconFontRegistry,
   type IconFontRegistry,
 } from "../renderer/icons.js";
+import { projectionUsesPrimitiveCapability } from "../renderer/primitives/registry.js";
 import type { RenderNode } from "../renderer/projection.js";
 import {
   inspectMachine,
@@ -111,10 +112,7 @@ interface Rect extends Point {
 
 export const projectionNeedsIconFonts = (
   nodes: readonly RenderNode[],
-): boolean => nodes.some((node) =>
-  node.kind === "element"
-  && (node.element === "icon" || projectionNeedsIconFonts(node.children))
-);
+): boolean => projectionUsesPrimitiveCapability(nodes, "icon-fonts");
 
 interface PanState {
   pointerId: number;

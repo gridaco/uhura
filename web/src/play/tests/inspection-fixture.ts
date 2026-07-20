@@ -6,9 +6,9 @@ import {
 } from "../../protocol/interaction-graph.js";
 import {
   UHURA_GENESIS_RECEIPT_PROTOCOL,
+  UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
   UHURA_REACTION_RECEIPT_PROTOCOL,
   UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
-  UHURA_SEMANTIC_IR_HASH_PROTOCOL,
   decodeReceipt,
   decodeRuntimeSnapshot,
   type Receipt,
@@ -94,7 +94,7 @@ const source = (id: string, index: number) => ({
 export function machineTestDeployment(): HostInspection {
   return decodeHostInspection({
     protocol: "uhura-inspection/0",
-    identityProtocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+    identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
     entry: "counter",
     machine: UHURA_TEST_MACHINE,
     presentation: UHURA_TEST_PRESENTATION,
@@ -108,10 +108,26 @@ export function machineTestDeployment(): HostInspection {
       sha256: HASH,
       bytes: 1000,
     }],
-    provenance: null,
+    provenance: {
+      protocol: "uhura-provenance/0",
+      sources: [{
+        source: 0,
+        package: "example@1",
+        module: "counter",
+        path: "counter.uhura",
+        sha256: HASH,
+        bytes: 1000,
+      }],
+      occurrences: [],
+      topology: {
+        protocol: "uhura-authored-interaction-topology/0",
+        nodes: [],
+        edges: [],
+      },
+    },
     interactionGraph: {
       protocol: UHURA_INTERACTION_GRAPH_PROTOCOL,
-      identity_protocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+      identity_protocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
       machine_program_hashes: {
         [UHURA_TEST_MACHINE]: UHURA_TEST_MACHINE_HASH,
       },

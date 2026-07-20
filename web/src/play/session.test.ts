@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-  UHURA_SEMANTIC_IR_HASH_PROTOCOL,
   decodeValue,
 } from "../protocol/machine.js";
 import {
@@ -26,7 +25,7 @@ const nextStateHash = "44".repeat(32);
 
 const config = {
   protocol: "uhura-play-config/1",
-  identityProtocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+  identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
   entry: "app",
   machine: "example.app@1::App",
   presentation: "example.app@1::Web",
@@ -122,19 +121,13 @@ const step = {
 const clone = <T>(value: T): T => structuredClone(value);
 
 describe("Uhura Play config", () => {
-  it("admits only the two language-owned identity protocols", () => {
+  it("admits only the current language-owned identity protocol", () => {
     expect(decodePlayConfig(config).identityProtocol)
-      .toBe(UHURA_SEMANTIC_IR_HASH_PROTOCOL);
-    expect(
-      decodePlayConfig({
-        ...config,
-        identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-      }).identityProtocol,
-    ).toBe(UHURA_MACHINE_PROGRAM_ID_PROTOCOL);
+      .toBe(UHURA_MACHINE_PROGRAM_ID_PROTOCOL);
     expect(() =>
       decodePlayConfig({
         ...config,
-        identityProtocol: "uhura-unrecognized-identity/9",
+        identityProtocol: "uhura-semantic-ir-hash/0",
       })
     ).toThrow(/identityProtocol must be/u);
   });

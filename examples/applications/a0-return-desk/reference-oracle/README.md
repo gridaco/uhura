@@ -3,8 +3,7 @@
 - **Status:** Executable, language-independent application evidence over a
   bounded transport domain
 - **Problem authority:** [A0 Return Desk](..)
-- **Uhura answers:** [Uhura 0.3](../answers/uhura-0.3/) and
-  [Uhura 0.4](../answers/uhura-0.4/)
+- **Uhura answer:** [Uhura 0.4](../answers/uhura-0.4/)
 - **Not:** An Uhura parser, checker, interpreter, backend, or conformance result
 
 This oracle makes one exact interpretation of A0 executable before a language

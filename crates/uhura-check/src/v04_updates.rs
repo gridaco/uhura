@@ -1,6 +1,6 @@
 //! Static lowering for non-terminal Uhura 0.4 updates.
 //!
-//! The retained kernel models one reaction transaction and terminal `Outcome`
+//! The machine kernel models one reaction transaction and terminal `Outcome`
 //! transitions. Uhura 0.4 updates that return `Unit` or an ordinary closed
 //! value are therefore source-level checked helpers: this pass alpha-renames
 //! and inlines them before the checker-neutral bridge. Lexical `return` is
@@ -11,8 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use uhura_base::Diagnostic;
 use uhura_core::{INLINE_UPDATE_JOIN_LOCAL_PREFIX, INLINE_UPDATE_LOOP_EXIT_LOCAL_PREFIX};
-use uhura_syntax::{ast, v04};
+use uhura_syntax::v04;
 
+use crate::checker_ir as ast;
 use crate::diagnostic::{codes, error};
 
 #[derive(Clone, Debug)]
@@ -569,6 +570,14 @@ impl Engine<'_> {
                 }
                 self.lower_record(record, 0, normal, returned, expression.span)
             }
+            v04::ast::ExpressionKind::AnonymousRecord(entries) => self.apply_continuation(
+                v04::ast::Node::new(
+                    v04::ast::ExpressionKind::AnonymousRecord(entries),
+                    expression.span,
+                ),
+                normal,
+                returned,
+            ),
             v04::ast::ExpressionKind::Call { callee, arguments } => {
                 let binder_returns = arguments.iter().any(|argument| {
                     matches!(argument, v04::ast::CallArgument::Binder(value) if expression_has_return(&value.body))
@@ -1622,6 +1631,10 @@ fn first_inline_call(
                     .as_deref()
                     .and_then(|value| first_inline_call(value, updates))
             }),
+        v04::ast::ExpressionKind::AnonymousRecord(entries) => entries.iter().find_map(|entry| {
+            first_inline_call(&entry.key, updates)
+                .or_else(|| first_inline_call(&entry.value, updates))
+        }),
         v04::ast::ExpressionKind::Block(block) => first_inline_call_in_block(block, updates),
         v04::ast::ExpressionKind::Call { callee, arguments } => first_inline_call(callee, updates)
             .or_else(|| {
@@ -1718,6 +1731,9 @@ fn expression_has_return(expression: &v04::ast::Expression) -> bool {
                 .any(expression_has_return)
                 || value.base.as_deref().is_some_and(expression_has_return)
         }
+        v04::ast::ExpressionKind::AnonymousRecord(entries) => entries
+            .iter()
+            .any(|entry| expression_has_return(&entry.key) || expression_has_return(&entry.value)),
         v04::ast::ExpressionKind::Block(block) => block_has_return(block),
         v04::ast::ExpressionKind::Call { callee, arguments } => {
             expression_has_return(callee)
@@ -1782,6 +1798,10 @@ fn expression_has_reaction_control(expression: &v04::ast::Expression) -> bool {
                     .as_deref()
                     .is_some_and(expression_has_reaction_control)
         }
+        v04::ast::ExpressionKind::AnonymousRecord(entries) => entries.iter().any(|entry| {
+            expression_has_reaction_control(&entry.key)
+                || expression_has_reaction_control(&entry.value)
+        }),
         v04::ast::ExpressionKind::Block(block) => block_has_reaction_control(block),
         v04::ast::ExpressionKind::Call { callee, arguments } => {
             expression_has_reaction_control(callee)
@@ -1982,6 +2002,12 @@ fn collect_inline_calls(
                 collect_inline_calls(base, updates, visitor);
             }
         }
+        v04::ast::ExpressionKind::AnonymousRecord(entries) => {
+            for entry in entries {
+                collect_inline_calls(&entry.key, updates, visitor);
+                collect_inline_calls(&entry.value, updates, visitor);
+            }
+        }
         v04::ast::ExpressionKind::Block(block) => {
             collect_inline_calls_in_block(block, updates, visitor);
         }
@@ -2142,6 +2168,12 @@ fn alpha_rename_expression(
                 alpha_rename_expression(base, renames, prefix);
             }
         }
+        v04::ast::ExpressionKind::AnonymousRecord(entries) => {
+            for entry in entries {
+                alpha_rename_expression(&mut entry.key, renames, prefix);
+                alpha_rename_expression(&mut entry.value, renames, prefix);
+            }
+        }
         v04::ast::ExpressionKind::Block(block) => {
             let mut child = renames.clone();
             alpha_rename_block(block, &mut child, prefix);
@@ -2229,7 +2261,8 @@ fn alpha_rename_pattern(
                 alpha_rename_pattern(argument, renames, prefix);
             }
         }
-        v04::ast::PatternKind::Record { fields, .. } => {
+        v04::ast::PatternKind::Record { fields, .. }
+        | v04::ast::PatternKind::AnonymousRecord { fields, .. } => {
             for field in fields {
                 if let Some(pattern) = &mut field.pattern {
                     alpha_rename_pattern(pattern, renames, prefix);

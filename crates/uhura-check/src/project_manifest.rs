@@ -14,38 +14,14 @@ use crate::resource_manifest::{ResourceManifest, ResourceManifestIssue, load_res
 pub const LANGUAGE_0_4: &str = "0.4";
 
 /// A parsed `uhura.toml`.
-///
-/// Resource-only manifests remain valid for legacy 0.3 projects. The presence
-/// of any 0.4 project table selects the strict 0.4 schema.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LoadedProjectManifest {
-    Legacy03(ResourceManifest),
-    V04(ProjectManifest),
-}
-
-impl LoadedProjectManifest {
-    pub fn resources(&self) -> &ResourceManifest {
-        match self {
-            Self::Legacy03(resources) => resources,
-            Self::V04(manifest) => &manifest.resources,
-        }
-    }
-
-    pub fn as_v04(&self) -> Option<&ProjectManifest> {
-        match self {
-            Self::Legacy03(_) => None,
-            Self::V04(manifest) => Some(manifest),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectManifest {
     pub project: ProjectConfig,
     pub modules: BTreeMap<LogicalModulePath, ProjectPath>,
-    /// Explicit tooling-only sources using the separately versioned evidence
-    /// language. These files are not 0.4 core modules.
-    pub evidence: Vec<ProjectPath>,
+    /// Explicit tooling-only modules using the same 0.4 frontend under the
+    /// evidence manifest role. These files cannot contribute deployable core
+    /// declarations.
+    pub evidence: BTreeMap<LogicalModulePath, ProjectPath>,
     pub dependencies: BTreeMap<DependencyAlias, DependencyConfig>,
     pub resources: ResourceManifest,
 }
@@ -298,11 +274,11 @@ impl fmt::Display for ProjectValueError {
 
 impl std::error::Error for ProjectValueError {}
 
-/// Parse either a legacy resource-only manifest or the closed 0.4 project
-/// manifest.
-pub fn load_project_manifest(
-    text: &str,
-) -> Result<LoadedProjectManifest, Vec<ProjectManifestIssue>> {
+/// Parse the closed 0.4 project manifest.
+///
+/// A manifest must declare both `[project]` and `[modules]`; resource-only and
+/// otherwise implicit projects are not part of the current language.
+pub fn load_project_manifest(text: &str) -> Result<ProjectManifest, Vec<ProjectManifestIssue>> {
     let table: toml::Table = match text.parse() {
         Ok(table) => table,
         Err(error) => {
@@ -313,22 +289,10 @@ pub fn load_project_manifest(
         }
     };
 
-    if !selects_v04(&table) {
-        return load_resource_manifest(text)
-            .map(LoadedProjectManifest::Legacy03)
-            .map_err(resource_issues);
-    }
-
-    parse_v04(table)
+    parse_manifest(table)
 }
 
-fn selects_v04(table: &toml::Table) -> bool {
-    ["project", "modules", "evidence", "dependencies"]
-        .iter()
-        .any(|key| table.contains_key(*key))
-}
-
-fn parse_v04(table: toml::Table) -> Result<LoadedProjectManifest, Vec<ProjectManifestIssue>> {
+fn parse_manifest(table: toml::Table) -> Result<ProjectManifest, Vec<ProjectManifestIssue>> {
     let mut issues = Vec::new();
     for key in table.keys() {
         if ![
@@ -353,13 +317,13 @@ fn parse_v04(table: toml::Table) -> Result<LoadedProjectManifest, Vec<ProjectMan
 
     match (project, modules, resources) {
         (Some(project), Some(modules), Some(resources)) if issues.is_empty() => {
-            Ok(LoadedProjectManifest::V04(ProjectManifest {
+            Ok(ProjectManifest {
                 project,
                 modules,
                 evidence,
                 dependencies,
                 resources,
-            }))
+            })
         }
         _ => Err(issues),
     }
@@ -468,16 +432,16 @@ fn parse_evidence(
     table: &toml::Table,
     modules: Option<&BTreeMap<LogicalModulePath, ProjectPath>>,
     issues: &mut Vec<ProjectManifestIssue>,
-) -> Vec<ProjectPath> {
+) -> BTreeMap<LogicalModulePath, ProjectPath> {
     let Some(value) = table.get("evidence") else {
-        return Vec::new();
+        return BTreeMap::new();
     };
     let Some(evidence) = value.as_table() else {
         issue(issues, "evidence", "expected an `[evidence]` table");
-        return Vec::new();
+        return BTreeMap::new();
     };
     for key in evidence.keys() {
-        if key != "sources" {
+        if key != "modules" {
             issue(
                 issues,
                 format!("evidence.{key}"),
@@ -485,36 +449,41 @@ fn parse_evidence(
             );
         }
     }
-    let Some(value) = evidence.get("sources") else {
-        issue(issues, "evidence.sources", "missing required source array");
-        return Vec::new();
-    };
-    let Some(values) = value.as_array() else {
+    let Some(value) = evidence.get("modules") else {
         issue(
             issues,
-            "evidence.sources",
-            "expected an array of `.uhura` source paths",
+            "evidence.modules",
+            "missing required `[evidence.modules]` table",
         );
-        return Vec::new();
+        return BTreeMap::new();
     };
-    if values.is_empty() {
+    let Some(entries) = value.as_table() else {
         issue(
             issues,
-            "evidence.sources",
-            "expected at least one evidence source",
+            "evidence.modules",
+            "expected an `[evidence.modules]` table",
+        );
+        return BTreeMap::new();
+    };
+    if entries.is_empty() {
+        issue(
+            issues,
+            "evidence.modules",
+            "expected at least one mapped evidence module",
         );
     }
 
     let module_paths = modules
         .map(|modules| modules.values().collect::<BTreeSet<_>>())
         .unwrap_or_default();
-    let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    for (index, value) in values.iter().enumerate() {
-        let path = format!("evidence.sources[{index}]");
+    let mut physical_paths = BTreeMap::<ProjectPath, String>::new();
+    let mut out = BTreeMap::new();
+    for (logical, value) in entries {
+        let path = format!("evidence.modules.{logical}");
+        let logical = logical_module_path(logical, &path, issues);
         let source = required_string(Some(value), &path, issues)
             .and_then(|value| project_path(value, &path, issues));
-        let Some(source) = source else {
+        let (Some(logical), Some(source)) = (logical, source) else {
             continue;
         };
         if !source.as_str().ends_with(".uhura") {
@@ -529,17 +498,22 @@ fn parse_evidence(
             );
             continue;
         }
-        if !seen.insert(source.clone()) {
+        if let Some(previous) = physical_paths.get(&source) {
+            issue(
+                issues,
+                previous,
+                format!("evidence source file `{source}` is already mapped by another module"),
+            );
             issue(
                 issues,
                 &path,
-                format!("evidence source file `{source}` occurs more than once"),
+                format!("evidence source file `{source}` is already mapped by another module"),
             );
             continue;
         }
-        out.push(source);
+        physical_paths.insert(source.clone(), path);
+        out.insert(logical, source);
     }
-    out.sort();
     out
 }
 

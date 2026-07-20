@@ -1,6 +1,5 @@
-//! The `uhura` CLI: check | fmt | editor | play | trace | graph. With no command it
-//! opens the read-only editor for the current directory. `dev` remains a
-//! compatibility alias for Play. Thin argument
+//! The `uhura` CLI: check | fmt | editor | play | trace | graph. With no command
+//! it opens the read-only editor for the current directory. Thin argument
 //! parsing over the library crate (`uhura_cli::cmd`) — the same code the gate
 //! tests drive.
 
@@ -25,7 +24,7 @@ impl CliCommand {
             "check" => Some(Self::Check),
             "fmt" => Some(Self::Fmt),
             "editor" => Some(Self::Editor),
-            "play" | "dev" => Some(Self::Play),
+            "play" => Some(Self::Play),
             "trace" => Some(Self::Trace),
             "graph" => Some(Self::Graph),
             _ => None,
@@ -156,7 +155,7 @@ fn main() -> ExitCode {
         CliCommand::Check => cmd::check::run(&common),
         CliCommand::Editor => cmd::editor::run(&common, port),
         CliCommand::Trace => cmd::trace::run(&common, script.as_deref(), expanded),
-        CliCommand::Play => cmd::dev::run(&common, port),
+        CliCommand::Play => cmd::play::run(&common, port),
         CliCommand::Graph => cmd::graph::run(&common, out.as_deref()),
     }
 }
@@ -165,7 +164,6 @@ fn print_usage() {
     eprintln!("usage: uhura [path] [--port <n>]");
     eprintln!("       uhura <check|fmt|editor|play|trace|graph> [path] [flags]");
     eprintln!("       no command selects the editor (path defaults to the current directory)");
-    eprintln!("       compatibility alias: dev (play)");
 }
 
 #[cfg(test)]
@@ -204,10 +202,5 @@ mod tests {
             select_command(Some("definitely-not-an-uhura-command-7c449")),
             Err("definitely-not-an-uhura-command-7c449")
         );
-    }
-
-    #[test]
-    fn preserves_dev_as_a_play_compatibility_alias() {
-        assert_eq!(CliCommand::parse("dev"), Some(CliCommand::Play));
     }
 }

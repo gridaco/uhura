@@ -1,19 +1,21 @@
-language uhura 0.3
-module app.return_desk.conformance@1
-
-use evidence
-
-import {
+use crate::evidence_support::{
+  ITEMS_LOCATION,
+  METHOD_LOCATION,
+  ORDER_7,
+  ORDER_8,
+  ORDER_9_WITHOUT_LAMP,
+  ORDER_LOCATION,
+  RECEIPT_LOCATION,
+  RETURN_900,
+  REVIEW_LOCATION,
+};
+use crate::return_desk::{
   BlockReason,
   InvalidReason,
-  LineId,
   Location,
-  OrderId,
-  OrderWire,
   Reason,
   RequestId,
   ReturnDesk,
-  ReturnId,
   ReturnMethod,
   Settlement,
   Step,
@@ -23,20 +25,11 @@ import {
   MUG,
   ORDER_100,
   RETURN_ROUTES,
-  ORDER_7,
-  ORDER_8,
-  ORDER_9_WITHOUT_LAMP,
-  ITEMS_LOCATION,
-  METHOD_LOCATION,
-  REVIEW_LOCATION,
-  ORDER_LOCATION,
-  RETURN_900,
-  RECEIPT_LOCATION,
-} from "app.returndesk@1"
-import { Token } from "uhura.boundary@1"
-import { Observation } from "uhura.observation@1"
-import { RequestPort } from "uhura.ports@1"
-import { Router } from "uhura.web_router@1"
+};
+use uhura::boundary::Token;
+use uhura::observation::Observation;
+use uhura::ports::RequestPort;
+use uhura::web_router::Router;
 
 
 scenario canonical for ReturnDesk {
@@ -46,10 +39,10 @@ scenario canonical for ReturnDesk {
 
   start
   expect observation {
-    location: none,
-    order: none,
-    draft: none,
-    ...
+    location: None,
+    order: None,
+    draft: None,
+    ..
   }
 
   deliver router.changed(REVIEW_LOCATION)
@@ -66,9 +59,9 @@ scenario canonical for ReturnDesk {
 
   send ChooseQuantity(LAMP, finite(1))
   expect Accepted commands []
-  pin IncompleteItems
+  pin incomplete_items
 
-  send ChooseReason(LAMP, known(Damaged))
+  send ChooseReason(LAMP, Token::Known { value: Reason::Damaged })
   expect Accepted commands []
   pin complete_items
 
@@ -79,7 +72,7 @@ scenario canonical for ReturnDesk {
   send DismissPolicy(SurfaceId(1))
   expect Accepted commands []
 
-  send GoToStep(known(Method))
+  send GoToStep(Token::Known { value: Step::Method })
   expect Accepted commands [
     router.push(METHOD_LOCATION),
   ]
@@ -87,11 +80,11 @@ scenario canonical for ReturnDesk {
   deliver router.changed(METHOD_LOCATION)
   expect Accepted commands []
 
-  send ChooseMethod(known(DropOff))
+  send ChooseMethod(Token::Known { value: ReturnMethod::DropOff })
   expect Accepted commands []
   pin method_selection
 
-  send GoToStep(known(Review))
+  send GoToStep(Token::Known { value: Step::Review })
   expect Accepted commands [
     router.push(REVIEW_LOCATION),
   ]
@@ -110,10 +103,10 @@ scenario canonical for ReturnDesk {
         selections: {
           LAMP: {
             quantity: 1,
-            reason: Damaged,
+            reason: Reason::Damaged,
           },
         },
-        method: DropOff,
+        method: ReturnMethod::DropOff,
       },
     ),
   ]
@@ -127,7 +120,7 @@ scenario canonical for ReturnDesk {
 
   deliver returns.settled(
     RequestId(1),
-    RefusedOrderChanged(8),
+    Settlement::RefusedOrderChanged { current_revision: 8 },
   )
   expect Accepted commands []
   pin domain_refusal
@@ -148,10 +141,10 @@ scenario canonical for ReturnDesk {
   send ChooseQuantity(MUG, finite(1))
   expect Accepted commands []
 
-  send ChooseReason(MUG, known(NotNeeded))
+  send ChooseReason(MUG, Token::Known { value: Reason::NotNeeded })
   expect Accepted commands []
 
-  send GoToStep(known(Method))
+  send GoToStep(Token::Known { value: Step::Method })
   expect Accepted commands [
     router.push(METHOD_LOCATION),
   ]
@@ -159,10 +152,10 @@ scenario canonical for ReturnDesk {
   deliver router.changed(METHOD_LOCATION)
   expect Accepted commands []
 
-  send ChooseMethod(known(Pickup))
+  send ChooseMethod(Token::Known { value: ReturnMethod::Pickup })
   expect Accepted commands []
 
-  send GoToStep(known(Review))
+  send GoToStep(Token::Known { value: Step::Review })
   expect Accepted commands [
     router.push(REVIEW_LOCATION),
   ]
@@ -180,10 +173,10 @@ scenario canonical for ReturnDesk {
         selections: {
           MUG: {
             quantity: 1,
-            reason: NotNeeded,
+            reason: Reason::NotNeeded,
           },
         },
-        method: Pickup,
+        method: ReturnMethod::Pickup,
       },
     ),
   ]
@@ -194,7 +187,7 @@ scenario canonical for ReturnDesk {
 
   deliver returns.settled(
     RequestId(2),
-    Accepted("return-900"),
+    Settlement::Accepted { return_id: "return-900" },
   )
   expect Accepted commands [
     router.replace(RECEIPT_LOCATION),
@@ -206,7 +199,7 @@ scenario canonical for ReturnDesk {
 
   deliver returns.settled(
     RequestId(2),
-    Accepted("return-900"),
+    Settlement::Accepted { return_id: "return-900" },
   )
   expect Stale commands []
 }
@@ -229,14 +222,14 @@ scenario missing_and_unknown_step for ReturnDesk {
   start
 
   deliver router.changed(
-    Flow(ORDER_100, none),
+    Location::Flow { order: ORDER_100, step: None },
   )
   expect Accepted commands [
     router.replace(ITEMS_LOCATION),
   ]
 
   deliver router.changed(
-    Flow(ORDER_100, some("unknown")),
+    Location::Flow { order: ORDER_100, step: Some("unknown") },
   )
   expect Accepted commands [
     router.replace(ITEMS_LOCATION),
@@ -265,19 +258,19 @@ scenario removed_selected_line
   deliver orders.observed(ORDER_9_WITHOUT_LAMP)
   expect Accepted commands []
   expect observation {
-    policy: none,
-    conflict: some(_),
-    ...
+    policy: None,
+    conflict: Some(_),
+    ..
   }
   expect observation where
-    draft is some(current)
-      and current.selections.get(LAMP) is some(_)
+    draft is Some(current)
+      && current.selections.get(LAMP) is Some(_)
 }
 
 scenario stale_surface_cannot_close_newer
   from canonical::open_policy_surface
 {
-  send GoToStep(known(Method))
+  send GoToStep(Token::Known { value: Step::Method })
   expect Accepted commands [
     router.push(METHOD_LOCATION),
   ]
@@ -295,11 +288,11 @@ scenario stale_surface_cannot_close_newer
   expect Stale commands []
 
   expect observation {
-    policy: some({
+    policy: Some({
       line: MUG,
-      ...
+      ..
     }),
-    ...
+    ..
   }
   pin newer_surface_after_stale_dismiss
 }
@@ -309,7 +302,7 @@ scenario unavailable_then_retry
 {
   deliver returns.settled(
     RequestId(1),
-    Unavailable,
+    Settlement::Unavailable,
   )
   expect Accepted commands []
   pin retryable_unavailability
@@ -324,10 +317,10 @@ scenario unavailable_then_retry
         selections: {
           LAMP: {
             quantity: 1,
-            reason: Damaged,
+            reason: Reason::Damaged,
           },
         },
-        method: DropOff,
+        method: ReturnMethod::DropOff,
       },
     ),
   ]
@@ -338,16 +331,18 @@ scenario invalid_refusal_keeps_pending
 {
   deliver returns.settled(
     RequestId(1),
-    RefusedOrderChanged(7),
+    Settlement::RefusedOrderChanged { current_revision: 7 },
   )
-  expect Invalid(InvalidRefusalRevision)
+  expect Invalid { reason: InvalidReason::InvalidRefusalRevision }
     commands []
   expect inspection {
-    submission: Pending({
-      id: RequestId(1),
-      ...
-    }),
-    ...
+    submission: Submission::Pending {
+      request: {
+        id: RequestId(1),
+        ..
+      },
+    },
+    ..
   }
 }
 
@@ -356,24 +351,26 @@ scenario malformed_settlement_precedes_stale
 {
   deliver returns.settled(
     RequestId(99),
-    RefusedOrderChanged(0),
+    Settlement::RefusedOrderChanged { current_revision: 0 },
   )
-  expect Invalid(InvalidRefusalRevision)
+  expect Invalid { reason: InvalidReason::InvalidRefusalRevision }
     commands []
 
   deliver returns.settled(
     RequestId(99),
-    Accepted(""),
+    Settlement::Accepted { return_id: "" },
   )
-  expect Invalid(InvalidReturnId)
+  expect Invalid { reason: InvalidReason::InvalidReturnId }
     commands []
 
   expect inspection {
-    submission: Pending({
-      id: RequestId(1),
-      ...
-    }),
-    ...
+    submission: Submission::Pending {
+      request: {
+        id: RequestId(1),
+        ..
+      },
+    },
+    ..
   }
 }
 
@@ -384,19 +381,19 @@ scenario fence_requires_observation_and_restart
   expect Accepted commands []
 
   send Submit
-  expect Blocked(SourceChanged) commands []
+  expect Blocked { reason: BlockReason::SourceChanged } commands []
 
   deliver router.changed(ITEMS_LOCATION)
   expect Accepted commands []
 
   send ChooseQuantity(LAMP, finite(2))
-  expect Blocked(SourceChanged) commands []
+  expect Blocked { reason: BlockReason::SourceChanged } commands []
 
   deliver orders.observed(ORDER_8)
   expect Accepted commands []
 
   send ChooseQuantity(MUG, finite(1))
-  expect Blocked(SourceChanged) commands []
+  expect Blocked { reason: BlockReason::SourceChanged } commands []
 
   send RestartFromCurrentOrder
   expect Accepted commands []
@@ -410,7 +407,7 @@ scenario late_acceptance_outside_flow
 
   deliver returns.settled(
     RequestId(1),
-    Accepted("return-900"),
+    Settlement::Accepted { return_id: "return-900" },
   )
   expect Accepted commands []
   pin completion_notice_outside_flow
@@ -423,8 +420,8 @@ scenario late_acceptance_outside_flow
   deliver router.changed(RECEIPT_LOCATION)
   expect Accepted commands []
   expect observation {
-    completion_notice: none,
-    ...
+    completion_notice: None,
+    ..
   }
 
   send FollowOrderLink
@@ -435,8 +432,8 @@ scenario late_acceptance_outside_flow
   deliver router.changed(ORDER_LOCATION)
   expect Accepted commands []
   expect observation {
-    completion_notice: none,
-    ...
+    completion_notice: None,
+    ..
   }
 }
 
@@ -445,13 +442,13 @@ scenario unknown_and_conflicting_settlements
 {
   deliver returns.settled(
     RequestId(99),
-    Accepted("return-unknown"),
+    Settlement::Accepted { return_id: "return-unknown" },
   )
   expect Stale commands []
 
   deliver returns.settled(
     RequestId(1),
-    Accepted("return-900"),
+    Settlement::Accepted { return_id: "return-900" },
   )
   expect Accepted commands [
     router.replace(RECEIPT_LOCATION),
@@ -459,7 +456,7 @@ scenario unknown_and_conflicting_settlements
 
   deliver returns.settled(
     RequestId(1),
-    RefusedOrderChanged(8),
+    Settlement::RefusedOrderChanged { current_revision: 8 },
   )
   expect Stale commands []
 }
@@ -481,7 +478,7 @@ scenario receipt_replacement_superseded
 {
   deliver returns.settled(
     RequestId(1),
-    Accepted("return-900"),
+    Settlement::Accepted { return_id: "return-900" },
   )
   expect Accepted commands [
     router.replace(RECEIPT_LOCATION),
@@ -490,12 +487,12 @@ scenario receipt_replacement_superseded
   deliver router.changed(ORDER_LOCATION)
   expect Accepted commands []
   expect observation {
-    completion_notice: some(RETURN_900),
+    completion_notice: Some(RETURN_900),
     actions: {
       follow_receipt: true,
-      ...
+      ..
     },
-    ...
+    ..
   }
 
   send FollowReceiptLink
@@ -523,21 +520,21 @@ scenario repeated_normalization for ReturnDesk {
 scenario one_navigation_intent
   from canonical::complete_items
 {
-  send GoToStep(known(Method))
+  send GoToStep(Token::Known { value: Step::Method })
   expect Accepted commands [
     router.push(METHOD_LOCATION),
   ]
 
-  send GoToStep(known(Method))
+  send GoToStep(Token::Known { value: Step::Method })
   expect Duplicate commands []
 
   send FollowOrderLink
-  expect Blocked(NavigationPending) commands []
+  expect Blocked { reason: BlockReason::NavigationPending } commands []
 
   deliver router.changed(METHOD_LOCATION)
   expect Accepted commands []
 
-  send GoToStep(known(Items))
+  send GoToStep(Token::Known { value: Step::Items })
   expect Accepted commands [
     router.push(ITEMS_LOCATION),
   ]
@@ -545,45 +542,45 @@ scenario one_navigation_intent
 
 
 example waiting_at_items =
-  canonical::waiting_at_items
+  canonical::waiting_at_items;
 
-example IncompleteItems =
-  canonical::IncompleteItems
+example incomplete_items =
+  canonical::incomplete_items;
 
 example complete_items =
-  canonical::complete_items
+  canonical::complete_items;
 
 example method_selection =
-  canonical::method_selection
+  canonical::method_selection;
 
 example review =
-  canonical::review
+  canonical::review;
 
 example open_policy_surface =
-  canonical::open_policy_surface
+  canonical::open_policy_surface;
 
 example pending_after_back =
-  canonical::request_2_pending_after_back
+  canonical::request_2_pending_after_back;
 
 example source_changed_conflict =
-  canonical::source_changed_conflict
+  canonical::source_changed_conflict;
 
 example domain_refusal =
-  canonical::domain_refusal
+  canonical::domain_refusal;
 
 example retryable_unavailability =
-  unavailable_then_retry::retryable_unavailability
+  unavailable_then_retry::retryable_unavailability;
 
 example completion_notice_outside_flow =
   late_acceptance_outside_flow::
-    completion_notice_outside_flow
+    completion_notice_outside_flow;
 
 example receipt =
-  canonical::receipt
+  canonical::receipt;
 
 
 checkpoint request_2_pending =
-  canonical::request_2_pending_after_back
+  canonical::request_2_pending_after_back;
 
 scenario replay_accepted_suffix
   from request_2_pending
@@ -592,7 +589,7 @@ scenario replay_accepted_suffix
 
   deliver returns.settled(
     RequestId(2),
-    Accepted("return-900"),
+    Settlement::Accepted { return_id: "return-900" },
   )
   expect Accepted commands [
     router.replace(RECEIPT_LOCATION),
@@ -610,7 +607,7 @@ scenario replay_accepted_suffix_again
 
   deliver returns.settled(
     RequestId(2),
-    Accepted("return-900"),
+    Settlement::Accepted { return_id: "return-900" },
   )
   expect Accepted commands [
     router.replace(RECEIPT_LOCATION),

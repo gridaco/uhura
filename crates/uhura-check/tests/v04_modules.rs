@@ -220,9 +220,12 @@ fn monolith_and_split_modules_lower_to_one_semantic_program() {
         module(3, "program", "program.uhura", MACHINE_SPLIT),
     ]);
 
-    assert_eq!(monolith.program_hashes, split.program_hashes);
+    assert_eq!(
+        monolith.machine_program.program_hashes,
+        split.machine_program.program_hashes
+    );
     assert_eq!(semantic_json(&monolith), semantic_json(&split));
-    assert_eq!(split.modules, ["example.modules@1"]);
+    assert_eq!(split.machine_program.modules, ["example.modules@1"]);
 }
 
 #[test]
@@ -237,7 +240,10 @@ fn physical_and_logical_module_moves_preserve_semantics() {
         module(92, "application", "src/application.uhura", &moved_machine),
     ]);
 
-    assert_eq!(before.program_hashes, after.program_hashes);
+    assert_eq!(
+        before.machine_program.program_hashes,
+        after.machine_program.program_hashes
+    );
     assert_eq!(semantic_json(&before), semantic_json(&after));
 }
 
@@ -284,7 +290,10 @@ fn aliases_are_resolution_only() {
     ];
     let aliased = checked(&aliased_modules);
 
-    assert_eq!(ordinary.program_hashes, aliased.program_hashes);
+    assert_eq!(
+        ordinary.machine_program.program_hashes,
+        aliased.machine_program.program_hashes
+    );
     assert_eq!(semantic_json(&ordinary), semantic_json(&aliased));
 
     let resolved = resolve_v04_project_modules(&aliased_modules);
@@ -357,10 +366,17 @@ fn same_name_public_reexport_resolves_without_a_second_declaration() {
         machine,
     ]);
 
-    assert_eq!(direct.program_hashes, through_facade.program_hashes);
     assert_eq!(
-        direct.types.keys().collect::<Vec<_>>(),
-        through_facade.types.keys().collect::<Vec<_>>()
+        direct.machine_program.program_hashes,
+        through_facade.machine_program.program_hashes
+    );
+    assert_eq!(
+        direct.machine_program.types.keys().collect::<Vec<_>>(),
+        through_facade
+            .machine_program
+            .types
+            .keys()
+            .collect::<Vec<_>>()
     );
 }
 
@@ -403,7 +419,10 @@ fn module_and_use_order_are_nonsemantic_and_unused_use_is_inert() {
         module(20, "program", "program.uhura", &reordered_source),
         module(10, "support", "support.uhura", SUPPORT),
     ]);
-    assert_eq!(normal.program_hashes, reordered.program_hashes);
+    assert_eq!(
+        normal.machine_program.program_hashes,
+        reordered.machine_program.program_hashes
+    );
     assert_eq!(semantic_json(&normal), semantic_json(&reordered));
 
     let unused_support = "pub struct Unused { value: Int }\n";
@@ -413,7 +432,10 @@ fn module_and_use_order_are_nonsemantic_and_unused_use_is_inert() {
         module(31, "unused", "unused.uhura", unused_support),
         module(32, "program", "program.uhura", &with_unused),
     ]);
-    assert_eq!(bare.program_hashes, imported.program_hashes);
+    assert_eq!(
+        bare.machine_program.program_hashes,
+        imported.machine_program.program_hashes
+    );
 }
 
 #[test]
@@ -631,8 +653,18 @@ pub machine Right {
         output.diagnostics,
     );
     let program = output.program.expect("both machines check");
-    assert!(program.machines.contains_key("example.modules@1::Left"));
-    assert!(program.machines.contains_key("example.modules@1::Right"));
+    assert!(
+        program
+            .machine_program
+            .machines
+            .contains_key("example.modules@1::Left")
+    );
+    assert!(
+        program
+            .machine_program
+            .machines
+            .contains_key("example.modules@1::Right")
+    );
 }
 
 #[test]
@@ -674,6 +706,7 @@ pub machine Probe {
         output
             .program
             .expect("transitive private closure checks")
+            .machine_program
             .machines
             .contains_key("example.modules@1::Probe")
     );
@@ -756,8 +789,18 @@ pub machine Second {
         output.diagnostics,
     );
     let program = output.program.expect("shared structural helper checks");
-    assert!(program.machines.contains_key("example.modules@1::First"));
-    assert!(program.machines.contains_key("example.modules@1::Second"));
+    assert!(
+        program
+            .machine_program
+            .machines
+            .contains_key("example.modules@1::First")
+    );
+    assert!(
+        program
+            .machine_program
+            .machines
+            .contains_key("example.modules@1::Second")
+    );
 }
 
 #[test]
@@ -797,11 +840,23 @@ pub machine {name} {{
     ]);
 
     assert_eq!(
-        baseline.program_hashes.get("example.modules@1::Left"),
-        changed.program_hashes.get("example.modules@1::Left"),
+        baseline
+            .machine_program
+            .program_hashes
+            .get("example.modules@1::Left"),
+        changed
+            .machine_program
+            .program_hashes
+            .get("example.modules@1::Left"),
     );
     assert_eq!(
-        baseline.program_hashes.get("example.modules@1::Right"),
-        changed.program_hashes.get("example.modules@1::Right"),
+        baseline
+            .machine_program
+            .program_hashes
+            .get("example.modules@1::Right"),
+        changed
+            .machine_program
+            .program_hashes
+            .get("example.modules@1::Right"),
     );
 }

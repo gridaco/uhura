@@ -460,6 +460,7 @@ fn covers_public_declarations_machine_members_ui_imports_and_direct_parts() {
     let program = checked(&modules);
     assert!(
         program
+            .machine_program
             .machines
             .contains_key("example.provenance@1::Application")
     );
@@ -651,7 +652,7 @@ pub machine Counter {
     let program = output.program.expect("checked grouped invariant");
     let provenance = output.provenance.expect("checked semantic provenance");
     let machine_id = "example.provenance@1::Counter";
-    let machine = &program.machines[machine_id];
+    let machine = &program.machine_program.machines[machine_id];
     assert_eq!(machine.invariants.len(), 2);
 
     for (ordinal, text) in ["count >= 0", "count <= 10"].into_iter().enumerate() {
@@ -744,7 +745,10 @@ fn file_module_comment_and_format_moves_preserve_nodes_but_change_provenance_rev
     )];
     let before_program = checked(&before_modules);
     let after_program = checked(&after_modules);
-    assert_eq!(before_program.program_hashes, after_program.program_hashes);
+    assert_eq!(
+        before_program.machine_program.program_hashes,
+        after_program.machine_program.program_hashes
+    );
 
     let before = build_v04_provenance(&before_modules).expect("before provenance");
     let after = build_v04_provenance(&after_modules).expect("after provenance");

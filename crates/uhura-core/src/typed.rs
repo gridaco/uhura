@@ -3,7 +3,7 @@ use std::fmt;
 use num_bigint::Sign;
 
 use super::codec::{frame, nat, nat_u64};
-use super::ir::{ConstructorDef, Machine, PortDef, Program, TypeDef, TypeRef};
+use super::ir::{ConstructorDef, Machine, MachineProgram, PortDef, TypeDef, TypeRef};
 use super::value::{BoundaryNumber, Decimal, IntegerKind, Value};
 
 fn signed_integer_body(value: &num_bigint::BigInt) -> Vec<u8> {
@@ -53,7 +53,7 @@ impl fmt::Display for ValueTypeError {
 
 impl std::error::Error for ValueTypeError {}
 
-impl Program {
+impl MachineProgram {
     /// Validates and canonicalizes a payload against one checked Uhura type.
     ///
     /// In particular, collection identity never comes from the first element:
@@ -1253,7 +1253,7 @@ mod tests {
 
     use super::*;
     use crate::ir::{PortDef, SourceRef};
-    use crate::{CommandDef, ConstructorDef, Machine, Program, TypeDef};
+    use crate::{CommandDef, ConstructorDef, Machine, MachineProgram, TypeDef};
 
     fn dotted_protocol_machine(with_port: bool) -> Machine {
         let constructor = ConstructorDef {
@@ -1311,7 +1311,7 @@ mod tests {
 
     #[test]
     fn dotted_local_protocols_are_not_misclassified_as_ports() {
-        let program = Program::new();
+        let program = MachineProgram::new();
         let machine = dotted_protocol_machine(false);
         let input = Value::variant("example@1::Machine.Input", "counter.Tick", Vec::new());
         assert_eq!(program.canonicalize_input(&machine, &input).unwrap(), input);
@@ -1324,7 +1324,7 @@ mod tests {
 
     #[test]
     fn a_declared_port_prefix_retains_port_precedence() {
-        let program = Program::new();
+        let program = MachineProgram::new();
         let machine = dotted_protocol_machine(true);
         let port_input = Value::variant(
             "example@1::Machine::port.counter.Receive",
@@ -1346,7 +1346,7 @@ mod tests {
 
     #[test]
     fn nested_part_owned_port_locators_use_the_full_declared_prefix() {
-        let program = Program::new();
+        let program = MachineProgram::new();
         let mut machine = dotted_protocol_machine(true);
         machine.ports[0].name = "counter.api".into();
         let port_input = Value::variant(
@@ -1373,7 +1373,7 @@ mod tests {
 
     #[test]
     fn empty_and_nested_collection_bytes_keep_checked_identity() {
-        let program = Program::new();
+        let program = MachineProgram::new();
         let text = TypeRef::Seq {
             value: Box::new(TypeRef::Seq {
                 value: Box::new(TypeRef::Text),
@@ -1413,7 +1413,7 @@ mod tests {
 
     #[test]
     fn nominal_keys_and_sums_are_closed() {
-        let mut program = Program::new();
+        let mut program = MachineProgram::new();
         program.types = BTreeMap::from([
             (
                 "example@1::Id".into(),
@@ -1460,7 +1460,7 @@ mod tests {
 
     #[test]
     fn table_requires_complete_declaration_order() {
-        let mut program = Program::new();
+        let mut program = MachineProgram::new();
         program.types.insert(
             "example@1::Slot".into(),
             TypeDef::Sum {
@@ -1495,7 +1495,7 @@ mod tests {
 
     #[test]
     fn typed_wire_decode_rejects_noncanonical_collection_order() {
-        let program = Program::new();
+        let program = MachineProgram::new();
         let set = serde_json::json!({
             "$": "set",
             "items": [
@@ -1538,7 +1538,7 @@ mod tests {
     fn typed_numeric_bytes_and_hashes_match_golden_vectors() {
         use std::str::FromStr as _;
 
-        let program = Program::new();
+        let program = MachineProgram::new();
         let vectors = [
             (
                 "int-negative-256",

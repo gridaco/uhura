@@ -55,11 +55,11 @@ const artifact = {
 describe("Uhura semantic provenance", () => {
   it("admits the exact source and occurrence contract", () => {
     const decoded = decodeSemanticProvenance(artifact);
-    expect(decoded?.sources[0]?.path).toBe("machine.uhura");
-    expect(decoded?.occurrences[0]?.node).toBe(hash);
-    expect(decoded?.topology.nodes[0]?.kind).toBe("module");
-    expect(decoded?.topology.nodes[1]?.kind).toBe("invariant");
-    expect(decodeSemanticProvenance(null)).toBeNull();
+    expect(decoded.sources[0]?.path).toBe("machine.uhura");
+    expect(decoded.occurrences[0]?.node).toBe(hash);
+    expect(decoded.topology.nodes[0]?.kind).toBe("module");
+    expect(decoded.topology.nodes[1]?.kind).toBe("invariant");
+    expect(() => decodeSemanticProvenance(null)).toThrow(/must be an object/u);
   });
 
   it("rejects non-contiguous sources and out-of-bounds occurrences", () => {
@@ -111,7 +111,7 @@ describe("Uhura semantic provenance", () => {
         edges: [],
       },
     };
-    expect(decodeSemanticProvenance(sharedPath)?.sources).toHaveLength(2);
+    expect(decodeSemanticProvenance(sharedPath).sources).toHaveLength(2);
     expect(() =>
       decodeSemanticProvenance({
         ...sharedPath,

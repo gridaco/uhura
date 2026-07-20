@@ -374,7 +374,7 @@ body {
   padding: var(--space-3) var(--space-4);
 }
 
-.ring-row > .uh-region {
+.ring-row > [role="listitem"] {
   flex: none;
 }
 

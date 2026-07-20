@@ -1,11 +1,10 @@
-//! Source-spanned syntax tree for the Uhura machine language.
+//! Private source-spanned IR consumed by the checker kernel.
 //!
-//! The tree intentionally stops before name or type resolution.  In
-//! particular, a bare name is not classified as a binding, constructor, or
-//! builtin here, and braces are retained as records or blocks according to
-//! their concrete syntactic role.  Every order that is semantically
-//! observable later (declarations, variants, statements, commands, UI nodes,
-//! and evidence steps) remains source ordered.
+//! This is not an authored language or a public syntax API. The current Uhura
+//! frontend resolves and lowers its AST into this stable substrate so the
+//! checker kernel can remain independent of source spelling. The tree stops
+//! before name and type checking, and every semantically observable order
+//! remains source ordered.
 
 use std::fmt;
 
@@ -13,31 +12,17 @@ use serde::{Deserialize, Serialize};
 
 use uhura_base::{FileId, Span};
 
-/// A serialisation-friendly source identity.
+/// A serialization-friendly checker source identity.
 ///
-/// `FileId` is process-local and deliberately tiny.  Persisted syntax also
-/// needs the logical path, so this frontend carries both rather than teaching the
-/// shared v0 source map a new wire contract.
+/// `FileId` is process-local and deliberately tiny. The lowering substrate
+/// also carries the logical path for diagnostics and deterministic identity.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourceId {
     pub file: u32,
     pub path: String,
 }
 
-impl SourceId {
-    pub fn new(file: FileId, path: impl Into<String>) -> Self {
-        Self {
-            file: file.0,
-            path: path.into(),
-        }
-    }
-
-    pub fn file_id(&self) -> FileId {
-        FileId(self.file)
-    }
-}
-
-/// A UTF-8 byte range in one current-generation Uhura source.
+/// A UTF-8 byte range retained through frontend lowering.
 #[derive(
     Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
@@ -76,11 +61,10 @@ impl From<Span> for SourceSpan {
     }
 }
 
-/// A syntax value plus its exact source extent.
+/// A checker-IR value plus its exact authored source extent.
 ///
-/// Structural equality intentionally ignores locations.  This makes
-/// parse-format-parse comparisons useful while retaining spans for
-/// diagnostics, editor selection, and lowering.
+/// Structural equality intentionally ignores locations while retaining spans
+/// for diagnostics, editor selection, and lowering.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Spanned<T> {
     pub value: T,
@@ -90,14 +74,6 @@ pub struct Spanned<T> {
 impl<T> Spanned<T> {
     pub const fn new(value: T, span: SourceSpan) -> Self {
         Self { value, span }
-    }
-
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
-        Spanned::new(f(self.value), self.span)
-    }
-
-    pub fn as_ref(&self) -> Spanned<&T> {
-        Spanned::new(&self.value, self.span)
     }
 }
 
@@ -137,9 +113,6 @@ pub struct Module {
     pub uses: Vec<UseDecl>,
     pub imports: Vec<ImportDecl>,
     pub declarations: Vec<Declaration>,
-    /// The accepted source is retained so comments, author-selected blank
-    /// lines, UI text, and literal spellings survive a syntax-only round trip.
-    pub source: String,
 }
 
 impl PartialEq for Module {
@@ -157,7 +130,7 @@ impl Eq for Module {}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct LanguageHeader {
     pub name: Name,
-    /// Exact decimal spelling of the minor-version pair, currently `0.3`.
+    /// Internal checker-kernel version. Authored source is headerless.
     pub version: String,
     pub span: SourceSpan,
 }

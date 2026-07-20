@@ -8,13 +8,9 @@
 export const UHURA_BROWSER_PROTOCOL = "uhura-browser/3" as const;
 export const UHURA_RUNTIME_SNAPSHOT_PROTOCOL =
   "uhura-runtime-snapshot/0" as const;
-export const UHURA_SEMANTIC_IR_HASH_PROTOCOL =
-  "uhura-semantic-ir-hash/0" as const;
 export const UHURA_MACHINE_PROGRAM_ID_PROTOCOL =
   "uhura-machine-program/0" as const;
-export type UhuraIdentityProtocol =
-  | typeof UHURA_SEMANTIC_IR_HASH_PROTOCOL
-  | typeof UHURA_MACHINE_PROGRAM_ID_PROTOCOL;
+export type UhuraIdentityProtocol = typeof UHURA_MACHINE_PROGRAM_ID_PROTOCOL;
 export const UHURA_GENESIS_RECEIPT_PROTOCOL =
   "uhura-genesis-receipt/0" as const;
 export const UHURA_REACTION_RECEIPT_PROTOCOL =
@@ -95,12 +91,9 @@ export const decodeIdentityProtocol = (
   value: unknown,
   context: string,
 ): UhuraIdentityProtocol => {
-  if (
-    value !== UHURA_SEMANTIC_IR_HASH_PROTOCOL
-    && value !== UHURA_MACHINE_PROGRAM_ID_PROTOCOL
-  ) {
+  if (value !== UHURA_MACHINE_PROGRAM_ID_PROTOCOL) {
     throw new TypeError(
-      `${context} must be ${JSON.stringify(UHURA_SEMANTIC_IR_HASH_PROTOCOL)} or ${JSON.stringify(UHURA_MACHINE_PROGRAM_ID_PROTOCOL)}`,
+      `${context} must be ${JSON.stringify(UHURA_MACHINE_PROGRAM_ID_PROTOCOL)}`,
     );
   }
   return value;

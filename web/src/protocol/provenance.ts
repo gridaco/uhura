@@ -167,16 +167,11 @@ const compareText = (left: string, right: string): number =>
 
 /**
  * Decode source-layout-sensitive language provenance.
- *
- * Legacy projects intentionally publish `null`; Uhura 0.4 projects publish
- * the closed `uhura-provenance/0` contract.
  */
 export const decodeSemanticProvenance = (
   value: unknown,
   context = "Uhura semantic provenance",
-): SemanticProvenance | null => {
-  if (value === null) return null;
-
+): SemanticProvenance => {
   const root = object(value, context);
   exactKeys(root, ["protocol", "sources", "occurrences", "topology"], context);
   if (root["protocol"] !== UHURA_PROVENANCE_PROTOCOL) {

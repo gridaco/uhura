@@ -9,8 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use uhura_base::Diagnostic;
 use uhura_core::ir::SourceRef;
 use uhura_core::{Program, SiteIdentityFrame, Statement, semantic_node_id};
-use uhura_syntax::{ast, v04};
+use uhura_syntax::v04;
 
+use crate::checker_ir as ast;
 use crate::diagnostic::{codes, error};
 
 #[derive(Clone, Debug)]
@@ -77,8 +78,10 @@ pub(super) struct SiteOrigin {
 
 impl CompositionOutput {
     pub(super) fn apply_site_ids(&self, program: &mut Program) -> Result<(), String> {
+        let core = &mut program.machine_program;
+        let (machines, site_identities) = (&mut core.machines, &mut core.site_identities);
         for (machine_id, sites) in &self.machine_sites {
-            let Some(machine) = program.machines.get_mut(machine_id) else {
+            let Some(machine) = machines.get_mut(machine_id) else {
                 continue;
             };
             if machine.invariants.len() != sites.invariants.len() {
@@ -89,7 +92,7 @@ impl CompositionOutput {
                 ));
             }
             for ((_, source), origin) in machine.invariants.iter_mut().zip(&sites.invariants) {
-                assign_origin(source, origin, machine_id, &mut program.site_identities);
+                assign_origin(source, origin, machine_id, site_identities);
             }
 
             for (input, handler) in &mut machine.handlers {
@@ -97,12 +100,7 @@ impl CompositionOutput {
                     .unreachable
                     .get(&SiteContainer::Handler(input.clone()))
                 {
-                    assign_container_sites(
-                        &mut handler.body,
-                        origins,
-                        machine_id,
-                        &mut program.site_identities,
-                    );
+                    assign_container_sites(&mut handler.body, origins, machine_id, site_identities);
                 }
             }
             for (name, transition) in &mut machine.transitions {
@@ -111,7 +109,7 @@ impl CompositionOutput {
                         &mut transition.body,
                         origins,
                         machine_id,
-                        &mut program.site_identities,
+                        site_identities,
                     );
                 }
             }
@@ -120,7 +118,7 @@ impl CompositionOutput {
                     &mut machine.before_commit,
                     origins,
                     machine_id,
-                    &mut program.site_identities,
+                    site_identities,
                 );
             }
 
@@ -131,7 +129,7 @@ impl CompositionOutput {
                     input,
                     &all_origins,
                     machine_id,
-                    &mut program.site_identities,
+                    site_identities,
                 );
             }
             for (name, transition) in &mut machine.transitions {
@@ -140,7 +138,7 @@ impl CompositionOutput {
                     name,
                     &all_origins,
                     machine_id,
-                    &mut program.site_identities,
+                    site_identities,
                 );
             }
             assign_fallback_sites(
@@ -148,7 +146,7 @@ impl CompositionOutput {
                 "root",
                 &all_origins,
                 machine_id,
-                &mut program.site_identities,
+                site_identities,
             );
             let mut missing = false;
             for handler in machine.handlers.values_mut() {
@@ -756,6 +754,12 @@ fn visit_expression_unreachable_spans(
                 visit_expression_unreachable_spans(base, visit);
             }
         }
+        E::AnonymousRecord(entries) => {
+            for entry in entries {
+                visit_expression_unreachable_spans(&mut entry.key, visit);
+                visit_expression_unreachable_spans(&mut entry.value, visit);
+            }
+        }
         E::Block(block) => visit_authored_unreachable_spans(block, visit),
         E::Call { callee, arguments } => {
             visit_expression_unreachable_spans(callee, visit);
@@ -984,6 +988,26 @@ fn collect_unreachable_expression(
                 );
             }
         }
+        E::AnonymousRecord(entries) => {
+            for (index, entry) in entries.iter().enumerate() {
+                collect_unreachable_expression(
+                    sites,
+                    machine_id,
+                    owner,
+                    container,
+                    &format!("{path}/entry/{index}/key"),
+                    &entry.key,
+                );
+                collect_unreachable_expression(
+                    sites,
+                    machine_id,
+                    owner,
+                    container,
+                    &format!("{path}/entry/{index}/value"),
+                    &entry.value,
+                );
+            }
+        }
         E::Block(block) => {
             collect_unreachable_block(sites, machine_id, owner, container.clone(), path, block);
         }
@@ -1203,6 +1227,23 @@ fn pattern_site_path(pattern: &v04::ast::Pattern) -> String {
                 rest
             )
         }
+        P::AnonymousRecord { fields, rest } => {
+            let mut fields = fields
+                .iter()
+                .map(|field| {
+                    format!(
+                        "{}={}",
+                        field.name.text,
+                        field
+                            .pattern
+                            .as_ref()
+                            .map_or_else(|| "bind".into(), pattern_site_path)
+                    )
+                })
+                .collect::<Vec<_>>();
+            fields.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+            format!("anonymous-record/{}/{}", fields.join("/"), rest)
+        }
         P::Alternative(values) => {
             let mut values = values.iter().map(pattern_site_path).collect::<Vec<_>>();
             values.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
@@ -1351,6 +1392,9 @@ impl PartCatalog {
                     v04::ast::DeclarationKind::Function(value) => {
                         (&value.name, value.visibility, "function")
                     }
+                    v04::ast::DeclarationKind::Scenario(_)
+                    | v04::ast::DeclarationKind::Example(_)
+                    | v04::ast::DeclarationKind::Checkpoint(_) => continue,
                 };
                 let lowered = module_bindings
                     .get(&name.text)
@@ -2696,6 +2740,12 @@ fn rewrite_expression(
                 rewrite_expression(base, context, diagnostics);
             }
         }
+        v04::ast::ExpressionKind::AnonymousRecord(entries) => {
+            for entry in entries {
+                rewrite_expression(&mut entry.key, context, diagnostics);
+                rewrite_expression(&mut entry.value, context, diagnostics);
+            }
+        }
         v04::ast::ExpressionKind::Block(value) => {
             rewrite_block(value, context, &BTreeMap::new(), diagnostics);
         }
@@ -3027,6 +3077,21 @@ fn rewrite_pattern(pattern: &mut v04::ast::Pattern, context: &mut RewriteContext
                 }
             }
         }
+        v04::ast::PatternKind::AnonymousRecord { fields, .. } => {
+            for field in fields {
+                if let Some(value) = &mut field.pattern {
+                    rewrite_pattern(value, context);
+                } else if let Some(lowered) = context.lexical.get(&field.name.text) {
+                    field.pattern = Some(v04::ast::Node::new(
+                        v04::ast::PatternKind::Binder(v04::ast::Identifier::new(
+                            lowered.clone(),
+                            field.name.span,
+                        )),
+                        field.span,
+                    ));
+                }
+            }
+        }
         v04::ast::PatternKind::Wildcard | v04::ast::PatternKind::Literal(_) => {}
     }
 }
@@ -3062,7 +3127,8 @@ fn collect_pattern_bindings(pattern: &v04::ast::Pattern, names: &mut BTreeSet<St
                 collect_pattern_bindings(argument, names);
             }
         }
-        v04::ast::PatternKind::Record { fields, .. } => {
+        v04::ast::PatternKind::Record { fields, .. }
+        | v04::ast::PatternKind::AnonymousRecord { fields, .. } => {
             for field in fields {
                 if let Some(value) = &field.pattern {
                     collect_pattern_bindings(value, names);
@@ -3545,6 +3611,12 @@ fn visit_expression(
             }
             if let Some(base) = &value.base {
                 visit_expression(base, visitor);
+            }
+        }
+        v04::ast::ExpressionKind::AnonymousRecord(entries) => {
+            for entry in entries {
+                visit_expression(&entry.key, visitor);
+                visit_expression(&entry.value, visitor);
             }
         }
         v04::ast::ExpressionKind::Block(value) => visit_block_expressions(value, visitor),

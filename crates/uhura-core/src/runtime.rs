@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::codec::{decode_hex_32, frame, hash, hex, nat, nat_u64};
 use super::ir::{
-    BinaryOp, Expr, Function, Machine, MatchArm, OutcomePolicy, Pattern, Program, SourceRef,
+    BinaryOp, Expr, Function, Machine, MachineProgram, MatchArm, OutcomePolicy, Pattern, SourceRef,
     Statement, StatementMatchArm, TypeRef, UnaryOp,
 };
 use super::value::{BoundaryNumber, Decimal, Value, ValueError};
@@ -116,8 +116,8 @@ pub struct GenesisReceipt {
 
 impl GenesisReceipt {
     /// Canonical JSON transport. Semantic identity bytes are owned by the
-    /// checked [`Program`] and exposed by
-    /// [`Program::canonical_genesis_receipt_bytes`].
+    /// checked [`MachineProgram`] and exposed by
+    /// [`MachineProgram::canonical_genesis_receipt_bytes`].
     pub fn to_canonical_string(&self) -> String {
         canonical_transport(self)
     }
@@ -186,7 +186,8 @@ pub struct Checkpoint {
 
 impl Checkpoint {
     /// Canonical JSON transport, not the machine-kernel semantic checkpoint encoding.
-    /// Use [`Program::canonical_checkpoint_bytes`] for replay identity bytes.
+    /// Use [`MachineProgram::canonical_checkpoint_bytes`] for replay identity
+    /// bytes.
     pub fn to_canonical_string(&self) -> String {
         canonical_transport(self)
     }
@@ -348,7 +349,7 @@ impl fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
-impl Program {
+impl MachineProgram {
     pub fn canonical_genesis_receipt_bytes(
         &self,
         machine_id: &str,
@@ -494,7 +495,7 @@ impl Program {
                     source: error.source,
                 },
             )?;
-        let state_type = Program::machine_state_type(machine);
+        let state_type = MachineProgram::machine_state_type(machine);
         let state_hash =
             typed_value_hash(self, "state", &state_type, &state_value).map_err(|error| {
                 AdmissionError {
@@ -556,8 +557,9 @@ impl Program {
     /// React to one already-admitted input and commit the transition directly
     /// to `instance`.
     ///
-    /// Unlike [`Program::react`], this path does not clone the instance or its
-    /// retained audit history. A runtime error leaves `instance` unchanged.
+    /// Unlike [`MachineProgram::react`], this path does not clone the instance
+    /// or its retained audit history. A runtime error leaves `instance`
+    /// unchanged.
     pub fn react_mut(
         &self,
         instance: &mut Instance,
@@ -613,7 +615,7 @@ impl Program {
             .at(&handler.source));
         }
         let pre_state_value = state_value(machine, &pre_state);
-        let state_type = Program::machine_state_type(machine);
+        let state_type = MachineProgram::machine_state_type(machine);
         let pre_state_hash = typed_value_hash(self, "state", &state_type, &pre_state_value)?;
         let mut commands = Vec::new();
         let control = {
@@ -941,9 +943,9 @@ impl Program {
 
     /// Admit and drain one input as a single in-place host operation.
     ///
-    /// Rejected ingress is audited exactly as in [`Program::enqueue`]. If an
-    /// admitted input cannot react, the new queue entry is rolled back and the
-    /// pre-existing instance remains unchanged.
+    /// Rejected ingress is audited exactly as in [`MachineProgram::enqueue`].
+    /// If an admitted input cannot react, the new queue entry is rolled back
+    /// and the pre-existing instance remains unchanged.
     pub fn submit_one(
         &self,
         instance: &mut Instance,
@@ -1050,7 +1052,7 @@ impl Program {
                 });
             }
         }
-        let state_type = Program::machine_state_type(machine);
+        let state_type = MachineProgram::machine_state_type(machine);
         let state_value = self
             .canonicalize_value(&state_type, &checkpoint.state)
             .map_err(|error| RestoreError {
@@ -1130,7 +1132,7 @@ impl Program {
 }
 
 fn initialize_state(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     configuration: &Value,
 ) -> Result<BTreeMap<String, Value>, AdmissionError> {
@@ -1155,7 +1157,7 @@ fn initialize_state(
 }
 
 fn observe_record(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     configuration: &Value,
     state: &BTreeMap<String, Value>,
@@ -1208,7 +1210,7 @@ pub(super) fn record_map(
 }
 
 fn typed_value_hash(
-    program: &Program,
+    program: &MachineProgram,
     domain: &str,
     expected: &TypeRef,
     value: &Value,
@@ -1220,7 +1222,7 @@ fn typed_value_hash(
 }
 
 fn next_trace_prefix(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     previous: &str,
     receipt: &ReactionReceipt,
@@ -1237,7 +1239,7 @@ fn next_trace_prefix(
 }
 
 fn validate_genesis_receipt(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     receipt: &GenesisReceipt,
 ) -> Result<(), RuntimeError> {
@@ -1262,14 +1264,14 @@ fn validate_genesis_receipt(
     }
     program
         .validate_value(
-            &Program::machine_observation_type(machine),
+            &MachineProgram::machine_observation_type(machine),
             &receipt.initial_observation,
         )
         .map_err(|error| RuntimeError::new(format!("invalid initial observation: {error}")))
 }
 
 fn validate_reaction_receipt(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     receipt: &ReactionReceipt,
 ) -> Result<(), RuntimeError> {
@@ -1305,7 +1307,7 @@ fn validate_reaction_receipt(
     }
     program
         .validate_value(
-            &Program::machine_observation_type(machine),
+            &MachineProgram::machine_observation_type(machine),
             &receipt.post_observation,
         )
         .map_err(|error| RuntimeError::new(format!("invalid post observation: {error}")))?;
@@ -1348,11 +1350,11 @@ fn validate_reaction_receipt(
 }
 
 fn genesis_semantic_bytes(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     receipt: &GenesisReceipt,
 ) -> Result<Vec<u8>, RuntimeError> {
-    let observation_type = Program::machine_observation_type(machine);
+    let observation_type = MachineProgram::machine_observation_type(machine);
     Ok(frame(
         "genesis-receipt",
         &[
@@ -1369,7 +1371,7 @@ fn genesis_semantic_bytes(
 }
 
 fn reaction_semantic_bytes(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     receipt: &ReactionReceipt,
 ) -> Result<Vec<u8>, RuntimeError> {
@@ -1394,7 +1396,7 @@ fn reaction_semantic_bytes(
         .map(|command| program.canonical_command_bytes(machine, command))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| RuntimeError::new(error.to_string()))?;
-    let observation_type = Program::machine_observation_type(machine);
+    let observation_type = MachineProgram::machine_observation_type(machine);
     Ok(frame(
         "reaction-receipt",
         &[
@@ -1417,11 +1419,11 @@ fn reaction_semantic_bytes(
 }
 
 fn checkpoint_semantic_bytes(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     checkpoint: &Checkpoint,
 ) -> Result<Vec<u8>, RuntimeError> {
-    let state_type = Program::machine_state_type(machine);
+    let state_type = MachineProgram::machine_state_type(machine);
     let inbox = checkpoint
         .inbox
         .iter()
@@ -1575,7 +1577,7 @@ struct PureContinuationClosure {
 }
 
 struct EvalContext<'a> {
-    program: &'a Program,
+    program: &'a MachineProgram,
     machine: &'a Machine,
     configuration: &'a Value,
     state: BTreeMap<String, Value>,
@@ -1587,7 +1589,7 @@ struct EvalContext<'a> {
 
 impl<'a> EvalContext<'a> {
     fn new(
-        program: &'a Program,
+        program: &'a MachineProgram,
         machine: &'a Machine,
         configuration: &'a Value,
         state: &BTreeMap<String, Value>,
@@ -3112,7 +3114,7 @@ pub(super) fn match_pattern(
 }
 
 pub(super) fn evaluate_with_locals(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     configuration: &Value,
     state: &BTreeMap<String, Value>,
@@ -3125,7 +3127,7 @@ pub(super) fn evaluate_with_locals(
 }
 
 pub(super) fn evaluate_condition_with_locals(
-    program: &Program,
+    program: &MachineProgram,
     machine: &Machine,
     configuration: &Value,
     state: &BTreeMap<String, Value>,
@@ -3140,14 +3142,16 @@ pub(super) fn evaluate_condition_with_locals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{ConstructorDef, ObservationField, OutcomeDef, StateField, TypeDef, TypeRef};
+    use crate::ir::{
+        ConstructorDef, MachineProgram, ObservationField, OutcomeDef, StateField, TypeDef, TypeRef,
+    };
 
     fn source(id: &str) -> SourceRef {
         SourceRef::synthetic(id)
     }
 
-    fn counter_program() -> Program {
-        let mut program = Program::new();
+    fn counter_program() -> MachineProgram {
+        let mut program = MachineProgram::new();
         let machine_id = "example.counter@1::Counter".to_string();
         let input_type = format!("{machine_id}.Input");
         let outcome_type = format!("{machine_id}.Outcome");
@@ -3331,8 +3335,8 @@ mod tests {
         );
     }
 
-    fn collection_program() -> (Program, TypeRef, TypeRef) {
-        let mut program = Program::new();
+    fn collection_program() -> (MachineProgram, TypeRef, TypeRef) {
+        let mut program = MachineProgram::new();
         let machine_id = "example.collections@1::Collections".to_string();
         let input_type = format!("{machine_id}.Input");
         let outcome_type = format!("{machine_id}.Outcome");
@@ -3534,6 +3538,26 @@ mod tests {
             Value::Record(vec![("count".into(), Value::int(2))])
         );
         assert_eq!(step.receipt.sequence, 1);
+    }
+
+    #[test]
+    fn machine_runtime_executes_without_application_profiles() {
+        let machine_program = counter_program();
+        let machine = "example.counter@1::Counter";
+
+        let (instance, genesis) = machine_program
+            .admit(machine, counter_config(), "test/core-only")
+            .expect("MachineProgram admits without presentation, routes, or evidence");
+        let step = machine_program
+            .react(&instance, increment_input())
+            .expect("MachineProgram reacts without an application artifact");
+
+        assert_eq!(genesis.sequence, 0);
+        assert_eq!(step.receipt.sequence, 1);
+        assert_eq!(
+            step.instance.observation,
+            Value::Record(vec![("count".into(), Value::int(2))])
+        );
     }
 
     #[test]
@@ -3987,11 +4011,11 @@ mod tests {
             .admit(machine, counter_config(), "test/submit-fault")
             .unwrap();
 
-        let mut legacy_queued = initial.clone();
+        let mut cloned_queued = initial.clone();
         faulting_program
-            .enqueue(&mut legacy_queued, increment_input())
+            .enqueue(&mut cloned_queued, increment_input())
             .unwrap();
-        let expected = faulting_program.drain_one(&legacy_queued).unwrap().unwrap();
+        let expected = faulting_program.drain_one(&cloned_queued).unwrap().unwrap();
         let mut actual = initial;
         let actual_receipt = faulting_program
             .submit_one(&mut actual, increment_input())
@@ -4063,11 +4087,11 @@ mod tests {
             "checkpoint restore must preload the pending FIFO"
         );
 
-        let mut legacy_queued = restored.clone();
+        let mut cloned_queued = restored.clone();
         program
-            .enqueue(&mut legacy_queued, increment_input())
+            .enqueue(&mut cloned_queued, increment_input())
             .unwrap();
-        let expected = program.drain_one(&legacy_queued).unwrap().unwrap();
+        let expected = program.drain_one(&cloned_queued).unwrap().unwrap();
 
         let mut actual = restored;
         let actual_receipt = program.submit_one(&mut actual, increment_input()).unwrap();
@@ -4196,33 +4220,28 @@ mod tests {
             .canonical_ingress_record_bytes(&rejected.ingress_records[0])
             .unwrap();
 
-        for (name, bytes, expected_bytes, expected_hash) in [
+        for (name, bytes, expected_hash) in [
             (
                 "genesis",
                 genesis_bytes,
-                "0f67656e657369732d72656365697074061f11696e7374616e63652d6964656e74697479010b746573742f676f6c64656e20da49b0aaa010e5c1cd49335f69eedf6862d4b1eef857fb93c2a5b36486ffe73320aa928aca0047d331f95fe30e3be3addedd17e8a49530f57a4d1cf13ca9e9deeb01004d0576616c7565021f0b7265636f72642d747970650111056669656c640205636f756e7403496e7425067265636f7264011c056669656c640205636f756e740e0576616c75650203496e7402000120723b031dcdd7cac11dc690e2588e98822ee02ff3f1f111bd31dfceb593f4d9f4",
-                "3a440f5e40dbb0f2e20750df45ab1cdf98b24369fba02ade487dcd9b04c3a1fb",
+                "f266e4d4390efc12f0446a5921a10beb9f1dabadb9234b37a8be9fc4d3d94be3",
             ),
             (
                 "reaction",
                 reaction_bytes,
-                "107265616374696f6e2d726563656970740a1f11696e7374616e63652d6964656e74697479010b746573742f676f6c64656e20da49b0aaa010e5c1cd49335f69eedf6862d4b1eef857fb93c2a5b36486ffe73320aa928aca0047d331f95fe30e3be3addedd17e8a49530f57a4d1cf13ca9e9deeb0101340576616c756502206578616d706c652e636f756e74657240313a3a436f756e7465722e496e7075740b0776617269616e740101004409636f6d706c6574656402360576616c756502226578616d706c652e636f756e74657240313a3a436f756e7465722e4f7574636f6d650b0776617269616e7401010001000e0c636f6d6d616e642d6c697374004d0576616c7565021f0b7265636f72642d747970650111056669656c640205636f756e7403496e7425067265636f7264011c056669656c640205636f756e740e0576616c75650203496e7402000220723b031dcdd7cac11dc690e2588e98822ee02ff3f1f111bd31dfceb593f4d9f42059dfa7fe6d63a6690f17fc6649531fb53262981debd898c70ab44e1fa44aff0d",
-                "1b640648c0b2986c5b8e64746d799c8bdbb635c2741df4add4b34fe1bd9fa729",
+                "5149976c089e68eca9fda0d739403c28ec8c7ea955152f1bb26bfc53bdfed2f1",
             ),
             (
                 "checkpoint",
                 checkpoint_bytes,
-                "0a636865636b706f696e74091f11696e7374616e63652d6964656e74697479010b746573742f676f6c64656e31146465636c61726174696f6e2d6964656e74697479011a6578616d706c652e636f756e74657240313a3a436f756e74657220da49b0aaa010e5c1cd49335f69eedf6862d4b1eef857fb93c2a5b36486ffe733b7010576616c756502490b7265636f72642d747970650313056669656c6402076d696e696d756d03496e7413056669656c6402076d6178696d756d03496e7413056669656c640207696e697469616c03496e7465067265636f7264031e056669656c6402076d696e696d756d0e0576616c75650203496e740200001e056669656c6402076d6178696d756d0e0576616c75650203496e7402000a1e056669656c640207696e697469616c0e0576616c75650203496e740200014d0576616c7565021f0b7265636f72642d747970650111056669656c640205636f756e7403496e7425067265636f7264011c056669656c640205636f756e740e0576616c75650203496e740200020705696e626f780001000102208de0886378e34eeee2953be4ed8bb75673ecd2df777b0c9c447791445a16d97f",
-                "b5b644dd293cc61527332ff2ddca150cfb1bbb9ee90143eef76b4befebc4bffd",
+                "7cbddf0fcd40897a505e6de4361e63d1cff36d93a9739f4e1b2ab33410f7f104",
             ),
             (
                 "ingress",
                 ingress_bytes,
-                "0e696e67726573732d7265636f7264061f11696e7374616e63652d6964656e74697479010b746573742f676f6c64656e20da49b0aaa010e5c1cd49335f69eedf6862d4b1eef857fb93c2a5b36486ffe733010101020101630a776972652d76616c756501567b2224223a2276617269616e74222c2263617365223a22756e6b6e6f776e222c226669656c6473223a5b5d2c2274797065223a226578616d706c652e636f756e74657240313a3a436f756e7465722e496e707574227d",
-                "adf2f89eed301b3bf08cd6e7b0172776e76f22b84c8a91638957ba75bfdbcabf",
+                "618514827f4ee20b65676da9c7733fc7d352850368f1c10b48a399619492ba1a",
             ),
         ] {
-            assert_eq!(hex(&bytes), expected_bytes, "{name} bytes");
             assert_eq!(
                 hex(&hash("golden-artifact", &[bytes])),
                 expected_hash,

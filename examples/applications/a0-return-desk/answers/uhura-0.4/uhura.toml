@@ -8,5 +8,5 @@ return_desk = "machine.uhura"
 ui = "ui.uhura"
 evidence_support = "evidence-support.uhura"
 
-[evidence]
-sources = ["evidence/conformance.uhura"]
+[evidence.modules]
+conformance = "evidence/conformance.uhura"

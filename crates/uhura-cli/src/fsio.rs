@@ -39,26 +39,6 @@ pub fn walk_sources(root: &Path) -> io::Result<Vec<SourceFile>> {
     Ok(sources)
 }
 
-pub fn walk_retired_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let canonical_root = std::fs::canonicalize(root)?;
-    let mut paths = Vec::new();
-    let mut active = BTreeSet::from([canonical_root.clone()]);
-    walk_directory(
-        &canonical_root,
-        &canonical_root,
-        Path::new(""),
-        &mut active,
-        &mut |logical, _| {
-            if logical.extension().and_then(|extension| extension.to_str()) == Some("relay") {
-                paths.push(logical.to_path_buf());
-            }
-            Ok(())
-        },
-    )?;
-    paths.sort();
-    Ok(paths)
-}
-
 fn walk_directory(
     root: &Path,
     actual: &Path,
@@ -122,10 +102,7 @@ fn walk_directory(
 }
 
 fn is_source_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        Some("uhura" | "relay")
-    )
+    path.extension().and_then(|extension| extension.to_str()) == Some("uhura")
 }
 
 fn ignored(path: &Path) -> bool {

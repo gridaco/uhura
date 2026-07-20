@@ -8,8 +8,8 @@ instagram = "machine.uhura"
 parts = "parts.uhura"
 ui = "ui.uhura"
 
-[evidence]
-sources = ["evidence.uhura"]
+[evidence.modules]
+previews = "evidence.uhura"
 
 # Live instance identity, presentation, lifetime, and port bindings belong to
 # `host.toml`.

@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { natural } from "../protocol/machine.js";
 import {
@@ -10,8 +12,16 @@ import type {
   ProjectionRendererOptions,
   RenderDocument,
 } from "./projection.js";
+import {
+  PRIMITIVE_ADAPTER_IDS,
+  primitiveAdapter,
+} from "./primitives/registry.js";
 
 const LIVE_REVISION = natural("1");
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const documentValue = (text: string): RenderDocument => ({
   protocol: "uhura-view/1",
@@ -253,6 +263,10 @@ class FakeElement extends FakeNode {
       isComposing: init.isComposing ?? false,
       preventDefault: vi.fn<() => void>(),
     } as unknown as Event;
+    this.emitEvent(type, event);
+  }
+
+  emitEvent(type: string, event: Event): void {
     for (const listener of this.#listeners.get(type) ?? []) {
       listener.call(this as unknown as EventTarget, event);
     }
@@ -263,8 +277,73 @@ class FakeElement extends FakeNode {
   }
 }
 
+class FakeIntersectionObserver {
+  readonly #callback: IntersectionObserverCallback;
+  target: FakeElement | undefined;
+  disconnected = false;
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.#callback = callback;
+  }
+
+  observe(target: Element): void {
+    this.target = target as unknown as FakeElement;
+  }
+
+  disconnect(): void {
+    this.disconnected = true;
+  }
+
+  emit(isIntersecting: boolean): void {
+    if (this.disconnected || !this.target) return;
+    this.#callback(
+      [{
+        isIntersecting,
+        target: this.target as unknown as Element,
+      } as IntersectionObserverEntry],
+      this as unknown as IntersectionObserver,
+    );
+  }
+}
+
 class FakeDocument {
-  readonly defaultView = undefined;
+  readonly defaultView: Window | undefined;
+  readonly intersections: FakeIntersectionObserver[] = [];
+  readonly #animationFrames = new Map<number, FrameRequestCallback>();
+  #nextAnimationFrame = 1;
+
+  constructor(options: {
+    readonly animationFrames?: boolean;
+    readonly intersections?: boolean;
+  } = {}) {
+    const { intersections } = this;
+    const view: Partial<Window> & {
+      IntersectionObserver?: typeof IntersectionObserver;
+    } = {};
+    if (options.animationFrames) {
+      view.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+        const handle = this.#nextAnimationFrame;
+        this.#nextAnimationFrame += 1;
+        this.#animationFrames.set(handle, callback);
+        return handle;
+      };
+      view.cancelAnimationFrame = (handle: number): void => {
+        this.#animationFrames.delete(handle);
+      };
+    }
+    if (options.intersections) {
+      view.IntersectionObserver = class extends FakeIntersectionObserver {
+        constructor(callback: IntersectionObserverCallback) {
+          super(callback);
+          intersections.push(this);
+        }
+      } as unknown as typeof IntersectionObserver;
+    }
+    this.defaultView =
+      options.animationFrames || options.intersections
+        ? view as Window
+        : undefined;
+  }
 
   createElement(name: string): FakeElement {
     return new FakeElement(this, name);
@@ -273,17 +352,28 @@ class FakeDocument {
   createTextNode(value: string): FakeText {
     return new FakeText(this, value);
   }
+
+  flushAnimationFrames(): void {
+    const frames = [...this.#animationFrames.values()];
+    this.#animationFrames.clear();
+    for (const callback of frames) callback(0);
+  }
 }
 
-const fakeRoot = (): {
+const fakeRoot = (options: {
+  readonly animationFrames?: boolean;
+  readonly intersections?: boolean;
+} = {}): {
   readonly root: HTMLElement;
   readonly element: FakeElement;
+  readonly document: FakeDocument;
 } => {
-  const document = new FakeDocument();
+  const document = new FakeDocument(options);
   const element = document.createElement("div");
   return {
     root: element as unknown as HTMLElement,
     element,
+    document,
   };
 };
 
@@ -445,6 +535,39 @@ describe("Uhura render protocol", () => {
 });
 
 describe("Uhura semantic primitive projection", () => {
+  it("publishes exactly the adapters required by the checked 0.4 catalogue", () => {
+    const contract = JSON.parse(readFileSync(
+      new URL("../../../resources/ui-catalog/0.4.json", import.meta.url),
+      "utf8",
+    )) as {
+      readonly protocol: string;
+      readonly language: string;
+      readonly primitiveAdapters: readonly string[];
+    };
+    expect(contract.protocol).toBe("uhura-ui-catalog/0");
+    expect(contract.language).toBe("0.4");
+    expect(PRIMITIVE_ADAPTER_IDS).toEqual([
+      "view",
+      "scroll",
+      "pager",
+      "text",
+      "img",
+      "video",
+      "icon",
+      "button",
+      "textfield",
+      "region",
+    ]);
+    expect([...PRIMITIVE_ADAPTER_IDS].sort())
+      .toEqual(contract.primitiveAdapters);
+    expect(new Set(PRIMITIVE_ADAPTER_IDS).size)
+      .toBe(PRIMITIVE_ADAPTER_IDS.length);
+    for (const id of PRIMITIVE_ADAPTER_IDS) {
+      expect(primitiveAdapter(id)?.id).toBe(id);
+    }
+    expect(primitiveAdapter("main")).toBeUndefined();
+  });
+
   it("retains listeners across binding tokens and rewires changed event shapes", () => {
     const { root, element } = fakeRoot();
     const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
@@ -687,6 +810,51 @@ describe("Uhura semantic primitive projection", () => {
     expect(surface.className).toBe("uhura-surface policy-sheet");
   });
 
+  it("owns list-item roles at a neutral view boundary", () => {
+    const { root, element } = fakeRoot();
+    const renderer = createProjectionRenderer({
+      root,
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
+      mode: "play",
+    });
+    renderer.render(renderNodes([
+      elementNode("list", "view", [{ name: "role", value: "list" }], [
+        elementNode("item", "view", [], [
+          elementNode(
+            "action",
+            "region",
+            [{ name: "label", value: "Open profile" }],
+            [{ kind: "text", key: "label", text: "Profile" }],
+            [{ event: "activate", binding: "open" }],
+          ),
+        ]),
+      ]),
+      elementNode("unsupported-role", "view", [
+        { name: "role", value: "tablist" },
+      ]),
+    ]));
+
+    const list = element.children[0]!;
+    const item = list.children[0]!;
+    const action = item.children[0]!;
+    expect(list.getAttribute("role")).toBe("list");
+    expect(item.getAttribute("role")).toBe("listitem");
+    expect(action.getAttribute("role")).toBe("button");
+    expect(element.children[1]!.getAttribute("role")).toBeNull();
+
+    expect(() => renderer.render(renderNodes([
+      elementNode("invalid-list", "view", [{ name: "role", value: "list" }], [
+        elementNode(
+          "invalid-item",
+          "region",
+          [{ name: "label", value: "Open profile" }],
+          [],
+          [{ event: "activate", binding: "open" }],
+        ),
+      ]),
+    ]))).toThrow(/neutral direct child/u);
+  });
+
   it("realizes scroll and region semantics and keeps Editor effects inert", () => {
     const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
     const play = fakeRoot();
@@ -727,6 +895,24 @@ describe("Uhura semantic primitive projection", () => {
       $: "record",
       fields: [],
     });
+    class KeyboardEventStub {
+      readonly isComposing = false;
+      readonly keyCode = 0;
+      readonly key: string;
+      readonly preventDefault = vi.fn<() => void>();
+
+      constructor(key: string) {
+        this.key = key;
+      }
+    }
+    vi.stubGlobal("KeyboardEvent", KeyboardEventStub);
+    const enter = new KeyboardEventStub("Enter");
+    region.emitEvent("keydown", enter as unknown as Event);
+    expect(enter.preventDefault).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenLastCalledWith("open", LIVE_REVISION, {
+      $: "record",
+      fields: [],
+    });
 
     const editorDispatch =
       vi.fn<ProjectionRendererOptions["dispatch"]>();
@@ -752,11 +938,124 @@ describe("Uhura semantic primitive projection", () => {
     expect(editorDispatch).not.toHaveBeenCalled();
   });
 
-  it("owns pager children through a stable track and synchronizes dot mechanics", () => {
+  it("realizes authored static scroll positions only in Editor mode", () => {
+    const editor = fakeRoot({ animationFrames: true });
+    const editorRenderer = createProjectionRenderer({
+      root: editor.root,
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
+      mode: "editor",
+    });
+    const vertical = renderNodes([
+      elementNode("scroll", "scroll", [
+        { name: "direction", value: "vertical" },
+        { name: "position", value: "0.25" },
+      ]),
+    ]);
+    editorRenderer.render(vertical);
+    const editorScroll = editor.element.children[0]!;
+    editorScroll.scrollHeight = 1_000;
+    editorScroll.clientHeight = 200;
+    editor.document.flushAnimationFrames();
+    expect(editorScroll.scrollTop).toBe(200);
+
+    const horizontal = renderNodes([
+      elementNode("scroll", "scroll", [
+        { name: "direction", value: "horizontal" },
+        { name: "position", value: "0.75" },
+      ]),
+    ]);
+    editorRenderer.render(horizontal);
+    editorScroll.scrollWidth = 1_000;
+    editorScroll.clientWidth = 200;
+    editor.document.flushAnimationFrames();
+    expect(editorScroll.scrollLeft).toBe(600);
+    expect(editorScroll.scrollTop).toBe(0);
+
+    editorRenderer.render(renderNodes([
+      elementNode("scroll", "scroll", [
+        { name: "direction", value: "horizontal" },
+      ]),
+    ]));
+    editor.document.flushAnimationFrames();
+    expect(editorScroll.scrollLeft).toBe(0);
+
+    const play = fakeRoot();
+    const playRenderer = createProjectionRenderer({
+      root: play.root,
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
+      mode: "play",
+    });
+    playRenderer.render(vertical);
+    const playScroll = play.element.children[0]!;
+    playScroll.scrollHeight = 1_000;
+    playScroll.clientHeight = 200;
+    playRenderer.render(vertical);
+    expect(playScroll.scrollTop).toBe(0);
+  });
+
+  it("arms, updates, and disposes the scroll near-end capability", () => {
+    const environment = fakeRoot({ intersections: true });
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
+    const renderer = createProjectionRenderer({
+      root: environment.root,
+      dispatch,
+      mode: "play",
+    });
+    const projection = (
+      binding: string,
+      child = "First",
+    ): RenderDocument => renderNodes([
+      elementNode(
+        "scroll",
+        "scroll",
+        [],
+        [{ kind: "text", key: "content", text: child }],
+        [{ event: "near-end", binding }],
+      ),
+    ]);
+    renderer.render(projection("load-1"), natural("3"));
+    const firstObserver = environment.document.intersections[0]!;
+    expect(firstObserver.target?.dataset["uhMechanic"]).toBe("near-end");
+
+    firstObserver.emit(true);
+    firstObserver.emit(true);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenLastCalledWith("load-1", natural("3"), {
+      $: "record",
+      fields: [],
+    });
+
+    renderer.render(projection("load-2", "Updated"), natural("4"));
+    expect(environment.document.intersections).toHaveLength(1);
+    firstObserver.emit(false);
+    firstObserver.emit(true);
+    expect(dispatch).toHaveBeenLastCalledWith("load-2", natural("4"), {
+      $: "record",
+      fields: [],
+    });
+
+    renderer.render(renderNodes([
+      elementNode("scroll", "scroll"),
+    ]));
+    expect(firstObserver.disconnected).toBe(true);
+    dispatch.mockClear();
+    firstObserver.emit(false);
+    firstObserver.emit(true);
+    expect(dispatch).not.toHaveBeenCalled();
+
+    renderer.render(projection("load-3"), natural("5"));
+    const replacementObserver = environment.document.intersections[1]!;
+    expect(replacementObserver.disconnected).toBe(false);
+    renderer.dispose();
+    expect(replacementObserver.disconnected).toBe(true);
+  });
+
+  it("owns pager children, dots, and checked page-change dispatch", () => {
     const { root, element } = fakeRoot();
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
     const renderer = createProjectionRenderer({
       root,
-      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
+      dispatch,
       mode: "play",
     });
     const pages = [
@@ -776,8 +1075,8 @@ describe("Uhura semantic primitive projection", () => {
         { name: "class", value: "gallery" },
         { name: "label", value: "Post media" },
         { name: "indicator", value: "dots" },
-      ], pages),
-    ]));
+      ], pages, [{ event: "page-change", binding: "page" }]),
+    ]), LIVE_REVISION);
 
     const pager = element.children[0]!;
     const track = pager.children.find(
@@ -805,13 +1104,18 @@ describe("Uhura semantic primitive projection", () => {
     track.emit("scroll");
     expect(dots.children[0]!.classList.contains("on")).toBe(false);
     expect(dots.children[1]!.classList.contains("on")).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith("page", LIVE_REVISION, {
+      $: "record",
+      fields: [],
+    });
 
     renderer.render(renderNodes([
       elementNode("pager", "pager", [
         { name: "label", value: "Post media" },
         { name: "indicator", value: "none" },
-      ], pages),
-    ]));
+      ], pages, [{ event: "page-change", binding: "page-next" }]),
+    ]), natural("2"));
     const updatedPager = element.children[0]!;
     expect(
       updatedPager.children.find(
@@ -823,6 +1127,18 @@ describe("Uhura semantic primitive projection", () => {
         (child) => child.dataset["uhMechanic"] === "dots",
       ),
     ).toBe(false);
+    track.scrollLeft = 0;
+    track.emit("scroll");
+    expect(dispatch).toHaveBeenLastCalledWith("page-next", natural("2"), {
+      $: "record",
+      fields: [],
+    });
+
+    dispatch.mockClear();
+    renderer.render(renderNodes([]));
+    track.scrollLeft = 100;
+    track.emit("scroll");
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("realizes textfield as a wrapper and dispatches from its input mechanic", () => {
@@ -893,6 +1209,48 @@ describe("Uhura semantic primitive projection", () => {
     editorInput.value = "changed";
     editorInput.emit("input");
     expect(editorDispatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps controlled textfield input coherent across synchronous projections", () => {
+    const environment = fakeRoot();
+    const projection = (value: string): RenderDocument => renderNodes([
+      elementNode(
+        "field",
+        "textfield",
+        [
+          { name: "label", value: "Search" },
+          { name: "value", value },
+        ],
+        [],
+        [{ event: "change", binding: "search" }],
+      ),
+    ]);
+    let renderer: ReturnType<typeof createProjectionRenderer>;
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>(() => {
+      renderer.render(projection("canonical"), natural("8"));
+    });
+    renderer = createProjectionRenderer({
+      root: environment.root,
+      dispatch,
+      mode: "play",
+    });
+    renderer.render(projection("model"), natural("7"));
+    const input = environment.element.children[0]!.children[0]!;
+
+    input.value = "browser";
+    input.emit("input");
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(input.value).toBe("canonical");
+
+    dispatch.mockClear();
+    input.emit("compositionstart");
+    input.value = "composing";
+    input.emit("input", { isComposing: true });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(input.value).toBe("composing");
+    input.emit("compositionend");
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(input.value).toBe("canonical");
   });
 
   it("filters media and icon semantics through renderer capabilities", () => {

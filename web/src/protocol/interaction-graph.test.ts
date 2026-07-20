@@ -7,12 +7,11 @@ import {
 } from "./interaction-graph.js";
 import {
   UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-  UHURA_SEMANTIC_IR_HASH_PROTOCOL,
 } from "./machine.js";
 
 const graph = {
   protocol: UHURA_INTERACTION_GRAPH_PROTOCOL,
-  identity_protocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+  identity_protocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
   machine_program_hashes: { "example@1::Counter": "a".repeat(64) },
   presentation_hashes: { "example@1::Web": "b".repeat(64) },
   outcome_policies: {
@@ -137,16 +136,13 @@ describe("Uhura interaction graph transport", () => {
     expect(decoded.sources.nodes[1]?.sources[0]).toEqual(
       source("handler", 20),
     );
-    expect(
-      decodeInteractionGraphArtifacts({
-        ...graph,
-        identity_protocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-      }, graphSources).graph.identityProtocol,
-    ).toBe(UHURA_MACHINE_PROGRAM_ID_PROTOCOL);
+    expect(decoded.graph.identityProtocol).toBe(
+      UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
+    );
     expect(() =>
       decodeInteractionGraphArtifacts({
         ...graph,
-        identity_protocol: "uhura-unrecognized-identity/9",
+        identity_protocol: "uhura-semantic-ir-hash/0",
       }, graphSources)
     ).toThrow(/identity_protocol must be/u);
   });

@@ -242,7 +242,7 @@ export interface EditorMachine {
   identityProtocol: string;
   deployment: JsonValue;
   sources: JsonValue;
-  provenance: SemanticProvenance | null;
+  provenance: SemanticProvenance;
   interactionGraph: JsonValue;
   graphSources: JsonValue;
   checkpoints: JsonValue;
@@ -1071,32 +1071,30 @@ const editorMachine = (value: unknown, path: string): EditorMachine | null => {
     object["provenance"],
     `${path}.provenance`,
   );
-  if (provenance !== null) {
-    const inventory = new Map(
-      array(object["sources"], `${path}.sources`).map((value, index) => {
-        const sourcePath = `${path}.sources[${index}]`;
-        const source = record(value, sourcePath);
-        return [
-          string(source["path"], `${sourcePath}.path`),
-          {
-            sha256: string(source["sha256"], `${sourcePath}.sha256`),
-            bytes: nonNegativeInteger(source["bytes"], `${sourcePath}.bytes`),
-          },
-        ] as const;
-      }),
-    );
-    for (const semanticSource of provenance.sources) {
-      const physical = inventory.get(semanticSource.path);
-      if (
-        physical === undefined
-        || physical.sha256 !== semanticSource.sha256
-        || physical.bytes !== semanticSource.bytes
-      ) {
-        throw new EditorContractError(
-          `${path}.provenance.sources`,
-          "entries matching the accepted source inventory",
-        );
-      }
+  const inventory = new Map(
+    array(object["sources"], `${path}.sources`).map((value, index) => {
+      const sourcePath = `${path}.sources[${index}]`;
+      const source = record(value, sourcePath);
+      return [
+        string(source["path"], `${sourcePath}.path`),
+        {
+          sha256: string(source["sha256"], `${sourcePath}.sha256`),
+          bytes: nonNegativeInteger(source["bytes"], `${sourcePath}.bytes`),
+        },
+      ] as const;
+    }),
+  );
+  for (const semanticSource of provenance.sources) {
+    const physical = inventory.get(semanticSource.path);
+    if (
+      physical === undefined
+      || physical.sha256 !== semanticSource.sha256
+      || physical.bytes !== semanticSource.bytes
+    ) {
+      throw new EditorContractError(
+        `${path}.provenance.sources`,
+        "entries matching the accepted source inventory",
+      );
     }
   }
   return {

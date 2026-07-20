@@ -95,7 +95,7 @@ pub machine StandardProbe {
     );
     let program = output.program.expect("checked standard-library probe");
     assert_eq!(
-        program.constants["example.standard@1::ITEMS"],
+        program.machine_program.constants["example.standard@1::ITEMS"],
         Value::Map(vec![(
             Value::Key {
                 type_id: "example.standard@1::ItemId".into(),
@@ -105,7 +105,7 @@ pub machine StandardProbe {
         )])
     );
     assert_eq!(
-        program.constants["example.standard@1::EMPTY"],
+        program.machine_program.constants["example.standard@1::EMPTY"],
         Value::Set(Vec::new())
     );
     assert!(
@@ -114,7 +114,7 @@ pub machine StandardProbe {
             .contains_key("example.standard@1::ROUTES")
     );
     assert_eq!(
-        program.machines["example.standard@1::StandardProbe"]
+        program.machine_program.machines["example.standard@1::StandardProbe"]
             .ports
             .len(),
         4
@@ -179,7 +179,7 @@ pub machine ConstProbe {
     );
     let program = output.program.expect("dependency-ordered constants");
     assert_eq!(
-        program.constants["example.standard@1::A_MAP"],
+        program.machine_program.constants["example.standard@1::A_MAP"],
         Value::Map(vec![(
             Value::Key {
                 type_id: "example.standard@1::ItemId".into(),
@@ -229,6 +229,7 @@ pub machine CollectionProbe {
     );
     let program = output.program.expect("generic collection helper program");
     let (instance, _) = program
+        .machine_program
         .admit(
             "example.standard@1::CollectionProbe",
             Value::Unit,
@@ -294,10 +295,17 @@ pub machine SetProbe {
         vec![(Some("item".into()), item.clone())],
     );
     let (instance, _) = program
+        .machine_program
         .admit(machine, Value::Unit, "standard/set-add")
         .expect("set probe admission");
-    let first = program.react(&instance, add.clone()).expect("first add");
-    let second = program.react(&first.instance, add).expect("repeated add");
+    let first = program
+        .machine_program
+        .react(&instance, add.clone())
+        .expect("first add");
+    let second = program
+        .machine_program
+        .react(&first.instance, add)
+        .expect("repeated add");
     for result in [&first, &second] {
         assert!(matches!(
             result.receipt.resolution,
@@ -343,6 +351,7 @@ pub machine PreludeProbe {
     );
     let program = output.program.expect("checked prelude inventory");
     let (instance, _) = program
+        .machine_program
         .admit(
             "example.standard@1::PreludeProbe",
             Value::Unit,
@@ -404,6 +413,7 @@ pub machine EphemeralViewProbe {
     );
     let program = output.program.expect("checked ephemeral FiniteView probe");
     let (instance, _) = program
+        .machine_program
         .admit(
             "example.standard@1::EphemeralViewProbe",
             Value::Unit,
@@ -566,6 +576,7 @@ pub machine A0Helpers {
     );
     let program = output.program.expect("checked A0 helper inventory");
     let (instance, _) = program
+        .machine_program
         .admit(
             "example.standard@1::A0Helpers",
             Value::Unit,
@@ -659,6 +670,7 @@ pub machine RatioProbe {
     );
     let program = output.program.expect("checked Ratio proof");
     let (instance, _) = program
+        .machine_program
         .admit(
             "example.standard@1::RatioProbe",
             Value::Unit,

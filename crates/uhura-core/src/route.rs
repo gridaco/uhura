@@ -54,6 +54,7 @@ impl Program {
         port_name: &str,
     ) -> Result<(&RouteTable, String), RouteRuntimeError> {
         let machine = self
+            .machine_program
             .machines
             .get(machine_id)
             .ok_or_else(|| RouteRuntimeError(format!("unknown machine `{machine_id}`")))?;

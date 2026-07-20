@@ -10,8 +10,8 @@ the [Instagram framework example](../README.md):
   machine transaction.
 - `ui.uhura` opts into the Web UI capability and projects that machine through
   18 public UI declarations. `FeedPage` is the deployed live presentation.
-- `evidence.uhura` is separately versioned 0.3 tooling source attached through
-  `[evidence]`. It defines the 91 checked page, component, and surface previews
+- `evidence.uhura` is a native 0.4 tooling module attached through
+  `[evidence.modules]`. It defines the 91 checked page, component, and surface previews
   consumed by Editor, including 34 replay-derived previews that retain their
   direct provenance.
 - `host.toml` deploys one application-session `Instagram` instance, binds its

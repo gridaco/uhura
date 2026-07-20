@@ -3,18 +3,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use uhura_base::{Diagnostic, FileId, Severity, SourceMap, Span};
 use uhura_check::project_lock::{
     CapturedPackage, ProjectLockIssue, check_project_lock, parse_project_lock,
 };
-use uhura_check::project_manifest::{
-    LoadedProjectManifest, ProjectManifest, ProjectManifestIssue, load_project_manifest,
-};
+use uhura_check::project_manifest::{ProjectManifest, ProjectManifestIssue, load_project_manifest};
+use uhura_check::resource_manifest::ResourceManifest;
+use uhura_check::{CheckedIconFonts, IconFontInput};
 use uhura_core::Program;
-use uhura_syntax::{SourceFile as SyntaxSourceFile, parse_project};
 
-use crate::fsio::{SourceFile, walk_retired_sources, walk_sources};
+use crate::fsio::{SourceFile, walk_sources};
 
 pub(super) struct Project {
     pub files: Vec<SourceFile>,
@@ -24,7 +24,6 @@ pub(super) struct Project {
 }
 
 pub(super) fn load(root: &Path, command: &str) -> Result<Project, ExitCode> {
-    reject_retired_sources(root, command)?;
     let files = walk_sources(root).map_err(|error| {
         eprintln!("uhura {command}: {}: {error}", root.display());
         ExitCode::from(2)
@@ -58,72 +57,7 @@ pub(super) fn load(root: &Path, command: &str) -> Result<Project, ExitCode> {
         }
     };
 
-    match manifest {
-        LoadedProjectManifest::Legacy03(_) => load_legacy_project(root, command, files, source_map),
-        LoadedProjectManifest::V04(manifest) => {
-            load_v04_project(root, files, source_map, manifest, manifest_file)
-        }
-    }
-}
-
-fn load_legacy_project(
-    root: &Path,
-    command: &str,
-    files: Vec<SourceFile>,
-    source_map: SourceMap,
-) -> Result<Project, ExitCode> {
-    if files.is_empty() {
-        eprintln!(
-            "uhura {command}: no .uhura sources under {}",
-            root.display()
-        );
-        return Err(ExitCode::from(2));
-    }
-
-    let parsed = parse_project(files.iter().enumerate().map(|(index, file)| {
-        SyntaxSourceFile::new(FileId(index as u32), file.rel_path.clone(), &file.text)
-    }));
-    let mut diagnostics = parsed
-        .diagnostics
-        .into_iter()
-        .map(|diagnostic| {
-            Diagnostic::new(
-                "R1001",
-                "uhura/parse",
-                Severity::Error,
-                diagnostic.message,
-                Span::new(
-                    FileId(diagnostic.span.file),
-                    diagnostic.span.start,
-                    diagnostic.span.end,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut checked = uhura_check::check_project(&parsed.project);
-    diagnostics.append(&mut checked.diagnostics);
-    diagnostics.sort_by_key(|diagnostic| {
-        (
-            diagnostic.span.file.0,
-            diagnostic.span.start,
-            diagnostic.span.end,
-            diagnostic.code,
-        )
-    });
-    if !diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.severity == Severity::Error)
-        && let Some(program) = checked.program.as_mut()
-    {
-        program.freeze_program_hashes();
-    }
-
-    Ok(Project {
-        files,
-        source_map,
-        diagnostics,
-        program: checked.program,
-    })
+    load_v04_project(root, files, source_map, manifest, manifest_file)
 }
 
 fn load_v04_project(
@@ -133,121 +67,84 @@ fn load_v04_project(
     manifest: ProjectManifest,
     manifest_file: FileId,
 ) -> Result<Project, ExitCode> {
-    let captured_dependencies = match capture_v04_dependencies(root, &files, &manifest) {
-        Ok(packages) => packages,
-        Err(messages) => {
+    let icon_fonts = match load_cli_icon_fonts(root, &manifest.resources, manifest_file) {
+        Ok(fonts) => fonts,
+        Err(mut diagnostics) => {
+            diagnostics.sort_by_key(|diagnostic| {
+                (
+                    diagnostic.span.file.0,
+                    diagnostic.span.start,
+                    diagnostic.span.end,
+                    diagnostic.code,
+                    diagnostic.rule,
+                )
+            });
             return Ok(Project {
                 files,
                 source_map,
-                diagnostics: contract_diagnostics(messages, manifest_file),
+                diagnostics,
+                program: None,
+            });
+        }
+    };
+    let captured_dependencies = match capture_v04_dependencies(root, &files, &manifest) {
+        Ok(packages) => packages,
+        Err(messages) => {
+            let mut diagnostics = contract_diagnostics(messages, manifest_file);
+            diagnostics.sort_by_key(|diagnostic| {
+                (
+                    diagnostic.span.file.0,
+                    diagnostic.span.start,
+                    diagnostic.span.end,
+                    diagnostic.code,
+                    diagnostic.rule,
+                )
+            });
+            return Ok(Project {
+                files,
+                source_map,
+                diagnostics,
                 program: None,
             });
         }
     };
     let dependency_roots = captured_dependencies
         .iter()
-        .map(|package| package.capture.source.as_str())
+        .map(|package| package.source.as_str())
         .collect::<Vec<_>>();
     let mut diagnostics = validate_v04_sources(&files, &manifest, manifest_file, &dependency_roots);
     let program = if diagnostics.is_empty() {
-        let mut modules = Vec::with_capacity(manifest.modules.len());
-        for (logical, physical) in &manifest.modules {
-            let (file, source) = files
-                .iter()
-                .enumerate()
-                .find(|(_, source)| source.rel_path == physical.as_str())
-                .expect("source admission proved every mapped 0.4 module exists");
-            let identity = uhura_syntax::v04::SourceIdentity::new(
-                file as u32,
-                manifest.project.package_id().to_string(),
-                logical.as_str(),
-                physical.as_str(),
-            );
-            let parsed = uhura_syntax::v04::parse(identity, &source.text);
-            diagnostics.extend(parsed.diagnostics.into_iter().map(|diagnostic| {
-                Diagnostic::new(
-                    "R1001",
-                    "uhura/parse",
-                    Severity::Error,
-                    diagnostic.message,
-                    Span::new(
-                        FileId(diagnostic.span.file),
-                        diagnostic.span.start,
-                        diagnostic.span.end,
-                    ),
+        let sources = files
+            .iter()
+            .enumerate()
+            .map(|(file, source)| {
+                uhura_check::V04ProjectSource::new(
+                    FileId(file as u32),
+                    &source.rel_path,
+                    &source.text,
                 )
-            }));
-            modules.push(parsed.module);
-        }
-        let evidence_modules = if manifest.evidence.is_empty() {
-            Vec::new()
-        } else {
-            let parsed = parse_project(manifest.evidence.iter().map(|physical| {
-                let (file, source) = files
+            })
+            .collect::<Vec<_>>();
+        let mut checked =
+            uhura_check::compile_v04_project(&manifest, &sources, &captured_dependencies);
+        diagnostics.append(&mut checked.diagnostics);
+        if let Some(program) = checked.program.as_ref() {
+            diagnostics.extend(uhura_check::icon_token_diagnostics(
+                program,
+                &icon_fonts,
+                files
                     .iter()
                     .enumerate()
-                    .find(|(_, source)| source.rel_path == physical.as_str())
-                    .expect("source admission proved every mapped evidence file exists");
-                SyntaxSourceFile::new(FileId(file as u32), physical.as_str(), source.text.as_str())
-            }));
-            diagnostics.extend(parsed.diagnostics.into_iter().map(|diagnostic| {
-                Diagnostic::new(
-                    "R1001",
-                    "uhura/parse",
-                    Severity::Error,
-                    diagnostic.message,
-                    Span::new(
-                        FileId(diagnostic.span.file),
-                        diagnostic.span.start,
-                        diagnostic.span.end,
-                    ),
-                )
-            }));
-            parsed.project.modules
-        };
-
-        // Static checking is skipped when parsing failed. The 0.4 checker
-        // consumes the complete manifest-resolved module graph and lowers to the
-        // same kernel Program used by the legacy frontend.
-        if diagnostics.is_empty() {
-            let mut packages = vec![uhura_check::V04CapturedPackageModules {
-                package: manifest.project.package_id().to_string(),
-                dependencies: manifest
-                    .dependencies
-                    .iter()
-                    .map(|(alias, dependency)| {
-                        (
-                            alias.as_str().to_string(),
-                            dependency.package_id().to_string(),
-                        )
-                    })
-                    .collect(),
-                modules,
-            }];
-            packages.extend(captured_dependencies.iter().map(|package| {
-                uhura_check::V04CapturedPackageModules {
-                    package: package.capture.package_id().to_string(),
-                    dependencies: package
-                        .capture
-                        .resolved_dependencies
-                        .iter()
-                        .map(|(alias, dependency)| {
-                            (alias.as_str().to_string(), dependency.to_string())
-                        })
-                        .collect(),
-                    modules: package.modules.clone(),
-                }
-            }));
-            let mut checked = uhura_check::check_v04_package_graph_with_evidence(
-                &manifest.project.package_id().to_string(),
-                &packages,
-                &evidence_modules,
-            );
-            diagnostics.append(&mut checked.diagnostics);
-            checked.program
-        } else {
-            None
+                    .map(|(file, source)| (FileId(file as u32), source.rel_path.as_str())),
+            ));
         }
+        if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Severity::Error)
+        {
+            checked.program = None;
+        }
+        checked.program
     } else {
         None
     };
@@ -276,16 +173,112 @@ fn load_v04_project(
     })
 }
 
-struct CliCapturedDependency {
-    capture: CapturedPackage,
-    modules: Vec<uhura_syntax::v04::Module>,
+fn load_cli_icon_fonts(
+    root: &Path,
+    resources: &ResourceManifest,
+    manifest_file: FileId,
+) -> Result<CheckedIconFonts, Vec<Diagnostic>> {
+    let canonical_root = std::fs::canonicalize(root).map_err(|error| {
+        icon_resource_diagnostics(
+            [format!("project root `{}`: {error}", root.display())],
+            manifest_file,
+        )
+    })?;
+    let mut inputs = BTreeMap::new();
+    let mut messages = Vec::new();
+    for (name, family) in &resources.icons.families {
+        let font_bytes = match read_project_resource(root, &canonical_root, &family.font) {
+            Ok(bytes) => bytes.map(Arc::<[u8]>::from),
+            Err(message) => {
+                messages.push(format!("icons.{name}.font: {message}"));
+                None
+            }
+        };
+        let glyphs_text = match read_project_resource(root, &canonical_root, &family.glyphs) {
+            Ok(Some(bytes)) => match String::from_utf8(bytes) {
+                Ok(text) => Some(text),
+                Err(error) => {
+                    messages.push(format!(
+                        "icons.{name}.glyphs: resource is not UTF-8: {error}"
+                    ));
+                    None
+                }
+            },
+            Ok(None) => None,
+            Err(message) => {
+                messages.push(format!("icons.{name}.glyphs: {message}"));
+                None
+            }
+        };
+        inputs.insert(
+            name.clone(),
+            IconFontInput {
+                font_path: family.font.clone(),
+                font_bytes,
+                glyphs_path: family.glyphs.clone(),
+                glyphs_text,
+            },
+        );
+    }
+    if !messages.is_empty() {
+        return Err(icon_resource_diagnostics(messages, manifest_file));
+    }
+    uhura_check::icon_fonts::load_icon_fonts(&resources.icons, &inputs).map_err(|issues| {
+        icon_resource_diagnostics(
+            issues
+                .into_iter()
+                .map(|issue| format!("{}: {}", issue.path, issue.message)),
+            manifest_file,
+        )
+    })
+}
+
+fn read_project_resource(
+    root: &Path,
+    canonical_root: &Path,
+    relative: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let candidate = root.join(relative);
+    let canonical = match std::fs::canonicalize(&candidate) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !canonical.starts_with(canonical_root) {
+        return Err(format!("`{relative}` escapes the project root"));
+    }
+    let metadata = std::fs::metadata(&canonical).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err(format!("`{relative}` is not a regular file"));
+    }
+    std::fs::read(canonical)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn icon_resource_diagnostics(
+    messages: impl IntoIterator<Item = String>,
+    manifest_file: FileId,
+) -> Vec<Diagnostic> {
+    messages
+        .into_iter()
+        .map(|message| {
+            Diagnostic::new(
+                "UH2010",
+                "contract/invalid-icon-font",
+                Severity::Error,
+                message,
+                Span::new(manifest_file, 0, 0),
+            )
+        })
+        .collect()
 }
 
 fn capture_v04_dependencies(
     root: &Path,
     files: &[SourceFile],
     manifest: &ProjectManifest,
-) -> Result<Vec<CliCapturedDependency>, Vec<String>> {
+) -> Result<Vec<CapturedPackage>, Vec<String>> {
     let lock_path = root.join("uhura.lock");
     let lock_text = match std::fs::read_to_string(&lock_path) {
         Ok(text) => Some(text),
@@ -336,14 +329,7 @@ fn capture_v04_dependencies(
         let manifest_path = canonical_package.join("uhura.toml");
         let package_manifest = match std::fs::read_to_string(&manifest_path) {
             Ok(text) => match load_project_manifest(&text) {
-                Ok(LoadedProjectManifest::V04(manifest)) => manifest,
-                Ok(LoadedProjectManifest::Legacy03(_)) => {
-                    messages.push(format!(
-                        "package.{}: dependency manifest must select Uhura 0.4",
-                        record.package
-                    ));
-                    continue;
-                }
+                Ok(manifest) => manifest,
                 Err(issues) => {
                     messages.extend(issues.into_iter().map(|issue| {
                         format!(
@@ -366,7 +352,7 @@ fn capture_v04_dependencies(
         let declared_sources = package_manifest
             .modules
             .values()
-            .chain(package_manifest.evidence.iter())
+            .chain(package_manifest.evidence.values())
             .map(|path| format!("{}/{}", record.source.path, path))
             .collect::<BTreeSet<_>>();
         let discovered_sources = files
@@ -379,19 +365,14 @@ fn capture_v04_dependencies(
             .collect::<BTreeSet<_>>();
         for unlisted in discovered_sources.difference(&declared_sources) {
             messages.push(format!(
-                "package.{}.sources: `{unlisted}` is not listed in `[modules]` or `[evidence]`",
+                "package.{}.sources: `{unlisted}` is not listed in `[modules]` or `[evidence.modules]`",
                 record.package
             ));
         }
         let mut module_bytes = BTreeMap::new();
-        let mut modules = Vec::new();
         for (logical, physical) in &package_manifest.modules {
             let global = format!("{}/{}", record.source.path, physical);
-            let Some((file, source)) = files
-                .iter()
-                .enumerate()
-                .find(|(_, source)| source.rel_path == global)
-            else {
+            let Some(source) = files.iter().find(|source| source.rel_path == global) else {
                 messages.push(format!(
                     "package.{}.modules.{}: mapped source `{global}` is missing",
                     record.package, logical
@@ -399,49 +380,25 @@ fn capture_v04_dependencies(
                 continue;
             };
             module_bytes.insert(logical.clone(), source.text.as_bytes().to_vec());
-            let parsed = uhura_syntax::v04::parse(
-                uhura_syntax::v04::SourceIdentity::new(
-                    file as u32,
-                    package_manifest.project.package_id().to_string(),
-                    logical.as_str(),
-                    global,
-                ),
-                &source.text,
-            );
-            messages.extend(parsed.diagnostics.into_iter().map(|diagnostic| {
-                format!(
-                    "package.{}.modules.{}: {}",
-                    record.package, logical, diagnostic.message
-                )
-            }));
-            modules.push(parsed.module);
         }
         let resolved_dependencies = package_manifest
             .dependencies
             .iter()
             .map(|(alias, dependency)| (alias.clone(), dependency.package_id()))
             .collect();
-        captured.push(CliCapturedDependency {
-            capture: CapturedPackage {
-                manifest: package_manifest,
-                source: record.source.path.clone(),
-                modules: module_bytes,
-                resolved_dependencies,
-                resources: BTreeMap::new(),
-            },
-            modules,
+        captured.push(CapturedPackage {
+            manifest: package_manifest,
+            source: record.source.path.clone(),
+            modules: module_bytes,
+            resolved_dependencies,
+            resources: BTreeMap::new(),
         });
     }
     if !messages.is_empty() {
         messages.sort();
         return Err(messages);
     }
-    let lock_captures = captured
-        .iter()
-        .map(|package| package.capture.clone())
-        .collect::<Vec<_>>();
-    check_project_lock(manifest, lock_text.as_deref(), &lock_captures)
-        .map_err(lock_issue_messages)?;
+    check_project_lock(manifest, lock_text.as_deref(), &captured).map_err(lock_issue_messages)?;
     Ok(captured)
 }
 
@@ -498,7 +455,7 @@ fn validate_v04_sources(
     let declared = manifest
         .modules
         .values()
-        .chain(manifest.evidence.iter())
+        .chain(manifest.evidence.values())
         .map(|path| path.as_str())
         .collect::<BTreeSet<_>>();
     let discovered = files
@@ -517,7 +474,7 @@ fn validate_v04_sources(
     }
     for unlisted in discovered.difference(&declared) {
         messages.push(format!(
-            "Uhura 0.4 source `{unlisted}` is not listed in `[modules]`"
+            "Uhura 0.4 source `{unlisted}` is not listed in `[modules]` or `[evidence.modules]`"
         ));
     }
 
@@ -602,70 +559,59 @@ pub(super) fn require_program(root: &Path, command: &str) -> Result<Program, Exi
     })
 }
 
-fn reject_retired_sources(root: &Path, command: &str) -> Result<(), ExitCode> {
-    let sources = walk_retired_sources(root).map_err(|error| {
-        eprintln!("uhura {command}: {}: {error}", root.display());
-        ExitCode::from(2)
-    })?;
-    let Some(source) = sources.first() else {
-        return Ok(());
-    };
-    eprintln!(
-        "uhura {command}: retired `.relay` source `{}`; rename it to `.uhura` and map it as a module in the current uhura.toml",
-        source.display()
-    );
-    Err(ExitCode::from(2))
-}
-
 #[cfg(test)]
 pub(super) fn checked_test_program() -> Program {
-    const MACHINE: &str = r#"language uhura 0.3
-module test.cli.machine@1
+    const MANIFEST: &str = r#"[project]
+name = "test.cli"
+version = 1
+language = "0.4"
 
-machine Counter {
-  input = | increment
-  command = Never
-  outcome = | accepted commit
-  state { count: Int = 0 }
-  observe { count = count }
-  on increment {
-    set count = count + 1
-    finish accepted
+[modules]
+counter = "machine.uhura"
+
+[evidence.modules]
+evidence = "evidence.uhura"
+"#;
+    const MACHINE: &str = r#"pub machine Counter {
+  events {
+    Increment,
+  }
+
+  outcomes {
+    commit Accepted,
+  }
+
+  state {
+    count: Int = 0,
+  }
+
+  observe {
+    count,
+  }
+
+  on Increment {
+    count = count + 1;
+    Accepted
   }
 }
 "#;
-    const EVIDENCE: &str = r#"language uhura 0.3
-module test.cli.evidence@1
-
-use evidence
-import { Counter } from "test.cli.machine@1"
+    const EVIDENCE: &str = r#"use crate::counter::Counter;
 
 scenario increment for Counter {
   start
-  send increment
-  expect accepted commands []
+  send Increment
+  expect Accepted commands []
   pin done
 }
 
-example incremented = increment::done
+example incremented = increment::done;
 "#;
-    const UI: &str = r#"language uhura 0.3
-module test.cli.ui@1
-
-use ui
-import { Counter } from "test.cli.machine@1"
-
-ui CounterView for Counter(view) {
-  <button on press -> increment>Count: {view.count}</button>
-}
-"#;
-    let parsed = parse_project([
-        SyntaxSourceFile::new(FileId(0), "machine.uhura", MACHINE),
-        SyntaxSourceFile::new(FileId(1), "evidence.uhura", EVIDENCE),
-        SyntaxSourceFile::new(FileId(2), "ui.uhura", UI),
-    ]);
-    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-    let checked = uhura_check::check_project(&parsed.project);
+    let manifest = load_project_manifest(MANIFEST).expect("test manifest is current");
+    let sources = [
+        uhura_check::V04ProjectSource::new(FileId(0), "machine.uhura", MACHINE),
+        uhura_check::V04ProjectSource::new(FileId(1), "evidence.uhura", EVIDENCE),
+    ];
+    let checked = uhura_check::compile_v04_project(&manifest, &sources, &[]);
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let mut program = checked.program.expect("test project lowers");
     program.freeze_program_hashes();
@@ -733,6 +679,36 @@ counter = "counter.uhura"
     }
 
     #[test]
+    fn project_admission_requires_the_current_manifest() {
+        for (label, manifest) in [
+            ("missing", None),
+            (
+                "resource-only",
+                Some(
+                    r#"[icons]
+default = "lucide"
+"#,
+                ),
+            ),
+        ] {
+            let root = project_root(label);
+            std::fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
+            if let Some(manifest) = manifest {
+                std::fs::write(root.join("uhura.toml"), manifest).unwrap();
+            }
+
+            let project = load(&root, "check").expect("invalid projects are diagnostic results");
+            assert!(project.program.is_none());
+            assert!(project.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "UH2001"
+                    && (diagnostic.message.contains("project")
+                        || diagnostic.message.contains("modules"))
+            }));
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn manifest_selected_v04_lowers_the_declared_module() {
         let root = project_root("accepted");
         write_v04_manifest(&root, "");
@@ -741,8 +717,98 @@ counter = "counter.uhura"
         let project = load(&root, "check").expect("load 0.4 project");
         assert!(project.diagnostics.is_empty(), "{:?}", project.diagnostics);
         let program = project.program.expect("0.4 program");
-        assert_eq!(program.language, "uhura 0.4");
-        assert_eq!(program.machines.len(), 1);
+        assert_eq!(program.machine_program.language, "uhura 0.4");
+        assert_eq!(program.machine_program.machines.len(), 1);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_selected_v04_rejects_unknown_icons_before_publication() {
+        let root = project_root("unknown-icon");
+        std::fs::write(
+            root.join("uhura.toml"),
+            r#"[project]
+name = "test.counter"
+version = 1
+language = "0.4"
+
+[modules]
+counter = "counter.uhura"
+ui = "ui.uhura"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
+        std::fs::write(
+            root.join("ui.uhura"),
+            r#"use uhura::ui;
+use crate::counter::Counter;
+
+pub ui CounterWeb for Counter(view) {
+  <button label="Increment" on press -> Increment>
+    <icon name="definitely-not-a-lucide-glyph" />
+  </button>
+}
+"#,
+        )
+        .unwrap();
+
+        let project = load(&root, "check").expect("load project with unknown icon");
+        assert!(project.program.is_none());
+        let diagnostic = project
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.rule == "uhura/unknown-icon")
+            .expect("unknown icon diagnostic");
+        assert_eq!(diagnostic.code, "UH5017");
+        assert_eq!(project.source_map.path(diagnostic.span.file), "ui.uhura");
+        assert!(diagnostic.message.contains("definitely-not-a-lucide-glyph"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_selected_v04_preserves_parse_kind_in_public_diagnostics() {
+        let root = project_root("parse-diagnostic");
+        write_v04_manifest(&root, "");
+        std::fs::write(root.join("counter.uhura"), "pub mashine Counter {}\n").unwrap();
+
+        let project = load(&root, "check").expect("load malformed 0.4 project");
+        assert!(project.program.is_none());
+        assert_eq!(
+            uhura_base::to_envelope(&project.diagnostics, &project.source_map),
+            serde_json::json!({
+                "format": "uhura-diagnostics",
+                "version": 0,
+                "summary": {
+                    "errors": 1,
+                    "warnings": 0,
+                },
+                "diagnostics": [{
+                    "code": "R1001",
+                    "rule": "uhura-0.4/parse/invalid-declaration",
+                    "severity": "error",
+                "message": "unknown module declaration `mashine`; expected `machine`, `part`, `ui`, `scenario`, `example`, `checkpoint`, `struct`, `enum`, `key`, `const`, or `fn`",
+                    "file": "counter.uhura",
+                    "span": {
+                        "offset": 4,
+                        "len": 7,
+                        "start": { "line": 1, "col": 5 },
+                        "end": { "line": 1, "col": 12 },
+                    },
+                    "fix": {
+                        "title": "Replace `mashine` with `machine`",
+                        "edits": [{
+                            "file": "counter.uhura",
+                            "offset": 4,
+                            "len": 7,
+                            "insert": "machine",
+                        }],
+                    },
+                }],
+            })
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -778,29 +844,25 @@ support = "support.uhura"
         let project = load(&root, "check").expect("load multi-module 0.4 project");
         assert!(project.diagnostics.is_empty(), "{:?}", project.diagnostics);
         let program = project.program.expect("0.4 program");
-        assert_eq!(program.language, "uhura 0.4");
-        assert_eq!(program.machines.len(), 1);
+        assert_eq!(program.machine_program.language, "uhura 0.4");
+        assert_eq!(program.machine_program.machines.len(), 1);
 
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn manifest_selected_v04_attaches_separately_versioned_evidence() {
+    fn manifest_selected_v04_attaches_manifest_role_evidence() {
         let root = project_root("evidence");
         write_v04_manifest(
             &root,
-            r#"[evidence]
-sources = ["counter.evidence.uhura"]
+            r#"[evidence.modules]
+evidence = "counter.evidence.uhura"
 "#,
         );
         std::fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
         std::fs::write(
             root.join("counter.evidence.uhura"),
-            r#"language uhura 0.3
-module test.counter.evidence@1
-
-use evidence
-import { Counter } from "test.counter@1"
+            r#"use crate::counter::Counter;
 
 scenario increment for Counter {
   start
@@ -809,7 +871,7 @@ scenario increment for Counter {
   pin done
 }
 
-example incremented = increment::done
+example incremented = increment::done;
 "#,
         )
         .unwrap();
@@ -904,16 +966,8 @@ values = "values.uhura"
             base_source,
         )
         .unwrap();
-        let LoadedProjectManifest::V04(vendor_manifest) =
-            load_project_manifest(vendor_manifest_text).unwrap()
-        else {
-            panic!("0.4 vendor manifest")
-        };
-        let uhura_check::project_manifest::LoadedProjectManifest::V04(base_manifest) =
-            load_project_manifest(base_manifest_text).unwrap()
-        else {
-            panic!("0.4 base manifest")
-        };
+        let vendor_manifest = load_project_manifest(vendor_manifest_text).unwrap();
+        let base_manifest = load_project_manifest(base_manifest_text).unwrap();
         let base_capture = CapturedPackage {
             manifest: base_manifest,
             source: uhura_check::project_manifest::ProjectPath::parse("vendor/shared/deps/base")

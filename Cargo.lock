@@ -606,6 +606,7 @@ name = "uhura-tests"
 version = "0.0.0"
 dependencies = [
  "cargo_metadata",
+ "serde_json",
  "uhura-base",
  "uhura-check",
  "uhura-core",

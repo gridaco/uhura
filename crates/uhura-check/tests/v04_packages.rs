@@ -84,9 +84,24 @@ fn transitive_external_imports_link_by_exact_package_identity() {
         output.diagnostics
     );
     let program = output.program.expect("linked program");
-    assert!(program.machines.contains_key("example.root@1::Probe"));
-    assert!(program.types.contains_key("vendor.base@1::Unit"));
-    assert!(program.types.contains_key("vendor.middle@1::Boxed"));
+    assert!(
+        program
+            .machine_program
+            .machines
+            .contains_key("example.root@1::Probe")
+    );
+    assert!(
+        program
+            .machine_program
+            .types
+            .contains_key("vendor.base@1::Unit")
+    );
+    assert!(
+        program
+            .machine_program
+            .types
+            .contains_key("vendor.middle@1::Boxed")
+    );
 }
 
 #[test]
@@ -102,7 +117,10 @@ fn dependency_aliases_are_nonsemantic() {
     )
     .program
     .expect("renamed aliases");
-    assert_eq!(ordinary.program_hashes, renamed.program_hashes);
+    assert_eq!(
+        ordinary.machine_program.program_hashes,
+        renamed.machine_program.program_hashes
+    );
 }
 
 #[test]
@@ -129,8 +147,14 @@ fn unused_dependency_declarations_do_not_enter_machine_program_identity() {
         .program
         .expect("graph with changed unused declaration");
     assert_eq!(
-        ordinary.program_hashes.get("example.root@1::Probe"),
-        changed.program_hashes.get("example.root@1::Probe"),
+        ordinary
+            .machine_program
+            .program_hashes
+            .get("example.root@1::Probe"),
+        changed
+            .machine_program
+            .program_hashes
+            .get("example.root@1::Probe"),
     );
 }
 
@@ -215,11 +239,27 @@ pub machine Probe {
     .program
     .expect("re-export graph");
     assert_eq!(
-        direct.program_hashes.get("example.root@1::Probe"),
-        reexported.program_hashes.get("example.root@1::Probe"),
+        direct
+            .machine_program
+            .program_hashes
+            .get("example.root@1::Probe"),
+        reexported
+            .machine_program
+            .program_hashes
+            .get("example.root@1::Probe"),
     );
-    assert!(reexported.types.contains_key("vendor.base@1::Item"));
-    assert!(!reexported.types.contains_key("vendor.facade@1::Item"));
+    assert!(
+        reexported
+            .machine_program
+            .types
+            .contains_key("vendor.base@1::Item")
+    );
+    assert!(
+        !reexported
+            .machine_program
+            .types
+            .contains_key("vendor.facade@1::Item")
+    );
 }
 
 #[test]
@@ -359,8 +399,18 @@ pub machine Probe {
         );
     }
     let program = output.program.expect("linked program");
-    assert!(program.types.contains_key("vendor.left@1::Item"));
-    assert!(program.types.contains_key("vendor.right@1::Item"));
+    assert!(
+        program
+            .machine_program
+            .types
+            .contains_key("vendor.left@1::Item")
+    );
+    assert!(
+        program
+            .machine_program
+            .types
+            .contains_key("vendor.right@1::Item")
+    );
 }
 
 #[test]
@@ -451,6 +501,7 @@ pub part Counter {
             .program
             .as_ref()
             .expect("linked program")
+            .machine_program
             .machines
             .contains_key("example.root@1::App")
     );
@@ -639,17 +690,30 @@ fn external_part_public_id_is_machine_identity_material_but_its_locator_is_not()
     .expect("different external Part provider");
 
     assert_eq!(
-        ordinary.program_hashes.get("example.root@1::App"),
-        relocated.program_hashes.get("example.root@1::App"),
+        ordinary
+            .machine_program
+            .program_hashes
+            .get("example.root@1::App"),
+        relocated
+            .machine_program
+            .program_hashes
+            .get("example.root@1::App"),
         "dependency aliases and logical module locators are nonsemantic"
     );
     assert_ne!(
-        ordinary.program_hashes.get("example.root@1::App"),
-        different_provider.program_hashes.get("example.root@1::App"),
+        ordinary
+            .machine_program
+            .program_hashes
+            .get("example.root@1::App"),
+        different_provider
+            .machine_program
+            .program_hashes
+            .get("example.root@1::App"),
         "the composed Part PublicId is semantic even when its body is identical"
     );
     assert_eq!(
         ordinary
+            .machine_program
             .composed_part_declarations
             .get("example.root@1::App")
             .expect("composed Part identity closure"),
@@ -704,11 +768,18 @@ pub machine App {
             .expect("re-exported external Part graph");
 
     assert_eq!(
-        direct.program_hashes.get("example.root@1::App"),
-        reexported.program_hashes.get("example.root@1::App")
+        direct
+            .machine_program
+            .program_hashes
+            .get("example.root@1::App"),
+        reexported
+            .machine_program
+            .program_hashes
+            .get("example.root@1::App")
     );
     assert_eq!(
         reexported
+            .machine_program
             .composed_part_declarations
             .get("example.root@1::App")
             .expect("composed Part identity closure"),
@@ -779,6 +850,7 @@ pub part Counter {
         output
             .program
             .expect("linked program")
+            .machine_program
             .functions
             .contains_key("vendor.base@1::increment")
     );
@@ -833,7 +905,7 @@ pub part Guard {
     let program = output.program.expect("linked fault-site program");
     let provenance = output.provenance.expect("linked fault-site provenance");
     let machine_id = "example.root@1::App";
-    let machine = &program.machines[machine_id];
+    let machine = &program.machine_program.machines[machine_id];
     for (index, owner) in ["left", "right"].into_iter().enumerate() {
         let invariant = semantic_node_id(machine_id, owner, "invariant", "invariant/0");
         let unreachable = semantic_node_id(
@@ -979,6 +1051,7 @@ pub part Counter {
         output
             .program
             .expect("two distinct external Parts")
+            .machine_program
             .composed_part_declarations["example.root@1::App"],
         std::collections::BTreeSet::from([
             "vendor.left@1::Counter".into(),
@@ -1042,6 +1115,7 @@ pub part Counter {
     let program = output.program.expect("linked private helper closure");
     assert!(
         program
+            .machine_program
             .functions
             .keys()
             .any(|name| name.contains("__uhura_part_private_") && name.ends_with("_increment"))
@@ -1093,7 +1167,12 @@ pub part Logger {
         output.diagnostics
     );
     assert_eq!(
-        output.program.expect("linked standard contract").machines["example.root@1::App"].ports[0]
+        output
+            .program
+            .expect("linked standard contract")
+            .machine_program
+            .machines["example.root@1::App"]
+            .ports[0]
             .name,
         "logger.sink"
     );

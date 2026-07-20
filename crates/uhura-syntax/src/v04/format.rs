@@ -1,10 +1,8 @@
 //! Deterministic canonical formatting for the Uhura 0.4 core AST.
 //!
-//! The 0.4 formatter is intentionally independent from the conservative 0.3
-//! source formatter. It renders parsed structure rather than rewriting token
-//! text, and refuses comments until RFC 0003 attachment is represented in the
-//! 0.4 AST. Refusing is important: formatting must never silently erase
-//! author-visible trivia.
+//! It renders parsed structure rather than rewriting token text, and refuses
+//! comments until RFC 0003 attachment is represented in the AST. Refusing is
+//! important: formatting must never silently erase author-visible trivia.
 
 use std::fmt;
 
@@ -200,6 +198,9 @@ impl Formatter {
             DeclarationKind::Machine(value) => self.machine(value),
             DeclarationKind::Part(value) => self.part(value),
             DeclarationKind::Ui(value) => self.ui(value),
+            DeclarationKind::Scenario(value) => self.scenario(value),
+            DeclarationKind::Example(value) => self.evidence_alias("example", value),
+            DeclarationKind::Checkpoint(value) => self.evidence_alias("checkpoint", value),
             DeclarationKind::Struct(value) => self.struct_declaration(value),
             DeclarationKind::Enum(value) => self.enum_declaration(value),
             DeclarationKind::Key(value) => self.key_declaration(value),
@@ -259,6 +260,128 @@ impl Formatter {
         self.ui_nodes(&declaration.body.nodes);
         self.indent -= 1;
         self.write("}");
+    }
+
+    fn scenario(&mut self, declaration: &ScenarioDeclaration) {
+        self.write("scenario ");
+        self.identifier(&declaration.name);
+        match &declaration.origin {
+            ScenarioOrigin::Machine {
+                machine,
+                configuration,
+            } => {
+                self.write(" for ");
+                self.type_path(machine);
+                if let Some(configuration) = configuration {
+                    self.write("(");
+                    self.expression(configuration);
+                    self.write(")");
+                }
+            }
+            ScenarioOrigin::Snapshot(reference) => {
+                self.write(" from ");
+                self.evidence_reference(reference);
+            }
+        }
+        self.write(" ");
+        self.open_multiline_body();
+        for step in &declaration.steps {
+            self.evidence_step(step);
+            self.newline();
+        }
+        self.close_multiline_body();
+    }
+
+    fn evidence_alias(&mut self, keyword: &str, declaration: &EvidenceAliasDeclaration) {
+        self.write(keyword);
+        self.write(" ");
+        self.identifier(&declaration.name);
+        if let Some(presentation) = &declaration.presentation {
+            self.write(" for ");
+            self.identifier(presentation);
+            self.write(" as ");
+            self.write(match declaration.kind {
+                Some(EvidencePresentationKind::Page) => "page",
+                Some(EvidencePresentationKind::Component) => "component",
+                Some(EvidencePresentationKind::Surface) => "surface",
+                None => "page",
+            });
+            if declaration.is_default {
+                self.write(" default");
+            }
+            if let Some(note) = &declaration.note {
+                self.write(" note ");
+                self.text(note);
+            }
+        }
+        self.write(" = ");
+        self.evidence_reference(&declaration.target);
+        self.write(";");
+    }
+
+    fn evidence_reference(&mut self, reference: &EvidenceReference) {
+        for (index, segment) in reference.path.iter().enumerate() {
+            if index > 0 {
+                self.write("::");
+            }
+            self.identifier(segment);
+        }
+    }
+
+    fn evidence_step(&mut self, step: &EvidenceStep) {
+        match &step.kind {
+            EvidenceStepKind::Bind { port, fixture } => {
+                self.write("bind ");
+                self.identifier(port);
+                self.write(" = ");
+                self.expression(fixture);
+            }
+            EvidenceStepKind::Start => self.write("start"),
+            EvidenceStepKind::Send(value) => {
+                self.write("send ");
+                self.expression(value);
+            }
+            EvidenceStepKind::Deliver(value) => {
+                self.write("deliver ");
+                self.expression(value);
+            }
+            EvidenceStepKind::ExpectReaction { outcome, commands } => {
+                self.write("expect ");
+                self.pattern(outcome);
+                self.write(" commands ");
+                self.command_expectation(commands);
+            }
+            EvidenceStepKind::ExpectObservationPattern(value) => {
+                self.write("expect observation ");
+                self.pattern(value);
+            }
+            EvidenceStepKind::ExpectInspectionPattern(value) => {
+                self.write("expect inspection ");
+                self.pattern(value);
+            }
+            EvidenceStepKind::ExpectObservationWhere(value) => {
+                self.write("expect observation where ");
+                self.expression(value);
+            }
+            EvidenceStepKind::ExpectRestore { commands } => {
+                self.write("expect restore commands ");
+                self.command_expectation(commands);
+            }
+            EvidenceStepKind::ExpectSnapshot { target } => {
+                self.write("expect snapshot == ");
+                self.evidence_reference(target);
+            }
+            EvidenceStepKind::Pin(value) => {
+                self.write("pin ");
+                self.identifier(value);
+            }
+        }
+    }
+
+    fn command_expectation(&mut self, commands: &[Expression]) {
+        self.write("[");
+        self.expressions(commands);
+        self.write("]");
     }
 
     fn struct_declaration(&mut self, declaration: &StructDeclaration) {
@@ -875,6 +998,7 @@ impl Formatter {
             }
             ExpressionKind::Name(value) => self.qualified_name(value),
             ExpressionKind::Record(value) => self.record_expression(value),
+            ExpressionKind::AnonymousRecord(value) => self.anonymous_record(value),
             ExpressionKind::Block(value) => self.block(value),
             ExpressionKind::Call { callee, arguments } => {
                 self.expression_at(callee, Precedence::Postfix);
@@ -1015,6 +1139,18 @@ impl Formatter {
         self.close_record_body(record.fields.is_empty() && record.base.is_none());
     }
 
+    fn anonymous_record(&mut self, entries: &[AnonymousRecordEntry]) {
+        self.open_record_body();
+        for entry in entries {
+            self.expression(&entry.key);
+            self.write(": ");
+            self.expression(&entry.value);
+            self.write(",");
+            self.newline();
+        }
+        self.close_record_body(entries.is_empty());
+    }
+
     fn field_initializer_body(&mut self, fields: &[FieldInitializer]) {
         self.open_record_body();
         for field in fields {
@@ -1124,6 +1260,23 @@ impl Formatter {
             } => {
                 self.qualified_name(constructor);
                 self.write(" ");
+                self.open_record_body();
+                for field in fields {
+                    self.identifier(&field.name);
+                    if let Some(value) = &field.pattern {
+                        self.write(": ");
+                        self.pattern(value);
+                    }
+                    self.write(",");
+                    self.newline();
+                }
+                if *rest {
+                    self.write("..,");
+                    self.newline();
+                }
+                self.close_record_body(fields.is_empty() && !rest);
+            }
+            PatternKind::AnonymousRecord { fields, rest } => {
                 self.open_record_body();
                 for field in fields {
                     self.identifier(&field.name);
@@ -1275,6 +1428,7 @@ fn expression_precedence(expression: &ExpressionKind) -> Precedence {
         | ExpressionKind::Group(_)
         | ExpressionKind::Name(_)
         | ExpressionKind::Record(_)
+        | ExpressionKind::AnonymousRecord(_)
         | ExpressionKind::Block(_)
         | ExpressionKind::If(_)
         | ExpressionKind::Match(_) => Precedence::Primary,

@@ -20,6 +20,7 @@ pub(super) struct Parser<'a> {
     tokens: &'a [Token],
     cursor: usize,
     diagnostics: Vec<ParseDiagnostic>,
+    evidence_expressions: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -29,6 +30,7 @@ impl<'a> Parser<'a> {
             tokens,
             cursor: 0,
             diagnostics: Vec::new(),
+            evidence_expressions: false,
         }
     }
 
@@ -45,13 +47,13 @@ impl<'a> Parser<'a> {
         let mut declarations = Vec::new();
         while !self.at_simple(TokenKind::Eof) {
             let start = self.cursor;
+            let diagnostics_before = self.diagnostics.len();
             if let Some(declaration) = self.parse_declaration() {
                 declarations.push(declaration);
             } else {
-                self.error_here(
-                    ParseDiagnosticKind::InvalidDeclaration,
-                    "expected `machine`, `part`, `ui`, `struct`, `enum`, `key`, `const`, or `fn`",
-                );
+                if self.diagnostics.len() == diagnostics_before {
+                    self.invalid_declaration_here();
+                }
                 self.synchronize_module();
             }
             if self.cursor == start {
@@ -177,6 +179,30 @@ impl<'a> Parser<'a> {
             DeclarationKind::Part(self.parse_part(visibility))
         } else if self.at_contextual("ui") {
             DeclarationKind::Ui(self.parse_ui(visibility))
+        } else if self.at_contextual("scenario") {
+            if visibility == Visibility::Public {
+                self.error_here(
+                    ParseDiagnosticKind::InvalidEvidence,
+                    "evidence declarations are tooling-local and cannot be `pub`",
+                );
+            }
+            DeclarationKind::Scenario(self.parse_scenario())
+        } else if self.at_contextual("example") {
+            if visibility == Visibility::Public {
+                self.error_here(
+                    ParseDiagnosticKind::InvalidEvidence,
+                    "evidence declarations are tooling-local and cannot be `pub`",
+                );
+            }
+            DeclarationKind::Example(self.parse_evidence_alias(true))
+        } else if self.at_contextual("checkpoint") {
+            if visibility == Visibility::Public {
+                self.error_here(
+                    ParseDiagnosticKind::InvalidEvidence,
+                    "evidence declarations are tooling-local and cannot be `pub`",
+                );
+            }
+            DeclarationKind::Checkpoint(self.parse_evidence_alias(false))
         } else if self.at_keyword(Keyword::Struct) {
             DeclarationKind::Struct(self.parse_struct(visibility))
         } else if self.at_keyword(Keyword::Enum) {
@@ -189,10 +215,7 @@ impl<'a> Parser<'a> {
             DeclarationKind::Function(self.parse_function(visibility))
         } else {
             if visibility == Visibility::Public {
-                self.error_here(
-                    ParseDiagnosticKind::InvalidDeclaration,
-                    "`pub` must precede a module declaration or `use`",
-                );
+                self.invalid_declaration_here();
             }
             return None;
         };
@@ -244,6 +267,217 @@ impl<'a> Parser<'a> {
                 span: body_span,
             },
         }
+    }
+
+    fn parse_scenario(&mut self) -> ScenarioDeclaration {
+        self.expect_contextual("scenario", "scenario declaration");
+        let name = self.expect_name(NameCategory::Lower, "scenario name");
+        let previous_evidence_mode = self.evidence_expressions;
+        self.evidence_expressions = true;
+        let origin = if self.eat_contextual("for").is_some() {
+            let machine = self.parse_type_path();
+            let configuration = if self.eat_simple(TokenKind::LParen).is_some() {
+                let value = self.parse_expression();
+                self.expect_simple(TokenKind::RParen, "scenario configuration");
+                Some(value)
+            } else {
+                None
+            };
+            ScenarioOrigin::Machine {
+                machine,
+                configuration,
+            }
+        } else if self.eat_contextual("from").is_some() {
+            ScenarioOrigin::Snapshot(self.parse_evidence_reference())
+        } else {
+            self.error_here(
+                ParseDiagnosticKind::InvalidEvidence,
+                "scenario requires `for Machine` or `from scenario::pin`",
+            );
+            ScenarioOrigin::Snapshot(EvidenceReference {
+                path: vec![Identifier::new("error", self.current().span)],
+                span: self.current().span,
+            })
+        };
+
+        self.expect_simple(TokenKind::LBrace, "scenario body");
+        let mut steps = Vec::new();
+        while !self.at_simple(TokenKind::RBrace) && !self.at_simple(TokenKind::Eof) {
+            let start = self.current().span.start;
+            let before = self.cursor;
+            if let Some(kind) = self.parse_evidence_step() {
+                steps.push(Node::new(
+                    kind,
+                    Span::new(self.identity.file, start, self.previous_end()),
+                ));
+            }
+            if self.cursor == before {
+                self.error_here(
+                    ParseDiagnosticKind::InvalidEvidence,
+                    "expected `bind`, `start`, `send`, `deliver`, `expect`, or `pin`",
+                );
+                self.bump();
+            }
+        }
+        self.expect_simple(TokenKind::RBrace, "scenario body");
+        self.evidence_expressions = previous_evidence_mode;
+        ScenarioDeclaration {
+            name,
+            origin,
+            steps,
+        }
+    }
+
+    fn parse_evidence_alias(&mut self, is_example: bool) -> EvidenceAliasDeclaration {
+        self.bump(); // contextual `example` or `checkpoint`
+        let name = self.expect_name(NameCategory::Lower, "evidence declaration name");
+        let mut presentation = None;
+        let mut kind = None;
+        let mut is_default = false;
+        let mut note = None;
+        if is_example && self.eat_contextual("for").is_some() {
+            presentation = Some(self.expect_name(NameCategory::Upper, "example presentation"));
+            self.expect_keyword(Keyword::As, "example presentation");
+            kind = Some(if self.eat_contextual("page").is_some() {
+                EvidencePresentationKind::Page
+            } else if self.eat_contextual("component").is_some() {
+                EvidencePresentationKind::Component
+            } else if self.eat_contextual("surface").is_some() {
+                EvidencePresentationKind::Surface
+            } else {
+                self.error_here(
+                    ParseDiagnosticKind::InvalidEvidence,
+                    "expected example presentation kind `page`, `component`, or `surface`",
+                );
+                if !self.at_simple(TokenKind::Eof) {
+                    self.bump();
+                }
+                EvidencePresentationKind::Page
+            });
+            loop {
+                if self.eat_contextual("default").is_some() {
+                    if is_default {
+                        self.error_previous(
+                            ParseDiagnosticKind::InvalidEvidence,
+                            "`default` is repeated on this example",
+                        );
+                    }
+                    is_default = true;
+                } else if self.eat_contextual("note").is_some() {
+                    let token = self.bump().clone();
+                    match token.kind {
+                        TokenKind::Text(value) if note.is_none() => note = Some(value),
+                        TokenKind::Text(_) => self.error(
+                            ParseDiagnosticKind::InvalidEvidence,
+                            "`note` is repeated on this example",
+                            token.span,
+                        ),
+                        _ => self.error(
+                            ParseDiagnosticKind::MissingToken,
+                            "expected quoted text after `note`",
+                            token.span,
+                        ),
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_simple(TokenKind::Eq, "evidence declaration");
+        let target = self.parse_evidence_reference();
+        let semicolon = self.expect_simple(TokenKind::Semicolon, "evidence declaration");
+        EvidenceAliasDeclaration {
+            name,
+            presentation,
+            kind,
+            is_default,
+            note,
+            target,
+            semicolon,
+        }
+    }
+
+    fn parse_evidence_reference(&mut self) -> EvidenceReference {
+        let start = self.current().span.start;
+        let mut path = vec![self.expect_name(NameCategory::Declaration, "evidence reference")];
+        while self.eat_simple(TokenKind::ColonColon).is_some() {
+            path.push(self.expect_name(NameCategory::Declaration, "evidence reference component"));
+        }
+        EvidenceReference {
+            span: Span::new(self.identity.file, start, self.previous_end()),
+            path,
+        }
+    }
+
+    fn parse_evidence_step(&mut self) -> Option<EvidenceStepKind> {
+        Some(if self.eat_contextual("bind").is_some() {
+            let port = self.expect_name(NameCategory::Lower, "bound port name");
+            self.expect_simple(TokenKind::Eq, "fixture binding");
+            EvidenceStepKind::Bind {
+                port,
+                fixture: self.parse_expression(),
+            }
+        } else if self.eat_contextual("start").is_some() {
+            EvidenceStepKind::Start
+        } else if self.eat_contextual("send").is_some() {
+            EvidenceStepKind::Send(self.parse_expression())
+        } else if self.eat_contextual("deliver").is_some() {
+            EvidenceStepKind::Deliver(self.parse_expression())
+        } else if self.eat_contextual("pin").is_some() {
+            EvidenceStepKind::Pin(self.expect_name(NameCategory::Declaration, "pin name"))
+        } else if self.eat_contextual("expect").is_some() {
+            self.parse_expect_step()
+        } else {
+            return None;
+        })
+    }
+
+    fn parse_expect_step(&mut self) -> EvidenceStepKind {
+        if self.eat_contextual("observation").is_some() {
+            if self.eat_contextual("where").is_some() {
+                EvidenceStepKind::ExpectObservationWhere(self.parse_expression())
+            } else {
+                EvidenceStepKind::ExpectObservationPattern(self.parse_pattern())
+            }
+        } else if self.eat_contextual("inspection").is_some() {
+            EvidenceStepKind::ExpectInspectionPattern(self.parse_pattern())
+        } else if self.eat_contextual("restore").is_some() {
+            self.expect_keyword(Keyword::Commands, "restore expectation");
+            EvidenceStepKind::ExpectRestore {
+                commands: self.parse_command_expectation(),
+            }
+        } else if self.eat_contextual("snapshot").is_some() {
+            self.expect_simple(TokenKind::EqEq, "snapshot expectation");
+            EvidenceStepKind::ExpectSnapshot {
+                target: self.parse_evidence_reference(),
+            }
+        } else {
+            let outcome = self.parse_pattern();
+            self.expect_keyword(Keyword::Commands, "reaction expectation");
+            EvidenceStepKind::ExpectReaction {
+                outcome,
+                commands: self.parse_command_expectation(),
+            }
+        }
+    }
+
+    fn parse_command_expectation(&mut self) -> Vec<Expression> {
+        self.expect_simple(TokenKind::LBracket, "command expectation");
+        let mut commands = Vec::new();
+        while !self.at_simple(TokenKind::RBracket) && !self.at_simple(TokenKind::Eof) {
+            commands.push(self.parse_expression());
+            if self.eat_simple(TokenKind::Comma).is_none() {
+                if !self.at_simple(TokenKind::RBracket) {
+                    self.error_here(
+                        ParseDiagnosticKind::MissingToken,
+                        "expected `,` between expected commands",
+                    );
+                }
+                break;
+            }
+        }
+        self.expect_simple(TokenKind::RBracket, "command expectation");
+        commands
     }
 
     fn parse_struct(&mut self, visibility: Visibility) -> StructDeclaration {
@@ -1441,6 +1675,9 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LParen => self.parse_parenthesized_expression(),
             TokenKind::LBracket => self.parse_sequence_expression(),
+            TokenKind::LBrace if self.evidence_expressions => {
+                self.parse_anonymous_record_expression()
+            }
             TokenKind::LBrace => {
                 let block = self.parse_block();
                 let span = block.span;
@@ -1454,7 +1691,10 @@ impl<'a> Parser<'a> {
                     ParseDiagnosticKind::InvalidExpression,
                     format!("expected expression, found {}", token.kind.describe()),
                 );
-                if !self.at_simple(TokenKind::Eof) {
+                // Preserve structural delimiters for the enclosing production.
+                // Consuming one here would turn a single missing expression into
+                // a second, misleading "missing delimiter" diagnostic.
+                if !self.expression_terminator() {
                     self.bump();
                 }
                 let placeholder = Identifier::new("error", token.span);
@@ -1467,6 +1707,37 @@ impl<'a> Parser<'a> {
                 )
             }
         }
+    }
+
+    fn parse_anonymous_record_expression(&mut self) -> Expression {
+        let open = self.expect_simple(TokenKind::LBrace, "evidence record");
+        let mut entries = Vec::new();
+        while !self.at_simple(TokenKind::RBrace) && !self.at_simple(TokenKind::Eof) {
+            let start = self.current().span.start;
+            let key = self.parse_expression();
+            self.expect_simple(TokenKind::Colon, "evidence record entry");
+            let value = self.parse_expression();
+            let end = value.span.end;
+            entries.push(AnonymousRecordEntry {
+                key,
+                value,
+                span: Span::new(self.identity.file, start, end),
+            });
+            if self.eat_simple(TokenKind::Comma).is_none() {
+                if !self.at_simple(TokenKind::RBrace) {
+                    self.error_here(
+                        ParseDiagnosticKind::MissingToken,
+                        "expected `,` between evidence record entries",
+                    );
+                }
+                break;
+            }
+        }
+        let close = self.expect_simple(TokenKind::RBrace, "evidence record");
+        Node::new(
+            ExpressionKind::AnonymousRecord(entries),
+            Span::new(self.identity.file, open.start, close.end),
+        )
     }
 
     fn parse_parenthesized_expression(&mut self) -> Expression {
@@ -1835,6 +2106,7 @@ impl<'a> Parser<'a> {
                 )
             }
             TokenKind::LParen => self.parse_parenthesized_pattern(),
+            TokenKind::LBrace if self.evidence_expressions => self.parse_anonymous_record_pattern(),
             TokenKind::Identifier(_) => self.parse_named_pattern(),
             _ => {
                 self.error_here(
@@ -1847,6 +2119,54 @@ impl<'a> Parser<'a> {
                 Node::new(PatternKind::Wildcard, token.span)
             }
         }
+    }
+
+    fn parse_anonymous_record_pattern(&mut self) -> Pattern {
+        let open = self.expect_simple(TokenKind::LBrace, "evidence record pattern");
+        let mut fields = Vec::new();
+        let mut rest = false;
+        while !self.at_simple(TokenKind::RBrace) && !self.at_simple(TokenKind::Eof) {
+            if self.eat_simple(TokenKind::DotDot).is_some() {
+                rest = true;
+                if self.eat_simple(TokenKind::Comma).is_some() && !self.at_simple(TokenKind::RBrace)
+                {
+                    self.error_here(
+                        ParseDiagnosticKind::InvalidEvidence,
+                        "pattern rest must be the final evidence record entry",
+                    );
+                }
+                break;
+            }
+            let start = self.current().span.start;
+            let name = self.expect_record_label("evidence record-pattern field");
+            let pattern = if self.eat_simple(TokenKind::Colon).is_some() {
+                Some(self.parse_pattern())
+            } else {
+                None
+            };
+            let end = pattern
+                .as_ref()
+                .map_or(name.span.end, |value| value.span.end);
+            fields.push(FieldPattern {
+                name,
+                pattern,
+                span: Span::new(self.identity.file, start, end),
+            });
+            if self.eat_simple(TokenKind::Comma).is_none() {
+                if !self.at_simple(TokenKind::RBrace) {
+                    self.error_here(
+                        ParseDiagnosticKind::MissingToken,
+                        "expected `,` between evidence record-pattern fields",
+                    );
+                }
+                break;
+            }
+        }
+        let close = self.expect_simple(TokenKind::RBrace, "evidence record pattern");
+        Node::new(
+            PatternKind::AnonymousRecord { fields, rest },
+            Span::new(self.identity.file, open.start, close.end),
+        )
     }
 
     fn parse_parenthesized_pattern(&mut self) -> Pattern {
@@ -1900,7 +2220,9 @@ impl<'a> Parser<'a> {
         }
 
         if self.eat_simple(TokenKind::LParen).is_some() {
-            if name.segments.len() != 1 || name.segments[0].text != "Some" {
+            if !self.evidence_expressions
+                && (name.segments.len() != 1 || name.segments[0].text != "Some")
+            {
                 self.error(
                     ParseDiagnosticKind::InvalidPattern,
                     "only the prelude `Some(pattern)` constructor is positional in core patterns",
@@ -2085,10 +2407,17 @@ impl<'a> Parser<'a> {
 
     fn is_module_declaration_start(&self) -> bool {
         if self.at_contextual("ui")
+            || self.at_contextual("scenario")
+            || self.at_contextual("example")
+            || self.at_contextual("checkpoint")
             || (self.at_keyword(Keyword::Pub)
                 && matches!(
                     self.nth(1).kind,
-                    TokenKind::Identifier(ref value) if value == "ui"
+                    TokenKind::Identifier(ref value)
+                        if matches!(
+                            value.as_str(),
+                            "ui" | "scenario" | "example" | "checkpoint"
+                        )
                 ))
         {
             return true;
@@ -2211,6 +2540,14 @@ impl<'a> Parser<'a> {
         )
     }
 
+    fn eat_contextual(&mut self, expected: &str) -> Option<Span> {
+        if self.at_contextual(expected) {
+            Some(self.bump().span)
+        } else {
+            None
+        }
+    }
+
     fn expect_contextual(&mut self, expected: &str, context: &str) -> Span {
         if self.at_contextual(expected) {
             self.bump().span
@@ -2271,11 +2608,44 @@ impl<'a> Parser<'a> {
         if let Some(span) = self.eat_simple(expected.clone()) {
             span
         } else {
-            self.error_here(
-                ParseDiagnosticKind::MissingToken,
-                format!("expected {} in {context}", expected.describe()),
-            );
+            let message = format!("expected {} in {context}", expected.describe());
+            if expected == TokenKind::Semicolon {
+                let insertion = Span::empty(self.identity.file, self.current().span.start);
+                self.error_with_fix(
+                    ParseDiagnosticKind::MissingToken,
+                    message,
+                    self.current().span,
+                    "Insert `;`",
+                    insertion,
+                    ";",
+                );
+            } else {
+                self.error_here(ParseDiagnosticKind::MissingToken, message);
+            }
             Span::empty(self.identity.file, self.current().span.start)
+        }
+    }
+
+    fn invalid_declaration_here(&mut self) {
+        const EXPECTED: &str = "`machine`, `part`, `ui`, `scenario`, `example`, `checkpoint`, `struct`, `enum`, `key`, `const`, or `fn`";
+        let token = self.current().clone();
+        if let TokenKind::Identifier(value) = &token.kind
+            && let Some(replacement) = declaration_keyword_typo(value)
+        {
+            self.error_with_fix(
+                ParseDiagnosticKind::InvalidDeclaration,
+                format!("unknown module declaration `{value}`; expected {EXPECTED}"),
+                token.span,
+                format!("Replace `{value}` with `{replacement}`"),
+                token.span,
+                replacement,
+            );
+        } else {
+            self.error(
+                ParseDiagnosticKind::InvalidDeclaration,
+                format!("expected {EXPECTED}"),
+                token.span,
+            );
         }
     }
 
@@ -2316,12 +2686,69 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&mut self, kind: ParseDiagnosticKind, message: impl Into<String>, span: Span) {
-        self.diagnostics.push(ParseDiagnostic {
-            kind,
-            message: message.into(),
-            span,
-        });
+        self.diagnostics
+            .push(ParseDiagnostic::new(kind, message, span));
     }
+
+    fn error_with_fix(
+        &mut self,
+        kind: ParseDiagnosticKind,
+        message: impl Into<String>,
+        span: Span,
+        title: impl Into<String>,
+        edit_span: Span,
+        insert: impl Into<String>,
+    ) {
+        self.diagnostics
+            .push(ParseDiagnostic::new(kind, message, span).with_fix(title, edit_span, insert));
+    }
+}
+
+fn declaration_keyword_typo(value: &str) -> Option<&'static str> {
+    const DECLARATIONS: [&str; 8] = [
+        "machine", "part", "ui", "struct", "enum", "key", "const", "fn",
+    ];
+    let mut matches = DECLARATIONS
+        .into_iter()
+        .filter(|candidate| one_edit_apart(value, candidate));
+    let candidate = matches.next()?;
+    matches.next().is_none().then_some(candidate)
+}
+
+fn one_edit_apart(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len().abs_diff(right.len()) > 1 {
+        return false;
+    }
+    if left.len() == right.len() {
+        return left
+            .iter()
+            .zip(right)
+            .filter(|(left, right)| left != right)
+            .count()
+            == 1;
+    }
+    let (shorter, longer) = if left.len() < right.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    let mut shorter_index = 0;
+    let mut longer_index = 0;
+    let mut skipped = false;
+    while shorter_index < shorter.len() && longer_index < longer.len() {
+        if shorter[shorter_index] == longer[longer_index] {
+            shorter_index += 1;
+            longer_index += 1;
+        } else if skipped {
+            return false;
+        } else {
+            skipped = true;
+            longer_index += 1;
+        }
+    }
+    true
 }
 
 pub(super) struct FragmentParse<T> {

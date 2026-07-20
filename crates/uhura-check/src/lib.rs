@@ -7,13 +7,16 @@
 
 pub mod assets;
 mod checker;
+mod checker_ir;
 mod diagnostic;
 pub mod icon_fonts;
 pub mod project_lock;
 pub mod project_manifest;
 pub mod resource_manifest;
 mod types;
+pub mod ui_catalog;
 pub mod v04;
+mod v04_compile;
 mod v04_evidence;
 mod v04_parts;
 pub mod v04_provenance;
@@ -21,9 +24,12 @@ mod v04_topology;
 mod v04_updates;
 
 pub use assets::{AssetInput, CheckedAsset, CheckedAssets};
-pub use checker::{CheckOutput, DeferredEvidence, DeferredPresentation, check_project};
+pub use checker::CheckOutput;
 pub use diagnostic::{codes, error, warning};
-pub use icon_fonts::{CheckedIconFamily, CheckedIconFonts, IconFontInput};
+pub use icon_fonts::{
+    CheckedIconFamily, CheckedIconFonts, IconFontInput, IconTokenIssue, check_program_icon_tokens,
+    icon_token_diagnostics,
+};
 pub use v04::{
     CapturedPackageModules as V04CapturedPackageModules,
     ResolutionMetadata as V04ResolutionMetadata, ResolvedBinding as V04ResolvedBinding,
@@ -36,7 +42,5 @@ pub use v04::{
     check_resolved_project_with_evidence as check_resolved_v04_project_with_evidence,
     resolve_project_modules as resolve_v04_project_modules,
 };
+pub use v04_compile::{V04ProjectSource, compile_v04_project};
 pub use v04_provenance::{V04ProvenanceBuildError, build_v04_provenance};
-
-#[cfg(test)]
-mod tests;

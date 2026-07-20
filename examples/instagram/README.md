@@ -41,8 +41,7 @@ are observed as `restart_required`; they are not migrated or swapped live.
 - `client/parts.uhura` proves checked source composition, ownership, and
   cross-part `Reads`/`Updates` over that same machine transaction.
 - `client/ui.uhura` is the explicit 0.4 Web UI projection.
-- `client/evidence.uhura` is the separately versioned checked Editor/preview
-  corpus.
+- `client/evidence.uhura` is the native 0.4 checked Editor/preview corpus.
 - `client/host.toml` deploys the machine and binds browser/provider adapters.
 - `client/uhura.toml` declares the 0.4 package, modules, evidence, assets, and
   icon resources.

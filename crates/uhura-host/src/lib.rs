@@ -24,9 +24,7 @@ use uhura_check::icon_fonts::load_icon_fonts;
 use uhura_check::project_lock::{
     CapturedPackage, ProjectLockIssue, check_project_lock, parse_project_lock,
 };
-use uhura_check::project_manifest::{
-    LoadedProjectManifest, ProjectManifest, ProjectManifestIssue, load_project_manifest,
-};
+use uhura_check::project_manifest::{ProjectManifest, ProjectManifestIssue, load_project_manifest};
 use uhura_check::resource_manifest::ResourceManifest;
 use uhura_check::{AssetInput, CheckedIconFonts, IconFontInput};
 use uhura_core::ir::{
@@ -35,9 +33,9 @@ use uhura_core::ir::{
 use uhura_core::{
     CHECKPOINT_PROTOCOL, Checkpoint, DeploymentContentIdentity, DeploymentIdentityMaterial,
     DeploymentPortBinding, DeploymentPresentationIdentity, EvidenceReport, EvidenceSnapshot,
-    Instance, MACHINE_PROGRAM_ID_PROTOCOL, Program as MachineProgram, Provenance, ReactionReceipt,
-    SEMANTIC_IR_IDENTITY_PROTOCOL, Value, build_interaction_graph_artifacts, deployment_hash,
-    deployment_hash_v04, merge_authored_interaction_topology, semantic_node_id,
+    Instance, MACHINE_PROGRAM_ID_PROTOCOL, Program, Provenance, ReactionReceipt, Value,
+    build_interaction_graph_artifacts, deployment_hash, merge_authored_interaction_topology,
+    semantic_node_id,
 };
 use uhura_editor_model::interaction_graph::{
     EdgeKind as ApplicationEdgeKind, INTERACTION_GRAPH_PROTOCOL, InteractionEdge, InteractionGraph,
@@ -51,7 +49,6 @@ use uhura_editor_model::{
     RenderFreshness, SourceTarget, SourceTargetClass, SourceTargetOwner, SourceTargetOwnerKind,
     TargetOccurrence, stable_group_id, stable_preview_id,
 };
-use uhura_syntax::{SourceFile as MachineSourceFile, parse_project};
 
 pub mod source;
 
@@ -59,7 +56,6 @@ pub use source::{ProjectSourceFingerprint, ProjectSourceSnapshot, capture_projec
 
 const EDITOR_EVENT_PROTOCOL: &str = "uhura-editor-event/0";
 const ICON_FONT_MANIFEST_PROTOCOL: &str = "uhura-icon-fonts/0";
-const UHURA_HOST_DEPLOYMENT_PROTOCOL: &str = "uhura-host-deployment/0";
 const UHURA_INSPECTION_PROTOCOL: &str = "uhura-inspection/0";
 const UHURA_PLAY_CONFIG_PROTOCOL: &str = "uhura-play-config/1";
 const UHURA_ADAPTER_PROVIDER_PROTOCOL: &str = "uhura-adapter-provider/0";
@@ -444,16 +440,16 @@ struct EditorInputs<'a> {
     evidence: &'a EvidenceReport,
     sources: &'a [(String, String)],
     provenance: &'a [serde_json::Value],
-    semantic_provenance: &'a serde_json::Value,
+    semantic_provenance: &'a Provenance,
     interaction_graph: &'a serde_json::Value,
     graph_sources: &'a serde_json::Value,
     assets: &'a BTreeMap<String, Asset>,
 }
 
 struct CheckedProject {
-    program: MachineProgram,
+    program: Program,
     /// Host-selector roots resolved from the same project manifest as the
-    /// checked program. Empty for legacy projects.
+    /// checked program.
     selector_packages: BTreeMap<String, String>,
     icon_fonts: CheckedIconFonts,
     editor_assets: BTreeMap<String, Asset>,
@@ -463,7 +459,7 @@ struct CheckedProject {
     evidence_diagnostics: serde_json::Value,
     sources: Vec<(String, String)>,
     provenance: Vec<serde_json::Value>,
-    semantic_provenance: serde_json::Value,
+    semantic_provenance: Provenance,
     interaction_graph: serde_json::Value,
     graph_sources: serde_json::Value,
 }
@@ -530,21 +526,6 @@ fn check_project_snapshot(
     snapshot: &ProjectSourceSnapshot,
 ) -> Result<CheckedProject, serde_json::Value> {
     snapshot.validate_for_build()?;
-    if snapshot.has_retired_relay_corpus() {
-        let paths = snapshot.files.retired_relay_sources();
-        let detail = if paths.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", paths.join(", "))
-        };
-        return Err(host_failure(
-            "R3014",
-            "uhura/source",
-            format!(
-                "the .relay extension is retired{detail}; rename each file to .uhura and map it as a module in the current uhura.toml"
-            ),
-        ));
-    }
     let manifest_text = snapshot
         .files
         .text("uhura.toml")
@@ -561,40 +542,38 @@ fn check_project_snapshot(
         .files
         .sources()
         .map_err(|message| host_failure("R3014", "uhura/source", message))?;
-    if sources.is_empty() && matches!(manifest, LoadedProjectManifest::Legacy03(_)) {
-        return Err(host_failure(
-            "R3014",
-            "uhura/source",
-            "the project contains no readable .uhura source",
-        ));
-    }
-    let resources = load_project_resources(snapshot, manifest.resources())?;
-    let selector_packages = match &manifest {
-        LoadedProjectManifest::Legacy03(_) => BTreeMap::new(),
-        LoadedProjectManifest::V04(manifest) => std::iter::once((
-            "crate".to_string(),
-            manifest.project.package_id().to_string(),
-        ))
-        .chain(manifest.dependencies.iter().map(|(alias, dependency)| {
-            (
-                alias.as_str().to_string(),
-                dependency.package_id().to_string(),
-            )
-        }))
-        .collect(),
-    };
+    let resources = load_project_resources(snapshot, &manifest.resources)?;
+    let selector_packages = std::iter::once((
+        "crate".to_string(),
+        manifest.project.package_id().to_string(),
+    ))
+    .chain(manifest.dependencies.iter().map(|(alias, dependency)| {
+        (
+            alias.as_str().to_string(),
+            dependency.package_id().to_string(),
+        )
+    }))
+    .collect();
 
     let mut source_map = SourceMap::new();
     for (path, text) in &sources {
         source_map.add(path.clone(), text.clone());
     }
-    let (mut diagnostics, program, semantic_provenance) = match manifest {
-        LoadedProjectManifest::Legacy03(_) => {
-            let (diagnostics, program) = check_legacy_sources(&sources);
-            (diagnostics, program, serde_json::Value::Null)
-        }
-        LoadedProjectManifest::V04(manifest) => check_v04_sources(snapshot, &sources, &manifest)?,
-    };
+    let uhura_check::CheckOutput {
+        mut diagnostics,
+        program,
+        provenance: semantic_provenance,
+    } = check_v04_sources(snapshot, &sources, &manifest)?;
+    if let Some(program) = program.as_ref() {
+        diagnostics.extend(uhura_check::icon_token_diagnostics(
+            program,
+            &resources.icon_fonts,
+            sources
+                .iter()
+                .enumerate()
+                .map(|(file, (path, _))| (FileId(file as u32), path.as_str())),
+        ));
+    }
     diagnostics.sort_by_key(|diagnostic| {
         (
             diagnostic.span.file.0,
@@ -621,6 +600,14 @@ fn check_project_snapshot(
             "the Uhura checker accepted the project but produced no program",
         )
     })?;
+    let semantic_provenance = require_semantic_provenance(semantic_provenance)?;
+    semantic_provenance.validate().map_err(|error| {
+        host_failure(
+            "R3014",
+            "uhura/provenance",
+            format!("checked provenance is invalid: {error}"),
+        )
+    })?;
     program.freeze_program_hashes();
 
     let evidence = program.run_evidence();
@@ -633,23 +620,15 @@ fn check_project_snapshot(
     // Build topology once. Editor and Play inspection publish byte-equivalent
     // semantic and physical-source read models from this same checked program.
     let mut interaction = build_interaction_graph_artifacts(&program);
-    if !semantic_provenance.is_null() {
-        let provenance = serde_json::from_value::<Provenance>(semantic_provenance.clone())
-            .map_err(|error| {
-                host_failure(
-                    "R3014",
-                    "uhura/interaction-topology",
-                    format!("checked provenance could not be decoded: {error}"),
-                )
-            })?;
-        merge_authored_interaction_topology(&mut interaction, &provenance).map_err(|error| {
+    merge_authored_interaction_topology(&mut interaction, &semantic_provenance).map_err(
+        |error| {
             host_failure(
                 "R3014",
                 "uhura/interaction-topology",
                 format!("checked authored topology could not be projected: {error}"),
             )
-        })?;
-    }
+        },
+    )?;
     validate_interaction_graph_source_inventory(&interaction, &sources).map_err(|message| {
         host_failure(
             "R3014",
@@ -675,6 +654,18 @@ fn check_project_snapshot(
         semantic_provenance,
         interaction_graph,
         graph_sources,
+    })
+}
+
+fn require_semantic_provenance(
+    provenance: Option<Provenance>,
+) -> Result<Provenance, serde_json::Value> {
+    provenance.ok_or_else(|| {
+        host_failure(
+            "R3014",
+            "uhura/provenance",
+            "the Uhura checker accepted the project but produced no semantic provenance",
+        )
     })
 }
 
@@ -752,41 +743,15 @@ fn validate_interaction_graph_source_inventory(
     Ok(())
 }
 
-fn check_legacy_sources(sources: &[(String, String)]) -> (Vec<Diagnostic>, Option<MachineProgram>) {
-    let parsed = parse_project(sources.iter().enumerate().map(|(index, (path, text))| {
-        MachineSourceFile::new(FileId(index as u32), path.clone(), text)
-    }));
-    let mut diagnostics = parsed
-        .diagnostics
-        .into_iter()
-        .map(|diagnostic| {
-            Diagnostic::new(
-                "R1001",
-                "uhura/parse",
-                Severity::Error,
-                diagnostic.message,
-                Span::new(
-                    FileId(diagnostic.span.file),
-                    diagnostic.span.start,
-                    diagnostic.span.end,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut checked = uhura_check::check_project(&parsed.project);
-    diagnostics.append(&mut checked.diagnostics);
-    (diagnostics, checked.program)
-}
-
 fn check_v04_sources(
     snapshot: &ProjectSourceSnapshot,
     sources: &[(String, String)],
     manifest: &ProjectManifest,
-) -> Result<(Vec<Diagnostic>, Option<MachineProgram>, serde_json::Value), serde_json::Value> {
+) -> Result<uhura_check::CheckOutput, serde_json::Value> {
     let captured_dependencies = capture_v04_dependencies(snapshot, sources, manifest)?;
     let dependency_roots = captured_dependencies
         .iter()
-        .map(|package| package.capture.source.as_str())
+        .map(|package| package.source.as_str())
         .collect::<Vec<_>>();
     let messages = validate_v04_source_inventory(snapshot, sources, manifest, &dependency_roots);
     if !messages.is_empty() {
@@ -797,113 +762,25 @@ fn check_v04_sources(
         ));
     }
 
-    let mut modules = Vec::with_capacity(manifest.modules.len());
-    let mut diagnostics = Vec::new();
-    for (logical, physical) in &manifest.modules {
-        let (file, (_, source)) = sources
-            .iter()
-            .enumerate()
-            .find(|(_, (path, _))| path == physical.as_str())
-            .expect("source admission proved every mapped 0.4 module exists");
-        let identity = uhura_syntax::v04::SourceIdentity::new(
-            file as u32,
-            manifest.project.package_id().to_string(),
-            logical.as_str(),
-            physical.as_str(),
-        );
-        let parsed = uhura_syntax::v04::parse(identity, source);
-        diagnostics.extend(parsed.diagnostics.into_iter().map(|diagnostic| {
-            Diagnostic::new(
-                "R1001",
-                "uhura/parse",
-                Severity::Error,
-                diagnostic.message,
-                Span::new(
-                    FileId(diagnostic.span.file),
-                    diagnostic.span.start,
-                    diagnostic.span.end,
-                ),
-            )
-        }));
-        modules.push(parsed.module);
-    }
-    let evidence_modules = if manifest.evidence.is_empty() {
-        Vec::new()
-    } else {
-        let parsed = parse_project(manifest.evidence.iter().map(|physical| {
-            let (file, (_, source)) = sources
-                .iter()
-                .enumerate()
-                .find(|(_, (path, _))| path == physical.as_str())
-                .expect("source admission proved every mapped evidence file exists");
-            MachineSourceFile::new(FileId(file as u32), physical.as_str(), source)
-        }));
-        diagnostics.extend(parsed.diagnostics.into_iter().map(|diagnostic| {
-            Diagnostic::new(
-                "R1001",
-                "uhura/parse",
-                Severity::Error,
-                diagnostic.message,
-                Span::new(
-                    FileId(diagnostic.span.file),
-                    diagnostic.span.start,
-                    diagnostic.span.end,
-                ),
-            )
-        }));
-        parsed.project.modules
-    };
-    if diagnostics.is_empty() {
-        let mut packages = vec![uhura_check::V04CapturedPackageModules {
-            package: manifest.project.package_id().to_string(),
-            dependencies: manifest
-                .dependencies
-                .iter()
-                .map(|(alias, dependency)| {
-                    (
-                        alias.as_str().to_string(),
-                        dependency.package_id().to_string(),
-                    )
-                })
-                .collect(),
-            modules,
-        }];
-        packages.extend(captured_dependencies.iter().map(|package| {
-            uhura_check::V04CapturedPackageModules {
-                package: package.capture.package_id().to_string(),
-                dependencies: package
-                    .capture
-                    .resolved_dependencies
-                    .iter()
-                    .map(|(alias, dependency)| (alias.as_str().to_string(), dependency.to_string()))
-                    .collect(),
-                modules: package.modules.clone(),
-            }
-        }));
-        let mut checked = uhura_check::check_v04_package_graph_with_evidence(
-            &manifest.project.package_id().to_string(),
-            &packages,
-            &evidence_modules,
-        );
-        diagnostics.append(&mut checked.diagnostics);
-        let provenance = serde_json::to_value(checked.provenance)
-            .expect("checked 0.4 provenance is serializable");
-        Ok((diagnostics, checked.program, provenance))
-    } else {
-        Ok((diagnostics, None, serde_json::Value::Null))
-    }
-}
-
-struct HostCapturedDependency {
-    capture: CapturedPackage,
-    modules: Vec<uhura_syntax::v04::Module>,
+    let compiler_sources = sources
+        .iter()
+        .enumerate()
+        .map(|(file, (path, text))| {
+            uhura_check::V04ProjectSource::new(FileId(file as u32), path, text)
+        })
+        .collect::<Vec<_>>();
+    Ok(uhura_check::compile_v04_project(
+        manifest,
+        &compiler_sources,
+        &captured_dependencies,
+    ))
 }
 
 fn capture_v04_dependencies(
     snapshot: &ProjectSourceSnapshot,
     sources: &[(String, String)],
     manifest: &ProjectManifest,
-) -> Result<Vec<HostCapturedDependency>, serde_json::Value> {
+) -> Result<Vec<CapturedPackage>, serde_json::Value> {
     let lock_text = snapshot.files.text("uhura.lock").map_err(|message| {
         diagnostics_envelope("UH2001", "contract/invalid-project", vec![message])
     })?;
@@ -934,7 +811,6 @@ fn capture_v04_dependencies(
     })?;
     let mut captured = Vec::new();
     let mut messages = Vec::new();
-    let mut parse_diagnostics = Vec::new();
     let dependency_roots = lock
         .packages
         .values()
@@ -957,14 +833,7 @@ fn capture_v04_dependencies(
             }
         };
         let package_manifest = match load_project_manifest(&manifest_text) {
-            Ok(LoadedProjectManifest::V04(manifest)) => manifest,
-            Ok(LoadedProjectManifest::Legacy03(_)) => {
-                messages.push(format!(
-                    "package.{}: dependency manifest must select Uhura 0.4",
-                    record.package
-                ));
-                continue;
-            }
+            Ok(manifest) => manifest,
             Err(issues) => {
                 messages.extend(issues.into_iter().map(|issue| {
                     format!(
@@ -978,7 +847,7 @@ fn capture_v04_dependencies(
         let declared_sources = package_manifest
             .modules
             .values()
-            .chain(package_manifest.evidence.iter())
+            .chain(package_manifest.evidence.values())
             .map(|path| format!("{}/{}", record.source.path, path))
             .collect::<BTreeSet<_>>();
         let discovered_sources = sources
@@ -990,19 +859,14 @@ fn capture_v04_dependencies(
             .collect::<BTreeSet<_>>();
         for unlisted in discovered_sources.difference(&declared_sources) {
             messages.push(format!(
-                "package.{}.sources: `{unlisted}` is not listed in `[modules]` or `[evidence]`",
+                "package.{}.sources: `{unlisted}` is not listed in `[modules]` or `[evidence.modules]`",
                 record.package
             ));
         }
         let mut module_bytes = BTreeMap::new();
-        let mut modules = Vec::new();
         for (logical, physical) in &package_manifest.modules {
             let global = format!("{}/{}", record.source.path, physical);
-            let Some((file, (_, source))) = sources
-                .iter()
-                .enumerate()
-                .find(|(_, (path, _))| path == &global)
-            else {
+            let Some((_, source)) = sources.iter().find(|(path, _)| path == &global) else {
                 messages.push(format!(
                     "package.{}.modules.{}: mapped source `{global}` is missing",
                     record.package, logical
@@ -1010,73 +874,29 @@ fn capture_v04_dependencies(
                 continue;
             };
             module_bytes.insert(logical.clone(), source.as_bytes().to_vec());
-            let parsed = uhura_syntax::v04::parse(
-                uhura_syntax::v04::SourceIdentity::new(
-                    file as u32,
-                    package_manifest.project.package_id().to_string(),
-                    logical.as_str(),
-                    global,
-                ),
-                source,
-            );
-            parse_diagnostics.extend(parsed.diagnostics.into_iter().map(|diagnostic| {
-                Diagnostic::new(
-                    "R1001",
-                    "uhura/parse",
-                    Severity::Error,
-                    format!(
-                        "package.{}.modules.{}: {}",
-                        record.package, logical, diagnostic.message
-                    ),
-                    Span::new(
-                        FileId(diagnostic.span.file),
-                        diagnostic.span.start,
-                        diagnostic.span.end,
-                    ),
-                )
-            }));
-            modules.push(parsed.module);
         }
         let resolved_dependencies = package_manifest
             .dependencies
             .iter()
             .map(|(alias, dependency)| (alias.clone(), dependency.package_id()))
             .collect();
-        captured.push(HostCapturedDependency {
-            capture: CapturedPackage {
-                manifest: package_manifest,
-                source: record.source.path.clone(),
-                modules: module_bytes,
-                resolved_dependencies,
-                resources: BTreeMap::new(),
-            },
-            modules,
+        captured.push(CapturedPackage {
+            manifest: package_manifest,
+            source: record.source.path.clone(),
+            modules: module_bytes,
+            resolved_dependencies,
+            resources: BTreeMap::new(),
         });
     }
-    if !messages.is_empty() || !parse_diagnostics.is_empty() {
+    if !messages.is_empty() {
         messages.sort();
-        parse_diagnostics.sort_by_key(|diagnostic| {
-            (
-                diagnostic.span.file.0,
-                diagnostic.span.start,
-                diagnostic.span.end,
-                diagnostic.code,
-            )
-        });
-        let mut source_map = SourceMap::new();
-        for (path, text) in sources {
-            source_map.add(path.clone(), text.clone());
-        }
-        return Err(merge_diagnostics([
-            diagnostics_envelope("UH2001", "contract/invalid-project", messages),
-            to_envelope(&parse_diagnostics, &source_map),
-        ]));
+        return Err(diagnostics_envelope(
+            "UH2001",
+            "contract/invalid-project",
+            messages,
+        ));
     }
-    let lock_captures = captured
-        .iter()
-        .map(|package| package.capture.clone())
-        .collect::<Vec<_>>();
-    check_project_lock(manifest, lock_text.as_deref(), &lock_captures).map_err(|issues| {
+    check_project_lock(manifest, lock_text.as_deref(), &captured).map_err(|issues| {
         diagnostics_envelope(
             "UH2001",
             "contract/invalid-project",
@@ -1124,7 +944,7 @@ fn validate_v04_source_inventory(
     let declared = manifest
         .modules
         .values()
-        .chain(manifest.evidence.iter())
+        .chain(manifest.evidence.values())
         .map(|path| path.as_str())
         .collect::<BTreeSet<_>>();
     let discovered = sources
@@ -1143,7 +963,7 @@ fn validate_v04_source_inventory(
     }
     for unlisted in discovered.difference(&declared) {
         messages.push(format!(
-            "Uhura 0.4 source `{unlisted}` is not listed in `[modules]`"
+            "Uhura 0.4 source `{unlisted}` is not listed in `[modules]` or `[evidence.modules]`"
         ));
     }
     for aliases in snapshot.files.duplicate_sources() {
@@ -1355,7 +1175,7 @@ fn diagnostics_envelope(
 
 fn admit_play(
     snapshot: &ProjectSourceSnapshot,
-    program: &MachineProgram,
+    program: &Program,
     selector_packages: &BTreeMap<String, String>,
 ) -> Result<PlayAuthority, serde_json::Value> {
     let host_toml = snapshot
@@ -1371,10 +1191,8 @@ fn admit_play(
         })?;
     let mut deployment = parse_host_manifest(&host_toml)
         .map_err(|message| host_failure("R3014", "uhura/host-manifest", message))?;
-    if program.language == "uhura 0.4" {
-        resolve_v04_deployment_selectors(program, selector_packages, &mut deployment)
-            .map_err(|message| host_failure("R3014", "uhura/host-manifest", message))?;
-    }
+    resolve_v04_deployment_selectors(program, selector_packages, &mut deployment)
+        .map_err(|message| host_failure("R3014", "uhura/host-manifest", message))?;
     let admission = validate_deployment(program, &deployment)
         .map_err(|(code, message)| host_failure(code, "uhura/host-admission", message))?;
     let stylesheet = deployment
@@ -1607,7 +1425,7 @@ fn evidence_span(source: &uhura_core::ir::SourceRef, sources: &[(String, String)
 }
 
 fn resolve_v04_deployment_selectors(
-    program: &MachineProgram,
+    program: &Program,
     packages: &BTreeMap<String, String>,
     deployment: &mut Deployment,
 ) -> Result<(), String> {
@@ -1615,7 +1433,7 @@ fn resolve_v04_deployment_selectors(
         &deployment.machine,
         "machine",
         packages,
-        program.machines.keys().map(String::as_str),
+        program.machine_program.machines.keys().map(String::as_str),
     )?;
     if let Some(presentation) = deployment.presentation.as_mut() {
         *presentation = resolve_v04_host_selector(
@@ -1856,7 +1674,7 @@ fn host_binding(
 }
 
 fn validate_deployment(
-    program: &MachineProgram,
+    program: &Program,
     deployment: &Deployment,
 ) -> Result<DeploymentAdmission, (&'static str, String)> {
     program.validate_protocol().map_err(|message| {
@@ -1865,15 +1683,19 @@ fn validate_deployment(
             format!("invalid checked Uhura port contract: {message}"),
         )
     })?;
-    let machine = program.machines.get(&deployment.machine).ok_or_else(|| {
-        (
-            "R3014",
-            format!(
-                "host entry names unknown Uhura machine `{}`",
-                deployment.machine
-            ),
-        )
-    })?;
+    let machine = program
+        .machine_program
+        .machines
+        .get(&deployment.machine)
+        .ok_or_else(|| {
+            (
+                "R3014",
+                format!(
+                    "host entry names unknown Uhura machine `{}`",
+                    deployment.machine
+                ),
+            )
+        })?;
     let configuration = match deployment.configuration.as_deref() {
         None if machine.config == uhura_core::TypeRef::Unit => Value::Unit,
         None => {
@@ -1916,6 +1738,7 @@ fn validate_deployment(
                 ));
             }
             program
+                .machine_program
                 .decode_wire_value(&machine.config, &json)
                 .map_err(|error| {
                     (
@@ -1930,6 +1753,7 @@ fn validate_deployment(
         }
     };
     program
+        .machine_program
         .admit(
             &deployment.machine,
             configuration.clone(),
@@ -2102,27 +1926,23 @@ fn validate_deployment(
 }
 
 fn deployment_identity(
-    program: &MachineProgram,
+    program: &Program,
     deployment: &Deployment,
     configuration: &Value,
     admitted_ports: &[serde_json::Value],
     stylesheet: &str,
     provider_js: Option<&str>,
 ) -> Result<DeploymentIdentity, String> {
-    match (
-        program.language.as_str(),
-        program.identity_protocol.as_str(),
-    ) {
-        ("uhura 0.3", SEMANTIC_IR_IDENTITY_PROTOCOL)
-        | ("uhura 0.4", MACHINE_PROGRAM_ID_PROTOCOL) => {}
-        _ => {
-            return Err(format!(
-                "unsupported Uhura machine identity protocol `{}` for language `{}`",
-                program.identity_protocol, program.language
-            ));
-        }
+    if program.machine_program.language != "uhura 0.4"
+        || program.machine_program.identity_protocol != MACHINE_PROGRAM_ID_PROTOCOL
+    {
+        return Err(format!(
+            "unsupported Uhura machine identity protocol `{}` for language `{}`",
+            program.machine_program.identity_protocol, program.machine_program.language
+        ));
     }
     let machine_program_hash = program
+        .machine_program
         .program_hashes
         .get(&deployment.machine)
         .cloned()
@@ -2148,116 +1968,69 @@ fn deployment_identity(
         })
         .transpose()?;
     let evidence_hash = program.evidence_hashes.get(&deployment.machine).cloned();
-    let deployment_hash = if program.identity_protocol == MACHINE_PROGRAM_ID_PROTOCOL {
-        let port_bindings = admitted_ports
-            .iter()
-            .map(|binding| {
-                let field = |name: &str| {
-                    binding
-                        .get(name)
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned)
-                        .ok_or_else(|| {
-                            format!("admitted Uhura adapter is missing its `{name}` identity field")
-                        })
-                };
-                Ok(DeploymentPortBinding {
-                    port: field("port")?,
-                    adapter: field("adapter")?,
-                    required_contract_hash: field("contractHash")?,
-                    admitted_contract_instance_hash: field("contractInstanceHash")?,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let provider = match (&deployment.provider, provider_js) {
-            (Some(provider), Some(source)) => Some(DeploymentContentIdentity {
-                protocol: UHURA_ADAPTER_PROVIDER_PROTOCOL.into(),
-                configuration: provider.config.clone(),
-                content_hash: sha256_hex(source.as_bytes()),
-            }),
-            (Some(provider), None) => {
-                return Err(format!(
-                    "configured provider module `{}` has no selected content for DeploymentId",
-                    provider.module
-                ));
-            }
-            (None, _) => None,
-        };
-        let material = DeploymentIdentityMaterial {
-            machine: deployment.machine.clone(),
-            machine_program_id: machine_program_hash.clone(),
-            presentation: deployment.presentation.as_ref().map(|id| {
-                DeploymentPresentationIdentity {
-                    id: id.clone(),
-                    presentation_id: presentation_hash
-                        .clone()
-                        .expect("selected presentation hash was resolved above"),
-                }
-            }),
-            entry: deployment.entry.clone(),
-            lifetime: deployment.lifetime.clone(),
-            configuration: configuration.to_wire_json(),
-            port_bindings,
-            stylesheet: deployment
-                .stylesheet
-                .as_ref()
-                .map(|_| DeploymentContentIdentity {
-                    protocol: UHURA_STYLESHEET_CONTENT_PROTOCOL.into(),
-                    configuration: serde_json::Value::Null,
-                    content_hash: sha256_hex(stylesheet.as_bytes()),
-                }),
-            provider,
-        };
-        deployment_hash_v04(&material)?
-    } else {
-        let canonical_manifest = try_to_canonical_json(&serde_json::json!({
-            "protocol": UHURA_HOST_DEPLOYMENT_PROTOCOL,
-            "entry": deployment.entry,
-            "machine": deployment.machine,
-            "presentation": deployment.presentation,
-            "lifetime": deployment.lifetime,
-            "configuration": configuration.to_wire_json(),
-            "ports": deployment.ports,
-            "stylesheet": deployment.stylesheet.as_ref().map(|path| serde_json::json!({
-                "path": path,
-                "sha256": sha256_hex(stylesheet.as_bytes()),
-            })),
-            "provider": deployment.provider.as_ref().map(|provider| serde_json::json!({
-                "protocol": UHURA_ADAPTER_PROVIDER_PROTOCOL,
-                "module": provider.module,
-                "sha256": provider_js.map(|source| sha256_hex(source.as_bytes())),
-                "config": provider.config,
-            })),
-        }))
-        .map_err(|error| format!("Uhura host deployment is not canonical: {error}"))?
-        .into_bytes();
-        let adapter_contracts = admitted_ports
-            .iter()
-            .map(|binding| {
-                let port = binding
-                    .get("port")
+    let port_bindings = admitted_ports
+        .iter()
+        .map(|binding| {
+            let field = |name: &str| {
+                binding
+                    .get(name)
                     .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
                     .ok_or_else(|| {
-                        "admitted Uhura adapter is missing its port identity".to_string()
-                    })?;
-                let contract_hash = binding
-                    .get("contractHash")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        format!("admitted Uhura adapter `{port}` is missing its contract hash")
-                    })?;
-                Ok((port.to_string(), contract_hash.to_string()))
+                        format!("admitted Uhura adapter is missing its `{name}` identity field")
+                    })
+            };
+            Ok(DeploymentPortBinding {
+                port: field("port")?,
+                adapter: field("adapter")?,
+                required_contract_hash: field("contractHash")?,
+                admitted_contract_instance_hash: field("contractInstanceHash")?,
             })
-            .collect::<Result<Vec<_>, String>>()?;
-        deployment_hash(
-            &machine_program_hash,
-            presentation_hash.as_deref(),
-            &canonical_manifest,
-            &adapter_contracts,
-        )?
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let provider = match (&deployment.provider, provider_js) {
+        (Some(provider), Some(source)) => Some(DeploymentContentIdentity {
+            protocol: UHURA_ADAPTER_PROVIDER_PROTOCOL.into(),
+            configuration: provider.config.clone(),
+            content_hash: sha256_hex(source.as_bytes()),
+        }),
+        (Some(provider), None) => {
+            return Err(format!(
+                "configured provider module `{}` has no selected content for DeploymentId",
+                provider.module
+            ));
+        }
+        (None, _) => None,
     };
+    let material = DeploymentIdentityMaterial {
+        machine: deployment.machine.clone(),
+        machine_program_id: machine_program_hash.clone(),
+        presentation: deployment
+            .presentation
+            .as_ref()
+            .map(|id| DeploymentPresentationIdentity {
+                id: id.clone(),
+                presentation_id: presentation_hash
+                    .clone()
+                    .expect("selected presentation hash was resolved above"),
+            }),
+        entry: deployment.entry.clone(),
+        lifetime: deployment.lifetime.clone(),
+        configuration: configuration.to_wire_json(),
+        port_bindings,
+        stylesheet: deployment
+            .stylesheet
+            .as_ref()
+            .map(|_| DeploymentContentIdentity {
+                protocol: UHURA_STYLESHEET_CONTENT_PROTOCOL.into(),
+                configuration: serde_json::Value::Null,
+                content_hash: sha256_hex(stylesheet.as_bytes()),
+            }),
+        provider,
+    };
+    let deployment_hash = deployment_hash(&material)?;
     Ok(DeploymentIdentity {
-        protocol: program.identity_protocol.clone(),
+        protocol: program.machine_program.identity_protocol.clone(),
         machine_program_hash,
         presentation_hash,
         evidence_hash,
@@ -2324,7 +2097,7 @@ fn source_provenance(sources: &[(String, String)]) -> Vec<serde_json::Value> {
 
 fn editor_render(
     revision: u64,
-    program: &MachineProgram,
+    program: &Program,
     authority: Option<&PlayAuthority>,
     inputs: &EditorInputs<'_>,
 ) -> Result<EditorRender, serde_json::Value> {
@@ -2342,39 +2115,25 @@ fn editor_render(
         .iter()
         .map(|(path, text)| (path.clone(), source_map.add(path.clone(), text.clone())))
         .collect::<BTreeMap<_, _>>();
-    let resolved_provenance = if semantic_provenance.is_null() {
-        None
-    } else {
-        let value = serde_json::from_value::<Provenance>((*semantic_provenance).clone()).map_err(
-            |error| {
-                host_failure(
-                    "R3014",
-                    "uhura/editor-authoring",
-                    format!("semantic provenance is not decodable: {error}"),
-                )
-            },
-        )?;
-        value.validate().map_err(|error| {
-            host_failure(
-                "R3014",
-                "uhura/editor-authoring",
-                format!("semantic provenance is invalid: {error}"),
-            )
-        })?;
-        Some(value)
-    };
+    semantic_provenance.validate().map_err(|error| {
+        host_failure(
+            "R3014",
+            "uhura/editor-authoring",
+            format!("semantic provenance is invalid: {error}"),
+        )
+    })?;
     let mut authoring_targets = BTreeMap::<String, SourceTarget>::new();
     let mut previews = Vec::new();
     let presentation_kinds = presentation_kinds(evidence);
     let presentation_sources =
-        presentation_authoring_sources(program, &presentation_kinds, resolved_provenance.as_ref())?;
+        presentation_authoring_sources(program, &presentation_kinds, semantic_provenance)?;
     let presentation_node_owners = presentation_node_owners(program);
     let projection_authoring = ProjectionAuthoringContext {
         source_map: &source_map,
         source_files: &source_files,
         presentation_sources: &presentation_sources,
         presentation_node_owners: &presentation_node_owners,
-        provenance: resolved_provenance.as_ref(),
+        provenance: semantic_provenance,
     };
     let mut default_presentations = BTreeSet::new();
     let declared_defaults = evidence
@@ -2496,12 +2255,7 @@ fn editor_render(
             });
         }
     }
-    establish_preview_lineage(
-        program,
-        evidence,
-        resolved_provenance.as_ref(),
-        &mut previews,
-    );
+    establish_preview_lineage(program, evidence, semantic_provenance, &mut previews);
 
     let mut groups = Vec::<PreviewGroup>::new();
     let mut group_indexes = BTreeMap::<(PreviewKind, String), usize>::new();
@@ -2548,7 +2302,7 @@ fn editor_render(
         deployment_hash: authority.identity.deployment_hash.clone(),
     });
     let machine = MachineSidecar::new(MachineSidecarInput {
-        identity_protocol: program.identity_protocol.clone(),
+        identity_protocol: program.machine_program.identity_protocol.clone(),
         deployment,
         sources: serde_json::Value::Array(provenance.to_vec()),
         provenance: (*semantic_provenance).clone(),
@@ -2559,7 +2313,7 @@ fn editor_render(
     });
     let application_name = authority
         .map(|authority| authority.deployment.entry.clone())
-        .or_else(|| program.modules.first().cloned())
+        .or_else(|| program.machine_program.modules.first().cloned())
         .unwrap_or_else(|| "Uhura".to_string());
     let application_interaction_graph = application_interaction_graph(
         program,
@@ -2646,31 +2400,29 @@ struct ProjectionAuthoringContext<'a> {
     source_files: &'a BTreeMap<String, FileId>,
     presentation_sources: &'a BTreeMap<String, PresentationAuthoringSource>,
     presentation_node_owners: &'a BTreeMap<String, String>,
-    provenance: Option<&'a Provenance>,
+    provenance: &'a Provenance,
 }
 
 fn presentation_authoring_sources(
-    program: &MachineProgram,
+    program: &Program,
     kinds: &BTreeMap<String, PreviewKind>,
-    provenance: Option<&Provenance>,
+    provenance: &Provenance,
 ) -> Result<BTreeMap<String, PresentationAuthoringSource>, serde_json::Value> {
     program
         .presentations
         .values()
         .map(|presentation| {
             let path = if presentation.source.path == "<resolved-project>" {
-                provenance
-                    .and_then(|provenance| presentation_source_path(provenance, &presentation.id))
-                    .ok_or_else(|| {
-                        host_failure(
-                            "R3014",
-                            "uhura/editor-authoring",
-                            format!(
-                                "presentation `{}` has no physical declaration provenance",
-                                presentation.id
-                            ),
-                        )
-                    })?
+                presentation_source_path(provenance, &presentation.id).ok_or_else(|| {
+                    host_failure(
+                        "R3014",
+                        "uhura/editor-authoring",
+                        format!(
+                            "presentation `{}` has no physical declaration provenance",
+                            presentation.id
+                        ),
+                    )
+                })?
             } else {
                 presentation.source.path.clone()
             };
@@ -2700,7 +2452,7 @@ fn source_is_within_presentation(source: &str, declaration: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with('.'))
 }
 
-fn presentation_node_owners(program: &MachineProgram) -> BTreeMap<String, String> {
+fn presentation_node_owners(program: &Program) -> BTreeMap<String, String> {
     fn collect(
         nodes: &[uhura_core::UiNode],
         presentation: &str,
@@ -2800,22 +2552,14 @@ fn projection_authoring_source(
         ));
     }
 
-    let provenance = context.provenance.ok_or_else(|| {
-        host_failure(
-            "R3014",
-            "uhura/editor-authoring",
-            format!(
-                "semantic source `{}` has no checked provenance sidecar",
-                source.id
-            ),
-        )
-    })?;
-    let mut occurrences = provenance
+    let mut occurrences = context
+        .provenance
         .occurrences
         .iter()
         .filter(|occurrence| occurrence.node == source.id && occurrence.role == "definition")
         .filter_map(|occurrence| {
-            provenance
+            context
+                .provenance
                 .sources
                 .iter()
                 .find(|candidate| candidate.source == occurrence.source)
@@ -3024,7 +2768,7 @@ fn source_target_label(source: &str, fallback: &str) -> String {
 }
 
 fn application_interaction_graph(
-    program: &MachineProgram,
+    program: &Program,
     evidence: &EvidenceReport,
     authority: Option<&PlayAuthority>,
     application_name: String,
@@ -3142,14 +2886,14 @@ fn application_edge(
 }
 
 fn application_navigation_graph(
-    program: &MachineProgram,
+    program: &Program,
     evidence: &EvidenceReport,
     authority: Option<&PlayAuthority>,
     definitions: &BTreeSet<(PreviewKind, String)>,
     previews: &[Preview],
 ) -> ApplicationNavigationGraph {
     let mut graph = ApplicationNavigationGraph::default();
-    for machine in program.machines.values() {
+    for machine in program.machine_program.machines.values() {
         for (port, route_type) in navigation_ports(machine, authority) {
             let destinations =
                 route_presentation_destinations(evidence, machine, &route_type, definitions);
@@ -3260,7 +3004,7 @@ fn route_presentation_destinations(
 }
 
 fn application_preview_route_graph(
-    program: &MachineProgram,
+    program: &Program,
     machine: &Machine,
     port: &str,
     route_type: &str,
@@ -3307,7 +3051,7 @@ fn application_preview_route_graph(
         return ApplicationNavigationGraph::default();
     }
 
-    // The retained evidence language permits an example to omit an explicit
+    // The evidence module role permits an example to omit an explicit
     // presentation. Such examples are still complete, honest application
     // states. When the route value is unambiguous, use the concrete preview
     // as the graph node so a single UI declaration (A0's ReturnDeskWeb) can
@@ -3477,7 +3221,7 @@ fn collect_presentation_inputs(nodes: &[UiNode], input_type: &str, output: &mut 
 #[allow(clippy::too_many_arguments)]
 fn collect_handler_route_constructors(
     statements: &[Statement],
-    program: &MachineProgram,
+    program: &Program,
     machine: &Machine,
     port: &str,
     route_type: &str,
@@ -3596,7 +3340,7 @@ fn collect_handler_route_constructors(
 fn collect_route_constructors(
     expression: &Expr,
     route_type: &str,
-    program: &MachineProgram,
+    program: &Program,
     machine: &Machine,
     locals: &BTreeMap<String, Expr>,
     visiting_functions: &mut BTreeSet<String>,
@@ -3615,7 +3359,7 @@ fn collect_route_constructors(
             );
             return;
         }
-        if let Some(value) = program.constants.get(name) {
+        if let Some(value) = program.machine_program.constants.get(name) {
             collect_value_constructors(value, route_type, output);
         }
     }
@@ -3630,7 +3374,7 @@ fn collect_route_constructors(
         if let Some(function) = machine
             .functions
             .get(&call)
-            .or_else(|| program.functions.get(&call))
+            .or_else(|| program.machine_program.functions.get(&call))
         {
             collect_route_constructors(
                 &function.body,
@@ -3787,9 +3531,9 @@ fn preview_data(snapshot: &EvidenceSnapshot) -> Vec<PreviewField> {
 }
 
 fn preview_replay(
-    program: &MachineProgram,
+    program: &Program,
     machine: &str,
-    provenance: Option<&Provenance>,
+    provenance: &Provenance,
     receipts: &[ReactionReceipt],
 ) -> (Vec<String>, Vec<serde_json::Value>) {
     let replay = receipts
@@ -3830,15 +3574,15 @@ fn preview_replay(
 }
 
 fn replay_dispatch(
-    program: &MachineProgram,
+    program: &Program,
     machine: &str,
-    provenance: Option<&Provenance>,
+    provenance: &Provenance,
     receipt: &ReactionReceipt,
 ) -> serde_json::Value {
     let Value::Variant { constructor, .. } = &receipt.input else {
         return serde_json::Value::Null;
     };
-    let Some(machine) = program.machines.get(machine) else {
+    let Some(machine) = program.machine_program.machines.get(machine) else {
         return serde_json::Value::Null;
     };
     let Some(_handler) = machine.handlers.get(constructor) else {
@@ -3867,7 +3611,7 @@ fn replay_dispatch(
     })
 }
 
-fn replay_authored_input(machine_id: &str, input: &str, provenance: Option<&Provenance>) -> String {
+fn replay_authored_input(machine_id: &str, input: &str, provenance: &Provenance) -> String {
     let owner = replay_handler_owner(machine_id, input, provenance);
     if owner == "root" {
         return input.to_string();
@@ -3878,14 +3622,11 @@ fn replay_authored_input(machine_id: &str, input: &str, provenance: Option<&Prov
     format!("{owner}.{selector}")
 }
 
-fn replay_handler_owner(machine_id: &str, input: &str, provenance: Option<&Provenance>) -> String {
+fn replay_handler_owner(machine_id: &str, input: &str, provenance: &Provenance) -> String {
     let mut candidates = vec![("root", input)];
     if let Some((owner, selector)) = input.rsplit_once('.') {
         candidates.insert(0, (owner, selector));
     }
-    let Some(provenance) = provenance else {
-        return "root".into();
-    };
     for (owner, selector) in candidates {
         let node = semantic_node_id(
             machine_id,
@@ -3942,7 +3683,7 @@ fn preview_reference(preview: &Preview) -> Option<EvidenceRef> {
 /// lets Editor lineage cross scenario ids without guessing through missing or
 /// ambiguous evidence.
 fn history_segments(
-    program: &MachineProgram,
+    program: &Program,
     evidence: &EvidenceReport,
     reference: &EvidenceRef,
     snapshot: &EvidenceSnapshot,
@@ -4075,9 +3816,9 @@ fn pin_receipt_log(
 }
 
 fn establish_preview_lineage(
-    program: &MachineProgram,
+    program: &Program,
     evidence: &EvidenceReport,
-    provenance: Option<&Provenance>,
+    provenance: &Provenance,
     previews: &mut [Preview],
 ) {
     let references = previews.iter().map(preview_reference).collect::<Vec<_>>();
@@ -4188,10 +3929,11 @@ fn collect_projection_interactions(
 }
 
 fn instance_from_snapshot(
-    program: &MachineProgram,
+    program: &Program,
     snapshot: &EvidenceSnapshot,
 ) -> Result<Instance, String> {
     let instance = program
+        .machine_program
         .restore(&Checkpoint {
             protocol: CHECKPOINT_PROTOCOL.into(),
             instance: snapshot.instance.clone(),
@@ -5711,10 +5453,7 @@ mod tests {
         ConstructorDef as MachineConstructorDef, Expr as MachineExpr, Machine as MachineDef,
         PortDef as MachinePortDef, SourceRef,
     };
-    use uhura_core::{
-        MACHINE_PROGRAM_ID_PROTOCOL, Program as MachineProgram, SEMANTIC_IR_IDENTITY_PROTOCOL,
-        TypeDef, TypeRef,
-    };
+    use uhura_core::{MACHINE_PROGRAM_ID_PROTOCOL, Program, TypeDef, TypeRef};
     use uhura_editor_model::{
         Application, AuthoringMetadata, EditorRender, Preview, RenderFreshness,
     };
@@ -5731,6 +5470,8 @@ mod tests {
         serve_file_map, split_request_url, subscribe, subscribe_with_blocking_keepalive, tool_root,
         validate_deployment,
     };
+
+    const TEST_PROVIDER_JS: &str = "export const provider = {};";
 
     fn render(revision: u64, name: &str) -> EditorRender {
         EditorRender {
@@ -5885,16 +5626,23 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("uhura-a0-{label}-{}-{unique}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let source = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.3");
+        let source = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.4");
+        fs::create_dir_all(root.join("evidence")).unwrap();
         for name in [
+            "uhura.toml",
             "machine.uhura",
-            "web.uhura",
-            "conformance.uhura",
+            "ui.uhura",
+            "evidence-support.uhura",
             "host.toml",
             "provider.mjs",
         ] {
             fs::copy(source.join(name), root.join(name)).unwrap();
         }
+        fs::copy(
+            source.join("evidence/conformance.uhura"),
+            root.join("evidence/conformance.uhura"),
+        )
+        .unwrap();
         root
     }
 
@@ -5994,12 +5742,17 @@ default = "lucide"
                 .expect("checked 0.4 project");
         let mut program = checked.program;
         let machine_id = program
+            .machine_program
             .machines
             .keys()
             .next()
             .expect("counter machine")
             .clone();
-        let machine = program.machines.get_mut(&machine_id).unwrap();
+        let machine = program
+            .machine_program
+            .machines
+            .get_mut(&machine_id)
+            .unwrap();
         let mut handler = machine.handlers.remove("Increment").unwrap();
         handler.input = "controls.Increment".into();
         machine
@@ -6049,10 +5802,10 @@ default = "lucide"
         };
 
         assert_eq!(
-            super::replay_handler_owner(&machine_id, "controls.Increment", Some(&provenance),),
+            super::replay_handler_owner(&machine_id, "controls.Increment", &provenance,),
             "controls"
         );
-        let dispatch = super::replay_dispatch(&program, &machine_id, Some(&provenance), &receipt);
+        let dispatch = super::replay_dispatch(&program, &machine_id, &provenance, &receipt);
         assert_eq!(dispatch["scope"], "entry/counter");
         assert_eq!(dispatch["definition"], machine_id);
         assert_eq!(dispatch["on"], "controls.Increment");
@@ -6067,26 +5820,109 @@ default = "lucide"
         let snapshot = crate::source::capture_project_snapshot(&root);
 
         let checked = super::check_project_snapshot(&snapshot).expect("checked 0.4 project");
-        assert_eq!(checked.program.language, "uhura 0.4");
-        assert_eq!(checked.program.machines.len(), 1);
+        assert_eq!(checked.program.machine_program.language, "uhura 0.4");
+        assert_eq!(checked.program.machine_program.machines.len(), 1);
         assert_eq!(checked.sources.len(), 1);
-        assert_eq!(
-            checked.semantic_provenance["protocol"],
-            "uhura-provenance/0",
-        );
-        assert_eq!(
-            checked.semantic_provenance["sources"][0]["module"],
-            "counter",
-        );
-        assert_eq!(
-            checked.semantic_provenance["sources"][0]["path"],
-            "counter.uhura",
-        );
+        assert_eq!(checked.semantic_provenance.protocol, "uhura-provenance/0",);
+        assert_eq!(checked.semantic_provenance.sources[0].module, "counter",);
+        assert_eq!(checked.semantic_provenance.sources[0].path, "counter.uhura",);
+        assert!(!checked.semantic_provenance.occurrences.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn successful_checked_projects_require_semantic_provenance() {
+        let diagnostics = super::require_semantic_provenance(None).unwrap_err();
+        assert_eq!(diagnostics["diagnostics"][0]["code"], "R3014");
+        assert_eq!(diagnostics["diagnostics"][0]["rule"], "uhura/provenance");
         assert!(
-            checked.semantic_provenance["occurrences"]
-                .as_array()
-                .is_some_and(|occurrences| !occurrences.is_empty()),
+            diagnostics["diagnostics"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("produced no semantic provenance"))
         );
+    }
+
+    #[test]
+    fn host_requires_the_current_project_manifest() {
+        for (label, manifest) in [
+            ("missing-manifest", None),
+            (
+                "resource-only-manifest",
+                Some(
+                    r#"[icons]
+default = "lucide"
+"#,
+                ),
+            ),
+        ] {
+            let root = v04_project(label, "");
+            if let Some(manifest) = manifest {
+                fs::write(root.join("uhura.toml"), manifest).unwrap();
+            } else {
+                fs::remove_file(root.join("uhura.toml")).unwrap();
+            }
+
+            let rejected =
+                super::check_project_snapshot(&crate::source::capture_project_snapshot(&root))
+                    .err()
+                    .expect("implicit and resource-only projects must be rejected");
+            assert_eq!(rejected["diagnostics"][0]["code"], "UH2001");
+            assert!(
+                rejected.to_string().contains("project")
+                    && rejected.to_string().contains("modules")
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn host_rejects_unknown_icon_tokens_before_editor_or_play_publication() {
+        let root = v04_project("unknown-icon", "");
+        fs::write(
+            root.join("uhura.toml"),
+            r#"[project]
+name = "test.counter"
+version = 1
+language = "0.4"
+
+[modules]
+counter = "counter.uhura"
+ui = "ui.uhura"
+
+[icons]
+default = "lucide"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("ui.uhura"),
+            r#"use uhura::ui;
+use crate::counter::Counter;
+
+pub ui CounterWeb for Counter(view) {
+  <button label="Increment" on press -> Increment>
+    <icon name="definitely-not-a-lucide-glyph" />
+  </button>
+}
+"#,
+        )
+        .unwrap();
+
+        let rejected =
+            super::check_project_snapshot(&crate::source::capture_project_snapshot(&root))
+                .err()
+                .expect("unknown icon must gate host publication");
+        let diagnostic = rejected["diagnostics"]
+            .as_array()
+            .and_then(|diagnostics| {
+                diagnostics
+                    .iter()
+                    .find(|diagnostic| diagnostic["rule"] == "uhura/unknown-icon")
+            })
+            .expect("unknown icon diagnostic");
+        assert_eq!(diagnostic["code"], "UH5017");
+        assert_eq!(diagnostic["file"], "ui.uhura");
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -6140,11 +5976,8 @@ values = "values.uhura"
             vendor_source,
         )
         .unwrap();
-        let uhura_check::project_manifest::LoadedProjectManifest::V04(vendor_manifest) =
-            uhura_check::project_manifest::load_project_manifest(vendor_manifest_text).unwrap()
-        else {
-            panic!("0.4 vendor manifest")
-        };
+        let vendor_manifest =
+            uhura_check::project_manifest::load_project_manifest(vendor_manifest_text).unwrap();
         let vendor_capture = uhura_check::project_lock::CapturedPackage {
             manifest: vendor_manifest,
             source: uhura_check::project_manifest::ProjectPath::parse("vendor/shared").unwrap(),
@@ -6183,6 +6016,7 @@ dependencies = {{}}
         assert!(
             dependency
                 .program
+                .machine_program
                 .machines
                 .contains_key("test.counter@1::Counter")
         );
@@ -6202,16 +6036,14 @@ dependencies = {{}}
         .into_iter()
         .next()
         .expect("invalid dependency has a parser diagnostic");
+        let (expected_code, expected_rule) = expected_parse.kind.diagnostic_identity();
         fs::write(
             dependency_root.join("vendor/shared/values.uhura"),
             invalid_vendor_source,
         )
         .unwrap();
-        let uhura_check::project_manifest::LoadedProjectManifest::V04(invalid_vendor_manifest) =
-            uhura_check::project_manifest::load_project_manifest(vendor_manifest_text).unwrap()
-        else {
-            panic!("0.4 vendor manifest")
-        };
+        let invalid_vendor_manifest =
+            uhura_check::project_manifest::load_project_manifest(vendor_manifest_text).unwrap();
         let invalid_vendor_capture = uhura_check::project_lock::CapturedPackage {
             manifest: invalid_vendor_manifest,
             source: uhura_check::project_manifest::ProjectPath::parse("vendor/shared").unwrap(),
@@ -6252,8 +6084,9 @@ dependencies = {{}}
             .as_array()
             .unwrap()
             .iter()
-            .find(|diagnostic| diagnostic["rule"] == "uhura/parse")
+            .find(|diagnostic| diagnostic["rule"] == expected_rule)
             .expect("dependency parser diagnostic");
+        assert_eq!(parse["code"], expected_code);
         assert_eq!(parse["file"], "vendor/shared/values.uhura");
         assert!(
             parse["message"]
@@ -6291,7 +6124,7 @@ dependencies = {{}}
         let card_text = "<view>Card</view>\n";
         let screen_text = "<view>Screen</view>\n";
 
-        let mut program = MachineProgram::new();
+        let mut program = Program::new();
         program.presentations.insert(
             card.clone(),
             Presentation {
@@ -6415,7 +6248,7 @@ dependencies = {{}}
             (screen.clone(), PreviewKind::Page),
         ]);
         let presentation_sources =
-            super::presentation_authoring_sources(&program, &kinds, Some(&provenance)).unwrap();
+            super::presentation_authoring_sources(&program, &kinds, &provenance).unwrap();
         let presentation_node_owners = super::presentation_node_owners(&program);
 
         let mut source_map = SourceMap::new();
@@ -6430,7 +6263,7 @@ dependencies = {{}}
             source_files: &source_files,
             presentation_sources: &presentation_sources,
             presentation_node_owners: &presentation_node_owners,
-            provenance: Some(&provenance),
+            provenance: &provenance,
         };
         let projection = ProjectionSources {
             protocol: PROJECTION_SOURCES_PROTOCOL.into(),
@@ -6476,23 +6309,19 @@ dependencies = {{}}
         assert_eq!(screen_target.owner.kind, SourceTargetOwnerKind::Page);
         assert_eq!(screen_target.owner.name, screen);
         assert_eq!(
-            super::replay_handler_owner(
-                &machine,
-                "notice_controls.DismissNotice",
-                Some(&provenance),
-            ),
+            super::replay_handler_owner(&machine, "notice_controls.DismissNotice", &provenance,),
             "notice_controls"
         );
     }
 
-    fn uhura_program_with_a0_ports() -> MachineProgram {
+    fn uhura_program_with_a0_ports() -> Program {
         uhura_program_with_adapter_domain(
             "app.return_desk.machine@1",
             "app.return_desk.machine@1::ReturnDesk",
         )
     }
 
-    fn uhura_program_with_adapter_domain(domain_module: &str, machine_id: &str) -> MachineProgram {
+    fn uhura_program_with_adapter_domain(domain_module: &str, machine_id: &str) -> Program {
         use uhura_port::{
             RouteConstructorDecl, RoutePatternDecl, RouteTable, TypeRef as PortTypeRef,
             observation_instance, request_port_instance, router_instance,
@@ -6530,22 +6359,24 @@ dependencies = {{}}
         let orders_instance =
             observation_instance(PortTypeRef::new(order_wire.canonical_name()).unwrap()).unwrap();
         let source = SourceRef::synthetic("test");
-        let mut program = MachineProgram::new();
-        program.types.insert(
+        let mut program = Program::new();
+        program.machine_program.language = "uhura 0.4".into();
+        program.machine_program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
+        program.machine_program.types.insert(
             order_id.canonical_name(),
             TypeDef::Key {
                 id: order_id.canonical_name(),
                 underlying: TypeRef::Text,
             },
         );
-        program.types.insert(
+        program.machine_program.types.insert(
             line_id.canonical_name(),
             TypeDef::Key {
                 id: line_id.canonical_name(),
                 underlying: TypeRef::Text,
             },
         );
-        program.types.insert(
+        program.machine_program.types.insert(
             order_line_wire.canonical_name(),
             TypeDef::Record {
                 id: order_line_wire.canonical_name(),
@@ -6558,7 +6389,7 @@ dependencies = {{}}
                 ],
             },
         );
-        program.types.insert(
+        program.machine_program.types.insert(
             order_wire.canonical_name(),
             TypeDef::Record {
                 id: order_wire.canonical_name(),
@@ -6580,7 +6411,7 @@ dependencies = {{}}
                 ],
             },
         );
-        program.types.insert(
+        program.machine_program.types.insert(
             settlement.canonical_name(),
             TypeDef::Sum {
                 id: settlement.canonical_name(),
@@ -6590,7 +6421,7 @@ dependencies = {{}}
                 }],
             },
         );
-        program.machines.insert(
+        program.machine_program.machines.insert(
             machine_id.into(),
             MachineDef {
                 id: machine_id.into(),
@@ -6881,6 +6712,7 @@ module = "provider.mjs"
 
         let mut incompatible = uhura_program_with_a0_ports();
         incompatible
+            .machine_program
             .machines
             .get_mut("app.return_desk.machine@1::ReturnDesk")
             .unwrap()
@@ -6984,7 +6816,12 @@ nested = [{ enabled = true }, { ratio = 0.5 }]
         const MACHINE: &str = "app.return_desk.machine@1::ReturnDesk";
         const LARGE: &str = "900719925474099312345678901234567890";
         let mut program = uhura_program_with_a0_ports();
-        program.machines.get_mut(MACHINE).unwrap().config = TypeRef::Record {
+        program
+            .machine_program
+            .machines
+            .get_mut(MACHINE)
+            .unwrap()
+            .config = TypeRef::Record {
             fields: vec![("seed".into(), TypeRef::Int)],
         };
         program.freeze_program_hashes();
@@ -7025,7 +6862,7 @@ module = "provider.mjs"
             &admission.configuration,
             &admission.ports,
             "",
-            None,
+            Some(TEST_PROVIDER_JS),
         )
         .unwrap();
         let play: serde_json::Value = serde_json::from_str(&super::play_config(
@@ -7050,7 +6887,7 @@ module = "provider.mjs"
             &changed.configuration,
             &changed.ports,
             "",
-            None,
+            Some(TEST_PROVIDER_JS),
         )
         .unwrap();
         assert_ne!(changed_identity.deployment_hash, identity.deployment_hash);
@@ -7111,7 +6948,7 @@ module = "provider.mjs"
             .unwrap();
         assert_eq!(
             orders_binding["contractInstanceHash"],
-            program.machines[WRAPPER]
+            program.machine_program.machines[WRAPPER]
                 .ports
                 .iter()
                 .find(|port| port.name == "orders")
@@ -7127,7 +6964,7 @@ module = "provider.mjs"
             .unwrap();
         assert_eq!(
             returns_binding["contractInstanceHash"],
-            program.machines[WRAPPER]
+            program.machine_program.machines[WRAPPER]
                 .ports
                 .iter()
                 .find(|port| port.name == "returns")
@@ -7144,7 +6981,7 @@ module = "provider.mjs"
             &admission.configuration,
             &admitted,
             "",
-            None,
+            Some(TEST_PROVIDER_JS),
         )
         .unwrap();
         let play: serde_json::Value = serde_json::from_str(&super::play_config(
@@ -7179,6 +7016,7 @@ module = "provider.mjs"
 
         let mut wrong_type = uhura_program_with_a0_ports();
         let orders = wrong_type
+            .machine_program
             .machines
             .get_mut("app.return_desk.machine@1::ReturnDesk")
             .unwrap()
@@ -7197,6 +7035,7 @@ module = "provider.mjs"
 
         let mut wrong_configuration = uhura_program_with_a0_ports();
         let router = wrong_configuration
+            .machine_program
             .machines
             .get_mut("app.return_desk.machine@1::ReturnDesk")
             .unwrap()
@@ -7208,10 +7047,14 @@ module = "provider.mjs"
             CanonicalJson::new(serde_json::json!({ "forged": true })).unwrap();
         let (code, message) = validate_deployment(&wrong_configuration, &deployment).unwrap_err();
         assert_eq!(code, "R3015");
-        assert!(message.contains("contract instance differs"));
+        assert!(
+            message.contains("invalid resolved route-table configuration"),
+            "{message}"
+        );
 
         let mut wrong_codec = uhura_program_with_a0_ports();
         let orders = wrong_codec
+            .machine_program
             .machines
             .get_mut("app.return_desk.machine@1::ReturnDesk")
             .unwrap()
@@ -7231,7 +7074,7 @@ module = "provider.mjs"
         const MACHINE: &str = "app.return_desk.machine@1::ReturnDesk";
 
         let mut program = uhura_program_with_a0_ports();
-        let machine = program.machines.get_mut(MACHINE).unwrap();
+        let machine = program.machine_program.machines.get_mut(MACHINE).unwrap();
         let mut second_router = machine
             .ports
             .iter()
@@ -7292,10 +7135,10 @@ module = "provider.mjs"
             &admission.configuration,
             &admission.ports,
             "",
-            None,
+            Some(TEST_PROVIDER_JS),
         )
         .unwrap();
-        assert_eq!(identity.protocol, SEMANTIC_IR_IDENTITY_PROTOCOL);
+        assert_eq!(identity.protocol, MACHINE_PROGRAM_ID_PROTOCOL);
         assert_eq!(identity.machine_program_hash.len(), 64);
         assert_eq!(identity.deployment_hash.len(), 64);
         assert_eq!(identity.presentation_hash, None);
@@ -7310,7 +7153,7 @@ module = "provider.mjs"
                 &admission.configuration,
                 &reordered,
                 "",
-                None,
+                Some(TEST_PROVIDER_JS),
             )
             .unwrap()
             .deployment_hash,
@@ -7326,7 +7169,7 @@ module = "provider.mjs"
                 &admission.configuration,
                 &admission.ports,
                 "",
-                None,
+                Some(TEST_PROVIDER_JS),
             )
             .unwrap()
             .deployment_hash,
@@ -7342,7 +7185,7 @@ module = "provider.mjs"
                 &admission.configuration,
                 &changed_contract,
                 "",
-                None,
+                Some(TEST_PROVIDER_JS),
             )
             .unwrap()
             .deployment_hash,
@@ -7370,8 +7213,6 @@ module = "provider.mjs"
 endpoint = "https://one.example"
 "#;
         let mut program = uhura_program_with_a0_ports();
-        program.language = "uhura 0.4".into();
-        program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
         program.freeze_program_hashes();
         let deployment = parse_host_manifest(source).unwrap();
         let admission = validate_deployment(&program, &deployment).unwrap();
@@ -7448,7 +7289,7 @@ endpoint = "https://one.example"
     }
 
     #[test]
-    fn deployment_identity_admits_only_the_closed_language_protocol_pairs() {
+    fn deployment_identity_admits_only_the_current_language_protocol_pair() {
         let source = r#"
 [entry.return-desk]
 machine = "app.return_desk.machine@1::ReturnDesk"
@@ -7466,39 +7307,25 @@ module = "provider.mjs"
         let deployment = parse_host_manifest(source).unwrap();
         let admission = validate_deployment(&program, &deployment).unwrap();
 
-        let legacy = deployment_identity(
-            &program,
-            &deployment,
-            &admission.configuration,
-            &admission.ports,
-            "",
-            None,
-        )
-        .unwrap();
-        assert_eq!(legacy.protocol, SEMANTIC_IR_IDENTITY_PROTOCOL);
-
-        program.language = "uhura 0.4".into();
-        program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
-        program.freeze_program_hashes();
         let current = deployment_identity(
             &program,
             &deployment,
             &admission.configuration,
             &admission.ports,
             "",
-            Some(""),
+            Some(TEST_PROVIDER_JS),
         )
         .unwrap();
         assert_eq!(current.protocol, MACHINE_PROGRAM_ID_PROTOCOL);
 
-        program.identity_protocol = "uhura-unrecognized-identity/9".into();
+        program.machine_program.identity_protocol = "uhura-unrecognized-identity/9".into();
         let error = deployment_identity(
             &program,
             &deployment,
             &admission.configuration,
             &admission.ports,
             "",
-            None,
+            Some(TEST_PROVIDER_JS),
         )
         .unwrap_err();
         assert!(error.contains("unsupported Uhura machine identity protocol"));
@@ -7537,32 +7364,46 @@ module = "provider.mjs"
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("app.uhura"),
-            r#"language uhura 0.3
-module test.app@1
+            r#"pub machine App {
+  events {
+    Noop,
+  }
 
-machine App {
-  input =
-    | noop
-  command = Never
-  outcome =
-    | accepted commit
+  outcomes {
+    commit Accepted,
+  }
+
   state {
-    count: Int = 0
+    count: Int = 0,
   }
+
   observe {
-    count = count
+    count,
   }
-  on noop {
-    finish accepted
+
+  on Noop {
+    Accepted
   }
 }
 "#,
         )
         .unwrap();
         fs::write(
+            root.join("uhura.toml"),
+            r#"[project]
+name = "test.app"
+version = 1
+language = "0.4"
+
+[modules]
+app = "app.uhura"
+"#,
+        )
+        .unwrap();
+        fs::write(
             root.join("host.toml"),
             r#"[entry.app]
-machine = "test.app@1::App"
+machine = "crate::App"
 lifetime = "application-session"
 
 [entry.app.ports]
@@ -7572,8 +7413,16 @@ lifetime = "application-session"
 
         let snapshot = crate::source::capture_project_snapshot(&root);
         let candidate = super::build_candidate(&snapshot, 1);
-        assert!(candidate.summary().editor_current);
-        assert!(candidate.summary().play_ok);
+        assert!(
+            candidate.summary().editor_current,
+            "editor diagnostics: {:#}",
+            candidate.diagnostics().editor
+        );
+        assert!(
+            candidate.summary().play_ok,
+            "play diagnostics: {:#}",
+            candidate.diagnostics().play
+        );
         let (host, _) = Host::new(test_web_assets(), candidate).unwrap();
         let config: serde_json::Value =
             serde_json::from_slice(&response_bytes(host.route(RouteRequest {
@@ -7614,44 +7463,53 @@ lifetime = "application-session"
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("app.uhura"),
-            r#"language uhura 0.3
-module test.configured@1
-
-machine Configured {
+            r#"pub machine Configured {
   config {
-    initial: Int
+    initial: Int,
   }
 
-  require initial > 0
+  require initial > 0;
 
-  input =
-    | noop
+  events {
+    Noop,
+  }
 
-  command = Never
-
-  outcome =
-    | accepted commit
+  outcomes {
+    commit Accepted,
+  }
 
   state {
-    value: Int = initial
+    value: Int = initial,
   }
 
-  invariant value > 0
+  invariant value > 0;
 
   observe {
-    value = value
+    value,
   }
 
-  on noop {
-    finish accepted
+  on Noop {
+    Accepted
   }
 }
 "#,
         )
         .unwrap();
+        fs::write(
+            root.join("uhura.toml"),
+            r#"[project]
+name = "test.configured"
+version = 1
+language = "0.4"
+
+[modules]
+configured = "app.uhura"
+"#,
+        )
+        .unwrap();
         let valid_host = format!(
             r#"[entry.configured]
-machine = "test.configured@1::Configured"
+machine = "crate::Configured"
 lifetime = "application-session"
 configuration = '{{"$":"record","fields":[{{"name":"initial","value":{{"$":"Int","value":"{LARGE}"}}}}]}}'
 
@@ -7703,7 +7561,7 @@ configuration = '{{"$":"record","fields":[{{"name":"initial","value":{{"$":"Int"
 
     #[test]
     fn uhura_program_corpus_without_host_is_a_current_graph_only_editor() {
-        let root = tool_root().join("examples/programs/answers/uhura-0.3");
+        let root = tool_root().join("examples/programs/answers/uhura-0.4");
         let candidate = super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
         let summary = candidate.summary();
         assert!(summary.editor_current);
@@ -7715,7 +7573,7 @@ configuration = '{{"$":"record","fields":[{{"name":"initial","value":{{"$":"Int"
         assert_eq!(editor["revision"], 1);
         assert_eq!(
             editor["machine"]["identityProtocol"],
-            "uhura-semantic-ir-hash/0"
+            MACHINE_PROGRAM_ID_PROTOCOL
         );
         assert_eq!(
             editor["machine"]["deployment"],
@@ -7903,7 +7761,7 @@ returns = "return-desk.returns"
                 .unwrap_or_else(|| panic!("missing `{local_name}` preview"))
         }
 
-        let root = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.3");
+        let root = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.4");
         let snapshot = crate::source::capture_project_snapshot(&root);
         let checked = super::check_project_snapshot(&snapshot).expect("checked A0 project");
         let editor = super::build_editor(1, &checked, None, serde_json::Value::Null).unwrap();
@@ -8027,7 +7885,7 @@ returns = "return-desk.returns"
     #[test]
     fn uhura_a0_evidence_failure_is_editor_diagnostic_not_play_admission() {
         let root = copy_a0_fixture("evidence-failure");
-        let evidence_path = root.join("conformance.uhura");
+        let evidence_path = root.join("evidence/conformance.uhura");
         let evidence = fs::read_to_string(&evidence_path).unwrap();
         let broken = evidence.replacen(
             "replay_accepted_suffix::replay_final",
@@ -8087,13 +7945,13 @@ returns = "return-desk.returns"
             }
         }
 
-        let root = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.3");
+        let root = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.4");
         let snapshot = crate::source::capture_project_snapshot(&root);
         let candidate = super::build_candidate(&snapshot, 1);
         let summary = candidate.summary();
         assert!(
             summary.editor_current && summary.play_ok,
-            "Uhura 0.3 A0 diagnostics: {:?}",
+            "Uhura 0.4 A0 diagnostics: {:?}",
             candidate.diagnostics()
         );
         assert_eq!(summary.preview_count, Some(12));
@@ -8162,7 +8020,8 @@ returns = "return-desk.returns"
             assert!(target["span"]["end"]["line"].as_u64().unwrap() > 0);
             assert!(target["span"]["end"]["col"].as_u64().unwrap() > 0);
         }
-        assert_eq!(machine["sources"].as_array().unwrap().len(), 3);
+        assert_eq!(machine["sources"].as_array().unwrap().len(), 4);
+        assert_eq!(machine["provenance"]["protocol"], "uhura-provenance/0");
         assert_eq!(
             machine["interactionGraph"]["protocol"],
             "uhura-interaction-graph/0"
@@ -8355,7 +8214,11 @@ returns = "return-desk.returns"
                 assert!(source["end"].as_u64().unwrap() <= bytes);
             }
         }
-        assert_eq!(inspection["evidence"]["passed"], true);
+        assert_eq!(
+            inspection["evidence"]["passed"], true,
+            "evidence failures: {:#}",
+            inspection["evidence"]["failures"]
+        );
         assert_eq!(
             inspection["evidence"]["artifacts"]["examples"]
                 .as_object()
@@ -8420,17 +8283,30 @@ returns = "return-desk.returns"
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
-        let source = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.3");
-        for name in ["machine.uhura", "web.uhura", "host.toml", "provider.mjs"] {
+        let source = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.4");
+        for name in ["machine.uhura", "ui.uhura", "host.toml", "provider.mjs"] {
             fs::copy(source.join(name), root.join(name)).unwrap();
         }
+        fs::write(
+            root.join("uhura.toml"),
+            r#"[project]
+name = "app.returndesk"
+version = 1
+language = "0.4"
+
+[modules]
+return_desk = "machine.uhura"
+ui = "ui.uhura"
+"#,
+        )
+        .unwrap();
 
         let snapshot = crate::source::capture_project_snapshot(&root);
         let candidate = super::build_candidate(&snapshot, 1);
         let summary = candidate.summary();
         assert!(
             summary.editor_current && summary.play_ok,
-            "Uhura 0.3 A0 without evidence diagnostics: {:?}",
+            "Uhura 0.4 A0 without evidence diagnostics: {:?}",
             candidate.diagnostics()
         );
         assert_eq!(summary.preview_count, Some(0));
@@ -8608,16 +8484,10 @@ returns = "return-desk.returns"
             "uhura-icon-resources-{}-{unique}",
             std::process::id()
         ));
-        let source = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.3");
+        let source = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.4");
         fs::create_dir_all(root.join("icons/brand")).unwrap();
         fs::create_dir_all(root.join("assets")).unwrap();
-        for name in [
-            "machine.uhura",
-            "web.uhura",
-            "conformance.uhura",
-            "host.toml",
-            "provider.mjs",
-        ] {
+        for name in ["machine.uhura", "ui.uhura", "host.toml", "provider.mjs"] {
             fs::copy(source.join(name), root.join(name)).unwrap();
         }
         let resources = tool_root().join("resources/icon-fonts/lucide");
@@ -8644,7 +8514,16 @@ sha256 = "{asset_hash}"
         .unwrap();
         fs::write(
             root.join("uhura.toml"),
-            r#"[assets]
+            r#"[project]
+name = "app.returndesk"
+version = 1
+language = "0.4"
+
+[modules]
+return_desk = "machine.uhura"
+ui = "ui.uhura"
+
+[assets]
 manifest = "assets/manifest.toml"
 
 [icons]
@@ -8703,7 +8582,19 @@ glyphs = "icons/brand/glyphs.json"
 
         fs::write(
             root.join("uhura.toml"),
-            r#"[icons]
+            r#"[project]
+name = "app.returndesk"
+version = 1
+language = "0.4"
+
+[modules]
+return_desk = "machine.uhura"
+ui = "ui.uhura"
+
+[assets]
+manifest = "assets/manifest.toml"
+
+[icons]
 default = "brand"
 
 [icons.brand]
@@ -8874,14 +8765,14 @@ glyphs = "icons/brand/missing.json"
         let good = candidate.play.expect("canonical example checks");
         let inspection: serde_json::Value =
             serde_json::from_str(&good.inspect_json).expect("inspection JSON");
-        let program = MachineProgram::from_json(&good.ir).expect("served IR loads");
+        let program = Program::from_json(&good.ir).expect("served IR loads");
         let machine = inspection["machine"].as_str().expect("inspected machine");
 
         assert_eq!(good.inspect_json, to_canonical_json(&inspection));
         assert_eq!(inspection["protocol"], "uhura-inspection/0");
         assert_eq!(
             inspection["machineProgramHash"],
-            program.program_hashes[machine]
+            program.machine_program.program_hashes[machine]
         );
         assert!(
             inspection["interactionGraph"]["nodes"]

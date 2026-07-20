@@ -1,58 +1,57 @@
-language uhura 0.3
-module app.instagram.evidence@1
-
-use evidence
-
-import {
+use crate::instagram::{
   Authority,
-  BottomNav,
-  CommentRow,
-  CommentsSheet,
-  ConnectionRow,
-  CreatePage,
   DEMO_APPENDED,
   DEMO_EMPTY,
   DEMO_EMPTY_EXPLORE,
   DEMO_EXHAUSTED,
   DEMO_STANDARD,
-  FeedPage,
-  FollowersPage,
-  FollowingPage,
   INSTAGRAM_ROUTES,
   Instagram,
   Location,
   Mutation,
-  NoticeBar,
   POST_AYLA_FERRY,
   POST_LENA_BOWLS,
   POST_LENA_GLAZE,
   POST_MARCO_BAJA,
   POST_NILS_AURORA,
   POST_THEO_COURT,
-  PostCard,
-  PostPage,
+  Post,
+  Profile,
   ProfileTab,
-  ProfileHeader,
-  ProfilePage,
-  ReelCard,
-  ReelsPage,
   RequestId,
-  SearchPage,
   Settlement,
   STORY_LENA,
   STORY_LENA_GLAZES,
   STORY_LENA_STUDIO,
   STORY_MIRA_TRAM,
   STORY_PRIYA,
-  StoriesTray,
-  StoryPage,
   USER_LENA,
   USER_MIRA,
   USER_NILS,
-} from "app.instagram@1"
-import { Observation } from "uhura.observation@1"
-import { RequestPort } from "uhura.ports@1"
-import { Router } from "uhura.web_router@1"
+};
+use crate::ui::{
+  BottomNav,
+  CommentRow,
+  CommentsSheet,
+  ConnectionRow,
+  CreatePage,
+  FeedPage,
+  FollowersPage,
+  FollowingPage,
+  NoticeBar,
+  PostCard,
+  PostPage,
+  ProfileHeader,
+  ProfilePage,
+  ReelCard,
+  ReelsPage,
+  SearchPage,
+  StoriesTray,
+  StoryPage,
+};
+use uhura::observation::Observation;
+use uhura::ports::RequestPort;
+use uhura::web_router::Router;
 
 
 scenario bootstrap_loading for Instagram {
@@ -66,7 +65,7 @@ scenario bootstrap_loading for Instagram {
   pin frame
 }
 
-checkpoint loading_base = bootstrap_loading::frame
+checkpoint loading_base = bootstrap_loading::frame;
 
 scenario bootstrap_ready from loading_base {
   expect restore commands []
@@ -75,7 +74,7 @@ scenario bootstrap_ready from loading_base {
   pin frame
 }
 
-checkpoint ready_base = bootstrap_ready::frame
+checkpoint ready_base = bootstrap_ready::frame;
 
 
 // Pages: Create
@@ -940,414 +939,414 @@ scenario comments_rejected_scenario
 
 example create_loading
   for CreatePage as page
-  = create_loading_scenario::frame
+  = create_loading_scenario::frame;
 
 example create_empty
   for CreatePage as page default
-  = create_empty_scenario::frame
+  = create_empty_scenario::frame;
 
 example create_choosing
   for CreatePage as page
   note "the platform picker/upload is in flight; no bytes enter Core"
-  = create_choosing_scenario::frame
+  = create_choosing_scenario::frame;
 
 example create_uploaded
   for CreatePage as page
-  = create_uploaded_scenario::frame
+  = create_uploaded_scenario::frame;
 
 example create_composed
   for CreatePage as page
-  = create_composed_scenario::frame
+  = create_composed_scenario::frame;
 
 example create_publishing
   for CreatePage as page
   note "publish carries only the storage object id and authored text"
-  = create_publishing_scenario::frame
+  = create_publishing_scenario::frame;
 
 example create_publish_refused
   for CreatePage as page
-  = create_publish_refused_scenario::frame
+  = create_publish_refused_scenario::frame;
 
 
 example feed_loading
   for FeedPage as page
   note "cold start — nothing delivered yet"
-  = feed_loading_scenario::frame
+  = feed_loading_scenario::frame;
 
 example feed_first_page
   for FeedPage as page default
-  = feed_first_page_scenario::frame
+  = feed_first_page_scenario::frame;
 
 example feed_like_pending
   for FeedPage as page
   note "optimistic heart + count while the like request is in flight"
-  = feed_like_pending_scenario::frame
+  = feed_like_pending_scenario::frame;
 
 example feed_like_refused
   for FeedPage as page
   note "transport unavailable — rollback, notice explains"
-  = feed_like_refused_scenario::frame
+  = feed_like_refused_scenario::frame;
 
 example feed_save_pending
   for FeedPage as page
   note "optimistic bookmark while the save request is in flight"
-  = feed_save_pending_scenario::frame
+  = feed_save_pending_scenario::frame;
 
 example feed_unsave_pending
   for FeedPage as page
   note "Marco's post starts saved because the seed contains Mira's save edge"
-  = feed_unsave_pending_scenario::frame
+  = feed_unsave_pending_scenario::frame;
 
 example feed_comments_open
   for FeedPage as page
   note "the sheet mounts because the machine owns its semantic lifetime"
-  = feed_comments_open_scenario::frame
+  = feed_comments_open_scenario::frame;
 
 example feed_load_pending
   for FeedPage as page
   note "footer spinner; the machine suppresses duplicate pagination"
-  = feed_load_pending_scenario::frame
+  = feed_load_pending_scenario::frame;
 
 example feed_load_failed
   for FeedPage as page
-  = feed_load_failed_scenario::frame
+  = feed_load_failed_scenario::frame;
 
 example feed_appended
   for FeedPage as page
   note "all six followed-author posts are loaded, so has-more is false"
-  = feed_appended_scenario::frame
+  = feed_appended_scenario::frame;
 
 example feed_exhausted
   for FeedPage as page
   note "has-more false — end cap; pinned state"
-  = feed_exhausted_scenario::frame
+  = feed_exhausted_scenario::frame;
 
 example feed_empty
   for FeedPage as page
-  = feed_empty_scenario::frame
+  = feed_empty_scenario::frame;
 
 example feed_failed
   for FeedPage as page
   note "provider reported an authoritative source failure"
-  = feed_failed_scenario::frame
+  = feed_failed_scenario::frame;
 
 
 example post_loading
   for PostPage as page
-  = post_loading_scenario::frame
+  = post_loading_scenario::frame;
 
 example post_lena
   for PostPage as page default
-  = post_lena_scenario::frame
+  = post_lena_scenario::frame;
 
 example post_profile_history
   for PostPage as page
   note "a profile-grid tile opens a genuine post, not a decorative thumbnail"
-  = post_profile_history_scenario::frame
+  = post_profile_history_scenario::frame;
 
 example post_like_pending
   for PostPage as page
-  = post_like_pending_scenario::frame
+  = post_like_pending_scenario::frame;
 
 example post_save_pending
   for PostPage as page
-  = post_save_pending_scenario::frame
+  = post_save_pending_scenario::frame;
 
 example post_comments_open
   for PostPage as page
-  = post_comments_open_scenario::frame
+  = post_comments_open_scenario::frame;
 
 
 example followers_loading
   for FollowersPage as page
-  = followers_loading_scenario::frame
+  = followers_loading_scenario::frame;
 
 example followers_lena
   for FollowersPage as page default
-  = followers_lena_scenario::frame
+  = followers_lena_scenario::frame;
 
 example followers_follow_pending
   for FollowersPage as page
-  = followers_follow_pending_scenario::frame
+  = followers_follow_pending_scenario::frame;
 
 example followers_mira
   for FollowersPage as page
-  = followers_mira_scenario::frame
+  = followers_mira_scenario::frame;
 
 
 example following_loading
   for FollowingPage as page
-  = following_loading_scenario::frame
+  = following_loading_scenario::frame;
 
 example following_lena
   for FollowingPage as page default
-  = following_lena_scenario::frame
+  = following_lena_scenario::frame;
 
 example following_mira
   for FollowingPage as page
-  = following_mira_scenario::frame
+  = following_mira_scenario::frame;
 
 
 example profile_loading
   for ProfilePage as page
-  = profile_loading_scenario::frame
+  = profile_loading_scenario::frame;
 
 example profile_lena_posts
   for ProfilePage as page default
-  = profile_lena_posts_scenario::frame
+  = profile_lena_posts_scenario::frame;
 
 example profile_lena_tagged
   for ProfilePage as page
   note "the tile is Priya's real sourdough post from the seeded tag edge"
-  = profile_lena_tagged_scenario::frame
+  = profile_lena_tagged_scenario::frame;
 
 example profile_self
   for ProfilePage as page
-  = profile_self_scenario::frame
+  = profile_self_scenario::frame;
 
 example profile_self_tagged
   for ProfilePage as page
   note "Mira's tagged grid carries Marco's real Baja post id"
-  = profile_self_tagged_scenario::frame
+  = profile_self_tagged_scenario::frame;
 
 example profile_self_reels
   for ProfilePage as page
   note "Reels is a filtered view of Mira's genuine video posts"
-  = profile_self_reels_scenario::frame
+  = profile_self_reels_scenario::frame;
 
 example profile_self_saved
   for ProfilePage as page
   note "Saved is private to Mira and mirrors her two seeded save edges"
-  = profile_self_saved_scenario::frame
+  = profile_self_saved_scenario::frame;
 
 example profile_nils_posts
   for ProfilePage as page
-  = profile_nils_posts_scenario::frame
+  = profile_nils_posts_scenario::frame;
 
 example profile_nils_reels
   for ProfilePage as page
-  = profile_nils_reels_scenario::frame
+  = profile_nils_reels_scenario::frame;
 
 example profile_nils_tagged_empty
   for ProfilePage as page
-  = profile_nils_tagged_empty_scenario::frame
+  = profile_nils_tagged_empty_scenario::frame;
 
 
 example reels_loading
   for ReelsPage as page
-  = reels_loading_scenario::frame
+  = reels_loading_scenario::frame;
 
 example reels_videos
   for ReelsPage as page default
   note "three real video posts backed by local fixture MP4s"
-  = reels_videos_scenario::frame
+  = reels_videos_scenario::frame;
 
 example reels_like_pending
   for ReelsPage as page
-  = reels_like_pending_scenario::frame
+  = reels_like_pending_scenario::frame;
 
 example reels_save_pending
   for ReelsPage as page
-  = reels_save_pending_scenario::frame
+  = reels_save_pending_scenario::frame;
 
 example reels_unsave_pending
   for ReelsPage as page
-  = reels_unsave_pending_scenario::frame
+  = reels_unsave_pending_scenario::frame;
 
 
 example search_loading
   for SearchPage as page
-  = search_loading_scenario::frame
+  = search_loading_scenario::frame;
 
 example search_explore
   for SearchPage as page default
   note "Explore combines real people and clickable post thumbnails"
-  = search_explore_scenario::frame
+  = search_explore_scenario::frame;
 
 example search_searching
   for SearchPage as page
-  = search_searching_scenario::frame
+  = search_searching_scenario::frame;
 
 example search_nils_results
   for SearchPage as page
-  = search_nils_results_scenario::frame
+  = search_nils_results_scenario::frame;
 
 example search_no_results
   for SearchPage as page
-  = search_no_results_scenario::frame
+  = search_no_results_scenario::frame;
 
 example search_empty_explore
   for SearchPage as page
-  = search_empty_explore_scenario::frame
+  = search_empty_explore_scenario::frame;
 
 
 example story_loading
   for StoryPage as page
-  = story_loading_scenario::frame
+  = story_loading_scenario::frame;
 
 example story_unseen
   for StoryPage as page default
   note "first of three: no previous target, next target present, all segments unseen"
-  = story_unseen_scenario::frame
+  = story_unseen_scenario::frame;
 
 example story_lena_middle
   for StoryPage as page
   note "middle frame exposes both previous and next hit zones"
-  = story_lena_middle_scenario::frame
+  = story_lena_middle_scenario::frame;
 
 example story_lena_last
   for StoryPage as page
   note "last frame replaces Next with the close affordance"
-  = story_lena_last_scenario::frame
+  = story_lena_last_scenario::frame;
 
 example story_self_middle_seen
   for StoryPage as page
   note "Mira's own three-frame sequence is fully viewed"
-  = story_self_middle_seen_scenario::frame
+  = story_self_middle_seen_scenario::frame;
 
 example story_seen
   for StoryPage as page
   note "a single-frame seen story has one progress segment and closes on advance"
-  = story_seen_scenario::frame
+  = story_seen_scenario::frame;
 
 example story_marking_seen
   for StoryPage as page
-  = story_marking_seen_scenario::frame
+  = story_marking_seen_scenario::frame;
 
 
 example bottom_nav_feed_active
   for BottomNav as component default
-  = bottom_nav_feed_scenario::frame
+  = bottom_nav_feed_scenario::frame;
 
 example bottom_nav_profile_active
   for BottomNav as component
-  = bottom_nav_profile_scenario::frame
+  = bottom_nav_profile_scenario::frame;
 
 example bottom_nav_create_active
   for BottomNav as component
-  = bottom_nav_create_scenario::frame
+  = bottom_nav_create_scenario::frame;
 
 example bottom_nav_search_active
   for BottomNav as component
-  = bottom_nav_search_scenario::frame
+  = bottom_nav_search_scenario::frame;
 
 example bottom_nav_reels_active
   for BottomNav as component
-  = bottom_nav_reels_scenario::frame
+  = bottom_nav_reels_scenario::frame;
 
 
 example comment_row_settled
   for CommentRow as component default
-  = comment_row_settled_scenario::frame
+  = comment_row_settled_scenario::frame;
 
 example comment_row_pending
   for CommentRow as component
-  = comment_row_pending_scenario::frame
+  = comment_row_pending_scenario::frame;
 
 
 example connection_row_following
   for ConnectionRow as component default
-  = connection_following_scenario::frame
+  = connection_following_scenario::frame;
 
 example connection_row_follow_action
   for ConnectionRow as component
-  = connection_follow_action_scenario::frame
+  = connection_follow_action_scenario::frame;
 
 example connection_row_pending
   for ConnectionRow as component
-  = connection_pending_scenario::frame
+  = connection_pending_scenario::frame;
 
 
 example notice_bar_refusal
   for NoticeBar as component default
-  = notice_refusal_scenario::frame
+  = notice_refusal_scenario::frame;
 
 
 example post_card_image
   for PostCard as component default
-  = post_card_image_scenario::frame
+  = post_card_image_scenario::frame;
 
 example post_card_carousel_liked
   for PostCard as component
-  = post_card_carousel_scenario::frame
+  = post_card_carousel_scenario::frame;
 
 example post_card_video
   for PostCard as component
   note "native video with a fixture MP4, poster, accessible label, and controls"
-  = post_card_video_scenario::frame
+  = post_card_video_scenario::frame;
 
 example post_card_like_pending
   for PostCard as component
   note "busy heart during the optimistic window"
-  = post_card_like_pending_scenario::frame
+  = post_card_like_pending_scenario::frame;
 
 example post_card_save_pending
   for PostCard as component
   note "optimistic bookmark while the private saved-library edge settles"
-  = post_card_save_pending_scenario::frame
+  = post_card_save_pending_scenario::frame;
 
 
 example profile_header_lena
   for ProfileHeader as component default
-  = profile_header_lena_scenario::frame
+  = profile_header_lena_scenario::frame;
 
 example profile_header_self
   for ProfileHeader as component
   note "the current actor gets a New post action, never a self-follow action"
-  = profile_header_self_scenario::frame
+  = profile_header_self_scenario::frame;
 
 example profile_header_follow_pending
   for ProfileHeader as component
-  = profile_header_follow_pending_scenario::frame
+  = profile_header_follow_pending_scenario::frame;
 
 
 example reel_card_aurora
   for ReelCard as component default
   note "a real vertical player surface backed by the seeded aurora MP4"
-  = reel_card_aurora_scenario::frame
+  = reel_card_aurora_scenario::frame;
 
 example reel_card_court
   for ReelCard as component
-  = reel_card_court_scenario::frame
+  = reel_card_court_scenario::frame;
 
 example reel_card_save_pending
   for ReelCard as component
-  = reel_card_save_pending_scenario::frame
+  = reel_card_save_pending_scenario::frame;
 
 
 example stories_tray
   for StoriesTray as component default
-  = stories_tray_scenario::frame
+  = stories_tray_scenario::frame;
 
 
 example comments_populated
   for CommentsSheet as surface default
-  = comments_populated_scenario::frame
+  = comments_populated_scenario::frame;
 
 example comments_composing
   for CommentsSheet as surface
   note "composer mid-draft; post enables once non-empty"
-  = comments_composing_scenario::frame
+  = comments_composing_scenario::frame;
 
 example comments_pending_append
   for CommentsSheet as surface
   note "optimistic dimmed row until the outcome settles"
-  = comments_pending_append_scenario::frame
+  = comments_pending_append_scenario::frame;
 
 example comments_empty
   for CommentsSheet as surface
-  = comments_empty_scenario::frame
+  = comments_empty_scenario::frame;
 
 example comments_empty_composing
   for CommentsSheet as surface
-  = comments_empty_composing_scenario::frame
+  = comments_empty_composing_scenario::frame;
 
 example comments_empty_pending
   for CommentsSheet as surface
   note "the optimistic row replaces the empty state and serializes submission"
-  = comments_empty_pending_scenario::frame
+  = comments_empty_pending_scenario::frame;
 
 example comments_rejected
   for CommentsSheet as surface
   note "a refusal restores the submitted body for correction"
-  = comments_rejected_scenario::frame
+  = comments_rejected_scenario::frame;

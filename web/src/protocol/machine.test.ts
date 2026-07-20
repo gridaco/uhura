@@ -3,7 +3,6 @@ import { test } from "vitest";
 
 import {
   UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-  UHURA_SEMANTIC_IR_HASH_PROTOCOL,
   decodeInspection,
   decodeReactionReceipt,
   decodeRuntimeSnapshot,
@@ -246,7 +245,7 @@ const reaction = {
 };
 const inspection = {
   protocol: "uhura-browser/3",
-  identityProtocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+  identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
   instance: "entry/counter",
   machineProgramHash: hash("a"),
   presentation: "example.counter_web@1::CounterWeb",
@@ -283,18 +282,11 @@ const runtimeSnapshot = {
 test("receipt and inspection decoders validate the complete exact protocol", () => {
   assert.deepEqual(decodeReactionReceipt(reaction), reaction);
   assert.deepEqual(decodeInspection(inspection), inspection);
-  assert.equal(
-    decodeInspection({
-      ...inspection,
-      identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-    }).identityProtocol,
-    UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
-  );
   assert.throws(
     () =>
       decodeInspection({
         ...inspection,
-        identityProtocol: "uhura-unrecognized-identity/9",
+        identityProtocol: "uhura-semantic-ir-hash/0",
       }),
     /identityProtocol must be/u,
   );

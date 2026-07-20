@@ -1,0 +1,40 @@
+{
+  "diagnostics": [
+    {
+      "code": "R1001",
+      "file": "diagnostics/parse-fix-declaration-typo.uhura",
+      "fix": {
+        "edits": [
+          {
+            "file": "diagnostics/parse-fix-declaration-typo.uhura",
+            "insert": "machine",
+            "len": 7,
+            "offset": 4
+          }
+        ],
+        "title": "Replace `mashine` with `machine`"
+      },
+      "message": "unknown module declaration `mashine`; expected `machine`, `part`, `ui`, `scenario`, `example`, `checkpoint`, `struct`, `enum`, `key`, `const`, or `fn`",
+      "rule": "uhura-0.4/parse/invalid-declaration",
+      "severity": "error",
+      "span": {
+        "end": {
+          "col": 12,
+          "line": 1
+        },
+        "len": 7,
+        "offset": 4,
+        "start": {
+          "col": 5,
+          "line": 1
+        }
+      }
+    }
+  ],
+  "format": "uhura-diagnostics",
+  "summary": {
+    "errors": 1,
+    "warnings": 0
+  },
+  "version": 0
+}

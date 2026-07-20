@@ -241,6 +241,7 @@ pub machine App {
     let program = checked(&[module(1, "root_interfaces", source)]);
     let machine_id = "example.parts@1::App";
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "parts/root-interfaces")
         .expect("admission");
     assert_eq!(
@@ -250,7 +251,10 @@ pub machine App {
     );
 
     let input = Value::variant(format!("{machine_id}.Input"), "Run", Vec::new());
-    let reacted = program.react(&instance, input).expect("root update call");
+    let reacted = program
+        .machine_program
+        .react(&instance, input)
+        .expect("root update call");
     assert_eq!(
         field(&reacted.instance.observation, "count"),
         &Value::int(2),
@@ -262,7 +266,7 @@ pub machine App {
 fn direct_parts_flatten_into_one_kernel_with_namespaced_domains() {
     let program = checked(&[module(1, "parts", PARTS), module(2, "app", APP)]);
     let machine_id = "example.parts@1::Composed";
-    let machine = &program.machines[machine_id];
+    let machine = &program.machine_program.machines[machine_id];
     assert_eq!(
         machine
             .state
@@ -299,6 +303,7 @@ fn direct_parts_flatten_into_one_kernel_with_namespaced_domains() {
     );
 
     let (instance, _) = program
+        .machine_program
         .admit(
             machine_id,
             Value::Record(vec![("step".into(), Value::int(2))]),
@@ -306,7 +311,10 @@ fn direct_parts_flatten_into_one_kernel_with_namespaced_domains() {
         )
         .expect("composed admission");
     let tick = Value::variant(format!("{machine_id}.Input"), "counter.Tick", Vec::new());
-    let ticked = program.react(&instance, tick).expect("part event");
+    let ticked = program
+        .machine_program
+        .react(&instance, tick)
+        .expect("part event");
     assert_eq!(outcome(&ticked.receipt), ("Done", OutcomePolicy::Commit));
     assert_eq!(
         field(&ticked.instance.observation, "counter.count"),
@@ -320,6 +328,7 @@ fn direct_parts_flatten_into_one_kernel_with_namespaced_domains() {
 
     let capture = Value::variant(format!("{machine_id}.Input"), "mirror.Capture", Vec::new());
     let captured = program
+        .machine_program
         .react(&ticked.instance, capture)
         .expect("read handle");
     assert_eq!(
@@ -333,6 +342,7 @@ fn direct_parts_flatten_into_one_kernel_with_namespaced_domains() {
         Vec::new(),
     );
     let reset = program
+        .machine_program
         .react(&captured.instance, reset)
         .expect("update handle");
     assert_eq!(
@@ -348,6 +358,7 @@ fn flat_and_part_forms_have_equivalent_mapped_reaction_traces() {
     let flat_id = "example.parts@1::Flat";
     let configuration = Value::Record(vec![("step".into(), Value::int(2))]);
     let (mut composed, _) = program
+        .machine_program
         .admit(
             composed_id,
             configuration.clone(),
@@ -355,6 +366,7 @@ fn flat_and_part_forms_have_equivalent_mapped_reaction_traces() {
         )
         .expect("composed admission");
     let (mut flat, _) = program
+        .machine_program
         .admit(flat_id, configuration, "parts/equivalence/flat")
         .expect("flat admission");
 
@@ -364,12 +376,14 @@ fn flat_and_part_forms_have_equivalent_mapped_reaction_traces() {
         ("mirror.ResetCounter", "ResetCounter"),
     ] {
         let composed_result = program
+            .machine_program
             .react(
                 &composed,
                 Value::variant(format!("{composed_id}.Input"), composed_case, Vec::new()),
             )
             .expect("composed reaction");
         let flat_result = program
+            .machine_program
             .react(
                 &flat,
                 Value::variant(format!("{flat_id}.Input"), flat_case, Vec::new()),
@@ -438,7 +452,10 @@ fn part_instance_order_is_nonsemantic_and_owner_rename_is_semantic() {
             &reordered.replace("crate::parts", "crate::renamed::parts"),
         ),
     ]);
-    assert_eq!(normal.program_hashes, reordered.program_hashes);
+    assert_eq!(
+        normal.machine_program.program_hashes,
+        reordered.machine_program.program_hashes
+    );
 
     let renamed_owner = APP
         .replace(
@@ -448,7 +465,10 @@ fn part_instance_order_is_nonsemantic_and_owner_rename_is_semantic() {
         .replace("counter.reads", "tally.reads")
         .replace("counter.updates", "tally.updates");
     let renamed = checked(&[module(1, "parts", PARTS), module(2, "app", &renamed_owner)]);
-    assert_ne!(normal.program_hashes, renamed.program_hashes);
+    assert_ne!(
+        normal.machine_program.program_hashes,
+        renamed.machine_program.program_hashes
+    );
 }
 
 #[test]
@@ -484,7 +504,7 @@ pub machine App {
 "#;
     let program = checked(&[module(1, "part_update_fault", source)]);
     let machine_id = "example.parts@1::App";
-    let site = unreachable_site(&program.machines[machine_id].handlers["Run"].body)
+    let site = unreachable_site(&program.machine_program.machines[machine_id].handlers["Run"].body)
         .expect("the called update retains its unreachable site");
     assert_eq!(
         site,
@@ -536,10 +556,12 @@ pub machine App {
     let direct = checked(&[module(1, "pattern_direct", source)]);
     let reordered = checked(&[module(2, "pattern_reordered", &reordered)]);
     let machine_id = "example.parts@1::App";
-    let direct = unreachable_site(&direct.machines[machine_id].handlers["Run"].body)
-        .expect("direct pattern fault site");
-    let reordered = unreachable_site(&reordered.machines[machine_id].handlers["Run"].body)
-        .expect("reordered pattern fault site");
+    let direct =
+        unreachable_site(&direct.machine_program.machines[machine_id].handlers["Run"].body)
+            .expect("direct pattern fault site");
+    let reordered =
+        unreachable_site(&reordered.machine_program.machines[machine_id].handlers["Run"].body)
+            .expect("reordered pattern fault site");
     assert_eq!(
         direct, reordered,
         "record field order is syntax, not fault-site identity material",
@@ -566,10 +588,12 @@ pub machine App {
     let escaped_pattern = text_pattern.replace(r#""A""#, r#""\u0041""#);
     let direct = checked(&[module(3, "text_pattern_direct", text_pattern)]);
     let escaped = checked(&[module(4, "text_pattern_escaped", &escaped_pattern)]);
-    let direct = unreachable_site(&direct.machines[machine_id].handlers["Run"].body)
-        .expect("direct text-pattern fault site");
-    let escaped = unreachable_site(&escaped.machines[machine_id].handlers["Run"].body)
-        .expect("escaped text-pattern fault site");
+    let direct =
+        unreachable_site(&direct.machine_program.machines[machine_id].handlers["Run"].body)
+            .expect("direct text-pattern fault site");
+    let escaped =
+        unreachable_site(&escaped.machine_program.machines[machine_id].handlers["Run"].body)
+            .expect("escaped text-pattern fault site");
     assert_eq!(
         direct, escaped,
         "literal source spelling is not fault-site identity material",
@@ -605,7 +629,7 @@ pub machine App {
 "#;
     let program = checked(&[module(1, "computed", source)]);
     let machine_id = "example.parts@1::App";
-    let machine = &program.machines[machine_id];
+    let machine = &program.machine_program.machines[machine_id];
     assert_eq!(
         machine
             .derives
@@ -618,6 +642,7 @@ pub machine App {
         ]
     );
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "parts/computed")
         .expect("computed admission");
     assert_eq!(
@@ -675,7 +700,7 @@ pub machine App {
 "#;
     let program = checked(&[module(1, "ports", source)]);
     let machine_id = "example.parts@1::App";
-    let machine = &program.machines[machine_id];
+    let machine = &program.machine_program.machines[machine_id];
     assert_eq!(
         machine
             .ports
@@ -688,6 +713,7 @@ pub machine App {
     assert!(machine.handlers.contains_key("worker.requests.settled"));
 
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "parts/ports")
         .expect("port admission");
     let submit = Value::variant(
@@ -698,7 +724,10 @@ pub machine App {
             (Some("payload".into()), Value::int(11)),
         ],
     );
-    let submitted = program.react(&instance, submit).expect("local part input");
+    let submitted = program
+        .machine_program
+        .react(&instance, submit)
+        .expect("local part input");
     assert_eq!(submitted.receipt.ordered_commands.len(), 1);
     let Value::Variant {
         type_id,
@@ -727,6 +756,7 @@ pub machine App {
         ],
     );
     let settled = program
+        .machine_program
         .react(&submitted.instance, settled)
         .expect("part-owned port input");
     assert_eq!(outcome(&settled.receipt), ("Done", OutcomePolicy::Commit));
@@ -761,9 +791,12 @@ pub machine App {
     );
     let direct = checked(&[module(1, "ports", source)]);
     let reordered = checked(&[module(2, "moved::ports", &reordered)]);
-    assert_eq!(direct.program_hashes, reordered.program_hashes);
     assert_eq!(
-        direct.machines["example.parts@1::App"]
+        direct.machine_program.program_hashes,
+        reordered.machine_program.program_hashes
+    );
+    assert_eq!(
+        direct.machine_program.machines["example.parts@1::App"]
             .ports
             .iter()
             .map(|port| port.name.as_str())
@@ -1095,13 +1128,17 @@ pub machine App {
     let program = checked(&[module(1, "updates", source)]);
     let machine_id = "example.parts@1::App";
     let (mut instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "parts/update-results")
         .expect("admission");
     for (event, expected_count, expected_seen, expected_continued) in
         [("driver.Run", 7, 7, 1), ("driver.Clear", 0, 0, 2)]
     {
         let input = Value::variant(format!("{machine_id}.Input"), event, Vec::new());
-        let result = program.react(&instance, input).expect("part update call");
+        let result = program
+            .machine_program
+            .react(&instance, input)
+            .expect("part update call");
         assert_eq!(
             field(&result.instance.observation, "counter.count"),
             &Value::int(expected_count)
@@ -1118,6 +1155,7 @@ pub machine App {
     }
     let input = Value::variant(format!("{machine_id}.Input"), "Local", Vec::new());
     let result = program
+        .machine_program
         .react(&instance, input)
         .expect("machine update call");
     assert_eq!(field(&result.instance.observation, "local"), &Value::int(1));
@@ -1151,6 +1189,7 @@ pub machine App {
     let program = checked(&[module(1, "outcome_updates", outcome_source)]);
     let machine_id = "example.parts@1::App";
     let (instance, _) = program
+        .machine_program
         .admit(machine_id, Value::Unit, "parts/outcome-update")
         .expect("admission");
     for (flag, expected) in [
@@ -1162,7 +1201,10 @@ pub machine App {
             "worker.Finish",
             vec![(Some("flag".into()), Value::Bool(flag))],
         );
-        let result = program.react(&instance, input).expect("outcome update");
+        let result = program
+            .machine_program
+            .react(&instance, input)
+            .expect("outcome update");
         assert_eq!(outcome(&result.receipt), expected);
     }
 
@@ -1259,7 +1301,7 @@ pub machine App {
     let original = module(71, "fault_sites", source);
     let program = checked(std::slice::from_ref(&original));
     let machine_id = "example.parts@1::App";
-    let machine = &program.machines[machine_id];
+    let machine = &program.machine_program.machines[machine_id];
 
     let left_invariant = semantic_node_id(machine_id, "left", "invariant", "invariant/0");
     let right_invariant = semantic_node_id(machine_id, "right", "invariant", "invariant/0");
@@ -1308,10 +1350,10 @@ pub machine App {
 
     let moved = module(99, "renamed_logical_module", source);
     let moved_program = checked(std::slice::from_ref(&moved));
-    let moved_machine = &moved_program.machines[machine_id];
+    let moved_machine = &moved_program.machine_program.machines[machine_id];
     assert_eq!(
-        program.program_hashes[machine_id],
-        moved_program.program_hashes[machine_id]
+        program.machine_program.program_hashes[machine_id],
+        moved_program.machine_program.program_hashes[machine_id]
     );
     assert_eq!(
         machine

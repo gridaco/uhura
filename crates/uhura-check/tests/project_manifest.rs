@@ -1,4 +1,4 @@
-use uhura_check::project_manifest::{LANGUAGE_0_4, LoadedProjectManifest, load_project_manifest};
+use uhura_check::project_manifest::{LANGUAGE_0_4, load_project_manifest};
 
 fn issue_paths(text: &str) -> Vec<String> {
     load_project_manifest(text)
@@ -9,12 +9,12 @@ fn issue_paths(text: &str) -> Vec<String> {
 }
 
 #[test]
-fn resource_only_manifests_remain_legacy_compatible() {
-    let empty = load_project_manifest("").unwrap();
-    assert!(matches!(empty, LoadedProjectManifest::Legacy03(_)));
-    assert_eq!(empty.resources().icons.default.as_str(), "lucide");
+fn resource_only_and_missing_manifests_are_rejected() {
+    let empty = issue_paths("");
+    assert!(empty.contains(&"project".to_string()));
+    assert!(empty.contains(&"modules".to_string()));
 
-    let configured = load_project_manifest(
+    let configured = issue_paths(
         r#"
 [icons]
 default = "brand"
@@ -23,17 +23,14 @@ default = "brand"
 font = "assets/brand.woff2"
 glyphs = "assets/brand.json"
 "#,
-    )
-    .unwrap();
-    let LoadedProjectManifest::Legacy03(resources) = configured else {
-        panic!("resource-only input must retain the legacy manifest mode");
-    };
-    assert_eq!(resources.icons.default.as_str(), "brand");
+    );
+    assert!(configured.contains(&"project".to_string()));
+    assert!(configured.contains(&"modules".to_string()));
 }
 
 #[test]
 fn parses_the_complete_closed_v04_manifest() {
-    let loaded = load_project_manifest(
+    let manifest = load_project_manifest(
         r#"
 [project]
 name = "examples.design-programs"
@@ -44,8 +41,8 @@ language = "0.4"
 programs = "programs.uhura"
 "shared::notice" = "src/shared/notice.uhura"
 
-[evidence]
-sources = ["evidence/programs.uhura"]
+[evidence.modules]
+programs = "evidence/programs.uhura"
 
 [dependencies]
 vendor_icons = { package = "vendor.icon-set", version = 1, path = "vendor/icons" }
@@ -63,9 +60,6 @@ glyphs = "assets/brand.json"
     )
     .unwrap();
 
-    let LoadedProjectManifest::V04(manifest) = loaded else {
-        panic!("project metadata must select 0.4");
-    };
     assert_eq!(manifest.project.name.as_str(), "examples.design-programs");
     assert_eq!(manifest.project.version, 2);
     assert_eq!(manifest.project.language, LANGUAGE_0_4);
@@ -88,9 +82,9 @@ glyphs = "assets/brand.json"
         manifest
             .evidence
             .iter()
-            .map(|path| path.as_str())
+            .map(|(module, path)| (module.as_str(), path.as_str()))
             .collect::<Vec<_>>(),
-        ["evidence/programs.uhura"]
+        [("programs", "evidence/programs.uhura")]
     );
     let dependency = manifest
         .dependencies
@@ -121,23 +115,21 @@ language = "0.4"
 [modules]
 programs = "programs.uhura"
 
-[evidence]
-sources = [
-  "programs.uhura",
-  "evidence.uhura",
-  "evidence.uhura",
-  "../escape.uhura",
-  "notes.md",
-]
-mode = "ambient"
+[evidence.modules]
+module_conflict = "programs.uhura"
+evidence = "evidence.uhura"
+duplicate = "evidence.uhura"
+escape = "../escape.uhura"
+not_source = "notes.md"
+"Bad-Module" = "bad.uhura"
 "#,
     );
     for expected in [
-        "evidence.sources[0]",
-        "evidence.sources[2]",
-        "evidence.sources[3]",
-        "evidence.sources[4]",
-        "evidence.mode",
+        "evidence.modules.module_conflict",
+        "evidence.modules.duplicate",
+        "evidence.modules.escape",
+        "evidence.modules.not_source",
+        "evidence.modules.Bad-Module",
     ] {
         assert!(
             paths.contains(&expected.to_string()),
@@ -156,10 +148,27 @@ language = "0.4"
 programs = "programs.uhura"
 
 [evidence]
-sources = "evidence.uhura"
+modules = "evidence.uhura"
 "#,
     );
-    assert!(scalar.contains(&"evidence.sources".to_string()));
+    assert!(scalar.contains(&"evidence.modules".to_string()));
+
+    let unknown = issue_paths(
+        r#"
+[project]
+name = "example"
+version = 1
+language = "0.4"
+
+[modules]
+programs = "programs.uhura"
+
+[evidence]
+sources = ["evidence.uhura"]
+"#,
+    );
+    assert!(unknown.contains(&"evidence.sources".to_string()));
+    assert!(unknown.contains(&"evidence.modules".to_string()));
 }
 
 #[test]
@@ -327,7 +336,7 @@ default = "missing"
 }
 
 #[test]
-fn dependencies_without_project_tables_do_not_fall_back_to_legacy_resources() {
+fn dependencies_without_project_tables_are_rejected() {
     let paths = issue_paths(
         r#"
 [dependencies]

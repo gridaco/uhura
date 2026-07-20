@@ -78,7 +78,7 @@ pub ui TokenProbeUi for TokenProbe(view) {
     );
     let program = output.program.expect("Token bridge checks");
     assert!(
-        program.machines["example.application-bridges@1::TokenProbe"]
+        program.machine_program.machines["example.application-bridges@1::TokenProbe"]
             .handlers
             .contains_key("Choose")
     );

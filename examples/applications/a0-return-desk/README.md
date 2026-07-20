@@ -14,11 +14,9 @@ presentation observations in this document are the authority. A current Uhura
 project, a redesigned language, or a familiar-language baseline is an answer
 sheet. The application must not be weakened or renamed to fit an answer.
 
-## Answer sheets and oracle
+## Answer sheet and oracle
 
-- [Uhura 0.3 answer sheet](answers/uhura-0.3/) — executable machine,
-  checked web projection, evidence source, and host manifest.
-- [Uhura 0.4 answer sheet](answers/uhura-0.4/) — the same application and
+- [Uhura 0.4 answer sheet](answers/uhura-0.4/) — the application and
   evidence expressed through the Rust-shaped machine core, Svelte-shaped UI,
   and explicit project manifest.
 - [Language-independent reference oracle](reference-oracle/) — executable A0

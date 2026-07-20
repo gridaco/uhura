@@ -1,7 +1,7 @@
 use uhura_syntax::v04::ast::{
     BinaryOperator, DeclarationKind, ExpressionKind, MachineMemberKind, StatementKind,
 };
-use uhura_syntax::v04::{ParseDiagnosticKind, SourceIdentity, parse};
+use uhura_syntax::v04::{ParseDiagnosticKind, ParseFix, SourceIdentity, Span, parse};
 
 fn parse_source(source: &str) -> uhura_syntax::v04::Parse {
     parse(
@@ -108,8 +108,81 @@ fn diagnoses_missing_semicolons_and_recovers_to_later_statements() {
         .diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.kind == ParseDiagnosticKind::MissingToken)
-        .count();
-    assert!(missing >= 2, "{:#?}", parsed.diagnostics);
+        .collect::<Vec<_>>();
+    assert_eq!(missing.len(), 2, "{:#?}", parsed.diagnostics);
+    let assignment = source.find("count = next").unwrap() as u32;
+    let accepted = source.find("Accepted\n").unwrap() as u32;
+    assert_eq!(
+        missing[0],
+        &uhura_syntax::v04::ParseDiagnostic {
+            kind: ParseDiagnosticKind::MissingToken,
+            message: "expected `;` in let statement".into(),
+            span: Span::new(11, assignment, assignment + "count".len() as u32),
+            fix: Some(ParseFix {
+                title: "Insert `;`".into(),
+                span: Span::empty(11, assignment),
+                insert: ";".into(),
+            }),
+        }
+    );
+    assert_eq!(
+        missing[1],
+        &uhura_syntax::v04::ParseDiagnostic {
+            kind: ParseDiagnosticKind::MissingToken,
+            message: "expected `;` in state assignment".into(),
+            span: Span::new(11, accepted, accepted + "Accepted".len() as u32),
+            fix: Some(ParseFix {
+                title: "Insert `;`".into(),
+                span: Span::empty(11, accepted),
+                insert: ";".into(),
+            }),
+        }
+    );
+}
+
+#[test]
+fn declaration_typo_has_one_stable_kind_and_safe_replacement() {
+    let source = "pub mashine Counter {}\n";
+    let parsed = parse_source(source);
+    assert_eq!(
+        parsed.diagnostics,
+        vec![uhura_syntax::v04::ParseDiagnostic {
+            kind: ParseDiagnosticKind::InvalidDeclaration,
+            message: "unknown module declaration `mashine`; expected `machine`, `part`, `ui`, `scenario`, `example`, `checkpoint`, `struct`, `enum`, `key`, `const`, or `fn`".into(),
+            span: Span::new(11, 4, 11),
+            fix: Some(ParseFix {
+                title: "Replace `mashine` with `machine`".into(),
+                span: Span::new(11, 4, 11),
+                insert: "machine".into(),
+            }),
+        }]
+    );
+}
+
+#[test]
+fn missing_expression_preserves_the_enclosing_delimiter_without_a_cascade() {
+    let source = "pub const INITIAL: Int = ;\n";
+    let parsed = parse_source(source);
+    let semicolon = source.find(';').unwrap() as u32;
+    assert_eq!(
+        parsed.diagnostics,
+        vec![uhura_syntax::v04::ParseDiagnostic {
+            kind: ParseDiagnosticKind::InvalidExpression,
+            message: "expected expression, found `;`".into(),
+            span: Span::new(11, semicolon, semicolon + 1),
+            fix: None,
+        }]
+    );
+    let diagnostic = parsed
+        .diagnostics
+        .into_iter()
+        .next()
+        .unwrap()
+        .into_public_diagnostic();
+    assert_eq!(diagnostic.code, "R1001");
+    assert_eq!(diagnostic.rule, "uhura-0.4/parse/invalid-expression");
+    assert_eq!(diagnostic.span.start, semicolon);
+    assert_eq!(diagnostic.span.end, semicolon + 1);
 }
 
 #[test]
@@ -135,5 +208,41 @@ fn project(entry: Entry) -> Text {
     assert!(shorthand.diagnostics.iter().any(|diagnostic| {
         diagnostic.kind == ParseDiagnosticKind::InvalidName
             && diagnostic.message.contains("keyword shorthand")
+    }));
+}
+
+#[test]
+fn evidence_patterns_admit_nominal_key_constructors_without_relaxing_core_patterns() {
+    let evidence = parse_source(
+        r#"scenario pending for Counter {
+  start
+  expect inspection {
+    request: {
+      id: RequestId(1),
+      ..
+    },
+    ..
+  }
+}
+"#,
+    );
+    assert!(
+        evidence.diagnostics.is_empty(),
+        "{:#?}",
+        evidence.diagnostics
+    );
+
+    let core = parse_source(
+        r#"fn is_first(value: RequestId) -> Bool {
+  match value {
+    RequestId(1) => true,
+    _ => false,
+  }
+}
+"#,
+    );
+    assert!(core.diagnostics.iter().any(|diagnostic| {
+        diagnostic.kind == ParseDiagnosticKind::InvalidPattern
+            && diagnostic.message.contains("only the prelude")
     }));
 }

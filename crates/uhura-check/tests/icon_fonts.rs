@@ -6,6 +6,8 @@ use uhura_check::icon_fonts::{IconFontInput, load_icon_fonts};
 use uhura_check::resource_manifest::{
     IconFamilyConfig, IconsConfig, ResourceManifest, load_resource_manifest,
 };
+use uhura_core::ir::{Expr, Presentation, SourceRef, UiAttribute, UiAttributeValue, UiNode};
+use uhura_core::{Program, Value};
 
 const LUCIDE_FONT: &[u8] = include_bytes!("../../../resources/icon-fonts/lucide/lucide.woff2");
 const LUCIDE_UPSTREAM_CODEPOINTS: &str =
@@ -40,6 +42,34 @@ fn local_input(glyphs: &str) -> BTreeMap<Ident, IconFontInput> {
     )])
 }
 
+fn source(start: u32) -> SourceRef {
+    SourceRef {
+        id: format!("test#{start}"),
+        path: "ui.uhura".into(),
+        start,
+        end: start + 1,
+    }
+}
+
+fn text_attribute(name: &str, value: &str, start: u32) -> UiAttribute {
+    UiAttribute {
+        name: name.into(),
+        value: UiAttributeValue::Text {
+            value: value.into(),
+        },
+        source: source(start),
+    }
+}
+
+fn icon(attributes: Vec<UiAttribute>, start: u32) -> UiNode {
+    UiNode::Element {
+        name: "icon".into(),
+        attributes,
+        children: Vec::new(),
+        source: source(start),
+    }
+}
+
 #[test]
 fn built_in_lucide_is_the_zero_config_default() {
     let checked = load_icon_fonts(&IconsConfig::default(), &BTreeMap::new()).unwrap();
@@ -56,6 +86,86 @@ fn built_in_lucide_is_the_zero_config_default() {
     for (name, codepoint) in &lucide.glyphs {
         assert_eq!(upstream.get(name.as_str()), Some(codepoint));
     }
+}
+
+#[test]
+fn checked_program_icon_tokens_cannot_fail_late_in_the_browser() {
+    let fonts = load_icon_fonts(&IconsConfig::default(), &BTreeMap::new()).unwrap();
+    let mut program = Program::new();
+    program.presentations.insert(
+        "icons".into(),
+        Presentation {
+            id: "icons".into(),
+            machine: "machine".into(),
+            binding: "view".into(),
+            nodes: vec![
+                icon(vec![text_attribute("name", "home", 1)], 0),
+                icon(vec![text_attribute("name", "not-a-lucide-glyph", 3)], 2),
+                icon(
+                    vec![
+                        text_attribute("family", "missing", 5),
+                        text_attribute("name", "home", 6),
+                    ],
+                    4,
+                ),
+                icon(
+                    vec![UiAttribute {
+                        name: "name".into(),
+                        value: UiAttributeValue::Expression {
+                            value: Expr::If {
+                                condition: Box::new(Expr::Literal {
+                                    value: Value::Bool(true),
+                                }),
+                                then_value: Box::new(Expr::Literal {
+                                    value: Value::Text("home".into()),
+                                }),
+                                else_value: Box::new(Expr::Literal {
+                                    value: Value::Text("also-missing".into()),
+                                }),
+                            },
+                        },
+                        source: source(8),
+                    }],
+                    7,
+                ),
+                icon(
+                    vec![UiAttribute {
+                        name: "name".into(),
+                        value: UiAttributeValue::Expression {
+                            value: Expr::Field {
+                                value: Box::new(Expr::Name {
+                                    name: "view".into(),
+                                }),
+                                field: "icon".into(),
+                            },
+                        },
+                        source: source(10),
+                    }],
+                    9,
+                ),
+            ],
+            source: source(0),
+        },
+    );
+
+    let issues = uhura_check::check_program_icon_tokens(&program, &fonts);
+    assert_eq!(
+        issues
+            .iter()
+            .map(|issue| (issue.code, issue.rule, issue.source.start))
+            .collect::<Vec<_>>(),
+        [
+            ("UH5017", "uhura/unknown-icon", 3),
+            ("UH5021", "uhura/unknown-icon-family", 5),
+            ("UH5017", "uhura/unknown-icon", 8),
+            ("UH5017", "uhura/unbounded-icon-name", 10),
+        ]
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.message.contains("also-missing"))
+    );
 }
 
 #[test]

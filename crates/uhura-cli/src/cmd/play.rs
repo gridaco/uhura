@@ -1,4 +1,4 @@
-//! Standalone `uhura play`/`uhura dev` transport and observer adapter.
+//! Standalone `uhura play` transport and observer adapter.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

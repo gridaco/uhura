@@ -1,7 +1,8 @@
 //! Uhura's machine-first semantic core.
 //!
-//! The core is pure and I/O-free. Checked source lowers to [`ir::Program`],
-//! and [`runtime::Instance`] is the single reference execution model used by
+//! The core is pure and I/O-free. Checked source lowers to an aggregate
+//! [`ir::Program`] containing an owned [`ir::MachineProgram`], and
+//! [`runtime::Instance`] is the single reference execution model used by
 //! native and Wasm consumers.
 #![deny(clippy::float_arithmetic)]
 
@@ -32,13 +33,12 @@ pub use graph::{
 pub use ir::{
     BinaryOp, CommandDef, ConstructorDef, DEPLOYMENT_ID_PROTOCOL, DeploymentContentIdentity,
     DeploymentIdentityMaterial, DeploymentPortBinding, DeploymentPresentationIdentity,
-    EvidenceExampleMetadata, EvidencePresentationKind, EvidenceRef, EvidenceStep, EvidenceSuite,
-    Expr, Function, Handler, IR_PROTOCOL, MACHINE_PROGRAM_ID_PROTOCOL,
-    MACHINE_UI_INTERFACE_ID_PROTOCOL, Machine, MatchArm, OutcomeDef, OutcomePolicy,
-    PRESENTATION_ID_PROTOCOL, Pattern, Presentation, Program, SEMANTIC_IR_IDENTITY_PROTOCOL,
+    EVIDENCE_ID_PROTOCOL, EvidenceExampleMetadata, EvidencePresentationKind, EvidenceRef,
+    EvidenceStep, EvidenceSuite, Expr, Function, Handler, IR_PROTOCOL, LANGUAGE,
+    MACHINE_PROGRAM_ID_PROTOCOL, MACHINE_UI_INTERFACE_ID_PROTOCOL, Machine, MachineProgram,
+    MatchArm, OutcomeDef, OutcomePolicy, PRESENTATION_ID_PROTOCOL, Pattern, Presentation, Program,
     Scenario, ScenarioOrigin, SiteIdentityFrame, Statement, TypeDef, TypeRef, UiAttribute,
-    UiAttributeValue, UiCase, UiNode, UnaryOp, deployment_hash, deployment_hash_v04,
-    deployment_identity_bytes, deployment_identity_bytes_v04,
+    UiAttributeValue, UiCase, UiNode, UnaryOp, deployment_hash, deployment_identity_bytes,
 };
 pub use provenance::{
     AUTHORED_INTERACTION_TOPOLOGY_PROTOCOL, AuthoredInteractionEdge, AuthoredInteractionNode,

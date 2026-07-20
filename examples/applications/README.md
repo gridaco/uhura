@@ -2,8 +2,8 @@
 
 - **Status:** Non-normative language-design corpus
 - **Current form:** Language-neutral Markdown application specifications
-- **Implementation status:** Executable Uhura 0.3 and 0.4 answers plus an
-  independent oracle; no accepted stable language solution
+- **Implementation status:** Executable Uhura 0.4 answer plus an independent
+  oracle; no accepted stable language solution
 - **Scope:** Practical composition of the machine language, `ui`, and explicit
   application features
 
@@ -37,12 +37,11 @@ concerns belong to a more advanced machine kernel.
 
 | Harness | Language | Answer | Evidence |
 | --- | --- | --- | --- |
-| A0 | Uhura 0.3 | [Machine, web, evidence, and host sources](a0-return-desk/answers/uhura-0.3/) | [Language-independent reference oracle](a0-return-desk/reference-oracle/) |
 | A0 | Uhura 0.4 | [Machine, UI, evidence, and host sources](a0-return-desk/answers/uhura-0.4/) | Complete 12-preview host admission plus the same independent oracle |
 
-Both answers execute in the single canonical Uhura engine. The
-historical [Relay B3 pointer](../../docs/spec/drafts/relay-b3/) explains the
-experiment that preceded it; it is not a second runtime. The oracle still
+The answer executes in the canonical Uhura engine. The historical
+[Relay B3 pointer](../../docs/spec/drafts/relay-b3/) explains the experiment
+that preceded it; it is not a second runtime. The oracle still
 checks an independent A0 model and does not, by itself, prove that Uhura source
 and lowering are correct. The active [0.4 candidate](../../docs/spec/drafts/0.4/)
 is an executable answer because its complete source, evidence, Editor, and

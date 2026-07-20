@@ -1,8 +1,8 @@
 //! Uhura 0.4 concrete syntax frontend.
 //!
-//! Project loading supplies source identity; this module lexes and parses the
-//! headerless core language while retaining the 0.3 parser as an explicit
-//! differential and compatibility frontend.
+//! Project loading supplies source identity and module role; this module lexes
+//! and parses the headerless 0.4 language used by core, UI, and evidence
+//! modules.
 
 pub mod ast;
 mod format;
@@ -11,6 +11,7 @@ mod parser;
 mod ui;
 
 use serde::{Deserialize, Serialize};
+use uhura_base::{Diagnostic, Edit, Severity};
 
 pub use ast::{Module, SourceIdentity, Span};
 pub use format::{FormatError, UnsupportedComment, format};
@@ -32,7 +33,37 @@ pub enum ParseDiagnosticKind {
     InvalidExpression,
     InvalidStatement,
     InvalidUi,
+    InvalidEvidence,
     ComparisonChain,
+}
+
+impl ParseDiagnosticKind {
+    pub const fn diagnostic_identity(self) -> uhura_base::codes::Code {
+        use uhura_base::codes::v04_parse;
+
+        match self {
+            Self::Lexical => v04_parse::LEXICAL,
+            Self::UnexpectedToken => v04_parse::UNEXPECTED_TOKEN,
+            Self::MissingToken => v04_parse::MISSING_TOKEN,
+            Self::InvalidName => v04_parse::INVALID_NAME,
+            Self::InvalidDeclaration => v04_parse::INVALID_DECLARATION,
+            Self::InvalidMember => v04_parse::INVALID_MEMBER,
+            Self::InvalidType => v04_parse::INVALID_TYPE,
+            Self::InvalidPattern => v04_parse::INVALID_PATTERN,
+            Self::InvalidExpression => v04_parse::INVALID_EXPRESSION,
+            Self::InvalidStatement => v04_parse::INVALID_STATEMENT,
+            Self::InvalidUi => v04_parse::INVALID_UI,
+            Self::InvalidEvidence => v04_parse::INVALID_EVIDENCE,
+            Self::ComparisonChain => v04_parse::COMPARISON_CHAIN,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ParseFix {
+    pub title: String,
+    pub span: Span,
+    pub insert: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -40,15 +71,77 @@ pub struct ParseDiagnostic {
     pub kind: ParseDiagnosticKind,
     pub message: String,
     pub span: Span,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<ParseFix>,
+}
+
+impl ParseDiagnostic {
+    pub(crate) fn new(kind: ParseDiagnosticKind, message: impl Into<String>, span: Span) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            span,
+            fix: None,
+        }
+    }
+
+    pub(crate) fn with_fix(
+        mut self,
+        title: impl Into<String>,
+        span: Span,
+        insert: impl Into<String>,
+    ) -> Self {
+        self.fix = Some(ParseFix {
+            title: title.into(),
+            span,
+            insert: insert.into(),
+        });
+        self
+    }
+
+    /// Convert syntax output into the one public diagnostic shape consumed by
+    /// the CLI, host, editor, and downstream tools.
+    pub fn into_public_diagnostic(self) -> Diagnostic {
+        let (code, rule) = self.kind.diagnostic_identity();
+        let mut diagnostic = Diagnostic::new(
+            code,
+            rule,
+            Severity::Error,
+            self.message,
+            uhura_base::Span::new(
+                uhura_base::FileId(self.span.file),
+                self.span.start,
+                self.span.end,
+            ),
+        );
+        if self.kind == ParseDiagnosticKind::ComparisonChain {
+            diagnostic = diagnostic
+                .with_note("split the relation into complete comparisons joined by `&&` or `||`");
+        } else if self.kind == ParseDiagnosticKind::InvalidName {
+            diagnostic = diagnostic.with_note(
+                "Uhura 0.4 symbolic names are ASCII and their case shape is part of the grammar",
+            );
+        }
+        if let Some(fix) = self.fix {
+            diagnostic = diagnostic.with_fix(
+                fix.title,
+                vec![Edit {
+                    span: uhura_base::Span::new(
+                        uhura_base::FileId(fix.span.file),
+                        fix.span.start,
+                        fix.span.end,
+                    ),
+                    insert: fix.insert,
+                }],
+            );
+        }
+        diagnostic
+    }
 }
 
 impl From<LexDiagnostic> for ParseDiagnostic {
     fn from(value: LexDiagnostic) -> Self {
-        Self {
-            kind: ParseDiagnosticKind::Lexical,
-            message: value.message,
-            span: value.span,
-        }
+        Self::new(ParseDiagnosticKind::Lexical, value.message, value.span)
     }
 }
 

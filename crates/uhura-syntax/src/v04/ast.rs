@@ -1,8 +1,8 @@
 //! Serialization-friendly, source-spanned syntax for Uhura 0.4.
 //!
-//! This tree is deliberately independent from the 0.3 AST. It represents
-//! authored syntax only: resolution, typing, effects, cardinality, and
-//! lowering remain checker responsibilities.
+//! This is the sole authored syntax tree. It represents source only:
+//! resolution, typing, effects, cardinality, and lowering remain checker
+//! responsibilities.
 
 use serde::{Deserialize, Serialize};
 
@@ -124,6 +124,9 @@ pub enum DeclarationKind {
     Machine(MachineDeclaration),
     Part(PartDeclaration),
     Ui(UiDeclaration),
+    Scenario(ScenarioDeclaration),
+    Example(EvidenceAliasDeclaration),
+    Checkpoint(EvidenceAliasDeclaration),
     Struct(StructDeclaration),
     Enum(EnumDeclaration),
     Key(KeyDeclaration),
@@ -232,6 +235,78 @@ pub struct FunctionDeclaration {
     pub parameters: Vec<Parameter>,
     pub result: TypeExpression,
     pub body: Block,
+}
+
+/// One tooling-only, replayable proof program.
+///
+/// Project admission decides whether a module is a core or evidence module;
+/// the source grammar itself remains headerless and shared.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ScenarioDeclaration {
+    pub name: Identifier,
+    pub origin: ScenarioOrigin,
+    pub steps: Vec<EvidenceStep>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum ScenarioOrigin {
+    Machine {
+        machine: TypePath,
+        configuration: Option<Expression>,
+    },
+    Snapshot(EvidenceReference),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceReference {
+    pub path: Vec<Identifier>,
+    pub span: Span,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceAliasDeclaration {
+    pub name: Identifier,
+    pub presentation: Option<Identifier>,
+    pub kind: Option<EvidencePresentationKind>,
+    pub is_default: bool,
+    pub note: Option<String>,
+    pub target: EvidenceReference,
+    pub semicolon: Span,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EvidencePresentationKind {
+    Page,
+    Component,
+    Surface,
+}
+
+pub type EvidenceStep = Node<EvidenceStepKind>;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum EvidenceStepKind {
+    Bind {
+        port: Identifier,
+        fixture: Expression,
+    },
+    Start,
+    Send(Expression),
+    Deliver(Expression),
+    ExpectReaction {
+        outcome: Pattern,
+        commands: Vec<Expression>,
+    },
+    ExpectObservationPattern(Pattern),
+    ExpectInspectionPattern(Pattern),
+    ExpectObservationWhere(Expression),
+    ExpectRestore {
+        commands: Vec<Expression>,
+    },
+    ExpectSnapshot {
+        target: EvidenceReference,
+    },
+    Pin(Identifier),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -628,6 +703,9 @@ pub enum ExpressionKind {
     Group(Box<Expression>),
     Name(QualifiedName),
     Record(RecordExpression),
+    /// Evidence-only structural fixture data. Core source must use a named,
+    /// closed record constructor.
+    AnonymousRecord(Vec<AnonymousRecordEntry>),
     Block(Block),
     Call {
         callee: Box<Expression>,
@@ -711,6 +789,13 @@ pub struct RecordExpression {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AnonymousRecordEntry {
+    pub key: Expression,
+    pub value: Expression,
+    pub span: Span,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct FieldInitializer {
     pub name: Identifier,
     pub value: Option<Expression>,
@@ -772,6 +857,11 @@ pub enum PatternKind {
     },
     Record {
         constructor: QualifiedName,
+        fields: Vec<FieldPattern>,
+        rest: bool,
+    },
+    /// Evidence-only structural observation pattern.
+    AnonymousRecord {
         fields: Vec<FieldPattern>,
         rest: bool,
     },

@@ -1,25 +1,26 @@
 //! Uhura 0.4's semantic bridge into the shared deterministic kernel.
 //!
-//! The 0.4 frontend is deliberately independent from the retained 0.3 syntax
-//! tree. It nevertheless targets the same checked machine kernel. This module
-//! performs a structural AST-to-AST adaptation into the checker-neutral tree;
-//! it never prints or reparses core source text. Separately versioned evidence
-//! is already parsed by its own 0.3 tooling frontend and joins only at the
-//! checker boundary.
+//! Core, UI, and tooling evidence are parsed by the same headerless frontend.
+//! This module resolves those authored trees and structurally adapts them into
+//! the checker-neutral deterministic-kernel tree without printing or reparsing
+//! source text.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use uhura_base::has_errors;
+use uhura_base::{Diagnostic, Label, has_errors};
 use uhura_core::{MACHINE_PROGRAM_ID_PROTOCOL, PURE_CONTINUATION_LOCAL_PREFIX, Provenance};
-use uhura_syntax::{ast, v04};
+use uhura_syntax::v04;
 
 use crate::checker::{
-    CheckOutput, ImportAliases, PhysicalSourcePaths, SourceSemantics,
-    check_project_with_import_aliases,
+    CheckOutput, ImportAliases, PhysicalSourcePaths, check_project_with_import_aliases,
 };
+use crate::checker_ir as ast;
 use crate::diagnostic::{codes, error};
 
+mod references;
 mod ui;
+
+use references::{declaration_references, declaration_root_references};
 
 /// Check and lower one manifest-resolved Uhura 0.4 module.
 ///
@@ -121,18 +122,20 @@ pub fn check_project_modules(modules: &[v04::ast::Module]) -> CheckOutput {
     check_resolved_project(&resolved)
 }
 
-/// Resolve and check 0.4 core modules together with separately parsed,
+/// Resolve and check core modules together with manifest-resolved,
 /// tooling-only evidence modules.
-///
-/// Evidence modules retain the 0.3 evidence vocabulary. They may import
-/// public declarations from the resolved 0.4 package, but validation rejects
-/// any deployable declaration before the two syntax trees share the retained
-/// checker backend.
 pub fn check_project_modules_with_evidence(
     modules: &[v04::ast::Module],
-    evidence_modules: &[ast::Module],
+    evidence_modules: &[v04::ast::Module],
 ) -> CheckOutput {
-    let resolved = resolve_project_modules(modules);
+    let mut all_modules = modules.to_vec();
+    all_modules.extend_from_slice(evidence_modules);
+    let resolution = Resolution::build(&all_modules, None);
+    let resolved = ResolvedProject {
+        metadata: resolution.metadata.clone(),
+        modules: modules.to_vec(),
+        resolution,
+    };
     check_resolved_project_with_evidence(&resolved, evidence_modules)
 }
 
@@ -144,7 +147,7 @@ pub fn check_resolved_project(project: &ResolvedProject) -> CheckOutput {
 /// Lower one resolved 0.4 project and its admitted tooling-only evidence.
 pub fn check_resolved_project_with_evidence(
     project: &ResolvedProject,
-    evidence_modules: &[ast::Module],
+    evidence_modules: &[v04::ast::Module],
 ) -> CheckOutput {
     let bindings = project
         .resolution
@@ -164,30 +167,30 @@ pub fn check_resolved_project_with_evidence(
     let mut adapter = ProjectAdapter::new(&modules, project.resolution.clone());
     adapter.diagnostics.extend(composition_diagnostics);
     let mut adapted = adapter.adapt();
-    let package = project.metadata.package.as_deref().unwrap_or_default();
-    let public_names = project
-        .metadata
-        .declarations
-        .iter()
-        .filter(|declaration| declaration.public_id.is_some())
-        .map(|declaration| declaration.name.clone())
-        .collect::<BTreeSet<_>>();
     adapter.diagnostics.extend(crate::v04_evidence::validate(
-        &ast::Project {
-            modules: evidence_modules.to_vec(),
-        },
-        package,
-        &public_names,
+        &project.modules,
+        evidence_modules,
     ));
-    adapted.modules.extend(evidence_modules.iter().cloned());
+    let mut shape_sources = project.modules.clone();
+    shape_sources.extend_from_slice(evidence_modules);
+    let mut evidence_adapter = ProjectAdapter::new_with_shapes(
+        evidence_modules,
+        &shape_sources,
+        project.resolution.clone(),
+    );
+    let lowered_evidence = evidence_adapter.adapt();
+    adapter.diagnostics.extend(evidence_adapter.diagnostics);
+    if let (Some(core), Some(evidence)) = (
+        adapted.modules.first_mut(),
+        lowered_evidence.modules.into_iter().next(),
+    ) {
+        activate_evidence(core, evidence.span);
+        core.declarations.extend(evidence.declarations);
+    }
     let physical_source_paths = physical_source_paths(&project.modules, evidence_modules);
 
-    let mut output = check_project_with_import_aliases(
-        &adapted,
-        &ImportAliases::new(),
-        &physical_source_paths,
-        SourceSemantics::V04,
-    );
+    let mut output =
+        check_project_with_import_aliases(&adapted, &ImportAliases::new(), &physical_source_paths);
     output.diagnostics.extend(adapter.diagnostics);
     output.diagnostics.sort_by_key(|diagnostic| {
         (
@@ -203,6 +206,16 @@ pub fn check_resolved_project_with_evidence(
             && left.rule == right.rule
             && left.span == right.span
             && left.message == right.message
+    });
+    suppress_contained_type_mismatch_cascades(&mut output.diagnostics);
+    output.diagnostics.sort_by_key(|diagnostic| {
+        (
+            diagnostic.span.file.0,
+            diagnostic.span.start,
+            diagnostic.span.end,
+            diagnostic.code,
+            diagnostic.rule,
+        )
     });
 
     if has_errors(&output.diagnostics) {
@@ -224,9 +237,10 @@ pub fn check_resolved_project_with_evidence(
             }
         }
         if let Some(program) = &mut output.program {
-            program.language = "uhura 0.4".into();
-            program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
-            program.composed_part_declarations = composition.machine_part_dependencies.clone();
+            program.machine_program.language = "uhura 0.4".into();
+            program.machine_program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
+            program.machine_program.composed_part_declarations =
+                composition.machine_part_dependencies.clone();
             if let Err(failure) = composition.apply_site_ids(program) {
                 output.diagnostics.push(error(
                     codes::UNSUPPORTED,
@@ -246,6 +260,70 @@ pub fn check_resolved_project_with_evidence(
     output
 }
 
+fn activate_evidence(module: &mut ast::Module, span: ast::SourceSpan) {
+    if module
+        .uses
+        .iter()
+        .any(|declaration| declaration.feature.value == "evidence")
+    {
+        return;
+    }
+    module.uses.push(ast::UseDecl {
+        feature: ast::Spanned::new("evidence".into(), span),
+        span,
+    });
+}
+
+/// Bidirectional checking can discover the same mismatch once at the exact
+/// value and once again at its enclosing assignment/call boundary. Preserve
+/// the narrower authored location and retain the enclosing site as context
+/// instead of reporting two indistinguishable errors.
+fn suppress_contained_type_mismatch_cascades(diagnostics: &mut Vec<Diagnostic>) {
+    let mut compact = Vec::<Diagnostic>::with_capacity(diagnostics.len());
+    for mut diagnostic in std::mem::take(diagnostics) {
+        let duplicate = compact.iter().position(|existing| {
+            existing.code == diagnostic.code
+                && existing.rule == "uhura/type-mismatch"
+                && existing.rule == diagnostic.rule
+                && existing.severity == diagnostic.severity
+                && existing.message == diagnostic.message
+                && existing.span.file == diagnostic.span.file
+                && (span_contains(existing.span, diagnostic.span)
+                    || span_contains(diagnostic.span, existing.span))
+        });
+        let Some(index) = duplicate else {
+            compact.push(diagnostic);
+            continue;
+        };
+
+        let existing = &mut compact[index];
+        if span_contains(existing.span, diagnostic.span) && existing.span != diagnostic.span {
+            let enclosing = existing.span;
+            diagnostic.labels.append(&mut existing.labels);
+            add_enclosing_type_label(&mut diagnostic, enclosing);
+            *existing = diagnostic;
+        } else if span_contains(diagnostic.span, existing.span) && existing.span != diagnostic.span
+        {
+            add_enclosing_type_label(existing, diagnostic.span);
+        }
+    }
+    *diagnostics = compact;
+}
+
+fn span_contains(outer: uhura_base::Span, inner: uhura_base::Span) -> bool {
+    outer.file == inner.file && outer.start <= inner.start && outer.end >= inner.end
+}
+
+fn add_enclosing_type_label(diagnostic: &mut Diagnostic, span: uhura_base::Span) {
+    if diagnostic.labels.iter().any(|label| label.span == span) {
+        return;
+    }
+    diagnostic.labels.push(Label {
+        span,
+        message: "the enclosing authored construct requires this type".into(),
+    });
+}
+
 /// Check one exact, lock-resolved package graph.
 ///
 /// The shared kernel receives one checker module per semantic package. Source
@@ -255,7 +333,7 @@ pub fn check_resolved_project_with_evidence(
 pub fn check_package_graph_with_evidence(
     root_package: &str,
     packages: &[CapturedPackageModules],
-    evidence_modules: &[ast::Module],
+    evidence_modules: &[v04::ast::Module],
 ) -> CheckOutput {
     let mut diagnostics = Vec::new();
     let mut by_package = BTreeMap::<String, &CapturedPackageModules>::new();
@@ -307,7 +385,8 @@ pub fn check_package_graph_with_evidence(
         BTreeMap::<String, Vec<crate::v04_provenance::V04ExternalReference>>::new();
     let mut topology_bindings = Vec::new();
     let mut all_modules = Vec::new();
-    let mut root_public_names = BTreeSet::new();
+    let mut root_resolution = None;
+    let mut root_core_modules = Vec::new();
     let mut ordered = packages.iter().collect::<Vec<_>>();
     ordered.sort_by(|left, right| left.package.as_bytes().cmp(right.package.as_bytes()));
     let mut resolved_packages = Vec::with_capacity(ordered.len());
@@ -317,7 +396,12 @@ pub fn check_package_graph_with_evidence(
             dependencies: &package.dependencies,
             catalog: &catalog,
         };
-        let resolution = Resolution::build(&package.modules, Some(&context));
+        let mut resolution_sources = package.modules.clone();
+        if package.package == root_package {
+            resolution_sources.extend_from_slice(evidence_modules);
+            root_core_modules = package.modules.clone();
+        }
+        let resolution = Resolution::build(&resolution_sources, Some(&context));
         for ((target, name), imported) in &resolution.external_imports {
             import_aliases.insert(
                 (package.package.clone(), target.clone(), name.clone()),
@@ -330,14 +414,7 @@ pub fn check_package_graph_with_evidence(
         );
         topology_bindings.extend(resolution.topology_bindings.iter().cloned());
         if package.package == root_package {
-            root_public_names.extend(
-                resolution
-                    .metadata
-                    .declarations
-                    .iter()
-                    .filter(|declaration| declaration.public_id.is_some())
-                    .map(|declaration| declaration.name.clone()),
-            );
+            root_resolution = Some(resolution.clone());
         }
         let bindings = resolution
             .modules
@@ -399,20 +476,40 @@ pub fn check_package_graph_with_evidence(
     }
 
     diagnostics.extend(crate::v04_evidence::validate(
-        &ast::Project {
-            modules: evidence_modules.to_vec(),
-        },
-        root_package,
-        &root_public_names,
+        &root_core_modules,
+        evidence_modules,
     ));
-    lowered.modules.extend(evidence_modules.iter().cloned());
+    if !evidence_modules.is_empty() {
+        let mut shape_sources = root_core_modules.clone();
+        shape_sources.extend_from_slice(evidence_modules);
+        let mut evidence_adapter = ProjectAdapter::new_with_shapes(
+            evidence_modules,
+            &shape_sources,
+            root_resolution.unwrap_or_default(),
+        );
+        let adapted_evidence = evidence_adapter.adapt();
+        diagnostics.extend(evidence_adapter.diagnostics);
+        if let Some(evidence) = adapted_evidence.modules.into_iter().next() {
+            if let Some(root) = lowered
+                .modules
+                .iter_mut()
+                .find(|module| module.identity == evidence.identity)
+            {
+                activate_evidence(root, evidence.span);
+                root.declarations.extend(evidence.declarations);
+            } else {
+                diagnostics.push(error(
+                    codes::UNSUPPORTED,
+                    "uhura-0.4/evidence-package",
+                    "evidence could not be attached to its checked package",
+                    evidence.span,
+                ));
+            }
+        }
+    }
     let physical_source_paths = physical_source_paths(&all_modules, evidence_modules);
-    let mut output = check_project_with_import_aliases(
-        &lowered,
-        &import_aliases,
-        &physical_source_paths,
-        SourceSemantics::V04,
-    );
+    let mut output =
+        check_project_with_import_aliases(&lowered, &import_aliases, &physical_source_paths);
     output.diagnostics.extend(diagnostics);
     output.diagnostics.sort_by_key(|diagnostic| {
         (
@@ -428,6 +525,16 @@ pub fn check_package_graph_with_evidence(
             && left.rule == right.rule
             && left.span == right.span
             && left.message == right.message
+    });
+    suppress_contained_type_mismatch_cascades(&mut output.diagnostics);
+    output.diagnostics.sort_by_key(|diagnostic| {
+        (
+            diagnostic.span.file.0,
+            diagnostic.span.start,
+            diagnostic.span.end,
+            diagnostic.code,
+            diagnostic.rule,
+        )
     });
     if has_errors(&output.diagnostics) {
         output.program = None;
@@ -454,9 +561,9 @@ pub fn check_package_graph_with_evidence(
         }
     }
     if let Some(program) = &mut output.program {
-        program.language = "uhura 0.4".into();
-        program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
-        program.composed_part_declarations = composed_part_declarations;
+        program.machine_program.language = "uhura 0.4".into();
+        program.machine_program.identity_protocol = MACHINE_PROGRAM_ID_PROTOCOL.into();
+        program.machine_program.composed_part_declarations = composed_part_declarations;
         let site_result = site_compositions
             .iter()
             .try_for_each(|composition| composition.apply_site_ids(program));
@@ -479,7 +586,7 @@ pub fn check_package_graph_with_evidence(
 
 fn physical_source_paths(
     modules: &[v04::ast::Module],
-    evidence_modules: &[ast::Module],
+    evidence_modules: &[v04::ast::Module],
 ) -> PhysicalSourcePaths {
     let mut paths = PhysicalSourcePaths::new();
     for (file, path) in modules
@@ -488,7 +595,7 @@ fn physical_source_paths(
         .chain(
             evidence_modules
                 .iter()
-                .map(|module| (module.source_id.file, module.source_id.path.as_str())),
+                .map(|module| (module.identity.file, module.identity.path.as_str())),
         )
     {
         paths.entry(file).or_insert_with(|| path.to_string());
@@ -798,6 +905,9 @@ fn build_external_catalog(
                     v04::ast::DeclarationKind::Machine(_) => "machine",
                     v04::ast::DeclarationKind::Part(_) => "part",
                     v04::ast::DeclarationKind::Ui(_) => "ui",
+                    v04::ast::DeclarationKind::Scenario(_) => "scenario",
+                    v04::ast::DeclarationKind::Example(_) => "example",
+                    v04::ast::DeclarationKind::Checkpoint(_) => "checkpoint",
                     v04::ast::DeclarationKind::Struct(_) => "struct",
                     v04::ast::DeclarationKind::Enum(_) => "enum",
                     v04::ast::DeclarationKind::Key(_) => "key",
@@ -1906,6 +2016,11 @@ fn declaration_header(
         v04::ast::DeclarationKind::Machine(value) => (&value.name, value.visibility),
         v04::ast::DeclarationKind::Part(value) => (&value.name, value.visibility),
         v04::ast::DeclarationKind::Ui(value) => (&value.name, value.visibility),
+        v04::ast::DeclarationKind::Scenario(value) => (&value.name, v04::ast::Visibility::Private),
+        v04::ast::DeclarationKind::Example(value)
+        | v04::ast::DeclarationKind::Checkpoint(value) => {
+            (&value.name, v04::ast::Visibility::Private)
+        }
         v04::ast::DeclarationKind::Struct(value) => (&value.name, value.visibility),
         v04::ast::DeclarationKind::Enum(value) => (&value.name, value.visibility),
         v04::ast::DeclarationKind::Key(value) => (&value.name, value.visibility),
@@ -2036,6 +2151,9 @@ fn private_declaration_kind(declaration: &v04::ast::Declaration) -> &'static str
         v04::ast::DeclarationKind::Key(_) => "key",
         v04::ast::DeclarationKind::Const(_) => "const",
         v04::ast::DeclarationKind::Function(_) => "function",
+        v04::ast::DeclarationKind::Scenario(_) => "scenario",
+        v04::ast::DeclarationKind::Example(_) => "example",
+        v04::ast::DeclarationKind::Checkpoint(_) => "checkpoint",
     }
 }
 
@@ -2102,332 +2220,6 @@ fn erase_source_coordinates(value: &mut serde_json::Value) {
         }
         _ => {}
     }
-}
-
-fn declaration_references(
-    declaration: &v04::ast::Declaration,
-) -> BTreeSet<(String, v04::ast::Span)> {
-    fn identifier(value: &serde_json::Value) -> Option<(String, v04::ast::Span)> {
-        let value = value.as_object()?;
-        let text = value.get("text")?.as_str()?.to_owned();
-        let span = value.get("span")?.as_object()?;
-        Some((
-            text,
-            v04::ast::Span::new(
-                u32::try_from(span.get("file")?.as_u64()?).ok()?,
-                u32::try_from(span.get("start")?.as_u64()?).ok()?,
-                u32::try_from(span.get("end")?.as_u64()?).ok()?,
-            ),
-        ))
-    }
-
-    fn visit(value: &serde_json::Value, references: &mut BTreeSet<(String, v04::ast::Span)>) {
-        match value {
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    visit(value, references);
-                }
-            }
-            serde_json::Value::Object(values) => {
-                if let Some(segments) = values.get("segments").and_then(serde_json::Value::as_array)
-                    && let Some(first) = segments.first()
-                {
-                    if let Some(identifier) = identifier(first) {
-                        references.insert(identifier);
-                    } else if let Some(identifier) = first
-                        .as_object()
-                        .and_then(|segment| segment.get("name"))
-                        .and_then(identifier)
-                    {
-                        references.insert(identifier);
-                    }
-                }
-                for value in values.values() {
-                    visit(value, references);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn ui_components(
-        nodes: &[v04::ast::UiNode],
-        references: &mut BTreeSet<(String, v04::ast::Span)>,
-    ) {
-        for node in nodes {
-            match &node.kind {
-                v04::ast::UiNodeKind::Element(element) => {
-                    if element.name.kind == v04::ast::UiNameKind::Component {
-                        references.insert((element.name.text.clone(), element.name.span));
-                    }
-                    ui_components(&element.children, references);
-                }
-                v04::ast::UiNodeKind::If(value) => {
-                    ui_components(&value.then_branch, references);
-                    if let Some(branch) = &value.else_branch {
-                        ui_components(branch, references);
-                    }
-                }
-                v04::ast::UiNodeKind::Each(value) => {
-                    ui_components(&value.children, references);
-                }
-                v04::ast::UiNodeKind::Text(_)
-                | v04::ast::UiNodeKind::Comment(_)
-                | v04::ast::UiNodeKind::Interpolation(_) => {}
-            }
-        }
-    }
-
-    let value = serde_json::to_value(declaration)
-        .expect("the serialization-friendly 0.4 AST must encode as JSON");
-    let mut references = BTreeSet::new();
-    visit(&value, &mut references);
-    if let v04::ast::DeclarationKind::Ui(value) = &declaration.kind {
-        ui_components(&value.body.nodes, &mut references);
-    }
-    let bound = declaration_bound_names(declaration);
-    let lexical_scopes = declaration_lexical_binding_scopes(&value);
-    references.retain(|(name, reference_span)| {
-        !bound.contains(name)
-            && !lexical_scopes.iter().any(|(binding, start, end)| {
-                binding == name && reference_span.start >= *start && reference_span.end <= *end
-            })
-    });
-    references
-}
-
-fn declaration_root_references(source: &v04::ast::Module) -> BTreeSet<(String, v04::ast::Span)> {
-    source
-        .declarations
-        .iter()
-        .flat_map(declaration_references)
-        .collect()
-}
-
-fn declaration_lexical_binding_scopes(encoded: &serde_json::Value) -> Vec<(String, u32, u32)> {
-    fn json_span(value: &serde_json::Value) -> Option<v04::ast::Span> {
-        let value = value.as_object()?;
-        Some(v04::ast::Span::new(
-            u32::try_from(value.get("file")?.as_u64()?).ok()?,
-            u32::try_from(value.get("start")?.as_u64()?).ok()?,
-            u32::try_from(value.get("end")?.as_u64()?).ok()?,
-        ))
-    }
-
-    fn identifier_name(value: &serde_json::Value) -> Option<String> {
-        value.as_object()?.get("text")?.as_str().map(str::to_owned)
-    }
-
-    fn pattern_names(value: &serde_json::Value, names: &mut BTreeSet<String>) {
-        match value {
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    pattern_names(value, names);
-                }
-            }
-            serde_json::Value::Object(values) => {
-                if let Some(name) = values.get("Binder").and_then(identifier_name) {
-                    names.insert(name);
-                }
-                for value in values.values() {
-                    pattern_names(value, names);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn visit(value: &serde_json::Value, scopes: &mut Vec<(String, u32, u32)>) {
-        match value {
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    visit(value, scopes);
-                }
-            }
-            serde_json::Value::Object(values) => {
-                if let (Some(parameters), Some(body)) = (
-                    values
-                        .get("parameters")
-                        .and_then(serde_json::Value::as_array),
-                    values.get("body"),
-                ) && let Some(body_span) = body
-                    .as_object()
-                    .and_then(|body| body.get("span"))
-                    .and_then(json_span)
-                {
-                    for parameter in parameters {
-                        if let Some(name) = parameter
-                            .as_object()
-                            .and_then(|parameter| parameter.get("name"))
-                            .and_then(identifier_name)
-                        {
-                            scopes.push((name, body_span.start, body_span.end));
-                        } else {
-                            let mut names = BTreeSet::new();
-                            pattern_names(parameter, &mut names);
-                            scopes.extend(
-                                names
-                                    .into_iter()
-                                    .map(|name| (name, body_span.start, body_span.end)),
-                            );
-                        }
-                    }
-                }
-
-                if let (Some(statements), Some(block_span)) = (
-                    values
-                        .get("statements")
-                        .and_then(serde_json::Value::as_array),
-                    values.get("span").and_then(json_span),
-                ) {
-                    for statement in statements {
-                        let Some(let_statement) = statement
-                            .as_object()
-                            .and_then(|statement| statement.get("kind"))
-                            .and_then(serde_json::Value::as_object)
-                            .and_then(|kind| kind.get("Let"))
-                            .and_then(serde_json::Value::as_object)
-                        else {
-                            continue;
-                        };
-                        let Some(name) = let_statement.get("name").and_then(identifier_name) else {
-                            continue;
-                        };
-                        let start = let_statement
-                            .get("semicolon")
-                            .and_then(json_span)
-                            .map_or(block_span.start, |semicolon| semicolon.end);
-                        scopes.push((name, start, block_span.end));
-                    }
-                }
-
-                if let (Some(pattern), Some(arm_value)) =
-                    (values.get("pattern"), values.get("value"))
-                    && let Some(arm_span) = arm_value
-                        .as_object()
-                        .and_then(|value| value.get("span"))
-                        .and_then(json_span)
-                {
-                    let mut names = BTreeSet::new();
-                    pattern_names(pattern, &mut names);
-                    scopes.extend(
-                        names
-                            .into_iter()
-                            .map(|name| (name, arm_span.start, arm_span.end)),
-                    );
-                }
-
-                if let (Some(pattern), Some(key), Some(close_span)) = (
-                    values.get("pattern"),
-                    values.get("key"),
-                    values.get("close_span").and_then(json_span),
-                ) && let Some(key_span) = key
-                    .as_object()
-                    .and_then(|key| key.get("span"))
-                    .and_then(json_span)
-                {
-                    let mut names = BTreeSet::new();
-                    pattern_names(pattern, &mut names);
-                    scopes.extend(
-                        names
-                            .into_iter()
-                            .map(|name| (name, key_span.start, close_span.end)),
-                    );
-                }
-
-                for value in values.values() {
-                    visit(value, scopes);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut scopes = Vec::new();
-    visit(encoded, &mut scopes);
-    scopes
-}
-
-fn declaration_bound_names(declaration: &v04::ast::Declaration) -> BTreeSet<String> {
-    fn machine_member_names(members: &[v04::ast::MachineMember], names: &mut BTreeSet<String>) {
-        for member in members {
-            match &member.kind {
-                v04::ast::MachineMemberKind::Config(value) => {
-                    names.extend(value.fields.iter().map(|field| field.name.text.clone()));
-                }
-                v04::ast::MachineMemberKind::Const(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::MachineMemberKind::Function(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::MachineMemberKind::Part(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::MachineMemberKind::Port(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::MachineMemberKind::State(value) => {
-                    names.extend(value.fields.iter().map(|field| field.name.text.clone()));
-                }
-                v04::ast::MachineMemberKind::Computed(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::MachineMemberKind::Update(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn part_member_names(members: &[v04::ast::PartMember], names: &mut BTreeSet<String>) {
-        for member in members {
-            match &member.kind {
-                v04::ast::PartMemberKind::Const(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::PartMemberKind::Function(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::PartMemberKind::Port(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::PartMemberKind::State(value) => {
-                    names.extend(value.fields.iter().map(|field| field.name.text.clone()));
-                }
-                v04::ast::PartMemberKind::Computed(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                v04::ast::PartMemberKind::Update(value) => {
-                    names.insert(value.name.text.clone());
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut names = BTreeSet::new();
-    match &declaration.kind {
-        v04::ast::DeclarationKind::Function(_) => {}
-        v04::ast::DeclarationKind::Machine(value) => {
-            machine_member_names(&value.members, &mut names);
-        }
-        v04::ast::DeclarationKind::Part(value) => {
-            names.extend(
-                value
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.name.text.clone()),
-            );
-            part_member_names(&value.members, &mut names);
-        }
-        v04::ast::DeclarationKind::Ui(value) => {
-            names.insert(value.observation.text.clone());
-        }
-        _ => {}
-    }
-    names
 }
 
 fn span(value: v04::ast::Span) -> ast::SourceSpan {
@@ -2585,16 +2377,34 @@ enum PureContinuation {
 
 struct ProjectAdapter<'a> {
     sources: &'a [v04::ast::Module],
+    shape_sources: &'a [v04::ast::Module],
     resolution: Resolution,
     diagnostics: Vec<uhura_base::Diagnostic>,
+    sort_declarations: bool,
 }
 
 impl<'a> ProjectAdapter<'a> {
     fn new(sources: &'a [v04::ast::Module], mut resolution: Resolution) -> Self {
         Self {
             sources,
+            shape_sources: sources,
             diagnostics: std::mem::take(&mut resolution.diagnostics),
             resolution,
+            sort_declarations: true,
+        }
+    }
+
+    fn new_with_shapes(
+        sources: &'a [v04::ast::Module],
+        shape_sources: &'a [v04::ast::Module],
+        mut resolution: Resolution,
+    ) -> Self {
+        Self {
+            sources,
+            shape_sources,
+            diagnostics: std::mem::take(&mut resolution.diagnostics),
+            resolution,
+            sort_declarations: false,
         }
     }
 
@@ -2605,7 +2415,7 @@ impl<'a> ProjectAdapter<'a> {
             };
         };
         let (package_path, major) = package_identity(first, &mut self.diagnostics);
-        let (mut structs, mut variants) = project_record_shapes(self.sources);
+        let (mut structs, mut variants) = project_record_shapes(self.shape_sources);
         structs.extend(self.resolution.external_structs.clone());
         variants.extend(self.resolution.external_variants.clone());
 
@@ -2664,12 +2474,16 @@ impl<'a> ProjectAdapter<'a> {
             );
             self.diagnostics.extend(adapter.diagnostics);
         }
-        declarations.sort_by(|left, right| {
-            lowered_declaration_key(left)
-                .as_bytes()
-                .cmp(lowered_declaration_key(right).as_bytes())
-                .then_with(|| lowered_declaration_rank(left).cmp(&lowered_declaration_rank(right)))
-        });
+        if self.sort_declarations {
+            declarations.sort_by(|left, right| {
+                lowered_declaration_key(left)
+                    .as_bytes()
+                    .cmp(lowered_declaration_key(right).as_bytes())
+                    .then_with(|| {
+                        lowered_declaration_rank(left).cmp(&lowered_declaration_rank(right))
+                    })
+            });
+        }
 
         // One package-global checker module is the deliberate lowering target.
         // Its source coordinates are synthetic and stable: every authored node
@@ -2677,8 +2491,8 @@ impl<'a> ProjectAdapter<'a> {
         // semantic owner or public ID.
         let synthetic = ast::SourceSpan::empty(0, 0);
         let uses = ui::profile_activation(self.sources, &mut self.diagnostics);
-        let mut imports = legacy_standard_imports(&self.resolution.standard_imports);
-        imports.extend(legacy_external_imports(&self.resolution.external_imports));
+        let mut imports = checker_standard_imports(&self.resolution.standard_imports);
+        imports.extend(checker_external_imports(&self.resolution.external_imports));
         imports.sort_by(|left, right| {
             left.target
                 .as_bytes()
@@ -2699,7 +2513,7 @@ impl<'a> ProjectAdapter<'a> {
                 span: synthetic,
                 language: ast::LanguageHeader {
                     name: ast::Spanned::new("uhura".into(), synthetic),
-                    version: "0.3".into(),
+                    version: "0.4".into(),
                     span: synthetic,
                 },
                 identity: ast::ModuleIdentity {
@@ -2713,13 +2527,12 @@ impl<'a> ProjectAdapter<'a> {
                 uses,
                 imports,
                 declarations,
-                source: String::new(),
             }],
         }
     }
 }
 
-fn legacy_standard_imports(
+fn checker_standard_imports(
     imports: &BTreeMap<(String, String), v04::ast::Span>,
 ) -> Vec<ast::ImportDecl> {
     let mut grouped = BTreeMap::<&str, Vec<(&str, v04::ast::Span)>>::new();
@@ -2757,7 +2570,7 @@ fn legacy_standard_imports(
         .collect()
 }
 
-fn legacy_external_imports(
+fn checker_external_imports(
     imports: &BTreeMap<(String, String), ExternalImport>,
 ) -> Vec<ast::ImportDecl> {
     let mut grouped = BTreeMap::<&str, Vec<(&str, v04::ast::Span)>>::new();
@@ -2830,12 +2643,77 @@ fn project_record_shapes(
                         );
                     }
                 }
+                v04::ast::DeclarationKind::Machine(value) => {
+                    for member in &value.members {
+                        match &member.kind {
+                            v04::ast::MachineMemberKind::Events(section)
+                            | v04::ast::MachineMemberKind::Commands(section) => {
+                                capture_protocol_shapes(
+                                    &value.name.text,
+                                    &section.variants,
+                                    &mut variants,
+                                );
+                            }
+                            v04::ast::MachineMemberKind::Outcomes(section) => {
+                                let entries = section
+                                    .entries
+                                    .iter()
+                                    .map(|entry| &entry.variant)
+                                    .collect::<Vec<_>>();
+                                capture_protocol_shapes(&value.name.text, entries, &mut variants);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                v04::ast::DeclarationKind::Part(value) => {
+                    for member in &value.members {
+                        match &member.kind {
+                            v04::ast::PartMemberKind::Events(section)
+                            | v04::ast::PartMemberKind::Commands(section) => {
+                                capture_protocol_shapes(
+                                    &value.name.text,
+                                    &section.variants,
+                                    &mut variants,
+                                );
+                            }
+                            v04::ast::PartMemberKind::RequiresOutcomes(section) => {
+                                let entries = section
+                                    .entries
+                                    .iter()
+                                    .map(|entry| &entry.variant)
+                                    .collect::<Vec<_>>();
+                                capture_protocol_shapes(&value.name.text, entries, &mut variants);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 v04::ast::DeclarationKind::Ui(_) => {}
                 _ => {}
             }
         }
     }
     (structs, variants)
+}
+
+fn capture_protocol_shapes<'a>(
+    owner: &str,
+    variants: impl IntoIterator<Item = &'a v04::ast::ProtocolVariant>,
+    shapes: &mut BTreeMap<(String, String), RecordShape>,
+) {
+    for variant in variants {
+        shapes.insert(
+            (owner.to_owned(), variant.name.text.clone()),
+            RecordShape {
+                fields: variant
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.name.text.clone())
+                    .collect(),
+            },
+        );
+    }
 }
 
 fn package_identity(
@@ -2894,9 +2772,10 @@ fn lowered_declaration_key(declaration: &ast::Declaration) -> &str {
         ast::DeclarationKind::Function(value) => &value.name.value,
         ast::DeclarationKind::Machine(value) => &value.name.value,
         ast::DeclarationKind::Ui(value) => &value.name.value,
-        ast::DeclarationKind::Scenario(_)
-        | ast::DeclarationKind::Example(_)
-        | ast::DeclarationKind::Checkpoint(_) => "",
+        ast::DeclarationKind::Scenario(value) => &value.name.value,
+        ast::DeclarationKind::Example(value) | ast::DeclarationKind::Checkpoint(value) => {
+            &value.name.value
+        }
     }
 }
 
@@ -2908,10 +2787,9 @@ fn lowered_declaration_name_mut(declaration: &mut ast::DeclarationKind) -> &mut 
         ast::DeclarationKind::Function(value) => &mut value.name.value,
         ast::DeclarationKind::Machine(value) => &mut value.name.value,
         ast::DeclarationKind::Ui(value) => &mut value.name.value,
-        ast::DeclarationKind::Scenario(_)
-        | ast::DeclarationKind::Example(_)
-        | ast::DeclarationKind::Checkpoint(_) => {
-            unreachable!("0.4 core declarations cannot lower into evidence declarations")
+        ast::DeclarationKind::Scenario(value) => &mut value.name.value,
+        ast::DeclarationKind::Example(value) | ast::DeclarationKind::Checkpoint(value) => {
+            &mut value.name.value
         }
     }
 }
@@ -3038,12 +2916,137 @@ impl<'a> Adapter<'a> {
             v04::ast::DeclarationKind::Ui(value) => {
                 ast::DeclarationKind::Ui(self.ui_declaration(value))
             }
+            v04::ast::DeclarationKind::Scenario(value) => {
+                ast::DeclarationKind::Scenario(self.scenario_declaration(value))
+            }
+            v04::ast::DeclarationKind::Example(value) => {
+                ast::DeclarationKind::Example(self.evidence_alias(value))
+            }
+            v04::ast::DeclarationKind::Checkpoint(value) => {
+                ast::DeclarationKind::Checkpoint(self.evidence_alias(value))
+            }
         };
         let (authored_name, _) = declaration_header(declaration);
         if let Some(lowered_name) = self.bindings.get(&authored_name.text) {
             *lowered_declaration_name_mut(&mut value) = lowered_name.clone();
         }
         Some(ast::Spanned::new(value, span))
+    }
+
+    fn scenario_declaration(&mut self, value: &v04::ast::ScenarioDeclaration) -> ast::ScenarioDecl {
+        let origin = match &value.origin {
+            v04::ast::ScenarioOrigin::Machine {
+                machine,
+                configuration,
+            } => {
+                let name = machine
+                    .segments
+                    .last()
+                    .map(|segment| self.resolved_name(&segment.name))
+                    .unwrap_or_else(|| {
+                        self.unsupported(machine.span, "scenario machine path must contain a name");
+                        ast::Spanned::new("<error>".into(), self.span(machine.span))
+                    });
+                ast::ScenarioOrigin::Machine {
+                    machine: name,
+                    configuration: configuration
+                        .as_ref()
+                        .map(|value| self.expr(value, &ExprEnv::default())),
+                }
+            }
+            v04::ast::ScenarioOrigin::Snapshot(reference) => {
+                ast::ScenarioOrigin::Snapshot(self.evidence_reference(reference))
+            }
+        };
+        ast::ScenarioDecl {
+            name: self.name(&value.name),
+            origin,
+            steps: value
+                .steps
+                .iter()
+                .map(|step| ast::Spanned::new(self.evidence_step(step), self.span(step.span)))
+                .collect(),
+        }
+    }
+
+    fn evidence_alias(
+        &mut self,
+        value: &v04::ast::EvidenceAliasDeclaration,
+    ) -> ast::EvidenceAliasDecl {
+        ast::EvidenceAliasDecl {
+            name: self.name(&value.name),
+            presentation: value
+                .presentation
+                .as_ref()
+                .map(|name| self.resolved_name(name)),
+            kind: value.kind.map(|kind| match kind {
+                v04::ast::EvidencePresentationKind::Page => ast::EvidencePresentationKind::Page,
+                v04::ast::EvidencePresentationKind::Component => {
+                    ast::EvidencePresentationKind::Component
+                }
+                v04::ast::EvidencePresentationKind::Surface => {
+                    ast::EvidencePresentationKind::Surface
+                }
+            }),
+            is_default: value.is_default,
+            note: value.note.clone(),
+            target: self.evidence_reference(&value.target),
+        }
+    }
+
+    fn evidence_reference(&self, value: &v04::ast::EvidenceReference) -> ast::EvidenceRef {
+        ast::EvidenceRef {
+            path: self.resolved_path(&value.path),
+            span: self.span(value.span),
+        }
+    }
+
+    fn evidence_step(&mut self, value: &v04::ast::EvidenceStep) -> ast::EvidenceStepKind {
+        match &value.kind {
+            v04::ast::EvidenceStepKind::Bind { port, fixture } => ast::EvidenceStepKind::Bind {
+                port: self.name(port),
+                fixture: self.expr(fixture, &ExprEnv::default()),
+            },
+            v04::ast::EvidenceStepKind::Start => ast::EvidenceStepKind::Start,
+            v04::ast::EvidenceStepKind::Send(value) => {
+                ast::EvidenceStepKind::Send(self.expr(value, &ExprEnv::default()))
+            }
+            v04::ast::EvidenceStepKind::Deliver(value) => {
+                ast::EvidenceStepKind::Deliver(self.expr(value, &ExprEnv::default()))
+            }
+            v04::ast::EvidenceStepKind::ExpectReaction { outcome, commands } => {
+                ast::EvidenceStepKind::ExpectReaction {
+                    outcome: self.pattern(outcome),
+                    commands: commands
+                        .iter()
+                        .map(|value| self.expr(value, &ExprEnv::default()))
+                        .collect(),
+                }
+            }
+            v04::ast::EvidenceStepKind::ExpectObservationPattern(value) => {
+                ast::EvidenceStepKind::ExpectObservationPattern(self.pattern(value))
+            }
+            v04::ast::EvidenceStepKind::ExpectInspectionPattern(value) => {
+                ast::EvidenceStepKind::ExpectInspectionPattern(self.pattern(value))
+            }
+            v04::ast::EvidenceStepKind::ExpectObservationWhere(value) => {
+                ast::EvidenceStepKind::ExpectObservationWhere(self.expr(value, &ExprEnv::default()))
+            }
+            v04::ast::EvidenceStepKind::ExpectRestore { commands } => {
+                ast::EvidenceStepKind::ExpectRestore {
+                    commands: commands
+                        .iter()
+                        .map(|value| self.expr(value, &ExprEnv::default()))
+                        .collect(),
+                }
+            }
+            v04::ast::EvidenceStepKind::ExpectSnapshot { target } => {
+                ast::EvidenceStepKind::ExpectSnapshot {
+                    target: self.evidence_reference(target),
+                }
+            }
+            v04::ast::EvidenceStepKind::Pin(value) => ast::EvidenceStepKind::Pin(self.name(value)),
+        }
     }
 
     fn struct_declaration(&mut self, value: &v04::ast::StructDeclaration) -> ast::TypeDecl {
@@ -3814,6 +3817,13 @@ impl<'a> Adapter<'a> {
             }
             v04::ast::ExpressionKind::Record(value) => {
                 self.pure_flow_record(value.clone(), 0, env.clone(), expression.span, continuation)
+            }
+            v04::ast::ExpressionKind::AnonymousRecord(_) => {
+                self.unsupported(
+                    expression.span,
+                    "an evidence record cannot contain lexical `return`",
+                );
+                ast::Spanned::new(ast::ExprKind::Error, self.span(expression.span))
             }
             v04::ast::ExpressionKind::Literal(_)
             | v04::ast::ExpressionKind::Unit
@@ -4646,6 +4656,16 @@ impl<'a> Adapter<'a> {
             v04::ast::ExpressionKind::Record(value) => {
                 return self.record_expression(expression.span, value, env);
             }
+            v04::ast::ExpressionKind::AnonymousRecord(entries) => ast::ExprKind::Record(
+                entries
+                    .iter()
+                    .map(|entry| ast::RecordEntry {
+                        key: self.expr(&entry.key, env),
+                        value: self.expr(&entry.value, env),
+                        span: self.span(entry.span),
+                    })
+                    .collect(),
+            ),
             v04::ast::ExpressionKind::Block(value) => {
                 return self.pure_block_expression(value, env);
             }
@@ -5567,6 +5587,23 @@ impl<'a> Adapter<'a> {
                     .checked_sub(2)
                     .and_then(|index| segments.get(index))
                     .map(String::as_str);
+                let unqualified_shape = if owner.is_none() {
+                    let mut matches = self
+                        .variants
+                        .iter()
+                        .filter(|((_, variant), _)| variant == name)
+                        .map(|(_, shape)| shape);
+                    let shape = matches.next().cloned();
+                    if shape.as_ref().is_some_and(|shape| {
+                        matches.all(|candidate| candidate.fields == shape.fields)
+                    }) {
+                        shape
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 if owner == Some("Token") && matches!(name, "Known" | "Unknown") {
                     let mut supplied = fields
                         .iter()
@@ -5647,6 +5684,41 @@ impl<'a> Adapter<'a> {
                         ],
                         arguments,
                     }
+                } else if let Some(shape) = unqualified_shape {
+                    let mut supplied = fields
+                        .iter()
+                        .map(|field| (field.name.text.as_str(), field))
+                        .collect::<BTreeMap<_, _>>();
+                    let mut arguments = Vec::new();
+                    for field_name in &shape.fields {
+                        if let Some(field) = supplied.remove(field_name.as_str()) {
+                            arguments.push(if let Some(pattern) = &field.pattern {
+                                self.pattern(pattern)
+                            } else {
+                                ast::Spanned::new(
+                                    ast::PatternKind::Name(self.name(&field.name)),
+                                    self.span(field.span),
+                                )
+                            });
+                        } else if *rest {
+                            arguments.push(ast::Spanned::new(ast::PatternKind::Wildcard, span));
+                        } else {
+                            self.unsupported(
+                                pattern.span,
+                                format!("record variant pattern is missing field `{field_name}`"),
+                            );
+                        }
+                    }
+                    for field_name in supplied.keys() {
+                        self.unsupported(
+                            pattern.span,
+                            format!("record variant pattern has unknown field `{field_name}`"),
+                        );
+                    }
+                    ast::PatternKind::Constructor {
+                        path: vec![self.qualified_pattern_name(constructor)],
+                        arguments,
+                    }
                 } else {
                     ast::PatternKind::Record {
                         fields: fields
@@ -5668,6 +5740,24 @@ impl<'a> Adapter<'a> {
                     }
                 }
             }
+            v04::ast::PatternKind::AnonymousRecord { fields, rest } => ast::PatternKind::Record {
+                fields: fields
+                    .iter()
+                    .map(|field| ast::RecordPatternField {
+                        name: self.name(&field.name),
+                        pattern: if let Some(pattern) = &field.pattern {
+                            self.pattern(pattern)
+                        } else {
+                            ast::Spanned::new(
+                                ast::PatternKind::Name(self.name(&field.name)),
+                                self.span(field.span),
+                            )
+                        },
+                        span: self.span(field.span),
+                    })
+                    .collect(),
+                open: *rest,
+            },
             v04::ast::PatternKind::Alternative(values) => ast::PatternKind::Alternative(
                 values.iter().map(|value| self.pattern(value)).collect(),
             ),
@@ -5820,6 +5910,9 @@ impl<'a> Adapter<'a> {
                         .as_deref()
                         .is_some_and(|value| self.contains_return(value))
             }
+            v04::ast::ExpressionKind::AnonymousRecord(entries) => entries.iter().any(|entry| {
+                self.contains_return(&entry.key) || self.contains_return(&entry.value)
+            }),
             v04::ast::ExpressionKind::Block(value) => {
                 value
                     .statements

@@ -34,7 +34,7 @@ export interface HostInspection {
   readonly evidenceHash: Hash | null;
   readonly deploymentHash: Hash;
   readonly sources: readonly InspectionSource[];
-  readonly provenance: SemanticProvenance | null;
+  readonly provenance: SemanticProvenance;
   readonly interactionGraph: InteractionGraph;
   readonly graphSources: InteractionGraphSources;
   readonly evidence: unknown;
@@ -199,7 +199,7 @@ export const decodeHostInspection = (
     source["provenance"],
     `${context}.provenance`,
   );
-  for (const semanticSource of provenance?.sources ?? []) {
+  for (const semanticSource of provenance.sources) {
     const physical = sources.find((item) => item.path === semanticSource.path);
     if (
       physical === undefined

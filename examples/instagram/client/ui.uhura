@@ -1,5 +1,5 @@
 use uhura::ui;
-use crate::instagram::{AppData, Authority, Comment, Connection, Instagram, Media, Page, Post, PostId, Profile, ProfileTab, Section, SearchStatus, FeedStatus, StoryDetail, StoryId, Tile, Upload, UserId, KENJI, LENA, LENA_GLAZE, LENA_PROFILE, LENA_STORY, MIRA, NILS, POST_LENA_GLAZE, USER_MIRA, USER_NILS};
+use crate::instagram::{AppData, Authority, Comment, Connection, Instagram, Media, Page, Post, PostId, Profile, ProfileTab, Section, SearchStatus, FeedStatus, StoryDetail, StoryId, Tile, Upload, UserId, KENJI, LENA, LENA_GLAZE, LENA_PROFILE, LENA_STORY, MIRA, NILS, POST_LENA_GLAZE, USER_LENA, USER_MIRA, USER_NILS};
 use uhura::ui_surface::Surface;
 
 pub fn post_for(data: AppData, id: PostId) -> Post {
@@ -278,23 +278,25 @@ pub ui FeedPage for Instagram(view) {
                       class="ring-row"
                     >
                       {#each data.stories as story (story.id)}
-                        <region
-                          label={story.user.username}
-                          on activate -> OpenStory(story.id)
-                        >
-                          <view class="ring-item">
-                            <img
-                              class={if story.unseen {
-                                "ring unseen"
-                              } else {
-                                "ring seen"
-                              }}
-                              src={story.user.avatar.src}
-                              alt={story.user.avatar.alt}
-                            />
-                            <text class="ring-name">{story.user.username}</text>
-                          </view>
-                        </region>
+                        <view>
+                          <region
+                            label={story.user.username}
+                            on activate -> OpenStory(story.id)
+                          >
+                            <view class="ring-item">
+                              <img
+                                class={if story.unseen {
+                                  "ring unseen"
+                                } else {
+                                  "ring seen"
+                                }}
+                                src={story.user.avatar.src}
+                                alt={story.user.avatar.alt}
+                              />
+                              <text class="ring-name">{story.user.username}</text>
+                            </view>
+                          </region>
+                        </view>
                       {/each}
                     </view>
                   </scroll>
@@ -510,22 +512,24 @@ pub ui FeedPage for Instagram(view) {
                             class="connection-list"
                           >
                             {#each data.search_people as person (person.user.id)}
-                              <region
-                                label={person.user.username}
-                                on activate -> OpenProfile(person.user.id)
-                              >
-                                <view class="connection-row">
-                                  <img
-                                    class="avatar"
-                                    src={person.user.avatar.src}
-                                    alt={person.user.avatar.alt}
-                                  />
-                                  <view class="connection-copy">
-                                    <text class="username">{person.user.username}</text>
-                                    <text class="muted">{person.user.display_name}</text>
+                              <view>
+                                <region
+                                  label={person.user.username}
+                                  on activate -> OpenProfile(person.user.id)
+                                >
+                                  <view class="connection-row">
+                                    <img
+                                      class="avatar"
+                                      src={person.user.avatar.src}
+                                      alt={person.user.avatar.alt}
+                                    />
+                                    <view class="connection-copy">
+                                      <text class="username">{person.user.username}</text>
+                                      <text class="muted">{person.user.display_name}</text>
+                                    </view>
                                   </view>
-                                </view>
-                              </region>
+                                </region>
+                              </view>
                             {/each}
                           </view>
                         {:else}
@@ -945,10 +949,7 @@ pub ui FeedPage for Instagram(view) {
                                 {/if}
                               </view>
                             </view>
-                            <view
-                              class="profile-tabs"
-                              role="tablist"
-                            >
+                            <view class="profile-tabs">
                               <button
                                 label="Posts"
                                 pressed={view.profile_tab == ProfileTab::Posts}
@@ -1623,10 +1624,7 @@ pub ui ProfilePage for Instagram(view) {
               <text class="profile-handle">{profile_for_page(data, view.page).user.username}</text>
               <text class="bio">{profile_for_page(data, view.page).bio}</text>
             </view>
-            <view
-              class="profile-tabs"
-              role="tablist"
-            >
+            <view class="profile-tabs">
               <button
                 label="Posts"
                 pressed={view.profile_tab == ProfileTab::Posts}
@@ -1969,22 +1967,24 @@ pub ui SearchPage for Instagram(view) {
                     class="connection-list"
                   >
                     {#each data.search_people as person (person.user.id)}
-                      <region
-                        label={person.user.username}
-                        on activate -> OpenProfile(person.user.id)
-                      >
-                        <view class="connection-row">
-                          <img
-                            class="avatar"
-                            src={person.user.avatar.src}
-                            alt={person.user.avatar.alt}
-                          />
-                          <view class="connection-copy">
-                            <text class="username">{person.user.username}</text>
-                            <text class="muted">{person.user.display_name}</text>
+                      <view>
+                        <region
+                          label={person.user.username}
+                          on activate -> OpenProfile(person.user.id)
+                        >
+                          <view class="connection-row">
+                            <img
+                              class="avatar"
+                              src={person.user.avatar.src}
+                              alt={person.user.avatar.alt}
+                            />
+                            <view class="connection-copy">
+                              <text class="username">{person.user.username}</text>
+                              <text class="muted">{person.user.display_name}</text>
+                            </view>
                           </view>
-                        </view>
-                      </region>
+                        </region>
+                      </view>
                     {/each}
                   </view>
                 {:else}
@@ -2206,7 +2206,10 @@ pub ui ConnectionRow for Instagram(view) {
           <text class="username">{LENA.username}</text>
           <text class="muted">{LENA.display_name}</text>
         </view>
-        <button label="Unfollow">
+        <button
+          label="Unfollow"
+          on press -> ToggleFollow(USER_LENA, false)
+        >
           <text>Following</text>
         </button>
       {/if}
@@ -2220,7 +2223,10 @@ pub ui ConnectionRow for Instagram(view) {
         <text class="username">{LENA.username}</text>
         <text class="muted">{LENA.display_name}</text>
       </view>
-      <button label="Unfollow">
+      <button
+        label="Unfollow"
+        on press -> ToggleFollow(USER_LENA, false)
+      >
         <text>Following</text>
       </button>
     {/if}
@@ -2514,23 +2520,25 @@ pub ui StoriesTray for Instagram(view) {
         class="ring-row"
       >
         {#each data.stories as story (story.id)}
-          <region
-            label={story.user.username}
-            on activate -> OpenStory(story.id)
-          >
-            <view class="ring-item">
-              <img
-                class={if story.unseen {
-                  "ring unseen"
-                } else {
-                  "ring seen"
-                }}
-                src={story.user.avatar.src}
-                alt={story.user.avatar.alt}
-              />
-              <text class="ring-name">{story.user.username}</text>
-            </view>
-          </region>
+          <view>
+            <region
+              label={story.user.username}
+              on activate -> OpenStory(story.id)
+            >
+              <view class="ring-item">
+                <img
+                  class={if story.unseen {
+                    "ring unseen"
+                  } else {
+                    "ring seen"
+                  }}
+                  src={story.user.avatar.src}
+                  alt={story.user.avatar.alt}
+                />
+                <text class="ring-name">{story.user.username}</text>
+              </view>
+            </region>
+          </view>
         {/each}
       </view>
     </scroll>
