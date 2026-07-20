@@ -24,6 +24,7 @@ export class Session {
   genesis(): string;
   semantic_genesis(): string;
   view(): string;
+  projection_revision(): string;
   presentation(): string;
   inspect(): string;
   next_sequence(): string;
@@ -32,7 +33,7 @@ export class Session {
   submit_value(value_json: string): string;
   dispatch_ui(
     binding_id: string,
-    projection_sequence: string,
+    projection_revision: string,
     event_json: string,
   ): string;
   decode_route(port: string, url: string): string;

@@ -6,12 +6,12 @@ import type {
   RuntimeInspectionState,
 } from "../protocol/types.js";
 import type {
-  Inspection,
   Receipt,
+  RuntimeSnapshot,
 } from "../protocol/machine.js";
 
 export const UHURA_INSPECTION_STATE_PROTOCOL =
-  "uhura-runtime-inspection-state/0" as const;
+  "uhura-runtime-inspection-state/1" as const;
 export const DEFAULT_UHURA_INSPECTION_HISTORY_LIMIT = 128;
 
 export interface InspectionStoreOptions {
@@ -22,7 +22,7 @@ export interface InspectionStoreOptions {
 export interface InspectionStore {
   readonly handle: RuntimeInspectionHandle;
   installArtifacts(artifacts: RuntimeInspectionArtifacts): boolean;
-  record(inspection: Inspection, receipt: Receipt): boolean;
+  record(snapshot: RuntimeSnapshot, receipt: Receipt): boolean;
   dispose(): void;
 }
 
@@ -48,10 +48,6 @@ function frozenState(
   });
 }
 
-function sameWire(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 function assertArtifacts(artifacts: RuntimeInspectionArtifacts): void {
   if (!Number.isSafeInteger(artifacts.generation) || artifacts.generation < 0) {
     throw new TypeError(
@@ -68,38 +64,40 @@ function assertArtifacts(artifacts: RuntimeInspectionArtifacts): void {
 function assertCorrelated(
   artifacts: RuntimeInspectionArtifacts,
   previous: RuntimeInspectedStep | null,
-  inspection: Inspection,
+  snapshot: RuntimeSnapshot,
   receipt: Receipt,
 ): void {
   const deployment = artifacts.deployment;
   if (
-    inspection.instance.length === 0
-    || inspection.machineProgramHash !== deployment.machineProgramHash
-    || inspection.presentation !== deployment.presentation
-    || inspection.presentationHash !== deployment.presentationHash
+    snapshot.instance.length === 0
+    || snapshot.machineProgramHash !== deployment.machineProgramHash
+    || snapshot.presentation !== deployment.presentation
+    || snapshot.presentationHash !== deployment.presentationHash
   ) {
     throw new TypeError(
-      "Uhura machine inspection does not match the admitted deployment identity",
+      "Uhura machine snapshot does not match the admitted deployment identity",
     );
   }
   if (
-    receipt.instance !== inspection.instance
-    || receipt.machineProgramHash !== inspection.machineProgramHash
-    || receipt.configurationHash !== inspection.configurationHash
+    receipt.instance !== snapshot.instance
+    || receipt.machineProgramHash !== snapshot.machineProgramHash
+    || receipt.configurationHash !== snapshot.configurationHash
   ) {
     throw new TypeError(
-      "Uhura machine receipt does not match its runtime inspection identity",
+      "Uhura machine receipt does not match its runtime snapshot identity",
     );
   }
-  const retained = inspection.receipts.at(-1);
-  if (!retained || !sameWire(retained, receipt)) {
+  const receiptStateHash = receipt.kind === "reaction"
+    ? receipt.postStateHash
+    : receipt.initialStateHash;
+  if (snapshot.stateHash !== receiptStateHash) {
     throw new TypeError(
-      "Uhura machine inspection must retain the exact receipt being published",
+      "Uhura machine snapshot state identity does not match its receipt",
     );
   }
-  if (BigInt(inspection.nextSequence) !== BigInt(receipt.sequence) + 1n) {
+  if (BigInt(snapshot.nextSequence) !== BigInt(receipt.sequence) + 1n) {
     throw new TypeError(
-      "Uhura machine inspection nextSequence must immediately follow its receipt",
+      "Uhura machine snapshot nextSequence must immediately follow its receipt",
     );
   }
   if (
@@ -190,7 +188,7 @@ export function createInspectionStore(
   }
 
   function record(
-    inspection: Inspection,
+    snapshot: RuntimeSnapshot,
     receipt: Receipt,
   ): boolean {
     if (state.disposed) return false;
@@ -199,8 +197,8 @@ export function createInspectionStore(
         "Uhura machine inspection artifacts must be installed before runtime records",
       );
     }
-    assertCorrelated(state.artifacts, state.latest, inspection, receipt);
-    const step = deepFreeze({ inspection, receipt });
+    assertCorrelated(state.artifacts, state.latest, snapshot, receipt);
+    const step = deepFreeze({ snapshot, receipt });
     const appended = [...state.history, step];
     const evicted = Math.max(0, appended.length - historyLimit);
     const history = evicted === 0 ? appended : appended.slice(evicted);

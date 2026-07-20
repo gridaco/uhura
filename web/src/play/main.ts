@@ -10,6 +10,7 @@ import type {
 } from "../protocol/types.js";
 import {
   UHURA_BROWSER_PROTOCOL,
+  UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
   decodeResolvedInput,
   type ResolvedInput,
   type Value,
@@ -85,6 +86,7 @@ const EXPECTED_PROTOCOLS: Readonly<Record<string, string>> = {
   ingressRecord: "uhura-ingress-record/0",
   ir: "uhura-ir/1",
   reactionReceipt: "uhura-reaction-receipt/0",
+  runtimeSnapshot: UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
   view: "uhura-view/1",
 };
 
@@ -553,8 +555,8 @@ export function startPlayRuntime(
       adapters: [...browserAdapters, ...(provider?.adapters ?? [])],
       assets: playAssets,
       icons,
-      publishInspection(nextInspection, receipt): void {
-        inspection.record(nextInspection, receipt);
+      publishRuntimeStep(snapshot, receipt): void {
+        inspection.record(snapshot, receipt);
       },
       onProjectionError(error): void {
         if (disposed) return;

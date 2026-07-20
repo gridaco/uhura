@@ -5,13 +5,14 @@ import {
   UHURA_INTERACTION_GRAPH_PROVENANCE_PROTOCOL,
 } from "../../protocol/interaction-graph.js";
 import {
-  UHURA_BROWSER_PROTOCOL,
   UHURA_GENESIS_RECEIPT_PROTOCOL,
   UHURA_REACTION_RECEIPT_PROTOCOL,
+  UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
   UHURA_SEMANTIC_IR_HASH_PROTOCOL,
-  decodeInspection,
-  type Inspection,
+  decodeReceipt,
+  decodeRuntimeSnapshot,
   type Receipt,
+  type RuntimeSnapshot,
 } from "../../protocol/machine.js";
 
 export const UHURA_TEST_MACHINE = "example@1::Counter";
@@ -200,38 +201,28 @@ const reaction = (sequence: number) => ({
   postStateHash: HASH,
 });
 
-export function machineTestInspection(sequence: number): {
-  readonly inspection: Inspection;
+export function machineTestRuntimeStep(sequence: number): {
+  readonly snapshot: RuntimeSnapshot;
   readonly receipt: Receipt;
 } {
   if (!Number.isSafeInteger(sequence) || sequence < 0) {
     throw new RangeError("test sequence must be a non-negative safe integer");
   }
-  const receipts = [
-    genesis,
-    ...Array.from({ length: sequence }, (_, index) => reaction(index + 1)),
-  ];
-  const inspection = decodeInspection({
-    protocol: UHURA_BROWSER_PROTOCOL,
-    identityProtocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+  const snapshot = decodeRuntimeSnapshot({
+    protocol: UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
     instance: "counter-1",
     machineProgramHash: UHURA_TEST_MACHINE_HASH,
     presentation: UHURA_TEST_PRESENTATION,
     presentationHash: UHURA_TEST_PRESENTATION_HASH,
     configurationHash: UHURA_TEST_CONFIGURATION_HASH,
-    configuration: { $: "unit" },
     state: count(sequence),
-    observation: count(sequence),
-    inbox: [],
+    stateHash: HASH,
     lifecycle: "running",
     nextSequence: String(sequence + 1),
     tracePrefixHash: HASH,
-    receipts,
     ingressPrefixHash: HASH,
     nextIngressOrdinal: "1",
-    ingressRecords: [],
   });
-  const receipt = inspection.receipts.at(-1);
-  if (!receipt) throw new Error("test inspection has no receipt");
-  return { inspection, receipt };
+  const receipt = decodeReceipt(sequence === 0 ? genesis : reaction(sequence));
+  return { snapshot, receipt };
 }

@@ -14,10 +14,11 @@ import {
 } from "./adapter-host.js";
 import {
   UHURA_BROWSER_PROTOCOL,
+  UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
   decodeIdentityProtocol,
   decodeInspection,
   decodeReactionReceipt,
-  decodeResolvedCommand,
+  decodeRuntimeSnapshot,
   decodeValue,
   hash,
   natural,
@@ -29,6 +30,7 @@ import {
   type ReactionReceipt,
   type ResolvedCommand,
   type ResolvedInput,
+  type RuntimeSnapshot,
   type UhuraIdentityProtocol,
   type Value,
 } from "../protocol/machine.js";
@@ -82,11 +84,11 @@ export interface StartPlayOptions {
   readonly assets?: AssetAppliers;
   readonly icons?: IconFontRegistry;
   /**
-   * Publishes only a fully correlated runtime step. Inspection is
-   * observational and never participates in machine execution.
+   * Publishes one correlated receipt and bounded current-state snapshot.
+   * Complete audit inspection remains explicit and never enters this hot path.
    */
-  readonly publishInspection: (
-    inspection: Inspection,
+  readonly publishRuntimeStep: (
+    snapshot: RuntimeSnapshot,
     receipt: Receipt,
   ) => void;
   /** Reports a recoverable UI projection failure; the machine keeps running. */
@@ -99,7 +101,7 @@ export interface BrowserStep {
   readonly observation: Observation;
   readonly commands: readonly ResolvedCommand[];
   readonly presentation: BrowserPresentation;
-  readonly inspection: Inspection;
+  readonly snapshot: RuntimeSnapshot;
 }
 
 export interface ProjectionFailure {
@@ -113,7 +115,11 @@ export interface ProjectionFailure {
 
 export type BrowserPresentation =
   | { readonly kind: "none" }
-  | { readonly kind: "view"; readonly view: RenderDocument }
+  | {
+      readonly kind: "view";
+      readonly projectionRevision: NaturalText;
+      readonly view: RenderDocument;
+    }
   | { readonly kind: "error"; readonly error: ProjectionFailure };
 
 const object = (
@@ -408,6 +414,53 @@ const validateInspectionIdentity = (
   );
 };
 
+const validateRuntimeSnapshotIdentity = (
+  snapshot: RuntimeSnapshot,
+  config: PlayConfig,
+): void => {
+  if (snapshot.instance !== config.instance) {
+    throw new TypeError(
+      "Uhura runtime snapshot instance differs from Play config",
+    );
+  }
+  if (snapshot.machineProgramHash !== config.machineProgramHash) {
+    throw new TypeError(
+      "Uhura runtime snapshot machine identity differs from Play config",
+    );
+  }
+  if (snapshot.presentation !== config.presentation) {
+    throw new TypeError(
+      "Uhura runtime snapshot presentation differs from Play config",
+    );
+  }
+  if (snapshot.presentationHash !== config.presentationHash) {
+    throw new TypeError(
+      "Uhura runtime snapshot presentation identity differs from Play config",
+    );
+  }
+};
+
+const snapshotFromInspection = (
+  inspection: Inspection,
+  receipt: Receipt,
+): RuntimeSnapshot => ({
+  protocol: UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
+  instance: inspection.instance,
+  machineProgramHash: inspection.machineProgramHash,
+  presentation: inspection.presentation,
+  presentationHash: inspection.presentationHash,
+  configurationHash: inspection.configurationHash,
+  state: inspection.state,
+  stateHash: receipt.kind === "reaction"
+    ? receipt.postStateHash
+    : receipt.initialStateHash,
+  lifecycle: inspection.lifecycle,
+  nextSequence: inspection.nextSequence,
+  tracePrefixHash: inspection.tracePrefixHash,
+  ingressPrefixHash: inspection.ingressPrefixHash,
+  nextIngressOrdinal: inspection.nextIngressOrdinal,
+});
+
 const validateViewIdentity = (
   view: RenderDocument,
   receipt: Receipt,
@@ -488,13 +541,23 @@ const decodeBrowserPresentation = (
       }
       return { kind: "none" };
     case "view": {
-      exactKeys(presentation, ["kind", "view"], context);
+      exactKeys(
+        presentation,
+        ["kind", "projectionRevision", "view"],
+        context,
+      );
+      const projectionRevision = natural(
+        text(
+          presentation["projectionRevision"],
+          `${context}.projectionRevision`,
+        ),
+      );
       const view = decodeRenderDocument(
         presentation["view"],
         `${context}.view`,
       );
       validateViewIdentity(view, receipt, config);
-      return { kind: "view", view };
+      return { kind: "view", projectionRevision, view };
     }
     case "error":
       exactKeys(presentation, ["kind", "error"], context);
@@ -518,7 +581,6 @@ const decodeBrowserPresentation = (
  */
 export const decodePlayStep = (
   source: string,
-  inspectionSource: string,
   config: PlayConfig,
 ): BrowserStep => {
   const step = object(
@@ -527,7 +589,7 @@ export const decodePlayStep = (
   );
   exactKeys(
     step,
-    ["protocol", "receipt", "observation", "commands", "presentation"],
+    ["protocol", "receipt", "snapshot", "presentation"],
     "Uhura reaction step",
   );
   if (step["protocol"] !== UHURA_BROWSER_PROTOCOL) {
@@ -537,60 +599,43 @@ export const decodePlayStep = (
     step["receipt"],
     "Uhura reaction step.receipt",
   );
-  const observation = decodeValue(
-    step["observation"],
-    "Uhura reaction step.observation",
+  const snapshot = decodeRuntimeSnapshot(
+    step["snapshot"],
+    "Uhura reaction step.snapshot",
   );
-  const commands = list(step["commands"], "Uhura reaction step.commands").map(
-    (command, index) =>
-      decodeResolvedCommand(
-        command,
-        `Uhura reaction step.commands[${index}]`,
-      ),
-  );
+  validateRuntimeSnapshotIdentity(snapshot, config);
   const presentation = decodeBrowserPresentation(
     step["presentation"],
     receipt,
     config,
     "Uhura reaction step.presentation",
   );
-  requireSameWireValue(
-    commands,
-    receipt.orderedCommands,
-    "Uhura reaction step commands differ from receipt.orderedCommands",
-  );
-  requireSameWireValue(
-    observation,
-    receipt.postObservation,
-    "Uhura reaction step observation differs from receipt.postObservation",
-  );
-
-  const inspection = decodeInspection(
-    parseJson(inspectionSource, "Uhura reaction inspection"),
-    "Uhura reaction inspection",
-  );
-  validateInspectionIdentity(inspection, config);
   if (
-    receipt.instance !== inspection.instance
-    || receipt.machineProgramHash !== inspection.machineProgramHash
-    || receipt.configurationHash !== inspection.configurationHash
+    receipt.instance !== snapshot.instance
+    || receipt.machineProgramHash !== snapshot.machineProgramHash
+    || receipt.configurationHash !== snapshot.configurationHash
   ) {
     throw new TypeError(
-      "Uhura reaction receipt identity differs from the inspected runtime",
+      "Uhura reaction receipt identity differs from its runtime snapshot",
     );
   }
-  const latest = inspection.receipts.at(-1);
-  if (latest?.kind !== "reaction") {
+  if (snapshot.stateHash !== receipt.postStateHash) {
     throw new TypeError(
-      "Uhura reaction inspection does not end in a reaction receipt",
+      "Uhura runtime snapshot state identity differs from its reaction receipt",
     );
   }
-  requireSameWireValue(
+  if (BigInt(snapshot.nextSequence) !== BigInt(receipt.sequence) + 1n) {
+    throw new TypeError(
+      "Uhura runtime snapshot nextSequence does not follow its reaction receipt",
+    );
+  }
+  return {
     receipt,
-    latest,
-    "Uhura reaction step receipt differs from the latest inspected receipt",
-  );
-  return { receipt, observation, commands, presentation, inspection };
+    observation: receipt.postObservation,
+    commands: receipt.orderedCommands,
+    presentation,
+    snapshot,
+  };
 };
 
 export const admitConfiguredPorts = (
@@ -679,13 +724,21 @@ export function startPlay(
       mode: "play",
       assets: options.assets,
       icons: options.icons,
-      dispatch(binding, event): void {
+      dispatch(binding, projectionRevision, event): void {
         if (disposed || currentView === null) return;
+        if (projectionRevision === undefined) {
+          options.onError(
+            new TypeError(
+              "Uhura Play cannot dispatch an event without a projection revision",
+            ),
+          );
+          return;
+        }
         try {
           applyStep(
             session.dispatch_ui(
               binding,
-              currentView.sequence,
+              projectionRevision,
               JSON.stringify(event),
             ),
           );
@@ -713,15 +766,18 @@ export function startPlay(
       case "view":
         renderer ??= createRenderer();
         currentView = null;
-        renderer.render(presentation.view);
+        renderer.render(
+          presentation.view,
+          presentation.projectionRevision,
+        );
         currentView = presentation.view;
         return;
     }
   }
 
   function applyStep(source: string): void {
-    const step = decodePlayStep(source, session.inspect(), config);
-    options.publishInspection(step.inspection, step.receipt);
+    const step = decodePlayStep(source, config);
+    options.publishRuntimeStep(step.snapshot, step.receipt);
     // Committed commands are never contingent on optional UI projection or
     // DOM reconciliation. Adapter delivery therefore precedes presentation.
     adapters?.publish(step.commands);
@@ -759,7 +815,10 @@ export function startPlay(
     },
   });
 
-  options.publishInspection(identityInspection, initialReceipt);
+  options.publishRuntimeStep(
+    snapshotFromInspection(identityInspection, initialReceipt),
+    initialReceipt,
+  );
   adapters.start();
 
   return {

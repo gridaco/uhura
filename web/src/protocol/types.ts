@@ -3,8 +3,8 @@
 
 import type { HostInspection } from "../protocol/host-inspection.js";
 import type {
-  Inspection,
   Receipt,
+  RuntimeSnapshot,
 } from "../protocol/machine.js";
 
 /** The board-facing slice of one `uhura-interaction-graph/0` node. */
@@ -76,11 +76,11 @@ export interface RuntimeInspectionArtifacts {
 
 export interface RuntimeInspectedStep {
   readonly receipt: Receipt;
-  readonly inspection: Inspection;
+  readonly snapshot: RuntimeSnapshot;
 }
 
 export interface RuntimeInspectionState {
-  readonly protocol: "uhura-runtime-inspection-state/0";
+  readonly protocol: "uhura-runtime-inspection-state/1";
   readonly disposed: boolean;
   readonly historyLimit: number;
   readonly artifacts: RuntimeInspectionArtifacts | null;

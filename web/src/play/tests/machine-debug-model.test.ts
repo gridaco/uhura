@@ -11,7 +11,7 @@ import {
   UHURA_TEST_MACHINE,
   UHURA_TEST_MACHINE_HASH,
   machineTestDeployment,
-  machineTestInspection,
+  machineTestRuntimeStep,
 } from "./inspection-fixture.js";
 
 function byId<T extends { id: string }>(
@@ -29,11 +29,11 @@ test("projects admitted machine topology with conservative receipt activity", ()
     generation: 11,
     deployment: machineTestDeployment(),
   });
-  const genesis = machineTestInspection(0);
-  store.record(genesis.inspection, genesis.receipt);
+  const genesis = machineTestRuntimeStep(0);
+  store.record(genesis.snapshot, genesis.receipt);
   const before = deriveDebugGraph(store.handle.state);
-  const reaction = machineTestInspection(1);
-  store.record(reaction.inspection, reaction.receipt);
+  const reaction = machineTestRuntimeStep(1);
+  store.record(reaction.snapshot, reaction.receipt);
   const model = deriveDebugGraph(store.handle.state);
 
   assert.equal(model.generation, 11);

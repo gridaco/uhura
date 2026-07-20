@@ -56,7 +56,7 @@ pub use runtime::{
     INGRESS_RECORD_PROTOCOL, INLINE_UPDATE_JOIN_LOCAL_PREFIX, INLINE_UPDATE_LOOP_EXIT_LOCAL_PREFIX,
     IngressAttempt, IngressError, IngressRecord, IngressRejectionKind, Instance, InstanceLifecycle,
     PURE_CONTINUATION_LOCAL_PREFIX, ProgramFault, REACTION_RECEIPT_PROTOCOL, ReactionReceipt,
-    ReactionResolution, RestoreError, RuntimeError, Step,
+    ReactionResolution, RestoreError, RuntimeError, Step, SubmissionError,
 };
 pub use typed::{ValueTypeError, canonical_type_identity_bytes};
 pub use value::{BoundaryNumber, Decimal, DecimalError, IntegerKind, Value, ValueError};

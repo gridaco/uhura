@@ -5,7 +5,7 @@ import { hash } from "../../protocol/machine.js";
 import { createInspectionStore } from "../inspection-store.js";
 import {
   machineTestDeployment,
-  machineTestInspection,
+  machineTestRuntimeStep,
 } from "./inspection-fixture.js";
 
 test("retains a frozen bounded  history with exact receipt identity", () => {
@@ -22,8 +22,8 @@ test("retains a frozen bounded  history with exact receipt identity", () => {
     deployment: machineTestDeployment(),
   }), true);
   for (let sequence = 0; sequence <= 2; sequence += 1) {
-    const step = machineTestInspection(sequence);
-    assert.equal(store.record(step.inspection, step.receipt), true);
+    const step = machineTestRuntimeStep(sequence);
+    assert.equal(store.record(step.snapshot, step.receipt), true);
   }
 
   assert.deepEqual(publications, ["loading", "artifacts", "0", "1", "2"]);
@@ -32,10 +32,10 @@ test("retains a frozen bounded  history with exact receipt identity", () => {
     ["1", "2"],
   );
   assert.equal(store.handle.state.evictedSteps, 1);
-  assert.equal(store.handle.state.latest?.inspection.nextSequence, "3");
+  assert.equal(store.handle.state.latest?.snapshot.nextSequence, "3");
   assert.equal(Object.isFrozen(store.handle.state), true);
   assert.equal(Object.isFrozen(store.handle.state.history), true);
-  assert.equal(Object.isFrozen(store.handle.state.latest?.inspection), true);
+  assert.equal(Object.isFrozen(store.handle.state.latest?.snapshot), true);
   stop();
 });
 
@@ -45,23 +45,23 @@ test("rejects deployment drift and noncontiguous runtime publications", () => {
     generation: 1,
     deployment: machineTestDeployment(),
   });
-  const genesis = machineTestInspection(0);
-  store.record(genesis.inspection, genesis.receipt);
+  const genesis = machineTestRuntimeStep(0);
+  store.record(genesis.snapshot, genesis.receipt);
 
-  const next = machineTestInspection(1);
+  const next = machineTestRuntimeStep(1);
   assert.throws(
     () => store.record(
       {
-        ...next.inspection,
+        ...next.snapshot,
         machineProgramHash: hash("e".repeat(64)),
       },
       next.receipt,
     ),
     /admitted deployment identity/u,
   );
-  const skipped = machineTestInspection(2);
+  const skipped = machineTestRuntimeStep(2);
   assert.throws(
-    () => store.record(skipped.inspection, skipped.receipt),
+    () => store.record(skipped.snapshot, skipped.receipt),
     /increase contiguously/u,
   );
   assert.throws(
@@ -103,6 +103,6 @@ test("isolates listener failures and publishes one terminal disposed state", () 
     assert.equal(state.disposed, true);
   });
   assert.equal(terminalCalls, 1);
-  const step = machineTestInspection(0);
-  assert.equal(store.record(step.inspection, step.receipt), false);
+  const step = machineTestRuntimeStep(0);
+  assert.equal(store.record(step.snapshot, step.receipt), false);
 });

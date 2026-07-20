@@ -16,3 +16,7 @@ uhura-core = { workspace = true }
 uhura-port = { workspace = true }
 wasm-bindgen = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+uhura-check = { workspace = true }
+uhura-syntax = { workspace = true }

@@ -204,6 +204,39 @@ pub struct Step {
     pub receipt: ReactionReceipt,
 }
 
+struct ReactionTransition {
+    receipt: ReactionReceipt,
+    state: Option<Value>,
+    observation: Option<Value>,
+    lifecycle: InstanceLifecycle,
+    next_sequence: u64,
+    trace_prefix_hash: String,
+}
+
+impl ReactionTransition {
+    fn apply(self, instance: &mut Instance) -> ReactionReceipt {
+        let Self {
+            receipt,
+            state,
+            observation,
+            lifecycle,
+            next_sequence,
+            trace_prefix_hash,
+        } = self;
+        if let Some(state) = state {
+            instance.state = state;
+        }
+        if let Some(observation) = observation {
+            instance.observation = observation;
+        }
+        instance.lifecycle = lifecycle;
+        instance.next_sequence = next_sequence;
+        instance.trace_prefix_hash = trace_prefix_hash;
+        instance.receipts.push(receipt.clone());
+        receipt
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Instance {
     pub id: String,
@@ -249,6 +282,30 @@ impl fmt::Display for IngressError {
 }
 
 impl std::error::Error for IngressError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SubmissionError {
+    Ingress(IngressError),
+    Reaction(RuntimeError),
+}
+
+impl fmt::Display for SubmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ingress(error) => write!(formatter, "ingress: {error}"),
+            Self::Reaction(error) => write!(formatter, "reaction: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SubmissionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Ingress(error) => Some(error),
+            Self::Reaction(error) => Some(error),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RestoreError {
@@ -487,6 +544,34 @@ impl Program {
     }
 
     pub fn react(&self, instance: &Instance, input: Value) -> Result<Step, RuntimeError> {
+        let transition = self.reaction_transition(instance, input)?;
+        let mut next = instance.clone();
+        let receipt = transition.apply(&mut next);
+        Ok(Step {
+            instance: next,
+            receipt,
+        })
+    }
+
+    /// React to one already-admitted input and commit the transition directly
+    /// to `instance`.
+    ///
+    /// Unlike [`Program::react`], this path does not clone the instance or its
+    /// retained audit history. A runtime error leaves `instance` unchanged.
+    pub fn react_mut(
+        &self,
+        instance: &mut Instance,
+        input: Value,
+    ) -> Result<ReactionReceipt, RuntimeError> {
+        let transition = self.reaction_transition(instance, input)?;
+        Ok(transition.apply(instance))
+    }
+
+    fn reaction_transition(
+        &self,
+        instance: &Instance,
+        input: Value,
+    ) -> Result<ReactionTransition, RuntimeError> {
         if instance.lifecycle != InstanceLifecycle::Running {
             return Err(RuntimeError::new("the Uhura machine instance is faulted"));
         }
@@ -543,7 +628,6 @@ impl Program {
             &machine.config,
             &instance.configuration,
         )?;
-        let mut next = instance.clone();
         let (resolution, published_commands, post_state, lifecycle) = match control {
             Control::Finish(outcome) => {
                 let outcome = self
@@ -582,7 +666,12 @@ impl Program {
                                     ));
                                 }
                                 Control::Fault(fault) => {
-                                    return self.fault_step(instance, input, fault, pre_state_hash);
+                                    return self.fault_transition(
+                                        instance,
+                                        input,
+                                        fault,
+                                        pre_state_hash,
+                                    );
                                 }
                             }
                         }
@@ -590,7 +679,7 @@ impl Program {
                             EvalContext::new(self, machine, &instance.configuration, &draft);
                         for (invariant, source) in &machine.invariants {
                             if !context.eval_condition(invariant)?.0 {
-                                return self.fault_step(
+                                return self.fault_transition(
                                     instance,
                                     input,
                                     ProgramFault::InvariantViolation {
@@ -634,7 +723,7 @@ impl Program {
                 }
             }
             Control::Fault(fault) => {
-                return self.fault_step(instance, input, fault, pre_state_hash);
+                return self.fault_transition(instance, input, fault, pre_state_hash);
             }
             Control::Continue => {
                 return Err(RuntimeError::new(format!(
@@ -659,26 +748,25 @@ impl Program {
             pre_state_hash,
             post_state_hash,
         };
-        next.state = post_state_value;
-        next.observation = post_observation;
-        next.lifecycle = lifecycle;
-        next.next_sequence = following_sequence;
-        next.trace_prefix_hash =
-            next_trace_prefix(self, machine, &next.trace_prefix_hash, &receipt)?;
-        next.receipts.push(receipt.clone());
-        Ok(Step {
-            instance: next,
+        let trace_prefix_hash =
+            next_trace_prefix(self, machine, &instance.trace_prefix_hash, &receipt)?;
+        Ok(ReactionTransition {
             receipt,
+            state: Some(post_state_value),
+            observation: Some(post_observation),
+            lifecycle,
+            next_sequence: following_sequence,
+            trace_prefix_hash,
         })
     }
 
-    fn fault_step(
+    fn fault_transition(
         &self,
         instance: &Instance,
         input: Value,
         fault: ProgramFault,
         state_hash: String,
-    ) -> Result<Step, RuntimeError> {
+    ) -> Result<ReactionTransition, RuntimeError> {
         let machine = self
             .machines
             .get(&instance.machine)
@@ -706,15 +794,15 @@ impl Program {
             pre_state_hash: state_hash.clone(),
             post_state_hash: state_hash,
         };
-        let mut next = instance.clone();
-        next.lifecycle = InstanceLifecycle::Faulted;
-        next.next_sequence = following_sequence;
-        next.trace_prefix_hash =
-            next_trace_prefix(self, machine, &next.trace_prefix_hash, &receipt)?;
-        next.receipts.push(receipt.clone());
-        Ok(Step {
-            instance: next,
+        let trace_prefix_hash =
+            next_trace_prefix(self, machine, &instance.trace_prefix_hash, &receipt)?;
+        Ok(ReactionTransition {
             receipt,
+            state: None,
+            observation: None,
+            lifecycle: InstanceLifecycle::Faulted,
+            next_sequence: following_sequence,
+            trace_prefix_hash,
         })
     }
 
@@ -823,9 +911,58 @@ impl Program {
         let Some(input) = instance.inbox.front().cloned() else {
             return Ok(None);
         };
-        let mut admitted = instance.clone();
-        admitted.inbox.pop_front();
-        self.react(&admitted, input).map(Some)
+        let transition = self.reaction_transition(instance, input)?;
+        let mut next = instance.clone();
+        next.inbox.pop_front();
+        let receipt = transition.apply(&mut next);
+        Ok(Some(Step {
+            instance: next,
+            receipt,
+        }))
+    }
+
+    /// Drain one queued input directly into `instance` without cloning its
+    /// retained receipt or ingress history.
+    ///
+    /// The queued input is consumed only after the reaction has been evaluated
+    /// successfully. A runtime error therefore leaves the instance and FIFO
+    /// unchanged.
+    pub fn drain_one_mut(
+        &self,
+        instance: &mut Instance,
+    ) -> Result<Option<ReactionReceipt>, RuntimeError> {
+        let Some(input) = instance.inbox.front().cloned() else {
+            return Ok(None);
+        };
+        let transition = self.reaction_transition(instance, input)?;
+        instance.inbox.pop_front();
+        Ok(Some(transition.apply(instance)))
+    }
+
+    /// Admit and drain one input as a single in-place host operation.
+    ///
+    /// Rejected ingress is audited exactly as in [`Program::enqueue`]. If an
+    /// admitted input cannot react, the new queue entry is rolled back and the
+    /// pre-existing instance remains unchanged.
+    pub fn submit_one(
+        &self,
+        instance: &mut Instance,
+        input: Value,
+    ) -> Result<ReactionReceipt, SubmissionError> {
+        self.enqueue(instance, input)
+            .map_err(SubmissionError::Ingress)?;
+        match self.drain_one_mut(instance) {
+            Ok(Some(receipt)) => Ok(receipt),
+            Ok(None) => unreachable!("successful enqueue always leaves one queued input"),
+            Err(error) => {
+                let submitted = instance.inbox.pop_back();
+                debug_assert!(
+                    submitted.is_some(),
+                    "failed reaction retains the newly submitted queue entry"
+                );
+                Err(SubmissionError::Reaction(error))
+            }
+        }
     }
 
     pub fn checkpoint(&self, instance: &Instance) -> Checkpoint {
@@ -3400,6 +3537,32 @@ mod tests {
     }
 
     #[test]
+    fn in_place_reaction_preserves_the_immutable_reaction_contract() {
+        let program = counter_program();
+        let machine = "example.counter@1::Counter";
+        let (initial, _) = program
+            .admit(machine, counter_config(), "test/react-mut")
+            .unwrap();
+        let history = program.react(&initial, increment_input()).unwrap().instance;
+
+        let expected = program.react(&history, increment_input()).unwrap();
+        let mut actual = history;
+        let actual_receipt = program.react_mut(&mut actual, increment_input()).unwrap();
+
+        assert_eq!(actual_receipt, expected.receipt);
+        assert_eq!(actual, expected.instance);
+        assert_eq!(actual.receipts.len(), 2);
+        assert_eq!(
+            program
+                .canonical_reaction_receipt_bytes(machine, &actual_receipt)
+                .unwrap(),
+            program
+                .canonical_reaction_receipt_bytes(machine, &expected.receipt)
+                .unwrap(),
+        );
+    }
+
+    #[test]
     fn while_back_edge_observes_a_final_state_mutation() {
         let mut program = counter_program();
         let machine_id = "example.counter@1::Counter";
@@ -3760,6 +3923,165 @@ mod tests {
         assert_eq!(faulted.next_sequence, 2);
         assert_eq!(faulted.inbox, queued);
         assert_eq!(faulted.ingress_records.len(), 1);
+    }
+
+    #[test]
+    fn in_place_drain_preserves_fifo_receipts_ingress_and_hashes() {
+        let program = counter_program();
+        let machine = "example.counter@1::Counter";
+        let (mut queued, _) = program
+            .admit(machine, counter_config(), "test/drain-mut")
+            .unwrap();
+        program
+            .enqueue(
+                &mut queued,
+                Value::variant(format!("{machine}.Input"), "unknown", Vec::new()),
+            )
+            .unwrap_err();
+        program.enqueue(&mut queued, increment_input()).unwrap();
+        program.enqueue(&mut queued, increment_input()).unwrap();
+
+        let mut actual = queued.clone();
+        let expected_first = program.drain_one(&queued).unwrap().unwrap();
+        let actual_first = program.drain_one_mut(&mut actual).unwrap().unwrap();
+        assert_eq!(actual_first, expected_first.receipt);
+        assert_eq!(actual, expected_first.instance);
+        assert_eq!(actual.inbox.len(), 1);
+        assert_eq!(actual.ingress_records, queued.ingress_records);
+        assert_eq!(actual.ingress_prefix_hash, queued.ingress_prefix_hash);
+        assert_eq!(
+            actual.trace_prefix_hash,
+            expected_first.instance.trace_prefix_hash
+        );
+
+        let expected_second = program
+            .drain_one(&expected_first.instance)
+            .unwrap()
+            .unwrap();
+        let actual_second = program.drain_one_mut(&mut actual).unwrap().unwrap();
+        assert_eq!(actual_second, expected_second.receipt);
+        assert_eq!(actual, expected_second.instance);
+        assert!(actual.inbox.is_empty());
+
+        let complete = actual.clone();
+        assert!(program.drain_one_mut(&mut actual).unwrap().is_none());
+        assert_eq!(actual, complete);
+    }
+
+    #[test]
+    fn in_place_submission_matches_fault_and_rejection_semantics() {
+        let machine = "example.counter@1::Counter";
+        let mut faulting_program = counter_program();
+        faulting_program
+            .machines
+            .get_mut(machine)
+            .unwrap()
+            .handlers
+            .get_mut("increment")
+            .unwrap()
+            .body = vec![Statement::Unreachable {
+            source: source("forced-submit-fault"),
+        }];
+        faulting_program.freeze_program_hashes();
+        let (initial, _) = faulting_program
+            .admit(machine, counter_config(), "test/submit-fault")
+            .unwrap();
+
+        let mut legacy_queued = initial.clone();
+        faulting_program
+            .enqueue(&mut legacy_queued, increment_input())
+            .unwrap();
+        let expected = faulting_program.drain_one(&legacy_queued).unwrap().unwrap();
+        let mut actual = initial;
+        let actual_receipt = faulting_program
+            .submit_one(&mut actual, increment_input())
+            .unwrap();
+        assert_eq!(actual_receipt, expected.receipt);
+        assert_eq!(actual, expected.instance);
+        assert_eq!(actual.lifecycle, InstanceLifecycle::Faulted);
+        assert_eq!(actual.receipts.len(), 1);
+
+        let program = counter_program();
+        let (initial, _) = program
+            .admit(machine, counter_config(), "test/submit-rejection")
+            .unwrap();
+        let rejected = Value::variant(format!("{machine}.Input"), "unknown", Vec::new());
+        let mut expected_rejection = initial.clone();
+        let expected_error = program
+            .enqueue(&mut expected_rejection, rejected.clone())
+            .unwrap_err();
+        let mut actual_rejection = initial;
+        let actual_error = match program
+            .submit_one(&mut actual_rejection, rejected)
+            .unwrap_err()
+        {
+            SubmissionError::Ingress(error) => error,
+            SubmissionError::Reaction(error) => {
+                panic!("invalid ingress reached the reaction: {error}")
+            }
+        };
+        assert_eq!(actual_error, expected_error);
+        assert_eq!(actual_rejection, expected_rejection);
+
+        let mut broken_program = counter_program();
+        broken_program
+            .machines
+            .get_mut(machine)
+            .unwrap()
+            .handlers
+            .get_mut("increment")
+            .unwrap()
+            .body = Vec::new();
+        broken_program.freeze_program_hashes();
+        let (mut retained_queue, _) = broken_program
+            .admit(machine, counter_config(), "test/submit-rollback")
+            .unwrap();
+        broken_program
+            .enqueue(&mut retained_queue, increment_input())
+            .unwrap();
+        let before = retained_queue.clone();
+        let error = broken_program
+            .submit_one(&mut retained_queue, increment_input())
+            .unwrap_err();
+        assert!(matches!(error, SubmissionError::Reaction(_)));
+        assert_eq!(retained_queue, before);
+    }
+
+    #[test]
+    fn in_place_submission_preserves_a_checkpoint_restored_fifo() {
+        let program = counter_program();
+        let machine = "example.counter@1::Counter";
+        let (mut queued, _) = program
+            .admit(machine, counter_config(), "test/submit-restored-fifo")
+            .unwrap();
+        program.enqueue(&mut queued, increment_input()).unwrap();
+        let checkpoint = program.checkpoint(&queued);
+        let restored = program.restore(&checkpoint).unwrap();
+        assert_eq!(
+            restored.inbox,
+            VecDeque::from([increment_input()]),
+            "checkpoint restore must preload the pending FIFO"
+        );
+
+        let mut legacy_queued = restored.clone();
+        program
+            .enqueue(&mut legacy_queued, increment_input())
+            .unwrap();
+        let expected = program.drain_one(&legacy_queued).unwrap().unwrap();
+
+        let mut actual = restored;
+        let actual_receipt = program.submit_one(&mut actual, increment_input()).unwrap();
+        assert_eq!(actual_receipt, expected.receipt);
+        assert_eq!(actual, expected.instance);
+        assert_eq!(
+            actual.inbox,
+            VecDeque::from([increment_input()]),
+            "submit must drain the restored front and retain the new tail"
+        );
+        assert_eq!(
+            actual.state,
+            Value::Record(vec![("count".into(), Value::int(2))])
+        );
     }
 
     #[test]

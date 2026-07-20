@@ -7,14 +7,15 @@
 
 use serde_json::{Map, Value as JsonValue, json};
 use uhura_base::to_canonical_json;
-use uhura_core::codec::{decode_hex_32, hash, hex};
+use uhura_core::codec::{decode_hex_32, hex};
 use uhura_core::{
     Checkpoint, GenesisReceipt, IngressAttempt, IngressRecord, Instance, InstanceLifecycle,
     OutcomePolicy, Program, ProgramFault, Projection, ReactionReceipt, ReactionResolution, Value,
 };
 use wasm_bindgen::prelude::*;
 
-pub const BROWSER_PROTOCOL: &str = "uhura-browser/2";
+pub const BROWSER_PROTOCOL: &str = "uhura-browser/3";
+pub const RUNTIME_SNAPSHOT_PROTOCOL: &str = "uhura-runtime-snapshot/0";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProjectionFailure {
@@ -40,6 +41,12 @@ pub struct Session {
     genesis: GenesisReceipt,
     presentation: Option<String>,
     projection: Option<Projection>,
+    /// Session-local exact-text freshness identity for presentation output.
+    ///
+    /// This is deliberately independent of the machine sequence: restoring a
+    /// checkpoint may revisit an earlier machine sequence, but must never make
+    /// a browser event retained from the abandoned projection current again.
+    projection_revision: u64,
     projection_failure: Option<ProjectionFailure>,
 }
 
@@ -119,6 +126,7 @@ impl Session {
             .map_err(|error| format!("admission: {error}"))?;
         let (projection, projection_failure) =
             project_presentation(&program, presentation.as_deref(), &admitted);
+        let projection_revision = u64::from(presentation.is_some());
         Ok(Self {
             program,
             machine,
@@ -126,6 +134,7 @@ impl Session {
             genesis,
             presentation,
             projection,
+            projection_revision,
             projection_failure,
         })
     }
@@ -166,7 +175,23 @@ impl Session {
         Err("this Uhura machine session has no presentation".into())
     }
 
-    /// Current presentation outcome for `uhura-browser/2`.
+    /// Exact session-local freshness revision for the current successful
+    /// presentation projection. Direct `view()` consumers must return this
+    /// value unchanged when dispatching one of that view's event bindings.
+    pub fn projection_revision(&self) -> Result<String, String> {
+        self.projection
+            .as_ref()
+            .map(|_| self.projection_revision.to_string())
+            .ok_or_else(|| {
+                if self.projection_failure.is_some() {
+                    "this Uhura machine session has no successful projection".to_string()
+                } else {
+                    "this Uhura machine session has no presentation".to_string()
+                }
+            })
+    }
+
+    /// Current presentation outcome for `uhura-browser/3`.
     ///
     /// A declared presentation is always represented by either a correlated
     /// view or a structured, recoverable projection error. Projection is pure
@@ -174,11 +199,12 @@ impl Session {
     pub fn presentation(&self) -> String {
         canonical(&browser_presentation(
             self.projection.as_ref(),
+            self.projection_revision,
             self.projection_failure.as_ref(),
         ))
     }
 
-    /// Privileged `uhura-browser/2` inspection. Ordinary presentation code
+    /// Privileged `uhura-browser/3` inspection. Ordinary presentation code
     /// receives only the declared observation through `view()`.
     pub fn inspect(&self) -> Result<String, String> {
         browser_inspection(self).map(|inspection| canonical(&inspection))
@@ -259,36 +285,31 @@ impl Session {
 
     /// Resolve and dispatch one event binding from the stored projection.
     ///
-    /// The renderer must return the projection sequence with the binding ID.
-    /// This exact-text token rejects a binding retained from an older view even
-    /// when the deterministic binding ID itself is unchanged. `event_json`
-    /// must be a tagged Uhura record.
+    /// The renderer must return the exact-text, session-local projection
+    /// revision with the binding ID. It rejects a binding retained from an
+    /// older view even when the deterministic binding ID and machine sequence
+    /// are unchanged after checkpoint restore. `event_json` must be a tagged
+    /// Uhura record.
     pub fn dispatch_ui(
         &mut self,
         binding_id: &str,
-        projection_sequence: &str,
+        projection_revision: &str,
         event_json: &str,
     ) -> Result<String, String> {
-        let expected = parse_sequence(projection_sequence)?;
+        let expected = parse_sequence(projection_revision)?;
         let projection = self
             .projection
             .as_ref()
             .ok_or_else(|| "this Uhura machine session has no presentation".to_string())?;
-        if projection.document.sequence != expected {
+        if self.projection_revision != expected {
             return Err(format!(
-                "stale Uhura projection: event used sequence {expected}, current sequence is {}",
-                projection.document.sequence
+                "stale Uhura projection: event used revision {expected}, current revision is {}",
+                self.projection_revision
             ));
         }
         let event = parse_uhura_value(event_json, "UI event")?;
         if !matches!(event, Value::Record(_)) {
             return Err("UI event must be an exact tagged Uhura record".into());
-        }
-        let (binding_id, projection_token) = binding_id.rsplit_once('@').ok_or_else(|| {
-            "UI event binding is missing its Uhura projection identity".to_string()
-        })?;
-        if projection_token != exact_projection_token(projection) {
-            return Err("UI event refers to a stale Uhura projection".into());
         }
         let input = self
             .program
@@ -372,6 +393,7 @@ impl Session {
                 "checkpoint configuration does not match this Uhura machine session genesis".into(),
             );
         }
+        self.ensure_projection_refresh_capacity()?;
         self.instance = restored;
         self.refresh_projection();
         Ok(())
@@ -396,29 +418,30 @@ impl Session {
 
 impl Session {
     fn submit_core(&mut self, input: Value) -> Result<String, String> {
-        let mut queued = self.instance.clone();
-        if let Err(error) = self.program.enqueue(&mut queued, input) {
-            self.instance = queued;
-            return Err(format!("ingress: {error}"));
-        }
-        let step = self
+        self.ensure_projection_refresh_capacity()?;
+        let receipt = self
             .program
-            .drain_one(&queued)
-            .map_err(|error| format!("reaction: {error}"))?;
-        let step =
-            step.ok_or_else(|| "Uhura ingress queue did not admit a reaction".to_string())?;
-        let receipt = step.receipt;
-        self.instance = step.instance;
+            .submit_one(&mut self.instance, input)
+            .map_err(|error| error.to_string())?;
         self.refresh_projection();
-        let envelope = browser_step(
-            &receipt,
-            self.projection.as_ref(),
-            self.projection_failure.as_ref(),
-        )?;
+        let envelope = browser_step(self, &receipt)?;
         Ok(canonical(&envelope))
     }
 
+    fn ensure_projection_refresh_capacity(&self) -> Result<(), String> {
+        if self.presentation.is_some() && self.projection_revision == u64::MAX {
+            return Err("Uhura presentation projection revision space is exhausted".to_string());
+        }
+        Ok(())
+    }
+
     fn refresh_projection(&mut self) {
+        if self.presentation.is_some() {
+            self.projection_revision = self
+                .projection_revision
+                .checked_add(1)
+                .expect("projection refresh capacity is checked before mutation");
+        }
         let (projection, projection_failure) =
             project_presentation(&self.program, self.presentation.as_deref(), &self.instance);
         self.projection = projection;
@@ -810,32 +833,28 @@ fn browser_reaction(receipt: &ReactionReceipt) -> Result<JsonValue, String> {
     }))
 }
 
-fn browser_step(
-    receipt: &ReactionReceipt,
-    projection: Option<&Projection>,
-    projection_failure: Option<&ProjectionFailure>,
-) -> Result<JsonValue, String> {
-    let commands = receipt
-        .ordered_commands
-        .iter()
-        .map(|command| browser_resolved_value(command, Direction::Command).map(JsonValue::Object))
-        .collect::<Result<Vec<_>, _>>()?;
+fn browser_step(session: &Session, receipt: &ReactionReceipt) -> Result<JsonValue, String> {
     Ok(json!({
         "protocol": BROWSER_PROTOCOL,
         "receipt": browser_reaction(receipt)?,
-        "observation": receipt.post_observation.to_wire_json(),
-        "commands": commands,
-        "presentation": browser_presentation(projection, projection_failure),
+        "snapshot": browser_runtime_snapshot(session, receipt),
+        "presentation": browser_presentation(
+            session.projection.as_ref(),
+            session.projection_revision,
+            session.projection_failure.as_ref(),
+        ),
     }))
 }
 
 fn browser_presentation(
     projection: Option<&Projection>,
+    projection_revision: u64,
     projection_failure: Option<&ProjectionFailure>,
 ) -> JsonValue {
     match (projection, projection_failure) {
         (Some(projection), None) => json!({
             "kind": "view",
+            "projectionRevision": projection_revision.to_string(),
             "view": browser_view(projection),
         }),
         (None, Some(failure)) => json!({
@@ -843,8 +862,8 @@ fn browser_presentation(
             "error": browser_projection_failure(failure),
         }),
         (None, None) => json!({ "kind": "none" }),
-        (Some(_), Some(_)) => {
-            unreachable!("one Uhura session cannot retain a view and projection failure together")
+        _ => {
+            unreachable!("one Uhura session must retain a view, a projection failure, or neither")
         }
     }
 }
@@ -860,14 +879,29 @@ fn browser_projection_failure(failure: &ProjectionFailure) -> JsonValue {
     })
 }
 
-fn browser_view(projection: &Projection) -> JsonValue {
-    let token = exact_projection_token(projection);
-    let mut view = browser_view_base(projection);
-    tokenise_event_bindings(&mut view, &token);
-    if let Some(object) = view.as_object_mut() {
-        object.insert("projectionHash".into(), JsonValue::String(token));
-    }
-    view
+fn browser_runtime_snapshot(session: &Session, receipt: &ReactionReceipt) -> JsonValue {
+    json!({
+        "protocol": RUNTIME_SNAPSHOT_PROTOCOL,
+        "instance": session.instance.id,
+        "machineProgramHash": session.instance.program_hash,
+        "presentation": session.presentation,
+        "presentationHash": session.presentation.as_ref().map(|presentation| {
+            session.program.presentation_hashes
+                .get(presentation)
+                .expect("resolved presentation has a frozen identity")
+        }),
+        "configurationHash": session.genesis.configuration_hash,
+        "state": session.instance.state.to_wire_json(),
+        "stateHash": receipt.post_state_hash,
+        "lifecycle": match session.instance.lifecycle {
+            InstanceLifecycle::Running => "running",
+            InstanceLifecycle::Faulted => "faulted",
+        },
+        "nextSequence": session.instance.next_sequence.to_string(),
+        "tracePrefixHash": session.instance.trace_prefix_hash,
+        "ingressPrefixHash": session.instance.ingress_prefix_hash,
+        "nextIngressOrdinal": session.instance.next_ingress_ordinal.to_string(),
+    })
 }
 
 fn browser_view_base(projection: &Projection) -> JsonValue {
@@ -882,50 +916,8 @@ fn browser_view_base(projection: &Projection) -> JsonValue {
     view
 }
 
-fn exact_projection_token(projection: &Projection) -> String {
-    let binding_semantics = projection
-        .bindings
-        .iter()
-        .map(|(id, binding)| {
-            let locals = binding
-                .locals
-                .iter()
-                .map(|(name, value)| (name.clone(), value.to_wire_json()))
-                .collect::<Map<_, _>>();
-            json!({
-                "id": id,
-                "input": binding.input,
-                "locals": locals,
-            })
-        })
-        .collect::<Vec<_>>();
-    hex(&hash(
-        "uhura-browser-projection",
-        &[
-            canonical(&browser_view_base(projection)).into_bytes(),
-            canonical(&JsonValue::Array(binding_semantics)).into_bytes(),
-        ],
-    ))
-}
-
-fn tokenise_event_bindings(value: &mut JsonValue, token: &str) {
-    match value {
-        JsonValue::Array(values) => {
-            for value in values {
-                tokenise_event_bindings(value, token);
-            }
-        }
-        JsonValue::Object(object) => {
-            if let Some(JsonValue::String(binding)) = object.get_mut("binding") {
-                binding.push('@');
-                binding.push_str(token);
-            }
-            for value in object.values_mut() {
-                tokenise_event_bindings(value, token);
-            }
-        }
-        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_) => {}
-    }
+fn browser_view(projection: &Projection) -> JsonValue {
+    browser_view_base(projection)
 }
 
 fn browser_inspection(session: &Session) -> Result<JsonValue, String> {
@@ -1335,8 +1327,7 @@ mod tests {
 
     fn first_binding(session: &Session) -> String {
         let projection = session.projection.as_ref().unwrap();
-        let raw = projection.bindings.keys().next().unwrap().clone();
-        format!("{raw}@{}", exact_projection_token(projection))
+        projection.bindings.keys().next().unwrap().clone()
     }
 
     #[test]
@@ -1359,20 +1350,22 @@ mod tests {
         assert_eq!(step["receipt"]["protocol"], "uhura-reaction-receipt/0");
         assert_eq!(step["receipt"]["sequence"], "1");
         assert_eq!(step["presentation"]["kind"], "view");
+        assert_eq!(step["presentation"]["projectionRevision"], "2");
         let view = &step["presentation"]["view"];
         assert_eq!(view["protocol"], "uhura-view/1");
         assert_eq!(view["sequence"], "1");
-        assert_eq!(view["projectionHash"].as_str().unwrap().len(), 64);
-        assert!(
-            view["nodes"][0]["events"][0]["binding"]
-                .as_str()
-                .unwrap()
-                .contains('@')
-        );
+        assert!(view.get("projectionRevision").is_none());
         assert_eq!(
-            step["observation"]["fields"][0]["value"]["value"],
+            view["nodes"][0]["events"][0]["binding"],
+            first_binding(&session)
+        );
+        assert_eq!(session.projection_revision().unwrap(), "2");
+        assert_eq!(
+            step["receipt"]["postObservation"]["fields"][0]["value"]["value"],
             "9007199254740994"
         );
+        assert_eq!(step["snapshot"]["protocol"], RUNTIME_SNAPSHOT_PROTOCOL);
+        assert_eq!(step["snapshot"]["nextSequence"], "2");
         let inspection: JsonValue = serde_json::from_str(&session.inspect().unwrap()).unwrap();
         assert_eq!(
             inspection["identityProtocol"],
@@ -1435,9 +1428,18 @@ mod tests {
         let headless_step: JsonValue =
             serde_json::from_str(&headless.submit_value(&input).unwrap()).unwrap();
         assert_eq!(presented_step["receipt"]["sequence"], "1");
-        assert_eq!(presented_step["commands"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            presented_step["receipt"]["orderedCommands"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(presented_step["receipt"], headless_step["receipt"]);
-        assert_eq!(presented_step["commands"], headless_step["commands"]);
+        assert_eq!(
+            presented_step["receipt"]["orderedCommands"],
+            headless_step["receipt"]["orderedCommands"]
+        );
         assert_eq!(presented_step["presentation"]["kind"], "error");
         assert_eq!(
             presented_step["presentation"]["error"]["code"],
@@ -1513,39 +1515,65 @@ mod tests {
     }
 
     #[test]
-    fn ui_dispatch_rejects_a_stale_projection_sequence() {
+    fn ui_dispatch_rejects_a_stale_projection_revision() {
         let mut session = session();
         let binding = first_binding(&session);
-        let old_sequence = session
-            .projection
-            .as_ref()
-            .unwrap()
-            .document
-            .sequence
-            .to_string();
+        let old_revision = session.projection_revision.to_string();
         session
             .submit_value(&canonical(&increment_value().to_wire_json()))
             .unwrap();
         let event = canonical(&Value::Record(Vec::new()).to_wire_json());
         let error = session
-            .dispatch_ui(&binding, &old_sequence, &event)
+            .dispatch_ui(&binding, &old_revision, &event)
             .unwrap_err();
         assert!(error.contains("stale Uhura projection"));
 
-        let current = session
-            .projection
-            .as_ref()
-            .unwrap()
-            .document
-            .sequence
-            .to_string();
-        let error = session.dispatch_ui(&binding, &current, &event).unwrap_err();
-        assert!(error.contains("stale Uhura projection"));
-        let current_binding = first_binding(&session);
-        session
-            .dispatch_ui(&current_binding, &current, &event)
-            .unwrap();
+        let current = session.projection_revision.to_string();
+        session.dispatch_ui(&binding, &current, &event).unwrap();
         assert_eq!(session.next_sequence(), "3");
+    }
+
+    #[test]
+    fn checkpoint_restore_never_revalidates_an_abandoned_projection() {
+        let mut session = session();
+        let checkpoint = session.checkpoint();
+        let initial_binding = first_binding(&session);
+        let initial_revision = session.projection_revision.to_string();
+        let initial_sequence = session.projection.as_ref().unwrap().document.sequence;
+
+        session
+            .submit_value(&canonical(&increment_value().to_wire_json()))
+            .unwrap();
+        session.restore(&checkpoint).unwrap();
+
+        assert_eq!(
+            session.projection.as_ref().unwrap().document.sequence,
+            initial_sequence,
+            "restore deliberately revisits the checkpoint machine sequence"
+        );
+        assert_ne!(session.projection_revision.to_string(), initial_revision);
+        let event = canonical(&Value::Record(Vec::new()).to_wire_json());
+        let error = session
+            .dispatch_ui(&initial_binding, &initial_revision, &event)
+            .unwrap_err();
+        assert!(error.contains("stale Uhura projection"));
+
+        let restored_revision = session.projection_revision.to_string();
+        session
+            .dispatch_ui(&initial_binding, &restored_revision, &event)
+            .unwrap();
+    }
+
+    #[test]
+    fn exhausted_projection_revisions_reject_before_machine_mutation() {
+        let mut session = session();
+        session.projection_revision = u64::MAX;
+        let before = session.checkpoint();
+        let error = session
+            .submit_value(&canonical(&increment_value().to_wire_json()))
+            .unwrap_err();
+        assert!(error.contains("projection revision space is exhausted"));
+        assert_eq!(session.checkpoint(), before);
     }
 
     #[test]

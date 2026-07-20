@@ -3,17 +3,20 @@ import { describe, expect, it } from "vitest";
 import {
   UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
   UHURA_SEMANTIC_IR_HASH_PROTOCOL,
+  decodeValue,
 } from "../protocol/machine.js";
 import {
   admitConfiguredPorts,
   decodePlayConfig,
   decodePlayStep,
+  startPlay,
 } from "./session.js";
 import { UHURA_ADAPTER_PROVIDER_PROTOCOL } from "./provider.js";
 import {
   APPLICATION_PROVIDER_ADAPTER,
   WEB_HISTORY_ADAPTER,
   WEB_ROUTER_CONTRACT,
+  type PortAdapter,
 } from "./adapter-host.js";
 
 const hash = "11".repeat(32);
@@ -52,17 +55,6 @@ const command = {
   },
 };
 
-const genesis = {
-  protocol: "uhura-genesis-receipt/0",
-  kind: "genesis",
-  instance: config.instance,
-  machineProgramHash: hash,
-  configurationHash,
-  sequence: "0",
-  initialObservation: observation("0"),
-  initialStateHash: stateHash,
-};
-
 const reaction = {
   protocol: "uhura-reaction-receipt/0",
   kind: "reaction",
@@ -96,43 +88,35 @@ const reaction = {
 };
 
 const step = {
-  protocol: "uhura-browser/2",
+  protocol: "uhura-browser/3",
   receipt: reaction,
-  observation: observation("1"),
-  commands: [command],
+  snapshot: {
+    protocol: "uhura-runtime-snapshot/0",
+    instance: config.instance,
+    machineProgramHash: hash,
+    presentation: config.presentation,
+    presentationHash: hash,
+    configurationHash,
+    state: observation("1"),
+    stateHash: nextStateHash,
+    lifecycle: "running",
+    nextSequence: "2",
+    tracePrefixHash: "66".repeat(32),
+    ingressPrefixHash: "77".repeat(32),
+    nextIngressOrdinal: "1",
+  },
   presentation: {
     kind: "view",
+    projectionRevision: "1",
     view: {
       protocol: "uhura-view/1",
       presentation: config.presentation,
       machine: config.machine,
       instance: config.instance,
       sequence: "1",
-      projectionHash: "55".repeat(32),
       nodes: [],
     },
   },
-};
-
-const inspection = {
-  protocol: "uhura-browser/2",
-  identityProtocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
-  instance: config.instance,
-  machineProgramHash: hash,
-  presentation: config.presentation,
-  presentationHash: hash,
-  configurationHash,
-  configuration: config.configuration,
-  state: observation("1"),
-  observation: observation("1"),
-  inbox: [],
-  lifecycle: "running",
-  nextSequence: "2",
-  tracePrefixHash: "66".repeat(32),
-  receipts: [genesis, reaction],
-  ingressPrefixHash: "77".repeat(32),
-  nextIngressOrdinal: "1",
-  ingressRecords: [],
 };
 
 const clone = <T>(value: T): T => structuredClone(value);
@@ -268,17 +252,18 @@ describe("Uhura Play config", () => {
 describe("Uhura browser-step admission", () => {
   const play = decodePlayConfig(config);
 
-  it("correlates receipt, inspection, observation, commands, and view", () => {
+  it("correlates receipt, bounded snapshot, derived values, and view", () => {
     const decoded = decodePlayStep(
       JSON.stringify(step),
-      JSON.stringify(inspection),
       play,
     );
     expect(decoded.receipt.sequence).toBe("1");
     expect(decoded.commands).toEqual(decoded.receipt.orderedCommands);
-    expect(decoded.observation).toEqual(decoded.inspection.observation);
+    expect(decoded.observation).toEqual(decoded.receipt.postObservation);
+    expect(decoded.snapshot.nextSequence).toBe("2");
     expect(decoded.presentation.kind).toBe("view");
     if (decoded.presentation.kind !== "view") throw new Error("expected view");
+    expect(decoded.presentation.projectionRevision).toBe("1");
     expect(decoded.presentation.view.sequence).toBe(decoded.receipt.sequence);
   });
 
@@ -288,10 +273,45 @@ describe("Uhura browser-step admission", () => {
     expect(() =>
       decodePlayStep(
         JSON.stringify(invalid),
-        JSON.stringify(inspection),
         play,
       )
     ).toThrow(/view identity or sequence/u);
+  });
+
+  it("rejects a live view without a projection revision before dispatch", () => {
+    const invalid = clone(step);
+    delete (invalid.presentation as {
+      projectionRevision?: string;
+    }).projectionRevision;
+    expect(() =>
+      decodePlayStep(
+        JSON.stringify(invalid),
+        play,
+      )
+    ).toThrow(/wrong fields/u);
+  });
+
+  it("requires the live projection revision to be canonical natural text", () => {
+    for (const projectionRevision of [undefined, 1, "01", "-1"]) {
+      const invalid = clone(step) as {
+        presentation: {
+          projectionRevision: unknown;
+        };
+      };
+      invalid.presentation.projectionRevision = projectionRevision;
+      expect(() =>
+        decodePlayStep(
+          JSON.stringify(invalid),
+          play,
+        )
+      ).toThrow(
+        projectionRevision === undefined
+          ? /wrong fields/u
+          : projectionRevision === 1
+            ? /projectionRevision must be nonempty text/u
+            : /Uhura Nat must use canonical exact text/u,
+      );
+    }
   });
 
   it("admits a correlated projection error without losing committed commands", () => {
@@ -309,7 +329,6 @@ describe("Uhura browser-step admission", () => {
     };
     const decoded = decodePlayStep(
       JSON.stringify(failed),
-      JSON.stringify(inspection),
       play,
     );
     expect(decoded.presentation.kind).toBe("error");
@@ -332,7 +351,6 @@ describe("Uhura browser-step admission", () => {
     expect(() =>
       decodePlayStep(
         JSON.stringify(failed),
-        JSON.stringify(inspection),
         play,
       )
     ).toThrow(/projection error identity or sequence/u);
@@ -344,21 +362,209 @@ describe("Uhura browser-step admission", () => {
     expect(() =>
       decodePlayStep(
         JSON.stringify(invalid),
-        JSON.stringify(inspection),
         play,
       )
     ).toThrow(/reaction-receipt\/0/u);
   });
 
-  it("rejects commands that differ from the committed receipt", () => {
+  it("rejects duplicate command transport outside the committed receipt", () => {
     const invalid = clone(step);
-    invalid.commands = [];
+    Object.assign(invalid, { commands: [] });
     expect(() =>
       decodePlayStep(
         JSON.stringify(invalid),
-        JSON.stringify(inspection),
         play,
       )
-    ).toThrow(/commands differ/u);
+    ).toThrow(/wrong fields/u);
+  });
+
+  it("rejects a snapshot that does not follow the committed receipt", () => {
+    const invalid = clone(step);
+    invalid.snapshot.nextSequence = "1";
+    expect(() =>
+      decodePlayStep(
+        JSON.stringify(invalid),
+        play,
+      )
+    ).toThrow(/nextSequence/u);
+  });
+
+  it("rejects a snapshot with an unrelated committed state identity", () => {
+    const invalid = clone(step);
+    invalid.snapshot.stateHash = stateHash;
+    expect(() =>
+      decodePlayStep(
+        JSON.stringify(invalid),
+        play,
+      )
+    ).toThrow(/state identity/u);
+  });
+});
+
+describe("Uhura Play reaction inspection", () => {
+  it("does not request cumulative inspection on the reaction hot path", async () => {
+    const deliveryCount = 6;
+    const port = "events";
+    const play = decodePlayConfig({
+      ...config,
+      presentation: null,
+      presentationHash: null,
+      ports: [{
+        port,
+        adapter: APPLICATION_PROVIDER_ADAPTER,
+        contractHash: hash,
+        contractInstanceHash: hash,
+      }],
+      provider: {
+        protocol: UHURA_ADAPTER_PROVIDER_PROTOCOL,
+        module: "/api/play/provider.js",
+        config: {},
+      },
+    });
+    const genesis = {
+      protocol: "uhura-genesis-receipt/0",
+      kind: "genesis",
+      instance: play.instance,
+      machineProgramHash: hash,
+      configurationHash,
+      sequence: "0",
+      initialObservation: observation("0"),
+      initialStateHash: stateHash,
+    };
+    const inspection = {
+      protocol: "uhura-browser/3",
+      identityProtocol: play.identityProtocol,
+      instance: play.instance,
+      machineProgramHash: hash,
+      presentation: null,
+      presentationHash: null,
+      configurationHash,
+      configuration: play.configuration,
+      state: observation("0"),
+      observation: observation("0"),
+      inbox: [],
+      lifecycle: "running",
+      nextSequence: "1",
+      tracePrefixHash: "66".repeat(32),
+      receipts: [genesis],
+      ingressPrefixHash: "77".repeat(32),
+      nextIngressOrdinal: "1",
+      ingressRecords: [],
+    };
+    let inspectCalls = 0;
+    let submitCalls = 0;
+    let freed = false;
+    const session = {
+      inspect(): string {
+        inspectCalls += 1;
+        return JSON.stringify(inspection);
+      },
+      port_requirements(): string {
+        return JSON.stringify([{
+          port,
+          contract: "example.events@1::Events",
+          contractHash: hash,
+          contractInstanceHash: hash,
+        }]);
+      },
+      presentation(): string {
+        return JSON.stringify({ kind: "none" });
+      },
+      submit(inputSource: string): string {
+        submitCalls += 1;
+        const sequence = String(submitCalls);
+        const input = JSON.parse(inputSource) as unknown;
+        const receipt = {
+          protocol: "uhura-reaction-receipt/0",
+          kind: "reaction",
+          instance: play.instance,
+          machineProgramHash: hash,
+          configurationHash,
+          sequence,
+          input,
+          resolution: {
+            kind: "completed",
+            outcome: {
+              $: "variant",
+              type: "example.app@1::App.Outcome",
+              case: "accepted",
+              fields: [],
+            },
+            disposition: "commit",
+          },
+          orderedCommands: [],
+          postObservation: observation(sequence),
+          preStateHash: nextStateHash,
+          postStateHash: nextStateHash,
+        };
+        return JSON.stringify({
+          protocol: "uhura-browser/3",
+          receipt,
+          snapshot: {
+            protocol: "uhura-runtime-snapshot/0",
+            instance: play.instance,
+            machineProgramHash: hash,
+            presentation: null,
+            presentationHash: null,
+            configurationHash,
+            state: observation(sequence),
+            stateHash: nextStateHash,
+            lifecycle: "running",
+            nextSequence: String(submitCalls + 1),
+            tracePrefixHash: "66".repeat(32),
+            ingressPrefixHash: "77".repeat(32),
+            nextIngressOrdinal: "1",
+          },
+          presentation: { kind: "none" },
+        });
+      },
+      free(): void {
+        freed = true;
+      },
+    } as unknown as Parameters<typeof startPlay>[0]["session"];
+    const adapter = {
+      port,
+      adapter: APPLICATION_PROVIDER_ADAPTER,
+      contractHash: play.ports[0]!.contractHash,
+      contractInstanceHash: play.ports[0]!.contractInstanceHash,
+      start(context): void {
+        for (let index = 1; index <= deliveryCount; index += 1) {
+          context.deliver(decodeValue({
+            $: "variant",
+            type: "example.events@1::Events.Input",
+            case: "tick",
+            fields: [{
+              name: "count",
+              value: { $: "Nat", value: String(index) },
+            }],
+          }, "test deferred provider input"));
+        }
+      },
+      accept(): void {},
+    } satisfies PortAdapter;
+    const published: string[] = [];
+    const errors: unknown[] = [];
+    const controller = startPlay({
+      shell: {} as Parameters<typeof startPlay>[0]["shell"],
+      session,
+      config: play,
+      adapters: [adapter],
+      publishRuntimeStep(_snapshot, receipt): void {
+        published.push(receipt.sequence);
+      },
+      onError(error): void {
+        errors.push(error);
+      },
+    });
+
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(errors).toEqual([]);
+    expect(submitCalls).toBe(deliveryCount);
+    expect(published).toEqual(["0", "1", "2", "3", "4", "5", "6"]);
+    expect(inspectCalls).toBe(1);
+
+    controller.dispose();
+    expect(freed).toBe(true);
   });
 });

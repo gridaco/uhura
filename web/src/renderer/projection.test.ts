@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { natural } from "../protocol/machine.js";
-import type { Value } from "../protocol/machine.js";
 import {
   createProjectionRenderer,
   decodeProjectionSources,
   decodeRenderDocument,
 } from "./projection.js";
-import type { RenderDocument } from "./projection.js";
+import type {
+  ProjectionRendererOptions,
+  RenderDocument,
+} from "./projection.js";
+
+const LIVE_REVISION = natural("1");
 
 const documentValue = (text: string): RenderDocument => ({
   protocol: "uhura-view/1",
@@ -328,17 +332,15 @@ describe("Uhura render protocol", () => {
     ).toThrow(/sequence must be text/);
   });
 
-  it("accepts only canonical hash text for live projection identity", () => {
-    expect(decodeRenderDocument({
-      ...documentValue("valid"),
-      projectionHash: "a".repeat(64),
-    }).projectionHash).toBe("a".repeat(64));
+  it("keeps live projection identity outside the pure view protocol", () => {
+    expect(decodeRenderDocument(documentValue("static")))
+      .toEqual(documentValue("static"));
     expect(() =>
       decodeRenderDocument({
-        ...documentValue("invalid"),
-        projectionHash: "not-a-hash",
+        ...documentValue("live envelope field"),
+        projectionRevision: "1",
       })
-    ).toThrow(/Uhura hash/u);
+    ).toThrow(/Uhura render document.*wrong fields/u);
   });
 
   it("rejects unknown fields at every document and render-node boundary", () => {
@@ -410,12 +412,6 @@ describe("Uhura render protocol", () => {
         }],
       })
     ).toThrow(/events\[0\].*wrong fields/u);
-    expect(() =>
-      decodeRenderDocument({
-        ...documentValue("undefined hash"),
-        projectionHash: undefined,
-      })
-    ).toThrow(/projectionHash must be text/u);
   });
 
   it("requires projection sources to cover the exact rendered key set", () => {
@@ -449,9 +445,147 @@ describe("Uhura render protocol", () => {
 });
 
 describe("Uhura semantic primitive projection", () => {
+  it("retains listeners across binding tokens and rewires changed event shapes", () => {
+    const { root, element } = fakeRoot();
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
+    const renderer = createProjectionRenderer({
+      root,
+      dispatch,
+      mode: "play",
+    });
+    const projection = (
+      event: string,
+      binding: string,
+      className: string,
+      label: string,
+    ): RenderDocument =>
+      renderNodes([
+        elementNode(
+          "action",
+          "button",
+          [{ name: "class", value: className }],
+          [{ kind: "text", key: "label", text: label }],
+          [{ event, binding }],
+        ),
+      ]);
+    const bindingA = "press-1";
+    const bindingB = "press-2";
+    const doubleBinding = "double-1";
+    const revisionA = natural("11");
+    const revisionB = natural("12");
+    const revisionDouble = natural("13");
+
+    renderer.render(
+      projection("press", bindingA, "primary", "First"),
+      revisionA,
+    );
+    const button = element.children[0]!;
+    const addEventListener = vi.spyOn(button, "addEventListener");
+    const removeEventListener = vi.spyOn(button, "removeEventListener");
+    const setAttribute = vi.spyOn(button, "setAttribute");
+    const removeAttribute = vi.spyOn(button, "removeAttribute");
+    const toggleAttribute = vi.spyOn(button, "toggleAttribute");
+
+    renderer.render(
+      projection("press", bindingA, "primary", "Second"),
+      revisionA,
+    );
+    expect(button.textContent).toBe("Second");
+    expect(addEventListener).not.toHaveBeenCalled();
+    expect(removeEventListener).not.toHaveBeenCalled();
+    expect(setAttribute).not.toHaveBeenCalled();
+    expect(removeAttribute).not.toHaveBeenCalled();
+    expect(toggleAttribute).not.toHaveBeenCalled();
+
+    dispatch.mockClear();
+    button.click();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith(bindingA, revisionA, {
+      $: "record",
+      fields: [],
+    });
+
+    renderer.render(
+      projection("press", bindingB, "primary", "Third"),
+      revisionB,
+    );
+    expect(removeEventListener).not.toHaveBeenCalled();
+    expect(addEventListener).not.toHaveBeenCalled();
+    dispatch.mockClear();
+    button.click();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith(bindingB, revisionB, {
+      $: "record",
+      fields: [],
+    });
+
+    renderer.render(
+      projection(
+        "activate-double",
+        doubleBinding,
+        "primary",
+        "Fourth",
+      ),
+      revisionDouble,
+    );
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    dispatch.mockClear();
+    button.emit("dblclick");
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith(
+      doubleBinding,
+      revisionDouble,
+      {
+        $: "record",
+        fields: [],
+      },
+    );
+
+    renderer.render(
+      projection(
+        "activate-double",
+        doubleBinding,
+        "secondary",
+        "Fifth",
+      ),
+      revisionDouble,
+    );
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(setAttribute).toHaveBeenCalledWith(
+      "class",
+      "uh-button secondary",
+    );
+  });
+
+  it("restores a controlled input property without rewriting its attribute", () => {
+    const { root, element } = fakeRoot();
+    const renderer = createProjectionRenderer({
+      root,
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
+      mode: "play",
+    });
+    const projection = renderNodes([
+      elementNode("query", "input", [
+        { name: "type", value: "text" },
+        { name: "value", value: "model" },
+      ]),
+    ]);
+
+    renderer.render(projection);
+    const input = element.children[0]!;
+    input.value = "browser edit";
+    const setAttribute = vi.spyOn(input, "setAttribute");
+
+    renderer.render(projection);
+    expect(input.value).toBe("model");
+    expect(setAttribute).not.toHaveBeenCalled();
+  });
+
   it("maps button state and classes without changing raw HTML passthrough", () => {
     const { root, element } = fakeRoot();
-    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
     const renderer = createProjectionRenderer({
       root,
       dispatch,
@@ -484,7 +618,7 @@ describe("Uhura semantic primitive projection", () => {
           [{ event: "input", binding: "native-change" }],
         ),
       ]),
-    ]));
+    ]), LIVE_REVISION);
 
     const main = element.children[0]!;
     const button = main.children[0]!;
@@ -510,7 +644,7 @@ describe("Uhura semantic primitive projection", () => {
     expect(input.value).toBe("initial");
     input.value = "next";
     input.emit("input");
-    expect(dispatch).toHaveBeenCalledWith("native-change", {
+    expect(dispatch).toHaveBeenCalledWith("native-change", LIVE_REVISION, {
       $: "record",
       fields: [{ name: "value", value: { $: "Text", value: "next" } }],
     });
@@ -554,7 +688,7 @@ describe("Uhura semantic primitive projection", () => {
   });
 
   it("realizes scroll and region semantics and keeps Editor effects inert", () => {
-    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
     const play = fakeRoot();
     createProjectionRenderer({
       root: play.root,
@@ -576,7 +710,7 @@ describe("Uhura semantic primitive projection", () => {
         [],
         [{ event: "activate", binding: "open" }],
       ),
-    ]));
+    ]), LIVE_REVISION);
     const scroll = play.element.children[0]!;
     const region = play.element.children[1]!;
     expect(scroll.className).toBe("uh-scroll rail");
@@ -589,13 +723,13 @@ describe("Uhura semantic primitive projection", () => {
     expect(region.hasAttribute("label")).toBe(false);
     expect(region.hasAttribute("supplementary")).toBe(false);
     region.click();
-    expect(dispatch).toHaveBeenCalledWith("open", {
+    expect(dispatch).toHaveBeenCalledWith("open", LIVE_REVISION, {
       $: "record",
       fields: [],
     });
 
     const editorDispatch =
-      vi.fn<(binding: string, event: Value) => void>();
+      vi.fn<ProjectionRendererOptions["dispatch"]>();
     const editor = fakeRoot();
     createProjectionRenderer({
       root: editor.root,
@@ -622,7 +756,7 @@ describe("Uhura semantic primitive projection", () => {
     const { root, element } = fakeRoot();
     const renderer = createProjectionRenderer({
       root,
-      dispatch: vi.fn<(binding: string, event: Value) => void>(),
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
       mode: "play",
     });
     const pages = [
@@ -692,7 +826,7 @@ describe("Uhura semantic primitive projection", () => {
   });
 
   it("realizes textfield as a wrapper and dispatches from its input mechanic", () => {
-    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
     const play = fakeRoot();
     createProjectionRenderer({
       root: play.root,
@@ -712,7 +846,7 @@ describe("Uhura semantic primitive projection", () => {
         [],
         [{ event: "change", binding: "search" }],
       ),
-    ]));
+    ]), LIVE_REVISION);
     const wrapper = play.element.children[0]!;
     const input = wrapper.children[0]!;
     expect(wrapper.localName).toBe("div");
@@ -730,13 +864,13 @@ describe("Uhura semantic primitive projection", () => {
     expect(dispatch).not.toHaveBeenCalled();
     input.value = "mira";
     input.emit("input");
-    expect(dispatch).toHaveBeenCalledWith("search", {
+    expect(dispatch).toHaveBeenCalledWith("search", LIVE_REVISION, {
       $: "record",
       fields: [{ name: "text", value: { $: "Text", value: "mira" } }],
     });
 
     const editorDispatch =
-      vi.fn<(binding: string, event: Value) => void>();
+      vi.fn<ProjectionRendererOptions["dispatch"]>();
     const editor = fakeRoot();
     createProjectionRenderer({
       root: editor.root,
@@ -799,7 +933,7 @@ describe("Uhura semantic primitive projection", () => {
     const editor = fakeRoot();
     createProjectionRenderer({
       root: editor.root,
-      dispatch: vi.fn<(binding: string, event: Value) => void>(),
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
       mode: "editor",
       ...capabilities,
     }).render(renderNodes([
@@ -849,7 +983,7 @@ describe("Uhura semantic primitive projection", () => {
     const play = fakeRoot();
     createProjectionRenderer({
       root: play.root,
-      dispatch: vi.fn<(binding: string, event: Value) => void>(),
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
       mode: "play",
       ...capabilities,
     }).render(renderNodes([
@@ -889,7 +1023,7 @@ const describeDom = typeof window === "undefined" ? describe.skip : describe;
 describeDom("Uhura view renderer", () => {
   it("reconciles stable keyed DOM and dispatches semantic events", () => {
     const root = window.document.createElement("div");
-    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
     const observeElement = vi.fn<(key: string, element: HTMLElement) => void>();
     const renderer = createProjectionRenderer({ root, dispatch, observeElement });
     renderer.render(documentValue("First"));
@@ -901,7 +1035,7 @@ describeDom("Uhura view renderer", () => {
     expect(root.querySelector("button")).toBe(button);
     expect(observeElement).toHaveBeenCalledWith("button", button);
     button?.click();
-    expect(dispatch).toHaveBeenCalledWith("press-1", {
+    expect(dispatch).toHaveBeenCalledWith("press-1", undefined, {
       $: "record",
       fields: [],
     });

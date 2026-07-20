@@ -619,8 +619,10 @@ version = "0.0.0"
 dependencies = [
  "serde_json",
  "uhura-base",
+ "uhura-check",
  "uhura-core",
  "uhura-port",
+ "uhura-syntax",
  "wasm-bindgen",
 ]
 

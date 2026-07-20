@@ -14,6 +14,7 @@ import type {
 } from "../protocol/interaction-graph.js";
 import type {
   ReactionReceipt,
+  Receipt,
   ResolvedCommand,
   ResolvedInput,
   Value,
@@ -311,9 +312,9 @@ function runtimeFacts(state: RuntimeInspectionState): RuntimeFacts {
   const latest = state.latest;
   const receipt = latest?.receipt;
   const reaction = receipt?.kind === "reaction" ? receipt : null;
-  const stateFields = recordFields(latest?.inspection.state ?? null);
+  const stateFields = recordFields(latest?.snapshot.state ?? null);
   const prior = state.history.length > 1
-    ? state.history.at(-2)?.inspection.state ?? null
+    ? state.history.at(-2)?.snapshot.state ?? null
     : null;
   const priorFields = recordFields(prior);
   const writtenFields = new Set<string>();
@@ -354,6 +355,13 @@ function runtimeFacts(state: RuntimeInspectionState): RuntimeFacts {
   };
 }
 
+const receiptObservation = (receipt: Receipt | undefined): Value | null => {
+  if (receipt === undefined) return null;
+  return receipt.kind === "reaction"
+    ? receipt.postObservation
+    : receipt.initialObservation;
+};
+
 function emptyModel(
   state: RuntimeInspectionState,
   reason: DebugEmptyReason,
@@ -363,7 +371,7 @@ function emptyModel(
     emptyReason: reason,
     generation: state.artifacts?.generation ?? null,
     programHash: state.artifacts?.deployment.machineProgramHash ?? null,
-    exactSequence: state.latest?.inspection.nextSequence ?? null,
+    exactSequence: state.latest?.snapshot.nextSequence ?? null,
     focusDefinitionId: null,
     runtimeDefinitionId: null,
     definitions: [],
@@ -380,13 +388,14 @@ function nodeDetail(
   runtimeMachine: boolean,
   policy: OutcomePolicy | null,
 ): string | null {
-  const inspection = state.latest?.inspection;
+  const snapshot = state.latest?.snapshot;
+  const observation = receiptObservation(state.latest?.receipt);
   switch (kind) {
     case "module":
       return "Source module";
     case "machine":
-      return runtimeMachine && inspection
-        ? `Machine · ${inspection.lifecycle}`
+      return runtimeMachine && snapshot
+        ? `Machine · ${snapshot.lifecycle}`
         : "Machine";
     case "part":
       return "Composed part";
@@ -436,8 +445,8 @@ function nodeDetail(
           : `Outcome · ${policy}`;
     }
     case "presentation":
-      return runtimeMachine && inspection
-        ? `Observation · ${formatDebugValue(inspection.observation)}`
+      return runtimeMachine && observation
+        ? `Observation · ${formatDebugValue(observation)}`
         : "Presentation";
     case "ui-event":
       return "Checked UI event binding";
@@ -488,7 +497,7 @@ export function deriveDebugGraph(
       label: node.label,
       entry: node.machine === deployment.machine,
       active: node.machine === deployment.machine
-        && state.latest?.inspection.lifecycle !== "stopped",
+        && state.latest?.snapshot.lifecycle !== "stopped",
       runtime: node.id === runtimeDefinitionId,
     }))
     .sort((left, right) =>
@@ -529,7 +538,7 @@ export function deriveDebugGraph(
   const included = graph.nodes.filter((node) => node.machine === focusedMachine);
   const includedIds = new Set(included.map((node) => node.id));
   const activeMachine = focusedMachine === deployment.machine
-    && state.latest?.inspection.lifecycle !== "stopped";
+    && state.latest?.snapshot.lifecycle !== "stopped";
   const nodes = included
     .map((node, order): DebugGraphNode => {
       const inputCurrent = node.kind === "input"
@@ -661,7 +670,7 @@ export function deriveDebugGraph(
     generation: artifacts.generation,
     programHash: graph.machineProgramHashes[focusedMachine]
       ?? deployment.machineProgramHash,
-    exactSequence: state.latest?.inspection.nextSequence ?? null,
+    exactSequence: state.latest?.snapshot.nextSequence ?? null,
     focusDefinitionId,
     runtimeDefinitionId,
     definitions,

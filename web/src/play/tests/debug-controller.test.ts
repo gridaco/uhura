@@ -17,7 +17,7 @@ function inspectionState(
   disposed = false,
 ): RuntimeInspectionState {
   return Object.freeze({
-    protocol: "uhura-runtime-inspection-state/0",
+    protocol: "uhura-runtime-inspection-state/1",
     disposed,
     historyLimit: 128,
     artifacts: null,

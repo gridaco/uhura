@@ -1,10 +1,9 @@
 import type {
   DecimalText,
-  Hash,
   NaturalText,
   Value,
 } from "../protocol/machine.js";
-import { decimal, hash, natural } from "../protocol/machine.js";
+import { decimal, natural } from "../protocol/machine.js";
 import type { AssetAppliers } from "./assets.js";
 import type { IconFontRegistry } from "./icons.js";
 
@@ -46,8 +45,6 @@ export interface RenderDocument {
   readonly machine: string;
   readonly instance: string;
   readonly sequence: NaturalText;
-  /** Opaque Wasm-issued stale-event token. Static Editor projections omit it. */
-  readonly projectionHash?: Hash;
   readonly nodes: readonly RenderNode[];
 }
 
@@ -65,13 +62,24 @@ export interface ProjectionSources {
 }
 
 export interface ProjectionRenderer {
-  render(document: RenderDocument): void;
+  /**
+   * Reconciles one pure view. Live Play supplies its correlated browser
+   * projection revision; static Editor projections omit it.
+   */
+  render(
+    document: RenderDocument,
+    projectionRevision?: NaturalText,
+  ): void;
   dispose(): void;
 }
 
 export interface ProjectionRendererOptions {
   readonly root: HTMLElement;
-  readonly dispatch: (binding: string, event: Value) => void;
+  readonly dispatch: (
+    binding: string,
+    projectionRevision: NaturalText | undefined,
+    event: Value,
+  ) => void;
   /** Editor is inert and may realize authored static scroll positions. */
   readonly mode?: "editor" | "play";
   /** Optional host-owned logical-asset resolver for img/video primitives. */
@@ -221,7 +229,6 @@ export const decodeRenderDocument = (
   context = "Uhura render document",
 ): RenderDocument => {
   const document = record(value, context);
-  const hasProjectionHash = Object.hasOwn(document, "projectionHash");
   exactFields(
     document,
     [
@@ -230,7 +237,6 @@ export const decodeRenderDocument = (
       "machine",
       "instance",
       "sequence",
-      ...(hasProjectionHash ? ["projectionHash"] : []),
       "nodes",
     ],
     context,
@@ -240,20 +246,12 @@ export const decodeRenderDocument = (
       `${context}.protocol must be ${JSON.stringify(UHURA_VIEW_PROTOCOL)}`,
     );
   }
-  const projectionHash = document["projectionHash"];
-  const decodedProjectionHash =
-    !hasProjectionHash
-      ? undefined
-      : hash(text(projectionHash, `${context}.projectionHash`));
   return {
     protocol: UHURA_VIEW_PROTOCOL,
     presentation: text(document["presentation"], `${context}.presentation`),
     machine: text(document["machine"], `${context}.machine`),
     instance: text(document["instance"], `${context}.instance`),
     sequence: natural(text(document["sequence"], `${context}.sequence`)),
-    ...(decodedProjectionHash === undefined
-      ? {}
-      : { projectionHash: decodedProjectionHash }),
     nodes: list(document["nodes"], `${context}.nodes`).map((node, index) =>
       decodeNode(node, `${context}.nodes[${index}]`)
     ),
@@ -400,15 +398,24 @@ const DOM_EVENT: Readonly<Record<string, string>> = {
   submit: "keydown",
 };
 
+type ElementNode = Extract<RenderNode, { readonly kind: "element" }>;
+type RendererMode = NonNullable<ProjectionRendererOptions["mode"]>;
+
 const appliedAttributes = new WeakMap<Element, Set<string>>();
 const listeners = new WeakMap<
   Element,
   readonly { readonly type: string; readonly listener: EventListener }[]
 >();
-const semanticElements = new WeakMap<Element, string>();
+interface AppliedEventConfiguration {
+  readonly mode: RendererMode;
+  readonly semanticElement: string;
+  readonly dispatch: ProjectionRendererOptions["dispatch"];
+  readonly projectionRevision: NaturalText | undefined;
+  readonly events: readonly RenderEvent[];
+}
 
-type ElementNode = Extract<RenderNode, { readonly kind: "element" }>;
-type RendererMode = NonNullable<ProjectionRendererOptions["mode"]>;
+const eventConfigurations = new WeakMap<Element, AppliedEventConfiguration>();
+const semanticElements = new WeakMap<Element, string>();
 
 const SEMANTIC_PRIMITIVES = new Set([
   "view",
@@ -633,13 +640,22 @@ const applyAttributes = (
   }
   for (const { name, value } of attributes) {
     if (typeof value === "boolean") {
-      element.toggleAttribute(name, value);
-      if (name.startsWith("aria-")) element.setAttribute(name, String(value));
+      if (name.startsWith("aria-")) {
+        const text = String(value);
+        if (element.getAttribute(name) !== text) {
+          element.setAttribute(name, text);
+        }
+      } else if (element.hasAttribute(name) !== value) {
+        element.toggleAttribute(name, value);
+      }
       continue;
     }
-    element.setAttribute(name, value);
+    if (element.getAttribute(name) !== value) {
+      element.setAttribute(name, value);
+    }
     if (name === "value" && element.localName === "input") {
-      (element as HTMLInputElement).value = value;
+      const input = element as HTMLInputElement;
+      if (input.value !== value) input.value = value;
     }
   }
   appliedAttributes.set(element, next);
@@ -670,14 +686,19 @@ const applyCapabilities = (
   if (node.element === "video") {
     const video = element as HTMLVideoElement;
     const play = mode === "play";
-    video.autoplay =
+    const autoplay =
       play && booleanAttribute(node.attributes, "autoplay") === true;
-    video.muted = play && booleanAttribute(node.attributes, "muted") === true;
-    video.loop = play && booleanAttribute(node.attributes, "loop") === true;
-    video.controls =
+    const muted = play && booleanAttribute(node.attributes, "muted") === true;
+    const loop = play && booleanAttribute(node.attributes, "loop") === true;
+    const controls =
       play && booleanAttribute(node.attributes, "controls") === true;
-    video.playsInline =
+    const playsInline =
       play && booleanAttribute(node.attributes, "playsinline") === true;
+    if (video.autoplay !== autoplay) video.autoplay = autoplay;
+    if (video.muted !== muted) video.muted = muted;
+    if (video.loop !== loop) video.loop = loop;
+    if (video.controls !== controls) video.controls = controls;
+    if (video.playsInline !== playsInline) video.playsInline = playsInline;
     if (options.assets) {
       options.assets.applyVideoSource(
         video,
@@ -736,12 +757,13 @@ const textFieldState = (input: HTMLInputElement): TextFieldState => {
 const dispatchTextFieldChange = (
   input: HTMLInputElement,
   binding: string,
+  projectionRevision: NaturalText | undefined,
   dispatch: ProjectionRendererOptions["dispatch"],
 ): void => {
   const state = textFieldState(input);
   state.inFlight += 1;
   try {
-    dispatch(binding, textEvent(input.value));
+    dispatch(binding, projectionRevision, textEvent(input.value));
   } finally {
     state.inFlight -= 1;
     if (state.inFlight === 0 && state.stash !== undefined) {
@@ -755,13 +777,39 @@ const eventAllowed = (element: HTMLElement): boolean =>
   !element.hasAttribute("disabled")
   && element.getAttribute("aria-disabled") !== "true";
 
+const sameEventShape = (
+  left: readonly RenderEvent[],
+  right: readonly RenderEvent[],
+): boolean =>
+  left.length === right.length
+  && left.every((event, index) => {
+    const candidate = right[index];
+    return candidate?.event === event.event;
+  });
+
 const applyEvents = (
   element: HTMLElement,
   node: ElementNode,
   events: readonly RenderEvent[],
+  projectionRevision: NaturalText | undefined,
   options: ProjectionRendererOptions,
   mode: RendererMode,
 ): void => {
+  const previous = eventConfigurations.get(element);
+  const retainListeners =
+    previous?.mode === mode
+    && previous.semanticElement === node.element
+    && sameEventShape(previous.events, events);
+
+  eventConfigurations.set(element, {
+    mode,
+    semanticElement: node.element,
+    dispatch: options.dispatch,
+    projectionRevision,
+    events: events.map(({ event, binding }) => ({ event, binding })),
+  });
+  if (retainListeners) return;
+
   for (const { type, listener } of listeners.get(element) ?? []) {
     element.removeEventListener(type, listener);
   }
@@ -774,7 +822,7 @@ const applyEvents = (
     readonly type: string;
     readonly listener: EventListener;
   }> = [];
-  for (const { event, binding } of events) {
+  for (const [eventIndex, { event }] of events.entries()) {
     if (event === "near-end") {
       continue;
     }
@@ -785,7 +833,16 @@ const applyEvents = (
           textFieldState(input).composing
           || ("isComposing" in domEvent && domEvent.isComposing === true);
         if (!composing && eventAllowed(input)) {
-          dispatchTextFieldChange(input, binding, options.dispatch);
+          const configuration = eventConfigurations.get(element);
+          const current = configuration?.events[eventIndex];
+          if (configuration && current?.event === event) {
+            dispatchTextFieldChange(
+              input,
+              current.binding,
+              configuration.projectionRevision,
+              configuration.dispatch,
+            );
+          }
         }
       };
       const onCompositionStart: EventListener = () => {
@@ -795,7 +852,16 @@ const applyEvents = (
         const state = textFieldState(input);
         state.composing = false;
         if (eventAllowed(input)) {
-          dispatchTextFieldChange(input, binding, options.dispatch);
+          const configuration = eventConfigurations.get(element);
+          const current = configuration?.events[eventIndex];
+          if (configuration && current?.event === event) {
+            dispatchTextFieldChange(
+              input,
+              current.binding,
+              configuration.projectionRevision,
+              configuration.dispatch,
+            );
+          }
         }
       };
       element.addEventListener("input", onInput);
@@ -825,16 +891,34 @@ const applyEvents = (
       }
       if (event === "activate-double") domEvent.preventDefault();
       if (!eventAllowed(element)) return;
-      options.dispatch(binding, eventValue(element, event));
+      const configuration = eventConfigurations.get(element);
+      const current = configuration?.events[eventIndex];
+      if (configuration && current?.event === event) {
+        configuration.dispatch(
+          current.binding,
+          configuration.projectionRevision,
+          eventValue(element, event),
+        );
+      }
     };
     element.addEventListener(type, listener);
     next.push({ type, listener });
   }
   if (node.element === "region") {
-    const activation =
-      events.find((candidate) => candidate.event === "activate")
-      ?? events.find((candidate) => candidate.event === "press")
-      ?? events.find((candidate) => candidate.event === "activate-double");
+    let activationIndex = events.findIndex(
+      (candidate) => candidate.event === "activate",
+    );
+    if (activationIndex < 0) {
+      activationIndex = events.findIndex(
+        (candidate) => candidate.event === "press",
+      );
+    }
+    if (activationIndex < 0) {
+      activationIndex = events.findIndex(
+        (candidate) => candidate.event === "activate-double",
+      );
+    }
+    const activation = events[activationIndex];
     if (activation) {
       const listener: EventListener = (domEvent) => {
         if (
@@ -845,7 +929,15 @@ const applyEvents = (
           return;
         }
         domEvent.preventDefault();
-        options.dispatch(activation.binding, UNIT_EVENT);
+        const configuration = eventConfigurations.get(element);
+        const current = configuration?.events[activationIndex];
+        if (configuration && current?.event === activation.event) {
+          configuration.dispatch(
+            current.binding,
+            configuration.projectionRevision,
+            UNIT_EVENT,
+          );
+        }
       };
       element.addEventListener("keydown", listener);
       next.push({ type: "keydown", listener });
@@ -858,6 +950,8 @@ interface NearEndObservation {
   readonly observer: IntersectionObserver;
   readonly sentinel: HTMLElement;
   binding: string;
+  projectionRevision: NaturalText | undefined;
+  dispatch: ProjectionRendererOptions["dispatch"];
   armed: boolean;
 }
 
@@ -882,6 +976,7 @@ const disposeMechanics = (root: HTMLElement): void => {
 const syncNearEnd = (
   element: HTMLElement,
   events: readonly RenderEvent[],
+  projectionRevision: NaturalText | undefined,
   dispatch: ProjectionRendererOptions["dispatch"],
 ): void => {
   const binding = events.find((event) => event.event === "near-end")?.binding;
@@ -892,6 +987,8 @@ const syncNearEnd = (
   }
   if (current) {
     current.binding = binding;
+    current.projectionRevision = projectionRevision;
+    current.dispatch = dispatch;
     if (current.sentinel !== element.lastElementChild) {
       element.append(current.sentinel);
     }
@@ -905,12 +1002,18 @@ const syncNearEnd = (
   const observation: NearEndObservation = {
     sentinel,
     binding,
+    projectionRevision,
+    dispatch,
     armed: true,
     observer: new Observer((entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting && observation.armed) {
           observation.armed = false;
-          dispatch(observation.binding, UNIT_EVENT);
+          observation.dispatch(
+            observation.binding,
+            observation.projectionRevision,
+            UNIT_EVENT,
+          );
         } else if (!entry.isIntersecting) {
           observation.armed = true;
         }
@@ -966,8 +1069,10 @@ const ensureTextFieldInput = (
       ? [{ name: "disabled", value: true }]
       : []),
   ]);
-  input.disabled = booleanAttribute(node.attributes, "disabled") === true;
-  input.readOnly = mode === "editor";
+  const disabled = booleanAttribute(node.attributes, "disabled") === true;
+  const readOnly = mode === "editor";
+  if (input.disabled !== disabled) input.disabled = disabled;
+  if (input.readOnly !== readOnly) input.readOnly = readOnly;
 
   const value = textAttribute(node.attributes, "value") ?? "";
   const state = textFieldState(input);
@@ -1142,6 +1247,7 @@ const reconcile = (
   observed: Array<{ readonly key: string; readonly element: HTMLElement }>,
   options: ProjectionRendererOptions,
   mode: RendererMode,
+  projectionRevision: NaturalText | undefined,
   parentIsList = false,
 ): void => {
   const document = parent.ownerDocument;
@@ -1189,12 +1295,21 @@ const reconcile = (
         physicalAttributes(node, mode, parentIsList),
       );
       if (node.element === "button") {
-        (child as HTMLButtonElement).disabled =
+        const button = child as HTMLButtonElement;
+        const disabled =
           booleanAttribute(node.attributes, "disabled") === true;
+        if (button.disabled !== disabled) button.disabled = disabled;
       }
       applyCapabilities(child, node, options, mode);
       const hosts = childHost(child, node, mode);
-      applyEvents(hosts.events, node, node.events, options, mode);
+      applyEvents(
+        hosts.events,
+        node,
+        node.events,
+        projectionRevision,
+        options,
+        mode,
+      );
       observed.push({ key: node.key, element: child });
       if (hosts.children) {
         reconcile(
@@ -1204,6 +1319,7 @@ const reconcile = (
           observed,
           options,
           mode,
+          projectionRevision,
           node.element === "view"
             && textAttribute(node.attributes, "role") === "list",
         );
@@ -1212,7 +1328,12 @@ const reconcile = (
         updatePagerDots(child, hosts.children ?? child);
       }
       if (node.element === "scroll" && mode === "play") {
-        syncNearEnd(child, node.events, options.dispatch);
+        syncNearEnd(
+          child,
+          node.events,
+          projectionRevision,
+          options.dispatch,
+        );
       } else {
         disposeNearEnd(child);
       }
@@ -1263,7 +1384,7 @@ export const createProjectionRenderer = (
   const mode = options.mode ?? "play";
   options.root.inert = mode === "editor";
   return {
-    render(document): void {
+    render(document, projectionRevision): void {
       if (disposed) throw new Error("Uhura renderer is disposed");
       if (document.protocol !== UHURA_VIEW_PROTOCOL) {
         throw new Error(`unsupported Uhura render protocol: ${document.protocol}`);
@@ -1279,6 +1400,7 @@ export const createProjectionRenderer = (
         observed,
         options,
         mode,
+        projectionRevision,
       );
       for (const realization of observed) {
         options.observeElement?.(realization.key, realization.element);

@@ -5,7 +5,9 @@
  * In particular, JavaScript numbers never carry Uhura machine numeric values or
  * sequence counters: exact numerics use canonical decimal text.
  */
-export const UHURA_BROWSER_PROTOCOL = "uhura-browser/2" as const;
+export const UHURA_BROWSER_PROTOCOL = "uhura-browser/3" as const;
+export const UHURA_RUNTIME_SNAPSHOT_PROTOCOL =
+  "uhura-runtime-snapshot/0" as const;
 export const UHURA_SEMANTIC_IR_HASH_PROTOCOL =
   "uhura-semantic-ir-hash/0" as const;
 export const UHURA_MACHINE_PROGRAM_ID_PROTOCOL =
@@ -270,6 +272,29 @@ export interface Inspection {
   readonly ingressRecords: readonly IngressRecord[];
 }
 
+/**
+ * Bounded current runtime facts published with one reaction.
+ *
+ * Unlike {@link Inspection}, a snapshot deliberately contains no cumulative
+ * receipt or ingress log. The reaction receipt travels beside it, and full
+ * inspection remains an explicit privileged operation.
+ */
+export interface RuntimeSnapshot {
+  readonly protocol: typeof UHURA_RUNTIME_SNAPSHOT_PROTOCOL;
+  readonly instance: string;
+  readonly machineProgramHash: Hash;
+  readonly presentation: string | null;
+  readonly presentationHash: Hash | null;
+  readonly configurationHash: Hash;
+  readonly state: Value;
+  readonly stateHash: Hash;
+  readonly lifecycle: InstanceLifecycle;
+  readonly nextSequence: NaturalText;
+  readonly tracePrefixHash: Hash;
+  readonly ingressPrefixHash: Hash;
+  readonly nextIngressOrdinal: NaturalText;
+}
+
 export interface IngressRecord {
   readonly protocol: typeof UHURA_INGRESS_RECORD_PROTOCOL;
   readonly instance: string;
@@ -290,8 +315,7 @@ export interface IngressRecord {
 export interface ReactionStep {
   readonly protocol: typeof UHURA_BROWSER_PROTOCOL;
   readonly receipt: ReactionReceipt;
-  readonly observation: Observation;
-  readonly commands: readonly ResolvedCommand[];
+  readonly snapshot: RuntimeSnapshot;
 }
 
 const objectValue = (
@@ -1062,5 +1086,91 @@ export const decodeInspection = (
     ),
     nextIngressOrdinal,
     ingressRecords,
+  };
+};
+
+export const decodeRuntimeSnapshot = (
+  input: unknown,
+  context = "Uhura runtime snapshot",
+): RuntimeSnapshot => {
+  const object = objectValue(input, context);
+  exactObjectFields(
+    object,
+    [
+      "protocol",
+      "instance",
+      "machineProgramHash",
+      "presentation",
+      "presentationHash",
+      "configurationHash",
+      "state",
+      "stateHash",
+      "lifecycle",
+      "nextSequence",
+      "tracePrefixHash",
+      "ingressPrefixHash",
+      "nextIngressOrdinal",
+    ],
+    context,
+  );
+  if (object["protocol"] !== UHURA_RUNTIME_SNAPSHOT_PROTOCOL) {
+    throw new TypeError(
+      `${context}.protocol must be ${JSON.stringify(UHURA_RUNTIME_SNAPSHOT_PROTOCOL)}`,
+    );
+  }
+  const presentation = object["presentation"];
+  if (presentation !== null && typeof presentation !== "string") {
+    throw new TypeError(`${context}.presentation must be text or null`);
+  }
+  if (presentation === "") {
+    throw new TypeError(`${context}.presentation must be nonempty when present`);
+  }
+  const presentationHash = object["presentationHash"] === null
+    ? null
+    : hash(textField(object, "presentationHash", context));
+  if ((presentation === null) !== (presentationHash === null)) {
+    throw new TypeError(
+      `${context}.presentation and presentationHash must either both be null or both be present`,
+    );
+  }
+  const lifecycle = textField(object, "lifecycle", context);
+  if (
+    lifecycle !== "running"
+    && lifecycle !== "faulted"
+    && lifecycle !== "stopped"
+  ) {
+    throw new TypeError(`${context}.lifecycle is not supported`);
+  }
+  return {
+    protocol: UHURA_RUNTIME_SNAPSHOT_PROTOCOL,
+    instance: nonemptyTextField(object, "instance", context),
+    machineProgramHash: hash(
+      textField(object, "machineProgramHash", context),
+    ),
+    presentation:
+      typeof presentation === "string"
+        ? presentation
+        : null,
+    presentationHash,
+    configurationHash: hash(
+      textField(object, "configurationHash", context),
+    ),
+    state: decodeValue(object["state"], `${context}.state`),
+    stateHash: hash(
+      textField(object, "stateHash", context),
+    ),
+    lifecycle,
+    nextSequence: natural(
+      textField(object, "nextSequence", context),
+    ),
+    tracePrefixHash: hash(
+      textField(object, "tracePrefixHash", context),
+    ),
+    ingressPrefixHash: hash(
+      textField(object, "ingressPrefixHash", context),
+    ),
+    nextIngressOrdinal: natural(
+      textField(object, "nextIngressOrdinal", context),
+    ),
   };
 };

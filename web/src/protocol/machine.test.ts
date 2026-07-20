@@ -6,6 +6,7 @@ import {
   UHURA_SEMANTIC_IR_HASH_PROTOCOL,
   decodeInspection,
   decodeReactionReceipt,
+  decodeRuntimeSnapshot,
   decodeValue,
   decimal,
   integer,
@@ -244,7 +245,7 @@ const reaction = {
   postStateHash: hash("d"),
 };
 const inspection = {
-  protocol: "uhura-browser/2",
+  protocol: "uhura-browser/3",
   identityProtocol: UHURA_SEMANTIC_IR_HASH_PROTOCOL,
   instance: "entry/counter",
   machineProgramHash: hash("a"),
@@ -262,6 +263,21 @@ const inspection = {
   ingressPrefixHash: hash("0"),
   nextIngressOrdinal: "1",
   ingressRecords: [],
+};
+const runtimeSnapshot = {
+  protocol: "uhura-runtime-snapshot/0",
+  instance: inspection.instance,
+  machineProgramHash: inspection.machineProgramHash,
+  presentation: inspection.presentation,
+  presentationHash: inspection.presentationHash,
+  configurationHash: inspection.configurationHash,
+  state: inspection.state,
+  stateHash: reaction.postStateHash,
+  lifecycle: inspection.lifecycle,
+  nextSequence: inspection.nextSequence,
+  tracePrefixHash: inspection.tracePrefixHash,
+  ingressPrefixHash: inspection.ingressPrefixHash,
+  nextIngressOrdinal: inspection.nextIngressOrdinal,
 };
 
 test("receipt and inspection decoders validate the complete exact protocol", () => {
@@ -319,6 +335,35 @@ test("receipt and inspection decoders reject drift and incoherent retained state
       nextSequence: "9007199254740993",
     }),
     /does not follow/u,
+  );
+});
+
+test("runtime snapshots remain bounded and reject protocol drift", () => {
+  assert.deepEqual(decodeRuntimeSnapshot(runtimeSnapshot), runtimeSnapshot);
+  assert.throws(
+    () => decodeRuntimeSnapshot({ ...runtimeSnapshot, receipts: [] }),
+    /wrong fields/u,
+  );
+  assert.throws(
+    () => decodeRuntimeSnapshot({
+      ...runtimeSnapshot,
+      presentationHash: null,
+    }),
+    /must either both be null or both be present/u,
+  );
+  assert.throws(
+    () => decodeRuntimeSnapshot({
+      ...runtimeSnapshot,
+      nextSequence: 2,
+    }),
+    /nextSequence must be text/u,
+  );
+  assert.throws(
+    () => decodeRuntimeSnapshot({
+      ...runtimeSnapshot,
+      lifecycle: "paused",
+    }),
+    /lifecycle is not supported/u,
   );
 });
 

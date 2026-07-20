@@ -15,7 +15,7 @@ use wasm_bindgen::prelude::*;
 
 mod session;
 
-pub use session::{BROWSER_PROTOCOL, Session};
+pub use session::{BROWSER_PROTOCOL, RUNTIME_SNAPSHOT_PROTOCOL, Session};
 
 /// Protocol versions spoken by this build.
 ///
@@ -30,6 +30,7 @@ pub fn protocols() -> String {
         "ingressRecord": INGRESS_RECORD_PROTOCOL,
         "ir": IR_PROTOCOL,
         "reactionReceipt": REACTION_RECEIPT_PROTOCOL,
+        "runtimeSnapshot": RUNTIME_SNAPSHOT_PROTOCOL,
         "view": VIEW_PROTOCOL,
     }))
 }
