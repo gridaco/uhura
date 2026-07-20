@@ -24,6 +24,7 @@ No later language generation inherits these names or contracts by default.
 | [`<icon>`](elements/icon.md) | [Icon font](integrations/icon-font.md) | Built-in Lucide family and local families implemented | Font-only realization selected before v1; permanent resource model open | Checked token, strict WOFF2 pipeline, host resources, and browser realization implemented |
 | [`<img>`](elements/img.md) | None | Built-in base catalogue during incubation | Renamed from `<image>` in the v0 catalogue; no accepted widget RFC | Typed asset and accessibility contract plus browser Editor/Play realization implemented |
 | [`<view>`](elements/view.md) | None | Built-in base catalogue during incubation | Neutral container implemented; semantic role taxonomy unsettled | Checker/runtime/browser realization implemented; known ARIA defects documented |
+| [`<region>`](elements/region.md) | None | Built-in base catalogue during incubation | Activation semantics implemented; role taxonomy and keyboard equivalence unsettled | Checked one-child activation area, supplementary reachability, and browser realization implemented; focus-order and role gaps documented |
 
 ## Integrations
 
