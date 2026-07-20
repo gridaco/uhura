@@ -92,6 +92,9 @@ language authority.
   feedback from exercising that topology.
 - [Referential example data and read-only preview provenance](referential-example-data-and-read-only-provenance.md)
   records one preview-model experiment.
+- [Carousel and the existing pager](carousel-and-pager.md) collects the
+  accessibility and scroll-snap prior art for the pager/carousel widget
+  candidate and proposes candidate answers to its open ownership questions.
 
 These entries are an inventory, not a roadmap. The index remains as a stable
 router even when its contents change. Removing a leaf means only that the
