@@ -77,6 +77,7 @@ struct ModuleEnv<'a> {
     module: &'a ast::Module,
     id: String,
     physical_source_paths: BTreeMap<u32, String>,
+    semantic_paths: BTreeMap<(u32, u32), String>,
     exports: BTreeMap<String, Export>,
     imports: BTreeMap<String, Export>,
     features: BTreeSet<String>,
@@ -322,6 +323,7 @@ impl<'a> Checker<'a> {
                     module,
                     id,
                     physical_source_paths: self.physical_source_paths.clone(),
+                    semantic_paths: semantic_path_index(module),
                     exports: BTreeMap::new(),
                     imports: BTreeMap::new(),
                     features,
@@ -8166,9 +8168,10 @@ fn machine_qualify(module: &str, machine: &str, name: &str) -> String {
 }
 
 fn source(module: &ModuleEnv<'_>, span: ast::SourceSpan) -> SourceRef {
-    let semantic_path = serde_json::to_value(module.module)
-        .ok()
-        .and_then(|value| semantic_path_for_span(&value, span, String::new()))
+    let semantic_path = module
+        .semantic_paths
+        .get(&(span.start, span.end))
+        .cloned()
         .unwrap_or_else(|| "unknown".into());
     SourceRef {
         // Runtime faults and evidence pins carry a semantic source identity.
@@ -8186,21 +8189,28 @@ fn source(module: &ModuleEnv<'_>, span: ast::SourceSpan) -> SourceRef {
     }
 }
 
-fn semantic_path_for_span(
+fn semantic_path_index(module: &ast::Module) -> BTreeMap<(u32, u32), String> {
+    let mut output = BTreeMap::new();
+    if let Ok(value) = serde_json::to_value(module) {
+        collect_semantic_paths(&value, String::new(), &mut output);
+    }
+    output
+}
+
+fn collect_semantic_paths(
     value: &serde_json::Value,
-    target: ast::SourceSpan,
     path: String,
-) -> Option<String> {
+    output: &mut BTreeMap<(u32, u32), String>,
+) {
     match value {
         serde_json::Value::Object(fields) => {
-            if fields
-                .get("span")
-                .is_some_and(|span| json_span_is(span, target))
-            {
-                return Some(if path.is_empty() {
-                    "module".into()
-                } else {
-                    path
+            if let Some(span) = fields.get("span").and_then(json_span_range) {
+                output.entry(span).or_insert_with(|| {
+                    if path.is_empty() {
+                        "module".into()
+                    } else {
+                        path.clone()
+                    }
                 });
             }
             for (name, child) in fields {
@@ -8212,24 +8222,24 @@ fn semantic_path_for_span(
                 } else {
                     format!("{path}.{name}")
                 };
-                if let Some(found) = semantic_path_for_span(child, target, child_path) {
-                    return Some(found);
-                }
+                collect_semantic_paths(child, child_path, output);
             }
-            None
         }
-        serde_json::Value::Array(values) => values.iter().enumerate().find_map(|(index, child)| {
-            semantic_path_for_span(child, target, format!("{path}[{index}]"))
-        }),
-        _ => None,
+        serde_json::Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                collect_semantic_paths(child, format!("{path}[{index}]"), output);
+            }
+        }
+        _ => {}
     }
 }
 
-fn json_span_is(value: &serde_json::Value, target: ast::SourceSpan) -> bool {
-    value.as_object().is_some_and(|fields| {
-        fields.get("start").and_then(serde_json::Value::as_u64) == Some(u64::from(target.start))
-            && fields.get("end").and_then(serde_json::Value::as_u64) == Some(u64::from(target.end))
-    })
+fn json_span_range(value: &serde_json::Value) -> Option<(u32, u32)> {
+    let fields = value.as_object()?;
+    Some((
+        fields.get("start")?.as_u64()?.try_into().ok()?,
+        fields.get("end")?.as_u64()?.try_into().ok()?,
+    ))
 }
 
 fn collect_calls(expression: &IrExpr, calls: &mut BTreeSet<String>) {
@@ -9944,5 +9954,67 @@ fn const_eval(expression: &IrExpr, program: &Program) -> Result<Value, String> {
             .canonicalize_value(result_type, &Value::Set(Vec::new()))
             .map_err(|error| error.to_string()),
         _ => Err("expression uses runtime evaluation".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_semantic_paths;
+    use std::collections::BTreeMap;
+
+    fn semantic_paths(value: serde_json::Value) -> BTreeMap<(u32, u32), String> {
+        let mut output = BTreeMap::new();
+        collect_semantic_paths(&value, String::new(), &mut output);
+        output
+    }
+
+    #[test]
+    fn semantic_path_index_records_nested_object_and_array_paths() {
+        let paths = semantic_paths(serde_json::json!({
+            "declarations": [{
+                "body": {
+                    "span": { "file": 7, "start": 10, "end": 20 }
+                }
+            }]
+        }));
+
+        assert_eq!(
+            paths.get(&(10, 20)).map(String::as_str),
+            Some("declarations[0].body")
+        );
+    }
+
+    #[test]
+    fn semantic_path_index_excludes_embedded_source_identity_subtrees() {
+        let paths = semantic_paths(serde_json::json!({
+            "declaration": {
+                "span": { "file": 7, "start": 1, "end": 2 },
+                "source": {
+                    "span": { "file": 7, "start": 3, "end": 4 }
+                },
+                "source_id": {
+                    "span": { "file": 7, "start": 5, "end": 6 }
+                }
+            }
+        }));
+
+        assert_eq!(paths.get(&(1, 2)).map(String::as_str), Some("declaration"));
+        assert!(!paths.contains_key(&(3, 4)));
+        assert!(!paths.contains_key(&(5, 6)));
+    }
+
+    #[test]
+    fn semantic_path_index_keeps_the_first_depth_first_duplicate_span() {
+        let paths = semantic_paths(serde_json::json!({
+            "alpha": {
+                "span": { "file": 7, "start": 10, "end": 20 }
+            },
+            "beta": {
+                "span": { "file": 9, "start": 10, "end": 20 }
+            }
+        }));
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths.get(&(10, 20)).map(String::as_str), Some("alpha"));
     }
 }
