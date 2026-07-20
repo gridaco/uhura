@@ -27,6 +27,7 @@ No later language generation inherits these names or contracts by default.
 | [`<region>`](elements/region.md) | None | Built-in base catalogue during incubation | Activation semantics implemented; role taxonomy and keyboard equivalence unsettled | Checked one-child activation area, supplementary reachability, and browser realization implemented; focus-order and role gaps documented |
 | [`<text>`](elements/text.md) | None | Built-in base catalogue during incubation | Text-only children rule implemented; semantic tag and inline-content model unsettled | Checked text-run children, typed interpolation, run joining, and browser realization implemented; no inline markup documented |
 | [`<pager>`](elements/pager.md) | None | Built-in base catalogue during incubation | Uncontrolled paging implemented; `page-change` and indicator semantics unsettled | Checked keyed-each viewport and browser scroll-snap realization implemented; `page-change` declared but wired in no renderer |
+| [`<video>`](elements/video.md) | None | Built-in base catalogue during incubation | In the catalogue; a stale checker note still calls it deferred — adjudication pending | Checked eight-prop playback contract, Play playback, and pinned Editor poster-only pose implemented; no playback events or captions |
 
 ## Integrations
 
