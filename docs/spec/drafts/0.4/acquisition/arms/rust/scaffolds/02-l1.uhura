@@ -1,0 +1,82 @@
+enum Side {
+  Left,
+  Right,
+}
+
+enum Passenger {
+  Predator,
+  Dependent,
+  Cargo,
+}
+
+enum Violation {
+  PredatorWithDependent,
+  DependentWithCargo,
+}
+
+enum Status {
+  InProgress,
+  Solved,
+}
+
+struct Position {
+  operator: Side,
+  predator: Side,
+  dependent: Side,
+  cargo: Side,
+}
+
+const INITIAL_POSITION: Position = Position {
+  operator: Side::Left,
+  predator: Side::Left,
+  dependent: Side::Left,
+  cargo: Side::Left,
+};
+
+fn opposite(side: Side) -> Side {
+  // TRIAL-TODO: return the other closed side.
+}
+
+fn safety_violations(position: Position) -> Seq<Violation> {
+  // TRIAL-TODO: return every violation in canonical declaration order.
+}
+
+pub machine Crossing {
+  events {
+    Cross(passenger: Option<Passenger>),
+  }
+
+  outcomes {
+    commit Accepted(
+      passenger: Option<Passenger>,
+      departure: Side,
+      arrival: Side,
+    ),
+    abort PassengerNotWithOperator(passenger: Passenger),
+    abort Unsafe(violations: NonEmpty<Violation>),
+  }
+
+  state {
+    position: Position = INITIAL_POSITION,
+  }
+
+  invariant safety_violations(position).is_empty();
+
+  observe {
+    position,
+    status: if position.operator == Side::Right
+      && position.predator == Side::Right
+      && position.dependent == Side::Right
+      && position.cargo == Side::Right
+    {
+      Status::Solved
+    } else {
+      Status::InProgress
+    },
+  }
+
+  on Cross(passenger) {
+    // TRIAL-TODO: implement precedence, tentative movement, refusal, and
+    // accepted publication.
+  }
+}

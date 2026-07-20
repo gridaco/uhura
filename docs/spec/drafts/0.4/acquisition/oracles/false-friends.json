@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "arms": {
+    "rust": [
+      {
+        "id": "F-R01",
+        "principle": "Uhura has immutable let and no mut or local reassignment.",
+        "expectedRepair": "Return value + 1 directly or bind a new immutable local."
+      },
+      {
+        "id": "F-R02",
+        "principle": "Uhura values are not Rust references and have no borrow syntax.",
+        "expectedRepair": "Accept Request by value: fn label(request: Request) -> Text."
+      },
+      {
+        "id": "F-R03",
+        "principle": "pub struct exposes the complete field contract; fields never carry pub.",
+        "expectedRepair": "Remove pub from both fields."
+      },
+      {
+        "id": "F-R04",
+        "principle": "Machine-domain payload declarations are named but construction and patterns are positional.",
+        "expectedRepair": "Use on Changed(value)."
+      },
+      {
+        "id": "F-R05",
+        "principle": "A Reads computed member is value-like, not a method.",
+        "expectedRepair": "Use session.signed_in without parentheses."
+      },
+      {
+        "id": "F-R06",
+        "principle": "Effectful updates cannot nest inside arguments.",
+        "expectedRepair": "Bind the complete refresh update call to let label, then call notice.show(label) as the next statement."
+      },
+      {
+        "id": "F-R07",
+        "principle": "Table::from accepts only an exhaustive literal for every unit key constructor.",
+        "expectedRepair": "Write the exhaustive literal directly or use Map when the domain is dynamic."
+      },
+      {
+        "id": "F-R08",
+        "principle": "The deterministic reaction fault is unreachable; and Uhura has no macros.",
+        "expectedRepair": "Replace unreachable!() with unreachable;."
+      },
+      {
+        "id": "F-R09",
+        "principle": "UI requires direct unaliased activation in the same logical module.",
+        "expectedRepair": "Replace the alias with use uhura::ui;."
+      },
+      {
+        "id": "F-R10",
+        "principle": "Logical module paths are locators; package identity plus public name defines public semantic identity.",
+        "expectedRepair": "Update use paths only; preserve semantic identity when public name and lowering are unchanged."
+      }
+    ],
+    "typescript": [
+      {
+        "id": "F-T01",
+        "principle": "Input committed state must not be mutated.",
+        "expectedRepair": "Return a copied state with count: state.count + 1n."
+      },
+      {
+        "id": "F-T02",
+        "principle": "any defeats the closed input claim.",
+        "expectedRepair": "Type input as the exact declared Input union."
+      },
+      {
+        "id": "F-T03",
+        "principle": "A type assertion is not exact boundary admission.",
+        "expectedRepair": "Decode and validate every field and tag before constructing ProgressInput."
+      },
+      {
+        "id": "F-T04",
+        "principle": "A default that returns a domain result hides non-exhaustiveness.",
+        "expectedRepair": "Handle every union case and send the default value to assertNever."
+      },
+      {
+        "id": "F-T05",
+        "principle": "Commands are returned inert data, not executed authority.",
+        "expectedRepair": "Return a start command object in commands and remove worker.start."
+      },
+      {
+        "id": "F-T06",
+        "principle": "ReadonlyMap is not runtime immutable and input state must remain unchanged.",
+        "expectedRepair": "Copy with new Map(state.tasks), update the copy, and publish the copy."
+      },
+      {
+        "id": "F-T07",
+        "principle": "One semantic step is synchronous; external completion is a later correlated input.",
+        "expectedRepair": "Return a command now and add a later result input handled by a synchronous reducer."
+      },
+      {
+        "id": "F-T08",
+        "principle": "A decoded contextual invalidity is a domain classification, not an exception.",
+        "expectedRepair": "Return original state, invalid classification, and empty commands."
+      },
+      {
+        "id": "F-T09",
+        "principle": "Ambient clock and randomness destroy deterministic replay.",
+        "expectedRepair": "Receive or allocate identity through explicit deterministic state/input protocol."
+      },
+      {
+        "id": "F-T10",
+        "principle": "Native Map traversal must not define task-visible FIFO.",
+        "expectedRepair": "Read and update the explicit ordered queue."
+      }
+    ]
+  }
+}

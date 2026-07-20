@@ -1,0 +1,55 @@
+// Non-task example: one finite access registry.
+
+key MemberId(Text);
+
+pub machine AccessRegistry {
+  config {
+    capacity: PositiveInt,
+  }
+
+  events {
+    Enter(member: MemberId),
+    Leave(member: MemberId),
+  }
+
+  outcomes {
+    commit Applied,
+    abort Duplicate,
+    abort Invalid,
+  }
+
+  state {
+    present: Map<MemberId, Unit> = Map::empty(),
+  }
+
+  computed present_count: Nat =
+    present.values().count(|_| true);
+
+  invariant present_count <= capacity;
+
+  observe {
+    present_count,
+    full: present_count == capacity,
+  }
+
+  on Enter(member) {
+    if present.get(member) is Some(_) {
+      return Duplicate;
+    }
+    if present_count == capacity {
+      return Invalid;
+    }
+
+    present = present.put(member, ());
+    Applied
+  }
+
+  on Leave(member) {
+    if present.get(member) is None {
+      return Invalid;
+    }
+
+    present = present.remove(member);
+    Applied
+  }
+}

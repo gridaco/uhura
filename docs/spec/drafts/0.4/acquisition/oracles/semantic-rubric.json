@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "validity": [
+    {
+      "id": "V-L0",
+      "fileStem": "01-l0",
+      "description": "The complete L0 source uses only admitted arm forms and is syntactically and statically coherent on paper."
+    },
+    {
+      "id": "V-L1",
+      "fileStem": "02-l1",
+      "description": "The completed L1 scaffold uses only admitted arm forms and is syntactically and statically coherent on paper."
+    },
+    {
+      "id": "V-L2",
+      "fileStem": "03-l2",
+      "description": "The completed L2 scaffold uses only admitted arm forms and is syntactically and statically coherent on paper."
+    },
+    {
+      "id": "V-A0",
+      "fileStem": "05-a0",
+      "description": "The completed A0 rehearsal uses only admitted arm forms and is syntactically and statically coherent on paper."
+    }
+  ],
+  "semantic": [
+    {
+      "id": "S-L0-01",
+      "task": "L0",
+      "description": "Configuration contains exact minimum, maximum, and initial integers and rejects unless minimum <= initial <= maximum before state exists."
+    },
+    {
+      "id": "S-L0-02",
+      "task": "L0",
+      "description": "The only mutable state is count initialized exactly from initial."
+    },
+    {
+      "id": "S-L0-03",
+      "task": "L0",
+      "description": "The input domain is closed to increment, decrement, and reset, with one total path for each."
+    },
+    {
+      "id": "S-L0-04",
+      "task": "L0",
+      "description": "Increment publishes min(count + 1, maximum), including an accepted boundary no-op."
+    },
+    {
+      "id": "S-L0-05",
+      "task": "L0",
+      "description": "Decrement publishes max(count - 1, minimum), including an accepted boundary no-op."
+    },
+    {
+      "id": "S-L0-06",
+      "task": "L0",
+      "description": "Reset targets configured initial, including an accepted no-op."
+    },
+    {
+      "id": "S-L0-07",
+      "task": "L0",
+      "description": "The inclusive bound invariant holds initially and after every transition."
+    },
+    {
+      "id": "S-L0-08",
+      "task": "L0",
+      "description": "Observation derives count and both exact boundary flags; the program emits no commands and uses no presentation or ambient authority."
+    },
+    {
+      "id": "S-L1-01",
+      "task": "L1",
+      "description": "opposite is total and exchanges exactly Left and Right."
+    },
+    {
+      "id": "S-L1-02",
+      "task": "L1",
+      "description": "A passenger on the other side returns only PassengerNotWithOperator before candidate construction or safety evaluation."
+    },
+    {
+      "id": "S-L1-03",
+      "task": "L1",
+      "description": "The tentative position atomically moves the operator and optional passenger and changes no other entity."
+    },
+    {
+      "id": "S-L1-04",
+      "task": "L1",
+      "description": "Both declared safety predicates are evaluated against the complete tentative position."
+    },
+    {
+      "id": "S-L1-05",
+      "task": "L1",
+      "description": "Violations retain canonical PredatorWithDependent then DependentWithCargo order and unsafe payload is non-empty."
+    },
+    {
+      "id": "S-L1-06",
+      "task": "L1",
+      "description": "Every refusal publishes the exact original state and no command."
+    },
+    {
+      "id": "S-L1-07",
+      "task": "L1",
+      "description": "Only a safe attempt publishes the candidate and exact passenger, departure, and arrival payload."
+    },
+    {
+      "id": "S-L1-08",
+      "task": "L1",
+      "description": "Committed state remains safe and solved is a pure exact all-right observation rather than absorbing state."
+    },
+    {
+      "id": "S-L2-01",
+      "task": "L2",
+      "description": "An unknown work identity is invalid."
+    },
+    {
+      "id": "S-L2-02",
+      "task": "L2",
+      "description": "A non-positive attempt is invalid."
+    },
+    {
+      "id": "S-L2-03",
+      "task": "L2",
+      "description": "A non-finite or outside-0..1 value is invalid before correlation-age classification and is never clamped."
+    },
+    {
+      "id": "S-L2-04",
+      "task": "L2",
+      "description": "An attempt greater than the greatest started attempt is invalid."
+    },
+    {
+      "id": "S-L2-05",
+      "task": "L2",
+      "description": "An attempt below the greatest started attempt is stale."
+    },
+    {
+      "id": "S-L2-06",
+      "task": "L2",
+      "description": "The greatest attempt is stale when the task is not currently running."
+    },
+    {
+      "id": "S-L2-07",
+      "task": "L2",
+      "description": "Lower progress for the current running correlation is stale."
+    },
+    {
+      "id": "S-L2-08",
+      "task": "L2",
+      "description": "Equal progress for the current running correlation is duplicate."
+    },
+    {
+      "id": "S-L2-09",
+      "task": "L2",
+      "description": "Greater valid progress for the current running correlation is accepted, including exact value 1 without completion."
+    },
+    {
+      "id": "S-L2-10",
+      "task": "L2",
+      "description": "Accepted progress preserves identity, started ledger, and attempt and changes only the progress field through copied or draft state."
+    },
+    {
+      "id": "S-L2-11",
+      "task": "L2",
+      "description": "Duplicate, stale, and invalid paths publish original state, no commands, and no scheduling."
+    },
+    {
+      "id": "S-A0-01",
+      "task": "A0",
+      "description": "Reason is extended with a tagged Other carrying exact Text/string note."
+    },
+    {
+      "id": "S-A0-02",
+      "task": "A0",
+      "description": "Other with exact empty text remains valid draft state but reasonComplete is false."
+    },
+    {
+      "id": "S-A0-03",
+      "task": "A0",
+      "description": "Every non-empty exact note, including whitespace-only text, is complete without trimming or normalization."
+    },
+    {
+      "id": "S-A0-04",
+      "task": "A0",
+      "description": "Submission carries the tagged reason and exact note."
+    },
+    {
+      "id": "S-A0-05",
+      "task": "A0",
+      "description": "Choosing another reason replaces the complete prior reason and retains no abandoned note side state."
+    },
+    {
+      "id": "S-A0-06",
+      "task": "A0",
+      "description": "The change adds no route, owner, authority, capability, hidden table, or foreign execution."
+    }
+  ],
+  "authority": {
+    "id": "A-NO-AMBIENT",
+    "description": "No answer moves required behavior into foreign code, global mutable state, clock, randomness, browser, storage, network, or command execution."
+  }
+}

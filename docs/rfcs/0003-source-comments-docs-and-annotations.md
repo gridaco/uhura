@@ -8,6 +8,8 @@
 - **Supersedes:** None
 - **Related work:** [RFC 0001](0001-project-foundation.md),
   [Spock RFD 0016](https://github.com/gridaco/spock/blob/main/docs/rfd/0016-doc-comments.md)
+- **0.4 reconciliation:** [Core source and lowering](../spec/drafts/0.4/source.md),
+  [normative grammar](../spec/drafts/0.4/grammar.ebnf)
 
 ## 1. Proposal
 
@@ -29,26 +31,38 @@ The forms are:
 For example:
 
 ```uhura
-//! Feed page source module.
-/// The feed experience and its session-local state.
-page
+//! Feed application source module.
+use uhura::ui;
 
-/// State owned by this page rather than the backend.
-store {
+/// The feed's deterministic state and input contract.
+pub machine Feed {
+  events {
+    RetryReload,
+  }
+
+  outcomes {
+    commit Accepted,
+  }
+
   state {
     /// Whether a reload command is unsettled.
-    reload-pending: bool = false
+    reload_pending: Bool = false,
   }
 
   // The guard prevents duplicate commands.
-  on retry-reload-tapped() when !reload-pending {
-    set reload-pending = true
-    send reload()
+  on RetryReload {
+    if !reload_pending {
+      reload_pending = true;
+    }
+    Accepted
   }
 }
 
+/// The Web projection of Feed observation.
+pub ui FeedWeb for Feed(view) {
 <!-- @annotation The primary recovery action in the failed state. -->
-<button label="Retry" on:press={emit retry-reload-tapped()} />
+  <button on press -> RetryReload>Retry</button>
+}
 ```
 
 Declaration docs and markup annotations are different metadata classes even
@@ -73,14 +87,41 @@ Docs and annotations are checked **authoring metadata**. They do not enter
 canonical runtime IR or semantic view data and do not change evaluation.
 Ordinary comments never enter authoring metadata.
 
+### 1.1 0.4 reconciliation and history
+
+RFC 0003 was accepted against Uhura's 0.3 page/component/store surface. The
+metadata taxonomy, lexical sigils, normalization, forward attachment,
+semantic-inertness, diagnostics, and separate authoring projection remain the
+accepted decision. Uhura 0.4 replaces only the active `.uhura` target
+vocabulary and comment-bearing boundaries with those of its machine/part
+grammar and activated `ui` profile.
+
+The historical mapping is explicit:
+
+| Accepted 0.3 target | Active 0.4 treatment |
+| --- | --- |
+| `component` / `page` / `surface` header | `machine`, `part`, or activated `ui` declaration, according to what is declared |
+| `props` and route parameters | UI-profile declaration parameters when that profile closes its reusable-component grammar |
+| `emits` event and payload | Machine/part `events` entry and protocol payload parameter |
+| `store` scope | Removed; state belongs directly to a machine or part |
+| Store state field | Machine/part state field |
+| Event/outcome handler | Machine/part `on` handler |
+| `{#match}` block | Removed; 0.4 uses core `match` expressions and does not annotate an expression as a markup occurrence |
+
+Git history preserves the original spelling and rationale; this reconciliation
+does not pretend those forms were always 0.4 forms. `.examples.uhura` remains
+a separately versioned evidence language. Its file and example documentation
+rules below are retained until that evidence grammar receives its own
+replacement RFC.
+
 ## 2. Motivation
 
 Uhura source serves two different explanatory needs.
 
-A declaration has a durable contract. A component, prop, state field, handler,
-or parameter benefits from documentation that follows it through checking and
-extraction. Spock's `///`/`//!` taxonomy already gives this kind of prose a
-small, deterministic source form.
+A declaration has a durable contract. A machine, part, nominal type, state or
+observation field, handler, update, or parameter benefits from documentation
+that follows it through checking and extraction. Spock's `///`/`//!` taxonomy
+already gives this kind of prose a small, deterministic source form.
 
 A markup element is different. It is one occurrence in an implementation,
 often repeated or conditionally present. Treating every local note as the
@@ -153,9 +194,9 @@ This RFC does not define:
   interpolation runs, match arms, or CSS rules; or
 - a wire filename or JSON encoding for authoring metadata.
 
-Uhura currently has no local `struct` or record declaration. Port record,
-union, and enum definitions belong to `ports/*.port.toml`; documenting those
-types requires a separate port-contract decision and is not implied here.
+Port-contract declarations outside `.uhura`, catalog schemas, and their
+documentation remain separate decisions. Core 0.4 `struct`, `enum`, and `key`
+declarations are local source targets and are covered here.
 
 ## 4. Terminology and invariants
 
@@ -194,9 +235,9 @@ The following invariants are mandatory:
    expressions, or toward any bounded construct count.
 4. Adding, removing, reordering, or editing valid metadata may change source
    revision, source spans, and authoring-metadata output, but not canonical
-   `ProgramIr`, view hashes, `step-u`, commands, intents, traces, or runtime
-   diagnostic codes, messages, and semantic outcomes. Diagnostic source
-   locations may shift with the surrounding text.
+   program IR, program hashes, checkpoints, observations, receipts, commands,
+   traces, or runtime diagnostic codes, messages, and semantic outcomes.
+   Diagnostic source locations may shift with the surrounding text.
 5. Annotation order is target-local source order and deterministic.
 6. Doc and annotation bodies are inert UTF-8 text. Braces, tags, backticks,
    and `@` within a payload have no nested language meaning.
@@ -206,9 +247,9 @@ The following invariants are mandatory:
 ### 5.1 Lexical classification
 
 In every DSL lexer region, the lexer classifies line comments exactly as Spock
-does. This includes the header, store, examples source, and DSL streams inside
-markup interpolation, braced attribute values, event bindings, arguments, and
-structural block heads:
+does. This includes core module and machine/part source, examples source, and
+DSL streams inside activated UI interpolation, braced attribute values, event
+bindings, arguments, and structural block heads:
 
 - `//!` is an inner file doc;
 - exactly `///`, when not followed by a fourth `/`, is an outer doc;
@@ -240,21 +281,23 @@ The comment-bearing DSL boundaries are closed:
 
 | Containing context | A comment may occur immediately before |
 |---|---|
-| Module preamble/body | the `component`/`page`/`surface` header; a complete top-level `use` declaration; a `props` or `emits` grouping head; a route `param`; `store`; the DSL-to-markup/style transition; EOF |
-| `props` body | a prop; `}` |
-| `emits` body | an emitted event; `}` |
-| Emitted-event or handler parameter list | the first parameter; a later parameter after the preceding comma; `)` |
-| `store` body | the `state` grouping head; a handler; `}` |
-| `state` body | a state field; `}` |
-| Handler body | a complete statement; `}` |
+| Module preamble/body | a complete `use`/`pub use`; a complete top-level declaration; an activated DSL-to-markup/style transition; EOF |
+| Machine or part body | a complete member declaration or grouping head; `}` |
+| `struct` body | a field after the preceding comma; `}` |
+| `enum` body or record-variant body | a variant or field after the preceding comma; `}` |
+| Parameter or protocol-payload list | the first parameter; a later parameter after the preceding comma; `)` |
+| `config`, `events`, `commands`, `outcomes`, `requires outcomes`, `state`, `observe`, or invariant body | an entry after the preceding comma; `}` |
+| Function, handler, update, reconciliation, `if`, or loop body | a complete statement or final expression; `}` |
+| `match` body | a complete arm after the preceding comma; `}` |
 | Examples module | a complete top-level `use` declaration; a named example; EOF |
 | Example body | a complete example clause; `}` |
 
-The items inside `use port name { … }`, argument lists, example-clause
-sub-lists, types, expressions, guards, event bindings, and the interior token
-sequence of any declaration, parameter, statement, or other complete item are
-not comment-bearing boundaries. A comment also may not occur between a
-parameter and its separating comma. Such placement receives the existing
+Import braces, part/port/constructor/ordinary call arguments, tuple and
+collection literals, struct constructions and patterns, example-clause
+sub-lists, types, expressions, conditions, event bindings, and the interior
+token sequence of any declaration, parameter, statement, arm, or other
+complete item are not comment-bearing boundaries. A comment also may not occur
+between an item and its separating comma. Such placement receives the existing
 `UH0001 syntax/unexpected-token`, with a repair that moves it to the nearest
 owning boundary.
 
@@ -269,13 +312,14 @@ there. `// @kind …` follows these same rules and remains ordinary in DSL mode.
 ### 5.3 File docs
 
 `//!` is legal only in the file preamble. The preamble ends at the first
-non-comment syntactic item: the component/page/surface header in `.uhura`, or
-the first `use`/`example` item in `.examples.uhura`. Whitespace, ordinary
-comments, and other `//!` lines may coexist before that item.
+non-comment syntactic item: the first `use`, `pub use`, top-level declaration,
+or activated-profile declaration in `.uhura`, or the first `use`/`example`
+item in `.examples.uhura`. Whitespace, ordinary comments, and other `//!`
+lines may coexist before that item.
 
 In a `.uhura` file, `//!` documents the source module. In an
 `.examples.uhura` file, it documents the examples source module. It does not
-replace `///` documentation for the component, page, surface, or example
+replace `///` documentation for a machine, part, type, value, `ui`, or example
 declared inside that file.
 
 A non-empty `//!` after the preamble is
@@ -314,46 +358,50 @@ The documentable target table is closed:
 | Target | Doc form |
 |---|---|
 | Source module | `//!` in the preamble |
-| `component`, `page`, or `surface` declaration | `///` before the header |
-| Prop declaration | `///` before the prop |
-| Emitted-event declaration | `///` before the emit |
-| Emitted-event payload parameter | `///` before the parameter |
-| Route parameter declaration | `///` before the parameter |
-| `store` scope | `///` before `store` |
+| `machine`, `part`, activated `ui`, `struct`, `enum`, `key`, `const`, or `fn` declaration | `///` before the declaration |
+| Part parameter or function parameter | `///` before the parameter |
+| Configuration field | `///` before the field |
+| Struct field, enum variant, or enum-variant field | `///` before the field or variant |
+| Event, command, outcome, or required-outcome entry | `///` before the entry |
+| Protocol payload parameter | `///` before the parameter |
+| Part composition or port declaration | `///` before `part` or `port` |
 | State field | `///` before the field |
-| Event or outcome handler | `///` before `on` |
-| Handler parameter | `///` before the parameter |
+| `computed` declaration or observation field | `///` before the member or field |
+| Event handler | `///` before `on` |
+| `update` declaration or update parameter | `///` before the update or parameter |
+| Root reconciliation block | `///` before `before commit` |
 | Named example declaration | `///` before `example` |
 
-Imports, port-import items, grouping sections, statements, expressions,
-example clauses, markup occurrences, style blocks, and CSS are not
-documentable.
+Imports, grouping sections, requirements, invariants, handler pattern binders,
+statements, expressions, match arms, example clauses, markup occurrences,
+style blocks, and CSS are not documentable.
 
 Parameter docs use the existing comma-delimited parameter list. When any
 parameter has docs or an ordinary comment, the canonical list is multiline:
 
 ```uhura
-emits {
-  like-toggled(
+events {
+  LikeToggled(
     /// The post whose state changed.
-    post: id,
+    post: PostId,
     /// The requested presentation state.
-    now-liked: bool
-  )
+    now_liked: Bool,
+  ),
 }
 
-on like-toggled(
+update record_toggle(
   /// The post whose state changed.
-  post: id,
+  post: PostId,
   /// The requested presentation state.
-  now-liked: bool
+  now_liked: Bool,
 ) {
-  // …
+  // ...
 }
 ```
 
-A doc before `)` with no parameter is dangling. Outcome-handler parameters
-without written types are documentable by the same rule.
+A doc before `)` with no parameter is dangling. Handler pattern binders are
+not independently documentable; document their declared protocol payload
+parameters instead.
 
 ### 5.5 Doc text normalization
 
@@ -472,7 +520,7 @@ Metadata never crosses any of these boundaries:
 - a parameter-list open or close;
 - transition from the DSL region into markup;
 - `</element>`;
-- `{:else}`, `{:when}`, or a block close; or
+- `{:else}` or a block close; or
 - transition from markup into `<style>`.
 
 Reaching a closing delimiter, arm boundary, region transition, or EOF without
@@ -484,10 +532,10 @@ case. Closing delimiters, arm labels, and region-transition markers such as
 `<style>` are boundaries, not incompatible target constructs.
 
 A parameter doc is valid only after the parameter-list open and immediately
-before its parameter. A doc between an emitted-event or handler name and `(`
-is therefore `UH0019` incompatible; it cannot cross the open to document the
-first parameter. A doc inside the list immediately before `)` encounters no
-construct and is `UH0017` dangling.
+before its parameter. A doc between a function, update, part, or protocol
+entry name and `(` is therefore `UH0019` incompatible; it cannot cross the
+open to document the first parameter. A doc inside the list immediately before
+`)` encounters no construct and is `UH0017` dangling.
 
 An annotation after an opening element annotates the next child, not the
 containing element. To annotate the containing element, place it before the
@@ -497,12 +545,12 @@ opening tag.
 
 Markup annotations may target:
 
-- a catalog element;
+- a UI element;
 - a component invocation; or
-- a complete `{#if}`, `{#each}`, or `{#match}` block.
+- a complete `{#if}` or keyed `{#each}` block.
 
 Raw text nodes, interpolations, attributes, event bindings, expressions,
-arguments, `{:else}`/`{:when}` arms, `<style>`, CSS, and parser recovery nodes
+arguments, `{:else}` arms, `<style>`, CSS, and parser recovery nodes
 are not annotatable. Authors annotate their nearest owning element or complete
 structural block.
 
@@ -552,7 +600,7 @@ their relative ordering while keeping the doc lines bound to one target:
 /// First documentation paragraph.
 // Implementation note retained as ordinary trivia.
 /// Second documentation paragraph.
-state-field: bool = false
+reload_pending: Bool = false,
 ```
 
 Markup layout is selected from normalized text, not original delimiter layout.
@@ -619,13 +667,19 @@ is `doc`. Consumers MUST distinguish the class from the kind.
 
 ```text
 source-module
-component-declaration | page-declaration | surface-declaration
-prop-declaration | emitted-event-declaration | emitted-event-parameter
-route-parameter | store-scope | state-field
-event-handler | outcome-handler | handler-parameter
+machine-declaration | part-declaration | ui-declaration
+struct-declaration | enum-declaration | key-declaration
+const-declaration | function-declaration
+part-parameter | function-parameter | update-parameter | config-field
+struct-field | enum-variant | enum-variant-field
+event-declaration | command-declaration
+outcome-declaration | required-outcome-declaration | protocol-parameter
+part-composition | port-declaration
+state-field | computed-declaration | observation-field
+event-handler | update-declaration | reconciliation-block
 example-declaration
-catalog-element | component-invocation
-if-block | each-block | match-block
+ui-element | component-invocation
+if-block | each-block
 ```
 
 The ordinal is target-local; the only repeatable entries today are markup
@@ -642,17 +696,26 @@ line ending:
 | Target class | Span |
 |---|---|
 | `source-module` | byte `0` through file length, including preamble metadata |
-| component/page/surface declaration | first byte of the kind keyword through the final header token |
-| `prop-declaration` | first byte of the prop name through the final type token |
-| `emitted-event-declaration` | first byte of the event name through its closing `)` |
-| emitted-event or handler parameter | first byte of the parameter name through its type's final token when written, otherwise through the name; excludes the separating comma |
-| `route-parameter` | first byte of `param` through the type's final token |
-| `store-scope` | first byte of `store` through its closing `}` |
-| `state-field` | first byte of the field name through the initializer's final token |
-| event/outcome handler | first byte of `on` through the handler body's closing `}` |
+| machine/part/UI declaration | first byte of `machine`, `part`, or contextual `ui` through its body's closing `}`; excludes leading `pub` |
+| struct/enum declaration | first byte of `struct`/`enum` through its closing `}`; excludes leading `pub` |
+| key/const/function declaration | first byte of `key`/`const`/`fn` through its terminating `;` or body `}`; excludes leading `pub` |
+| part/function/update parameter | first byte of the parameter name through the type's final token; excludes the separating comma |
+| configuration field | first byte of the field name through the type's final token; excludes the separating comma |
+| struct field or enum-variant field | first byte of the field name through the type's final token; excludes the separating comma |
+| enum variant | first byte of the variant name through its payload `}` when present; excludes the separating comma |
+| event/command declaration | first byte of the variant name through its closing `)` when present; excludes the separating comma |
+| outcome/required-outcome declaration | first byte of `commit`/`abort` through the variant's closing `)` when present; excludes the separating comma |
+| protocol payload parameter | first byte of the parameter name through the type's final token; excludes the separating comma |
+| part composition or port declaration | first byte of `part`/`port` through its terminating `;` |
+| `state-field` | first byte of the field name through the initializer's final token; excludes the separating comma |
+| computed declaration | first byte of `computed` through its terminating `;`; excludes leading `pub` |
+| observation field | first byte of the field name through its expression's final token when written; excludes the separating comma |
+| event handler | first byte of `on` through the handler body's closing `}` |
+| update declaration | first byte of `update` through the body's closing `}`; excludes leading `pub` |
+| reconciliation block | first byte of `before` through the body's closing `}` |
 | `example-declaration` | first byte of `example` through the example body's closing `}` |
-| catalog element/component invocation | opening `<` through the self-closing `>`, or through the matching closing tag's `>` including children |
-| `if-block`/`each-block`/`match-block` | opening block `{` through the matching block-close `}` including every arm |
+| UI element/component invocation | opening `<` through the self-closing `>`, or through the matching closing tag's `>` including children |
+| `if-block`/`each-block` | opening block `{` through the matching block-close `}` including every arm |
 
 The exact Rust representation, serialization protocol, artifact filename, and
 long-term stable target identifier are implementation RFC concerns. Those
@@ -710,16 +773,13 @@ export policy.
 
 ## 12. Compatibility
 
-Markup comments are additive: the current spike does not accept `<!--`, so no
-accepted markup program changes meaning.
-
-The DSL lexer currently treats all `//` lines as ordinary formatter trivia,
-including positions the AST formatter cannot preserve. This RFC makes the
-parser-owned item/list boundaries explicit and diagnoses comments between the
-tokens of one complete item instead of silently losing them. Promoting exactly
-`///` and `//!` may likewise introduce doc-placement diagnostics, but the
-complete source grammar is not yet versioned. `////` preserves an escape for
-slash dividers and ordinary prose. `// @kind` remains ordinary in DSL mode.
+Markup comments were additive to the 0.3 spike, which did not accept `<!--`.
+The accepted comment taxonomy is now part of the versioned 0.4 grammar.
+Programs using removed 0.3 page/component/store forms do not become 0.4 merely
+by preserving their docs; migration reattaches the normalized text to the
+corresponding 0.4 target listed in §1.1 and §5.4. `////` remains the escape for
+slash dividers and ordinary prose, and `// @kind` remains ordinary in DSL
+mode.
 
 Valid metadata is runtime-inert. Tools that only understand canonical runtime
 IR remain compatible because the authoring projection is separate. Source
@@ -766,9 +826,10 @@ authoring metadata with runtime props.
 
 ### Storing metadata in `ProgramIr` or semantic `V`
 
-Rejected. Documentation changes must not alter executable artifacts, view
-hashes, runtime traces, or renderer protocol traffic. A separate checked
-projection makes the authoring boundary explicit.
+Rejected. Documentation changes must not alter executable artifacts, program
+hashes, checkpoints, observations, receipts, runtime traces, or renderer
+protocol traffic. A separate checked projection makes the authoring boundary
+explicit.
 
 ## 14. Consequences
 
@@ -790,7 +851,7 @@ Costs:
 - the markup parser needs XML-comment recognition before generic elements plus
   a pending-annotation queue owned by each sibling list;
 - the AST needs ordinary trivia and attached metadata on the closed targets,
-  including headers, emitted-event/handler parameters, and examples;
+  including declarations, members, parameters, and examples;
 - parameter docs and ordinary parameter-list comments require multiline
   signature formatting;
 - the checker needs target compatibility, normalized spans/classes/order, and
@@ -825,8 +886,8 @@ only when tests demonstrate all of the following:
    remains ordinary in DSL mode.
 2. Ordinary DSL comments survive exactly at the closed comment-bearing
    boundaries—including grouping heads and the DSL-to-markup/style transition
-   but excluding inner port-import items—force multiline parameter layout when
-   applicable, and receive `UH0001` elsewhere.
+   but excluding import braces and expression interiors—force multiline
+   parameter layout when applicable, and receive `UH0001` elsewhere.
 3. File-preamble, dangling, incompatible-target, and malformed-comment
    diagnostics use the reserved codes, spans, and precedence; entirely empty
    doc runs receive none of those diagnostics and canonicalize away without
@@ -841,14 +902,15 @@ only when tests demonstrate all of the following:
 7. All valid lower-kebab annotation kinds—including `doc`—survive exactly in
    target-local source order and remain annotation-class metadata.
 8. Markup annotations attach only to elements, component invocations, and
-   complete structural blocks without crossing parent or arm boundaries.
+   complete `if`/`each` structural blocks without crossing parent or arm
+   boundaries.
 9. Formatter output is idempotent, selects markup shape from normalized text,
    and retains ordinary comments at item/list, trailing scope, and source-mode
    transition boundaries without consuming structural node bounds.
 10. Checked metadata retains class, kind, normalized text, metadata span,
     target span, target class, file, and target-local order.
 11. Adding or editing valid docs and annotations leaves canonical runtime IR,
-    view hashes, commands, intents, traces, and runtime diagnostic meaning
-    unchanged; only source locations may shift.
+    program hashes, checkpoints, observations, receipts, commands, traces, and
+    runtime diagnostic meaning unchanged; only source locations may shift.
 12. `.examples.uhura` file docs, example docs, and existing `note` clauses
     remain distinct through checking and formatting.

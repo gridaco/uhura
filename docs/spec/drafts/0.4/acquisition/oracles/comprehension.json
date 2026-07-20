@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "C01",
+      "expected": "accepted no-op; count remains at maximum"
+    },
+    {
+      "id": "C02",
+      "expected": "reject configuration before state initialization"
+    },
+    {
+      "id": "C03",
+      "expected": "no; refuse passenger-not-with-operator before constructing or checking a candidate"
+    },
+    {
+      "id": "C04",
+      "expected": "both violations in order [A, B]"
+    },
+    {
+      "id": "C05",
+      "expected": "invalid"
+    },
+    {
+      "id": "C06",
+      "expected": "duplicate; original state and empty commands are published"
+    },
+    {
+      "id": "C07",
+      "expected": "cancel current correlation, then start oldest queued correlation"
+    },
+    {
+      "id": "C08",
+      "expected": "original committed state and no commands"
+    },
+    {
+      "id": "C09",
+      "expected": "no; it is static source composition"
+    },
+    {
+      "id": "C10",
+      "expected": "no; the report is a later input after publication"
+    }
+  ]
+}

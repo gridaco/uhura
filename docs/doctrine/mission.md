@@ -9,8 +9,15 @@
 
 ## Thesis
 
-Uhura is a frontend-dedicated, user-facing builder language for describing
-interactive experiences.
+Uhura is a frontend-dedicated, user-facing builder system built on a
+standalone deterministic state-machine language.
+
+The product is optimized for authoring Web interfaces. The core language does
+not require presentation, a renderer, or a widget catalogue in order to define
+and execute a complete program. Web UI remains Uhura's first-class application
+domain through an explicit profile. This distinction is fixed by
+[RFC 0004](../rfcs/0004-standalone-machine-core-and-source-composition.md):
+product focus and core-language dependency are different design decisions.
 
 Uhura's durable design hypothesis is that an interactive experience can be
 understood through explicit state, causes, transitions, declared boundary
@@ -38,8 +45,9 @@ transition. A named version must supply the exact operational model; doctrine
 requires that the model be explicit, deterministic over its declared inputs,
 checkable, and honest about external nondeterminism.
 
-Presentation is computationally downstream of experience state and declared
-inputs. It matters enormously to the product, but it is not an independent
+When a program includes presentation, it is computationally downstream of
+experience state and declared inputs. It matters enormously to the product,
+but it is neither a prerequisite of the core language nor an independent
 behavior authority. A version may change its view syntax or rendering protocol
 without changing this separation.
 
@@ -62,8 +70,9 @@ Uhura makes five connected bets:
 
 1. An explicit behavioral model makes interface behavior more checkable,
    replayable, portable, and understandable.
-2. A closed frontend semantic model may express recurring intent more
-   compactly and checkably than a general-purpose language plus libraries.
+2. A closed machine model plus an explicit frontend profile may express
+   recurring intent more compactly and checkably than a general-purpose
+   language plus libraries.
 3. Declarative presentation can remain independent of DOM, native-widget, and
    canvas object models.
 4. Good defaults can make the shortest program accessible and operationally

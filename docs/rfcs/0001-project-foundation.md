@@ -4,6 +4,9 @@
 - **Scope:** Project identity, responsibility boundaries, repository posture,
   and the minimum semantic model
 - **Supersedes:** None
+- **Superseded in part by:**
+  [RFC 0004](0004-standalone-machine-core-and-source-composition.md), which
+  makes Web UI an explicit profile over a standalone machine core
 - **Related work:** Spock language/runtime; prior art in XAML, Svelte, QML,
   and Elm
 
