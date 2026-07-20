@@ -26,6 +26,7 @@ No later language generation inherits these names or contracts by default.
 | [`<view>`](elements/view.md) | None | Built-in base catalogue during incubation | Neutral container implemented; semantic role taxonomy unsettled | Checker/runtime/browser realization implemented; known ARIA defects documented |
 | [`<region>`](elements/region.md) | None | Built-in base catalogue during incubation | Activation semantics implemented; role taxonomy and keyboard equivalence unsettled | Checked one-child activation area, supplementary reachability, and browser realization implemented; focus-order and role gaps documented |
 | [`<text>`](elements/text.md) | None | Built-in base catalogue during incubation | Text-only children rule implemented; semantic tag and inline-content model unsettled | Checked text-run children, typed interpolation, run joining, and browser realization implemented; no inline markup documented |
+| [`<pager>`](elements/pager.md) | None | Built-in base catalogue during incubation | Uncontrolled paging implemented; `page-change` and indicator semantics unsettled | Checked keyed-each viewport and browser scroll-snap realization implemented; `page-change` declared but wired in no renderer |
 
 ## Integrations
 
