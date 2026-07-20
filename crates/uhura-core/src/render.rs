@@ -281,7 +281,7 @@ impl Projector<'_> {
                                     binding.clone(),
                                     EventBinding {
                                         input: input.clone(),
-                                        locals: locals.clone(),
+                                        locals: event_binding_locals(input, locals),
                                     },
                                 )
                                 .is_some()
@@ -488,6 +488,119 @@ fn event_key(source: &str, path: &str, event: &str) -> String {
             event.as_bytes().to_vec(),
         ],
     ))
+}
+
+fn event_binding_locals(input: &Expr, locals: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    let mut names = BTreeSet::new();
+    collect_expression_names(input, &mut names);
+    names
+        .into_iter()
+        .filter_map(|name| locals.get(&name).cloned().map(|value| (name, value)))
+        .collect()
+}
+
+fn collect_expression_names(expression: &Expr, names: &mut BTreeSet<String>) {
+    match expression {
+        Expr::Literal { .. } => {}
+        Expr::Name { name } => {
+            names.insert(name.clone());
+        }
+        Expr::Constructor { fields, .. } => {
+            for (_, value) in fields {
+                collect_expression_names(value, names);
+            }
+        }
+        Expr::Record { fields } => {
+            for (_, value) in fields {
+                collect_expression_names(value, names);
+            }
+        }
+        Expr::Key { value, .. }
+        | Expr::Unary { value, .. }
+        | Expr::Field { value, .. }
+        | Expr::Is { value, .. } => collect_expression_names(value, names),
+        Expr::Tuple { values } | Expr::Seq { values } => {
+            for value in values {
+                collect_expression_names(value, names);
+            }
+        }
+        Expr::Map { entries, .. } | Expr::Collect { clauses: entries } => {
+            for (key, value) in entries {
+                collect_expression_names(key, names);
+                collect_expression_names(value, names);
+            }
+        }
+        Expr::Table { entries, .. } => {
+            for (_, value) in entries {
+                collect_expression_names(value, names);
+            }
+        }
+        Expr::Binary { left, right, .. }
+        | Expr::Index {
+            value: left,
+            key: right,
+        } => {
+            collect_expression_names(left, names);
+            collect_expression_names(right, names);
+        }
+        Expr::Call { args, .. } => {
+            for argument in args {
+                collect_expression_names(argument, names);
+            }
+        }
+        Expr::Invoke { function, args } => {
+            collect_expression_names(function, names);
+            for argument in args {
+                collect_expression_names(argument, names);
+            }
+        }
+        Expr::Method { value, args, .. } => {
+            collect_expression_names(value, names);
+            for argument in args {
+                collect_expression_names(argument, names);
+            }
+        }
+        Expr::If {
+            condition,
+            then_value,
+            else_value,
+        } => {
+            collect_expression_names(condition, names);
+            collect_expression_names(then_value, names);
+            collect_expression_names(else_value, names);
+        }
+        Expr::Match { value, arms } => {
+            collect_expression_names(value, names);
+            for arm in arms {
+                collect_expression_names(&arm.value, names);
+            }
+        }
+        Expr::Update { value, fields } => {
+            collect_expression_names(value, names);
+            for (_, value) in fields {
+                collect_expression_names(value, names);
+            }
+        }
+        Expr::Let { bindings, value } => {
+            for (_, binding) in bindings {
+                collect_expression_names(binding, names);
+            }
+            collect_expression_names(value, names);
+        }
+        Expr::Lambda { body, .. } => collect_expression_names(body, names),
+        Expr::SetComprehension {
+            source,
+            conditions,
+            value,
+            ..
+        } => {
+            collect_expression_names(source, names);
+            for condition in conditions {
+                collect_expression_names(condition, names);
+            }
+            collect_expression_names(value, names);
+        }
+    }
 }
 
 fn display_value(value: &Value) -> Result<String, RenderError> {
@@ -745,6 +858,53 @@ mod tests {
     }
 
     #[test]
+    fn event_bindings_capture_only_expression_names_that_are_current_locals() {
+        let large_unused_model = Value::Seq((0..4_096).map(Value::int).collect());
+        let locals = BTreeMap::from([
+            ("call_symbol".into(), Value::Text("not a local call".into())),
+            (
+                "call_type_symbol".into(),
+                Value::Text("not a local type".into()),
+            ),
+            (
+                "method_symbol".into(),
+                Value::Text("not a local method".into()),
+            ),
+            (
+                "method_type_symbol".into(),
+                Value::Text("not a local type".into()),
+            ),
+            ("required".into(), Value::Text("argument".into())),
+            ("row".into(), Value::Text("selected row".into())),
+            ("unused_model".into(), large_unused_model),
+        ]);
+        let input = Expr::Call {
+            function: "call_symbol".into(),
+            args: vec![Expr::Method {
+                value: Box::new(Expr::Name { name: "row".into() }),
+                method: "method_symbol".into(),
+                args: vec![Expr::Name {
+                    name: "required".into(),
+                }],
+                result_type: TypeRef::Named {
+                    id: "method_type_symbol".into(),
+                },
+            }],
+            result_type: TypeRef::Named {
+                id: "call_type_symbol".into(),
+            },
+        };
+
+        assert_eq!(
+            event_binding_locals(&input, &locals),
+            BTreeMap::from([
+                ("required".into(), Value::Text("argument".into())),
+                ("row".into(), Value::Text("selected row".into())),
+            ])
+        );
+    }
+
+    #[test]
     fn each_rejects_duplicate_keys_before_rendering_text_rows() {
         let (program, instance) = duplicate_each_program(
             vec![UiNode::Interpolation {
@@ -797,6 +957,9 @@ mod tests {
         let projection = program.project(&unique, PRESENTATION).unwrap();
         assert_eq!(projection.document.nodes.len(), 2);
         assert_eq!(projection.bindings.len(), 2);
+        assert!(projection.bindings.values().all(|binding| {
+            binding.locals.keys().cloned().collect::<Vec<_>>() == vec!["label".to_string()]
+        }));
         assert_eq!(projection.sources.protocol, PROJECTION_SOURCES_PROTOCOL);
         assert_eq!(projection.sources.presentation, PRESENTATION);
         assert_eq!(projection.sources.nodes.len(), 4);
@@ -806,6 +969,61 @@ mod tests {
                 .nodes
                 .values()
                 .all(|source| source.id == "test/button" || source.id == "test/button-label")
+        );
+    }
+
+    #[test]
+    fn captured_row_and_model_locals_resolve_with_the_runtime_event() {
+        let children = vec![UiNode::Element {
+            name: "button".into(),
+            attributes: vec![UiAttribute {
+                name: "on-click".into(),
+                value: UiAttributeValue::Event {
+                    event: "click".into(),
+                    input: Expr::Tuple {
+                        values: vec![
+                            Expr::Name { name: "key".into() },
+                            Expr::Name {
+                                name: "label".into(),
+                            },
+                            Expr::Name {
+                                name: "rows".into(),
+                            },
+                            Expr::Name {
+                                name: "event".into(),
+                            },
+                        ],
+                    },
+                },
+                source: SourceRef::synthetic("test/click"),
+            }],
+            children: Vec::new(),
+            source: SourceRef::synthetic("test/button"),
+        }];
+        let (program, instance) = duplicate_each_program(children, &[11]);
+        let expected_model = instance.observation.clone();
+        let projection = program.project(&instance, PRESENTATION).unwrap();
+        let (binding_id, binding) = projection.bindings.iter().next().unwrap();
+
+        assert_eq!(
+            binding.locals.keys().cloned().collect::<Vec<_>>(),
+            vec!["key".to_string(), "label".to_string(), "rows".to_string()]
+        );
+        assert_eq!(
+            program
+                .resolve_ui_input(
+                    &instance,
+                    &projection,
+                    binding_id,
+                    Value::Text("click payload".into()),
+                )
+                .unwrap(),
+            Value::Tuple(vec![
+                Value::int(11),
+                Value::Text("row-0".into()),
+                expected_model,
+                Value::Text("click payload".into()),
+            ])
         );
     }
 }
