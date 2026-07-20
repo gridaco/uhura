@@ -1,2 +1,0 @@
-error[UH5009 markup/a11y-alt]: `<img>` takes exactly one of alt / decorative
-  --> components/post-card.uhura:37:9

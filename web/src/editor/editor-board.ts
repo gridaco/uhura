@@ -1,6 +1,6 @@
-import { createEditorRenderer } from "../renderer/editor.js";
+import { createEditorAssets } from "../renderer/assets.js";
 import type { IconFontRegistry } from "../renderer/icons.js";
-import type { Snapshot, VNode } from "../protocol/types.js";
+import { createProjectionRenderer } from "../renderer/projection.js";
 import {
   type EditorPreview,
   type EditorRender,
@@ -32,6 +32,12 @@ import {
   structureConnectorDescription,
 } from "./structure-connectors.js";
 import { structureConnectorLabelSegments } from "./structure-presentation.js";
+import {
+  editorIdentifierLabel,
+  editorPreviewLabels,
+  editorSubjectLabel,
+  type PreviewDisplayLabels,
+} from "./display-labels.js";
 
 export interface PreparedWorkflowConnector extends WorkflowConnector {
   element: SVGGElement;
@@ -93,9 +99,9 @@ const prepareWorkflowConnector = (
   group.dataset.lane = String(connector.lane);
   group.dataset.sourcePort = `${connector.sourcePort.slot + 1}/${connector.sourcePort.count}`;
   group.dataset.targetPort = `${connector.targetPort.slot + 1}/${connector.targetPort.count}`;
-  if (connector.openedSurfaces.length > 0) {
+  if (connector.introducedSurfaces.length > 0) {
     group.classList.add("opens-surface");
-    group.dataset.openedSurfaces = connector.openedSurfaces
+    group.dataset.introducedSurfaces = connector.introducedSurfaces
       .map((surface) => surface.definition)
       .join(" ");
   }
@@ -107,7 +113,7 @@ const prepareWorkflowConnector = (
   const origin = svgElement(document, "circle", "workflow-connector-origin");
   origin.setAttribute("r", "3");
   const label = svgElement(document, "text", "workflow-connector-label");
-  label.textContent = workflowConnectorLabel(connector.steps, connector.openedSurfaces);
+  label.textContent = workflowConnectorLabel(connector.steps, connector.introducedSurfaces);
   group.append(title, path, arrow, origin, label);
   return { ...connector, element: group };
 };
@@ -174,9 +180,6 @@ const prepareStructureConnector = (
   return { ...connector, element: group };
 };
 
-const isSnapshot = (content: Snapshot | VNode): content is Snapshot =>
-  "protocol" in content && content.protocol === "uhura-view/0";
-
 const provenance = (preview: EditorPreview): string => {
   if (preview.pinned) return "Pinned example";
   if (preview.derived) return "Replay-derived";
@@ -190,60 +193,26 @@ const realizePreview = (
   stylesheet: CSSStyleSheet,
   host: HTMLElement,
   resources: RealizationResources,
-  icons: IconFontRegistry,
+  icons: IconFontRegistry | undefined,
 ): void => {
   const shadow = host.attachShadow({ mode: "open" });
   shadow.adoptedStyleSheets = [stylesheet];
   const application = element(document, "div", "preview-application");
   application.id = "uh-app";
-  const wrapper = element(document, "div", isSnapshot(preview.content)
+  const wrapper = element(document, "div", preview.identity.kind === "page"
     ? "screen-root"
-    : "fragment-root");
+    : "preview-root");
   wrapper.inert = true;
-  const renderer = createEditorRenderer({
-    document,
-    assets: render.assets,
+  const renderer = createProjectionRenderer({
+    root: wrapper,
+    dispatch: () => undefined,
+    mode: "editor",
+    assets: createEditorAssets(render.assets),
     icons,
+    modalSurfaces: false,
+    observeElement: (key, realized) => resources.registerKey(key, realized),
   });
-  if (isSnapshot(preview.content)) {
-    renderer.realizeRoot(wrapper, preview.content.page.root, {
-      root: { kind: "page" },
-      scope: `${preview.id}:page`,
-      parentIsList: false,
-      observe: (realization) => resources.register(realization),
-    });
-    for (const [index, surface] of preview.content.surfaces.entries()) {
-      const overlay = element(document, "div", "uh-surface-overlay");
-      overlay.dataset.surfaceDefinition = surface.definition;
-      overlay.dataset.surfaceModality = surface.modality;
-      overlay.dataset.surfaceStackIndex = String(index);
-      overlay.style.zIndex = String(index + 1);
-      const scrim = element(document, "div", "uh-scrim");
-      const surfaceHost = element(
-        document,
-        "div",
-        `uh-surface uh-modality-${surface.modality}`,
-      );
-      surfaceHost.setAttribute("role", "dialog");
-      surfaceHost.setAttribute("aria-modal", "true");
-      surfaceHost.dataset.surfaceDefinition = surface.definition;
-      renderer.realizeRoot(surfaceHost, surface.root, {
-        root: { kind: "surface", key: surface.key },
-        scope: `${preview.id}:surface:${surface.key}`,
-        parentIsList: false,
-        observe: (realization) => resources.register(realization),
-      });
-      overlay.append(scrim, surfaceHost);
-      wrapper.append(overlay);
-    }
-  } else {
-    renderer.realizeRoot(wrapper, preview.content, {
-      root: { kind: "fragment" },
-      scope: `${preview.id}:fragment`,
-      parentIsList: false,
-      observe: (realization) => resources.register(realization),
-    });
-  }
+  renderer.render(preview.content.value.document);
   application.append(wrapper);
   shadow.append(application);
 };
@@ -262,10 +231,11 @@ interface PreparedFrame {
 const frame = (
   document: Document,
   preview: EditorPreview,
+  labels: PreviewDisplayLabels,
   render: EditorRender,
   stylesheet: CSSStyleSheet,
   resources: RealizationResources,
-  icons: IconFontRegistry,
+  icons: IconFontRegistry | undefined,
   realize: boolean,
 ): PreparedFrame => {
   const figure = element(document, "figure", "editor-frame");
@@ -295,7 +265,7 @@ const frame = (
     document,
     "span",
     "caption-title",
-    `${preview.identity.subject} / ${preview.identity.example}`,
+    labels.combined,
   ));
   if (preview.default) caption.append(badge(document, "badge-default", "default"));
   if (preview.pinned) caption.append(badge(document, "badge-pinned", "pinned"));
@@ -309,13 +279,13 @@ const frame = (
       const surfaceBadge = badge(
         document,
         "badge-surface",
-        `${surface.modality} ${surface.definition}`,
+        `${surface.modality} ${editorIdentifierLabel(surface.definition)}`,
       );
       surfaceBadge.dataset.relation = surface.relation;
       surfaceBadge.title = {
-        direct: "Child surface opened by this replay edge",
-        inherited: "Child surface inherited from replay ancestry",
-        mounted: "Child surface mounted in this snapshot",
+        introduced: "Present in this projection but absent from its evidence parent",
+        retained: "Present in this projection and its evidence parent",
+        present: "Present in this standalone projection",
       }[surface.relation];
       caption.append(surfaceBadge);
     }
@@ -331,22 +301,29 @@ const navigatorGroup = (
   group: EditorRender["groups"][number],
   previews: EditorPreview[],
 ): HTMLElement => {
+  const peerIdentities = previews.map((preview) => preview.identity);
+  const subjectLabel = editorSubjectLabel(group);
   const section = element(document, "section", "navigator-group");
   section.dataset.navigatorGroup = "";
-  section.dataset.search = `${group.kind} ${group.subject}`.toLocaleLowerCase();
+  section.dataset.search = [
+    group.kind,
+    group.subject,
+    subjectLabel,
+  ].join(" ").toLocaleLowerCase();
 
   const row = element(document, "button", "navigator-row");
   row.type = "button";
   row.dataset.groupId = group.id;
   row.append(
     element(document, "span", "navigator-kind"),
-    element(document, "span", "navigator-row-title", group.subject),
+    element(document, "span", "navigator-row-title", subjectLabel),
     element(document, "span", "navigator-count", String(previews.length)),
   );
   (row.firstElementChild as HTMLElement).dataset.kind = group.kind;
 
   const list = element(document, "div", "navigator-frames");
   for (const preview of previews) {
+    const labels = editorPreviewLabels(preview.identity, peerIdentities);
     const button = element(document, "button", "navigator-frame");
     button.type = "button";
     button.dataset.previewId = preview.id;
@@ -354,11 +331,13 @@ const navigatorGroup = (
       preview.identity.kind,
       preview.identity.subject,
       preview.identity.example,
+      labels.subject,
+      labels.example,
     ].join(" ").toLocaleLowerCase();
     button.setAttribute("aria-pressed", "false");
     button.append(
       element(document, "span", "navigator-frame-icon"),
-      element(document, "span", "navigator-frame-title", preview.identity.example),
+      element(document, "span", "navigator-frame-title", labels.example),
     );
     if (preview.derived) {
       const marker = element(document, "span", "navigator-derived", "D");
@@ -437,12 +416,11 @@ export const prepareEditorModel = (
     };
   }
 
-  if (!icons) throw new Error("A renderable Editor model requires icon fonts");
-
   const stylesheet = previous?.render?.stylesheet === render.stylesheet
     ? previous.stylesheet ?? preparePreviewStylesheet(document, render.stylesheet)
     : preparePreviewStylesheet(document, render.stylesheet);
-  const resourcesMatch = previous?.iconFingerprint === icons.fingerprint;
+  const iconFingerprint = icons?.fingerprint ?? null;
+  const resourcesMatch = previous?.iconFingerprint === iconFingerprint;
   const reusableRealizationIds = new Set(resourcesMatch
     ? [...reusablePreviewIds(previous?.render ?? null, render)].filter((id) =>
       previous?.frameById.has(id) ?? false)
@@ -475,7 +453,7 @@ export const prepareEditorModel = (
         document,
         "h2",
         "row-title",
-        `${group.kind} ${group.subject}`,
+        `${group.kind} ${editorSubjectLabel(group)}`,
       ));
       const frames = element(document, "div", "row-frames");
       const laneCount = groupConnectors.reduce(
@@ -485,6 +463,7 @@ export const prepareEditorModel = (
       if (laneCount > 0) {
         frames.style.setProperty("--workflow-rail-height", `${workflowRailHeight(laneCount)}px`);
       }
+      const peerIdentities = typedPreviews.map((preview) => preview.identity);
       for (const preview of typedPreviews) {
         const resources = new RealizationResources();
         resources.claim(resourceOwner);
@@ -492,6 +471,7 @@ export const prepareEditorModel = (
         const prepared = frame(
           document,
           preview,
+          editorPreviewLabels(preview.identity, peerIdentities),
           render,
           stylesheet,
           resources,
@@ -533,7 +513,7 @@ export const prepareEditorModel = (
     connectors,
     structureConnectors,
     render,
-    iconFingerprint: icons.fingerprint,
+    iconFingerprint,
     stylesheet,
     reusableRealizationIds,
     reusableFrameIds,

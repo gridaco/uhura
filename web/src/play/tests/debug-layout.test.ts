@@ -22,23 +22,18 @@ function node(
     id,
     kind,
     lane,
-    definitionId: id.includes("/") ? "pages.feed" : null,
+    definitionId: "machine:counter",
     label: id,
     detail: null,
     order,
     span: null,
+    sourceSpans: [],
     runtime: {
       active: false,
       current: false,
       selected: false,
-      consulted: null,
       written: false,
       sent: false,
-      pending: 0,
-      projectionApply: null,
-      projectionReady: 0,
-      projectionFailures: 0,
-      structural: false,
     },
   };
 }
@@ -55,9 +50,9 @@ function edge(
     from,
     to,
     label: kind,
-    order: null,
-    mode: null,
+    order: 0,
     activity: "idle",
+    sourceSpans: [],
   };
 }
 
@@ -69,62 +64,62 @@ function topology(): {
     // Deliberately scrambled: layout owns deterministic semantic ordering.
     nodes: [
       node("commands.save", "command", "effect"),
-      node("pages.feed/handler/1", "handler", "handler", 1),
-      node("projections.feed", "projection", "input"),
-      node("pages.feed/state/output", "state", "effect"),
-      node("pages.feed/event/submit", "event", "input"),
-      node("pages.detail", "definition", "effect"),
-      node("pages.feed/state/input", "state", "input"),
-      node("pages.feed/handler/0", "handler", "handler", 0),
+      node("transitions.persist", "transition", "handler", 1),
+      node("ports.storage", "port", "input"),
+      node("state.output", "state", "effect"),
+      node("ui-events.submit", "ui-event", "input"),
+      node("outcomes.saved", "outcome", "effect"),
+      node("presentations.form", "presentation", "input"),
+      node("inputs.submit", "input", "handler", 0),
     ],
     edges: [
       edge(
-        "handles",
-        "handles",
-        "pages.feed/event/submit",
-        "pages.feed/handler/0",
+        "delivers",
+        "delivers",
+        "ui-events.submit",
+        "inputs.submit",
       ),
       edge(
-        "guard",
-        "guard-reads",
-        "pages.feed/state/input",
-        "pages.feed/handler/0",
+        "dispatches",
+        "dispatches",
+        "presentations.form",
+        "inputs.submit",
       ),
       edge(
-        "projection",
-        "body-reads",
-        "projections.feed",
-        "pages.feed/handler/1",
+        "exposes",
+        "exposes",
+        "ports.storage",
+        "transitions.persist",
       ),
       edge(
         "write",
         "writes",
-        "pages.feed/handler/0",
-        "pages.feed/state/output",
+        "inputs.submit",
+        "state.output",
       ),
       edge(
-        "navigate",
-        "navigates",
-        "pages.feed/handler/0",
-        "pages.detail",
+        "finish",
+        "finishes",
+        "inputs.submit",
+        "outcomes.saved",
       ),
       edge(
-        "send",
-        "sends",
-        "pages.feed/handler/1",
+        "emit",
+        "emits",
+        "transitions.persist",
         "commands.save",
       ),
       edge(
-        "read-after-write",
-        "body-reads",
-        "pages.feed/state/output",
-        "pages.feed/handler/0",
+        "delegate-after-write",
+        "delegates",
+        "state.output",
+        "inputs.submit",
       ),
       edge(
-        "settle",
-        "settles",
+        "trigger",
+        "triggers",
         "commands.save",
-        "pages.feed/event/submit",
+        "ui-events.submit",
       ),
     ],
   };
@@ -160,13 +155,13 @@ test("lays out semantic lanes at exact deterministic coordinates", () => {
       height: item.height,
     })),
     [
-      { id: "pages.feed/event/submit", x: 32, y: 32, width: 208, height: 52 },
-      { id: "pages.feed/state/input", x: 32, y: 104, width: 208, height: 52 },
-      { id: "projections.feed", x: 32, y: 176, width: 208, height: 52 },
-      { id: "pages.feed/handler/0", x: 336, y: 68, width: 208, height: 52 },
-      { id: "pages.feed/handler/1", x: 336, y: 140, width: 208, height: 52 },
-      { id: "pages.feed/state/output", x: 640, y: 32, width: 208, height: 52 },
-      { id: "pages.detail", x: 640, y: 104, width: 208, height: 52 },
+      { id: "ui-events.submit", x: 32, y: 32, width: 208, height: 52 },
+      { id: "presentations.form", x: 32, y: 104, width: 208, height: 52 },
+      { id: "ports.storage", x: 32, y: 176, width: 208, height: 52 },
+      { id: "inputs.submit", x: 336, y: 68, width: 208, height: 52 },
+      { id: "transitions.persist", x: 336, y: 140, width: 208, height: 52 },
+      { id: "state.output", x: 640, y: 32, width: 208, height: 52 },
+      { id: "outcomes.saved", x: 640, y: 104, width: 208, height: 52 },
       { id: "commands.save", x: 640, y: 176, width: 208, height: 52 },
     ],
   );
@@ -175,19 +170,19 @@ test("lays out semantic lanes at exact deterministic coordinates", () => {
 test("emits exact cubic forward paths and tracked orthogonal cycles", () => {
   const layout = layoutDebugGraph(topology());
 
-  assert.deepEqual(pathById(layout, "handles"), {
+  assert.deepEqual(pathById(layout, "delivers"), {
     edge: topology().edges[0],
     route: "cubic",
     path: "M 240 58 C 288 58 288 94 336 94",
   });
-  assert.equal(pathById(layout, "read-after-write").route, "orthogonal");
+  assert.equal(pathById(layout, "delegate-after-write").route, "orthogonal");
   assert.equal(
-    pathById(layout, "read-after-write").path,
+    pathById(layout, "delegate-after-write").path,
     "M 744 84 L 744 252 L 440 252 L 440 120",
   );
-  assert.equal(pathById(layout, "settle").route, "orthogonal");
+  assert.equal(pathById(layout, "trigger").route, "orthogonal");
   assert.equal(
-    pathById(layout, "settle").path,
+    pathById(layout, "trigger").path,
     "M 744 228 L 744 268 L 136 268 L 136 84",
   );
 
@@ -226,7 +221,7 @@ test("runtime-only changes cannot alter node positions or edge paths", () => {
       ...item.runtime,
       active: true,
       current: true,
-      pending: 9,
+      sent: true,
     },
   }));
   const changedEdges = graph.edges.map((item) => ({

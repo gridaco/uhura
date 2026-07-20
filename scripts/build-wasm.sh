@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Builds the uhura-wasm bundle for both targets (design §12.3):
+# Builds the canonical uhura-wasm runtime for both browser and Node.js hosts:
 #   crates/uhura-wasm/pkg/web/   — ES module for the play shell
-#   crates/uhura-wasm/pkg/node/  — CommonJS for scripts/parity.mjs
+#   crates/uhura-wasm/pkg/node/  — CommonJS for conformance and host tooling
 #
 # wasm-bindgen-cli MUST match the workspace's wasm-bindgen pin exactly
 # (Cargo.lock) — the CLI and the crate write two halves of one ABI.

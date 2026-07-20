@@ -1,0 +1,28 @@
+use uhura::ui;
+use crate::feed::{Feed, Post, PostCard};
+
+pub ui FeedWeb for Feed(view) {
+  <main class="feed" aria-label="Following feed">
+    <header>
+      <h1>{view.title}</h1>
+      {#if view.loading}
+        <progress aria-label="Loading" />
+      {:else}
+        <button disabled={view.refreshing} on press -> Refresh>
+          Refresh
+        </button>
+      {/if}
+    </header>
+
+    {#each view.posts as Post { id, .. } (id)}
+      <!-- one stable keyed card -->
+      <PostCard
+        post={view.by_id[id]}
+        on like -> ToggleLike(id)
+        featured
+      />
+    {/each}
+
+    <p>안녕하세요 {view.viewer_name}</p>
+  </main>
+}

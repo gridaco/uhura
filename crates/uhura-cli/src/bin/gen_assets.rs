@@ -1,4 +1,4 @@
-//! `gen-assets` — validate materialized demo assets and render legacy motifs.
+//! `gen-assets` — validate materialized demo assets and render seeded motifs.
 //! Reads `fixtures/assets/manifest.toml`. Entries with a `source` are already
 //! materialized: their dimensions and SHA-256 are verified without a network
 //! request. Legacy entries with `motif` + `seed` remain reproducible locally.

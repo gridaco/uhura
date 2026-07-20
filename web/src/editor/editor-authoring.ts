@@ -149,6 +149,7 @@ export const presentedSourceTargets = (
   const targetIds = new Set<string>([
     ...authoring.documentedTargets.map((target) => target.id),
     ...authoring.annotationTargets.map((annotation) => annotation.target.id),
+    ...authoring.occurrencesByTarget.keys(),
   ]);
   return [...targetIds]
     .flatMap((targetId) => {

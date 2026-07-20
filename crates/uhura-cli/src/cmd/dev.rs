@@ -13,8 +13,6 @@ use uhura_host::{
 
 use crate::CommonArgs;
 
-pub use uhura_host::boot_envelope;
-
 const REQUEST_WORKERS: usize = 8;
 const REQUEST_QUEUE_CAPACITY: usize = 64;
 const SSE_SESSION_LIMIT: usize = 4;

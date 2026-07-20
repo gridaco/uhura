@@ -1,0 +1,1353 @@
+language uhura 0.3
+module app.instagram.evidence@1
+
+use evidence
+
+import {
+  Authority,
+  BottomNav,
+  CommentRow,
+  CommentsSheet,
+  ConnectionRow,
+  CreatePage,
+  DEMO_APPENDED,
+  DEMO_EMPTY,
+  DEMO_EMPTY_EXPLORE,
+  DEMO_EXHAUSTED,
+  DEMO_STANDARD,
+  FeedPage,
+  FollowersPage,
+  FollowingPage,
+  INSTAGRAM_ROUTES,
+  Instagram,
+  Location,
+  Mutation,
+  NoticeBar,
+  POST_AYLA_FERRY,
+  POST_LENA_BOWLS,
+  POST_LENA_GLAZE,
+  POST_MARCO_BAJA,
+  POST_NILS_AURORA,
+  POST_THEO_COURT,
+  PostCard,
+  PostPage,
+  ProfileTab,
+  ProfileHeader,
+  ProfilePage,
+  ReelCard,
+  ReelsPage,
+  RequestId,
+  SearchPage,
+  Settlement,
+  STORY_LENA,
+  STORY_LENA_GLAZES,
+  STORY_LENA_STUDIO,
+  STORY_MIRA_TRAM,
+  STORY_PRIYA,
+  StoriesTray,
+  StoryPage,
+  USER_LENA,
+  USER_MIRA,
+  USER_NILS,
+} from "app.instagram@1"
+import { Observation } from "uhura.observation@1"
+import { RequestPort } from "uhura.ports@1"
+import { Router } from "uhura.web_router@1"
+
+
+scenario bootstrap_loading for Instagram {
+  bind router = Router.fixture(INSTAGRAM_ROUTES)
+  bind authority = Observation.fixture()
+  bind mutations = RequestPort.fixture()
+
+  start
+  deliver router.changed(Feed)
+  expect Accepted commands []
+  pin frame
+}
+
+checkpoint loading_base = bootstrap_loading::frame
+
+scenario bootstrap_ready from loading_base {
+  expect restore commands []
+  deliver authority.observed(Ready(DEMO_STANDARD))
+  expect Accepted commands []
+  pin frame
+}
+
+checkpoint ready_base = bootstrap_ready::frame
+
+
+// Pages: Create
+
+scenario create_loading_scenario from loading_base {
+  deliver router.changed(Create)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario create_empty_scenario from ready_base {
+  deliver router.changed(Create)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario create_choosing_scenario
+  from create_empty_scenario::frame
+{
+  send ChooseImage
+  expect Accepted commands [
+    mutations.request(RequestId(1), ChooseImage),
+  ]
+  pin frame
+}
+
+scenario create_uploaded_scenario from ready_base {
+  deliver router.changed(Create)
+  expect Accepted commands []
+  send ChooseImage
+  expect Accepted commands [
+    mutations.request(RequestId(1), ChooseImage),
+  ]
+  deliver mutations.settled(
+    RequestId(1),
+    ImageReady(
+      "object-mira-draft",
+      "media-ayla-ferry",
+      "lisbon-ferry.webp",
+    ),
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+scenario create_composed_scenario
+  from create_uploaded_scenario::frame
+{
+  send CaptionChanged("Last light over the Tagus.")
+  expect Accepted commands []
+  send AltChanged(
+    "Ferry wake glowing orange beneath the Lisbon skyline",
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+scenario create_publishing_scenario
+  from create_composed_scenario::frame
+{
+  send PublishImage
+  expect Accepted commands [
+    mutations.request(
+      RequestId(2),
+      PublishImage(
+        "object-mira-draft",
+        "Last light over the Tagus.",
+        "Ferry wake glowing orange beneath the Lisbon skyline",
+      ),
+    ),
+  ]
+  pin frame
+}
+
+scenario create_publish_refused_scenario
+  from create_publishing_scenario::frame
+{
+  deliver mutations.settled(
+    RequestId(2),
+    Refused("image-not-ready"),
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Pages: Feed
+
+scenario feed_loading_scenario from loading_base {
+  pin frame
+}
+
+scenario feed_first_page_scenario from ready_base {
+  pin frame
+}
+
+scenario feed_like_pending_scenario
+  from feed_first_page_scenario::frame
+{
+  send ToggleLike(POST_LENA_GLAZE, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetLike(POST_LENA_GLAZE, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario feed_like_refused_scenario
+  from feed_like_pending_scenario::frame
+{
+  deliver mutations.settled(
+    RequestId(1),
+    Refused("network unavailable"),
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+scenario feed_save_pending_scenario
+  from feed_first_page_scenario::frame
+{
+  send ToggleSave(POST_LENA_GLAZE, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetSave(POST_LENA_GLAZE, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario feed_unsave_pending_scenario
+  from feed_first_page_scenario::frame
+{
+  send ToggleSave(POST_MARCO_BAJA, false)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetSave(POST_MARCO_BAJA, false),
+    ),
+  ]
+  pin frame
+}
+
+scenario feed_comments_open_scenario
+  from feed_first_page_scenario::frame
+{
+  send OpenComments(POST_LENA_GLAZE)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario feed_load_pending_scenario
+  from feed_first_page_scenario::frame
+{
+  send FeedNearEnd
+  expect Accepted commands [
+    mutations.request(RequestId(1), LoadMore),
+  ]
+  pin frame
+}
+
+scenario feed_load_failed_scenario
+  from feed_load_pending_scenario::frame
+{
+  deliver mutations.settled(
+    RequestId(1),
+    Refused("unreachable"),
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+scenario feed_appended_scenario
+  from feed_first_page_scenario::frame
+{
+  send FeedNearEnd
+  expect Accepted commands [
+    mutations.request(RequestId(1), LoadMore),
+  ]
+  deliver authority.observed(Ready(DEMO_APPENDED))
+  expect Accepted commands []
+  deliver mutations.settled(RequestId(1), Accepted)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario feed_exhausted_scenario from ready_base {
+  deliver authority.observed(Ready(DEMO_EXHAUSTED))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario feed_empty_scenario from ready_base {
+  deliver authority.observed(Ready(DEMO_EMPTY))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario feed_failed_scenario from ready_base {
+  deliver authority.observed(Failed("unreachable"))
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Pages: Post
+
+scenario post_loading_scenario from loading_base {
+  deliver router.changed(Post(POST_LENA_GLAZE))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario post_lena_scenario from ready_base {
+  deliver router.changed(Post(POST_LENA_GLAZE))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario post_profile_history_scenario from ready_base {
+  deliver router.changed(Post(POST_LENA_BOWLS))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario post_like_pending_scenario
+  from post_lena_scenario::frame
+{
+  send ToggleLike(POST_LENA_GLAZE, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetLike(POST_LENA_GLAZE, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario post_save_pending_scenario
+  from post_lena_scenario::frame
+{
+  send ToggleSave(POST_LENA_GLAZE, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetSave(POST_LENA_GLAZE, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario post_comments_open_scenario
+  from post_lena_scenario::frame
+{
+  send OpenComments(POST_LENA_GLAZE)
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Pages: Followers
+
+scenario followers_loading_scenario from loading_base {
+  deliver router.changed(Followers(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario followers_lena_scenario from ready_base {
+  deliver router.changed(Followers(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario followers_follow_pending_scenario
+  from followers_lena_scenario::frame
+{
+  send ToggleFollow(USER_NILS, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetFollow(USER_NILS, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario followers_mira_scenario from ready_base {
+  deliver router.changed(Followers(USER_MIRA))
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Pages: Following
+
+scenario following_loading_scenario from loading_base {
+  deliver router.changed(Following(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario following_lena_scenario from ready_base {
+  deliver router.changed(Following(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario following_mira_scenario from ready_base {
+  deliver router.changed(Following(USER_MIRA))
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Pages: Profile
+
+scenario profile_loading_scenario from loading_base {
+  deliver router.changed(Profile(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_lena_posts_scenario from ready_base {
+  deliver router.changed(Profile(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_lena_tagged_scenario
+  from profile_lena_posts_scenario::frame
+{
+  send SelectProfileTab(Tagged)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_self_scenario from ready_base {
+  deliver router.changed(Profile(USER_MIRA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_self_tagged_scenario
+  from profile_self_scenario::frame
+{
+  send SelectProfileTab(Tagged)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_self_reels_scenario
+  from profile_self_scenario::frame
+{
+  send SelectProfileTab(Reels)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_self_saved_scenario
+  from profile_self_scenario::frame
+{
+  send SelectProfileTab(Saved)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_nils_posts_scenario from ready_base {
+  deliver router.changed(Profile(USER_NILS))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_nils_reels_scenario
+  from profile_nils_posts_scenario::frame
+{
+  send SelectProfileTab(Reels)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_nils_tagged_empty_scenario
+  from profile_nils_posts_scenario::frame
+{
+  send SelectProfileTab(Tagged)
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Pages: Reels
+
+scenario reels_loading_scenario from loading_base {
+  deliver router.changed(Reels)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario reels_videos_scenario from ready_base {
+  deliver router.changed(Reels)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario reels_like_pending_scenario
+  from reels_videos_scenario::frame
+{
+  send ToggleLike(POST_NILS_AURORA, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetLike(POST_NILS_AURORA, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario reels_save_pending_scenario
+  from reels_videos_scenario::frame
+{
+  send ToggleSave(POST_THEO_COURT, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetSave(POST_THEO_COURT, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario reels_unsave_pending_scenario
+  from reels_videos_scenario::frame
+{
+  send ToggleSave(POST_NILS_AURORA, false)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetSave(POST_NILS_AURORA, false),
+    ),
+  ]
+  pin frame
+}
+
+
+// Pages: Search
+
+scenario search_loading_scenario from loading_base {
+  deliver router.changed(Search)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario search_explore_scenario from ready_base {
+  deliver router.changed(Search)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario search_searching_scenario
+  from search_explore_scenario::frame
+{
+  send SearchChanged("nils")
+  expect Accepted commands []
+  send SubmitSearch
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SearchPeople("nils"),
+    ),
+  ]
+  pin frame
+}
+
+scenario search_nils_results_scenario
+  from search_explore_scenario::frame
+{
+  send SearchChanged("nils")
+  expect Accepted commands []
+  send SubmitSearch
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SearchPeople("nils"),
+    ),
+  ]
+  deliver mutations.settled(RequestId(1), Accepted)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario search_no_results_scenario
+  from search_explore_scenario::frame
+{
+  send SearchChanged("no-such-person")
+  expect Accepted commands []
+  send SubmitSearch
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SearchPeople("no-such-person"),
+    ),
+  ]
+  deliver mutations.settled(RequestId(1), Accepted)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario search_empty_explore_scenario from ready_base {
+  deliver router.changed(Search)
+  expect Accepted commands []
+  deliver authority.observed(Ready(DEMO_EMPTY_EXPLORE))
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Pages: Story
+
+scenario story_loading_scenario from loading_base {
+  deliver router.changed(Story(STORY_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario story_unseen_scenario from ready_base {
+  deliver router.changed(Story(STORY_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario story_lena_middle_scenario from ready_base {
+  deliver router.changed(Story(STORY_LENA_GLAZES))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario story_lena_last_scenario from ready_base {
+  deliver router.changed(Story(STORY_LENA_STUDIO))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario story_self_middle_seen_scenario from ready_base {
+  deliver router.changed(Story(STORY_MIRA_TRAM))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario story_seen_scenario from ready_base {
+  deliver router.changed(Story(STORY_PRIYA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario story_marking_seen_scenario
+  from story_unseen_scenario::frame
+{
+  send MarkStorySeen(STORY_LENA)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      MarkStory(STORY_LENA),
+    ),
+  ]
+  pin frame
+}
+
+
+// Components: bottom navigation
+
+scenario bottom_nav_feed_scenario from ready_base {
+  pin frame
+}
+
+scenario bottom_nav_profile_scenario from ready_base {
+  deliver router.changed(Profile(USER_MIRA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario bottom_nav_create_scenario from ready_base {
+  deliver router.changed(Create)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario bottom_nav_search_scenario from ready_base {
+  deliver router.changed(Search)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario bottom_nav_reels_scenario from ready_base {
+  deliver router.changed(Reels)
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Components: comment row
+
+scenario comment_row_settled_scenario from ready_base {
+  pin frame
+}
+
+scenario comment_row_pending_scenario from ready_base {
+  send OpenComments(POST_LENA_GLAZE)
+  expect Accepted commands []
+  send CommentChanged(
+    "Saving this palette for my kitchen reno — stunning work!",
+  )
+  expect Accepted commands []
+  send SubmitComment
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      AddComment(
+        POST_LENA_GLAZE,
+        "Saving this palette for my kitchen reno — stunning work!",
+      ),
+    ),
+  ]
+  pin frame
+}
+
+
+// Components: connection row
+
+scenario connection_following_scenario from ready_base {
+  deliver router.changed(Following(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario connection_follow_action_scenario from ready_base {
+  deliver router.changed(Followers(USER_MIRA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario connection_pending_scenario from ready_base {
+  deliver router.changed(Followers(USER_MIRA))
+  expect Accepted commands []
+  send ToggleFollow(USER_NILS, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetFollow(USER_NILS, true),
+    ),
+  ]
+  pin frame
+}
+
+
+// Components: notice bar
+
+scenario notice_refusal_scenario from ready_base {
+  send ToggleLike(POST_LENA_GLAZE, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetLike(POST_LENA_GLAZE, true),
+    ),
+  ]
+  deliver mutations.settled(
+    RequestId(1),
+    Refused("network unavailable"),
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+
+// Components: Post card
+
+scenario post_card_image_scenario from ready_base {
+  deliver router.changed(Post(POST_LENA_GLAZE))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario post_card_carousel_scenario from ready_base {
+  deliver router.changed(Post(POST_MARCO_BAJA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario post_card_video_scenario from ready_base {
+  deliver router.changed(Post(POST_NILS_AURORA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario post_card_like_pending_scenario from ready_base {
+  deliver router.changed(Post(POST_LENA_GLAZE))
+  expect Accepted commands []
+  send ToggleLike(POST_LENA_GLAZE, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetLike(POST_LENA_GLAZE, true),
+    ),
+  ]
+  pin frame
+}
+
+scenario post_card_save_pending_scenario from ready_base {
+  deliver router.changed(Post(POST_LENA_GLAZE))
+  expect Accepted commands []
+  send ToggleSave(POST_LENA_GLAZE, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetSave(POST_LENA_GLAZE, true),
+    ),
+  ]
+  pin frame
+}
+
+
+// Components: Profile header
+
+scenario profile_header_lena_scenario from ready_base {
+  deliver router.changed(Profile(USER_LENA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_header_self_scenario from ready_base {
+  deliver router.changed(Profile(USER_MIRA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario profile_header_follow_pending_scenario from ready_base {
+  deliver router.changed(Profile(USER_NILS))
+  expect Accepted commands []
+  send ToggleFollow(USER_NILS, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetFollow(USER_NILS, true),
+    ),
+  ]
+  pin frame
+}
+
+
+// Components: reel card
+
+scenario reel_card_aurora_scenario from ready_base {
+  deliver router.changed(Post(POST_NILS_AURORA))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario reel_card_court_scenario from ready_base {
+  deliver router.changed(Post(POST_THEO_COURT))
+  expect Accepted commands []
+  pin frame
+}
+
+scenario reel_card_save_pending_scenario from ready_base {
+  deliver router.changed(Post(POST_THEO_COURT))
+  expect Accepted commands []
+  send ToggleSave(POST_THEO_COURT, true)
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      SetSave(POST_THEO_COURT, true),
+    ),
+  ]
+  pin frame
+}
+
+
+// Components: stories tray
+
+scenario stories_tray_scenario from ready_base {
+  pin frame
+}
+
+
+// Surface: comments sheet
+
+scenario comments_populated_scenario from ready_base {
+  send OpenComments(POST_LENA_GLAZE)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario comments_composing_scenario
+  from comments_populated_scenario::frame
+{
+  send CommentChanged(
+    "Saving this palette for my kitchen reno",
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+scenario comments_pending_append_scenario
+  from comments_composing_scenario::frame
+{
+  send SubmitComment
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      AddComment(
+        POST_LENA_GLAZE,
+        "Saving this palette for my kitchen reno",
+      ),
+    ),
+  ]
+  pin frame
+}
+
+scenario comments_empty_scenario from ready_base {
+  send OpenComments(POST_AYLA_FERRY)
+  expect Accepted commands []
+  pin frame
+}
+
+scenario comments_empty_composing_scenario
+  from comments_empty_scenario::frame
+{
+  send CommentChanged("First comment")
+  expect Accepted commands []
+  pin frame
+}
+
+scenario comments_empty_pending_scenario
+  from comments_empty_composing_scenario::frame
+{
+  send SubmitComment
+  expect Accepted commands [
+    mutations.request(
+      RequestId(1),
+      AddComment(POST_AYLA_FERRY, "First comment"),
+    ),
+  ]
+  pin frame
+}
+
+scenario comments_rejected_scenario
+  from comments_empty_pending_scenario::frame
+{
+  deliver mutations.settled(
+    RequestId(1),
+    Refused("comment_body_invalid"),
+  )
+  expect Accepted commands []
+  pin frame
+}
+
+
+// The catalog is presentation-targeted. Every alias names one checked
+// snapshot; `default` is unique within its presentation.
+
+example create_loading
+  for CreatePage as page
+  = create_loading_scenario::frame
+
+example create_empty
+  for CreatePage as page default
+  = create_empty_scenario::frame
+
+example create_choosing
+  for CreatePage as page
+  note "the platform picker/upload is in flight; no bytes enter Core"
+  = create_choosing_scenario::frame
+
+example create_uploaded
+  for CreatePage as page
+  = create_uploaded_scenario::frame
+
+example create_composed
+  for CreatePage as page
+  = create_composed_scenario::frame
+
+example create_publishing
+  for CreatePage as page
+  note "publish carries only the storage object id and authored text"
+  = create_publishing_scenario::frame
+
+example create_publish_refused
+  for CreatePage as page
+  = create_publish_refused_scenario::frame
+
+
+example feed_loading
+  for FeedPage as page
+  note "cold start — nothing delivered yet"
+  = feed_loading_scenario::frame
+
+example feed_first_page
+  for FeedPage as page default
+  = feed_first_page_scenario::frame
+
+example feed_like_pending
+  for FeedPage as page
+  note "optimistic heart + count while the like request is in flight"
+  = feed_like_pending_scenario::frame
+
+example feed_like_refused
+  for FeedPage as page
+  note "transport unavailable — rollback, notice explains"
+  = feed_like_refused_scenario::frame
+
+example feed_save_pending
+  for FeedPage as page
+  note "optimistic bookmark while the save request is in flight"
+  = feed_save_pending_scenario::frame
+
+example feed_unsave_pending
+  for FeedPage as page
+  note "Marco's post starts saved because the seed contains Mira's save edge"
+  = feed_unsave_pending_scenario::frame
+
+example feed_comments_open
+  for FeedPage as page
+  note "the sheet mounts because the machine owns its semantic lifetime"
+  = feed_comments_open_scenario::frame
+
+example feed_load_pending
+  for FeedPage as page
+  note "footer spinner; the machine suppresses duplicate pagination"
+  = feed_load_pending_scenario::frame
+
+example feed_load_failed
+  for FeedPage as page
+  = feed_load_failed_scenario::frame
+
+example feed_appended
+  for FeedPage as page
+  note "all six followed-author posts are loaded, so has-more is false"
+  = feed_appended_scenario::frame
+
+example feed_exhausted
+  for FeedPage as page
+  note "has-more false — end cap; pinned state"
+  = feed_exhausted_scenario::frame
+
+example feed_empty
+  for FeedPage as page
+  = feed_empty_scenario::frame
+
+example feed_failed
+  for FeedPage as page
+  note "provider reported an authoritative source failure"
+  = feed_failed_scenario::frame
+
+
+example post_loading
+  for PostPage as page
+  = post_loading_scenario::frame
+
+example post_lena
+  for PostPage as page default
+  = post_lena_scenario::frame
+
+example post_profile_history
+  for PostPage as page
+  note "a profile-grid tile opens a genuine post, not a decorative thumbnail"
+  = post_profile_history_scenario::frame
+
+example post_like_pending
+  for PostPage as page
+  = post_like_pending_scenario::frame
+
+example post_save_pending
+  for PostPage as page
+  = post_save_pending_scenario::frame
+
+example post_comments_open
+  for PostPage as page
+  = post_comments_open_scenario::frame
+
+
+example followers_loading
+  for FollowersPage as page
+  = followers_loading_scenario::frame
+
+example followers_lena
+  for FollowersPage as page default
+  = followers_lena_scenario::frame
+
+example followers_follow_pending
+  for FollowersPage as page
+  = followers_follow_pending_scenario::frame
+
+example followers_mira
+  for FollowersPage as page
+  = followers_mira_scenario::frame
+
+
+example following_loading
+  for FollowingPage as page
+  = following_loading_scenario::frame
+
+example following_lena
+  for FollowingPage as page default
+  = following_lena_scenario::frame
+
+example following_mira
+  for FollowingPage as page
+  = following_mira_scenario::frame
+
+
+example profile_loading
+  for ProfilePage as page
+  = profile_loading_scenario::frame
+
+example profile_lena_posts
+  for ProfilePage as page default
+  = profile_lena_posts_scenario::frame
+
+example profile_lena_tagged
+  for ProfilePage as page
+  note "the tile is Priya's real sourdough post from the seeded tag edge"
+  = profile_lena_tagged_scenario::frame
+
+example profile_self
+  for ProfilePage as page
+  = profile_self_scenario::frame
+
+example profile_self_tagged
+  for ProfilePage as page
+  note "Mira's tagged grid carries Marco's real Baja post id"
+  = profile_self_tagged_scenario::frame
+
+example profile_self_reels
+  for ProfilePage as page
+  note "Reels is a filtered view of Mira's genuine video posts"
+  = profile_self_reels_scenario::frame
+
+example profile_self_saved
+  for ProfilePage as page
+  note "Saved is private to Mira and mirrors her two seeded save edges"
+  = profile_self_saved_scenario::frame
+
+example profile_nils_posts
+  for ProfilePage as page
+  = profile_nils_posts_scenario::frame
+
+example profile_nils_reels
+  for ProfilePage as page
+  = profile_nils_reels_scenario::frame
+
+example profile_nils_tagged_empty
+  for ProfilePage as page
+  = profile_nils_tagged_empty_scenario::frame
+
+
+example reels_loading
+  for ReelsPage as page
+  = reels_loading_scenario::frame
+
+example reels_videos
+  for ReelsPage as page default
+  note "three real video posts backed by local fixture MP4s"
+  = reels_videos_scenario::frame
+
+example reels_like_pending
+  for ReelsPage as page
+  = reels_like_pending_scenario::frame
+
+example reels_save_pending
+  for ReelsPage as page
+  = reels_save_pending_scenario::frame
+
+example reels_unsave_pending
+  for ReelsPage as page
+  = reels_unsave_pending_scenario::frame
+
+
+example search_loading
+  for SearchPage as page
+  = search_loading_scenario::frame
+
+example search_explore
+  for SearchPage as page default
+  note "Explore combines real people and clickable post thumbnails"
+  = search_explore_scenario::frame
+
+example search_searching
+  for SearchPage as page
+  = search_searching_scenario::frame
+
+example search_nils_results
+  for SearchPage as page
+  = search_nils_results_scenario::frame
+
+example search_no_results
+  for SearchPage as page
+  = search_no_results_scenario::frame
+
+example search_empty_explore
+  for SearchPage as page
+  = search_empty_explore_scenario::frame
+
+
+example story_loading
+  for StoryPage as page
+  = story_loading_scenario::frame
+
+example story_unseen
+  for StoryPage as page default
+  note "first of three: no previous target, next target present, all segments unseen"
+  = story_unseen_scenario::frame
+
+example story_lena_middle
+  for StoryPage as page
+  note "middle frame exposes both previous and next hit zones"
+  = story_lena_middle_scenario::frame
+
+example story_lena_last
+  for StoryPage as page
+  note "last frame replaces Next with the close affordance"
+  = story_lena_last_scenario::frame
+
+example story_self_middle_seen
+  for StoryPage as page
+  note "Mira's own three-frame sequence is fully viewed"
+  = story_self_middle_seen_scenario::frame
+
+example story_seen
+  for StoryPage as page
+  note "a single-frame seen story has one progress segment and closes on advance"
+  = story_seen_scenario::frame
+
+example story_marking_seen
+  for StoryPage as page
+  = story_marking_seen_scenario::frame
+
+
+example bottom_nav_feed_active
+  for BottomNav as component default
+  = bottom_nav_feed_scenario::frame
+
+example bottom_nav_profile_active
+  for BottomNav as component
+  = bottom_nav_profile_scenario::frame
+
+example bottom_nav_create_active
+  for BottomNav as component
+  = bottom_nav_create_scenario::frame
+
+example bottom_nav_search_active
+  for BottomNav as component
+  = bottom_nav_search_scenario::frame
+
+example bottom_nav_reels_active
+  for BottomNav as component
+  = bottom_nav_reels_scenario::frame
+
+
+example comment_row_settled
+  for CommentRow as component default
+  = comment_row_settled_scenario::frame
+
+example comment_row_pending
+  for CommentRow as component
+  = comment_row_pending_scenario::frame
+
+
+example connection_row_following
+  for ConnectionRow as component default
+  = connection_following_scenario::frame
+
+example connection_row_follow_action
+  for ConnectionRow as component
+  = connection_follow_action_scenario::frame
+
+example connection_row_pending
+  for ConnectionRow as component
+  = connection_pending_scenario::frame
+
+
+example notice_bar_refusal
+  for NoticeBar as component default
+  = notice_refusal_scenario::frame
+
+
+example post_card_image
+  for PostCard as component default
+  = post_card_image_scenario::frame
+
+example post_card_carousel_liked
+  for PostCard as component
+  = post_card_carousel_scenario::frame
+
+example post_card_video
+  for PostCard as component
+  note "native video with a fixture MP4, poster, accessible label, and controls"
+  = post_card_video_scenario::frame
+
+example post_card_like_pending
+  for PostCard as component
+  note "busy heart during the optimistic window"
+  = post_card_like_pending_scenario::frame
+
+example post_card_save_pending
+  for PostCard as component
+  note "optimistic bookmark while the private saved-library edge settles"
+  = post_card_save_pending_scenario::frame
+
+
+example profile_header_lena
+  for ProfileHeader as component default
+  = profile_header_lena_scenario::frame
+
+example profile_header_self
+  for ProfileHeader as component
+  note "the current actor gets a New post action, never a self-follow action"
+  = profile_header_self_scenario::frame
+
+example profile_header_follow_pending
+  for ProfileHeader as component
+  = profile_header_follow_pending_scenario::frame
+
+
+example reel_card_aurora
+  for ReelCard as component default
+  note "a real vertical player surface backed by the seeded aurora MP4"
+  = reel_card_aurora_scenario::frame
+
+example reel_card_court
+  for ReelCard as component
+  = reel_card_court_scenario::frame
+
+example reel_card_save_pending
+  for ReelCard as component
+  = reel_card_save_pending_scenario::frame
+
+
+example stories_tray
+  for StoriesTray as component default
+  = stories_tray_scenario::frame
+
+
+example comments_populated
+  for CommentsSheet as surface default
+  = comments_populated_scenario::frame
+
+example comments_composing
+  for CommentsSheet as surface
+  note "composer mid-draft; post enables once non-empty"
+  = comments_composing_scenario::frame
+
+example comments_pending_append
+  for CommentsSheet as surface
+  note "optimistic dimmed row until the outcome settles"
+  = comments_pending_append_scenario::frame
+
+example comments_empty
+  for CommentsSheet as surface
+  = comments_empty_scenario::frame
+
+example comments_empty_composing
+  for CommentsSheet as surface
+  = comments_empty_composing_scenario::frame
+
+example comments_empty_pending
+  for CommentsSheet as surface
+  note "the optimistic row replaces the empty state and serializes submission"
+  = comments_empty_pending_scenario::frame
+
+example comments_rejected
+  for CommentsSheet as surface
+  note "a refusal restores the submitted body for correction"
+  = comments_rejected_scenario::frame

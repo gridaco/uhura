@@ -68,7 +68,7 @@ export function createEditorAssets(table: EditorAssetTable): AssetAppliers {
   };
 }
 
-/** Creates asynchronous/fixture asset appliers for the current Play driver. */
+/** Creates asset appliers for the canonical Play projection renderer. */
 export function createPlayAssets(resolveAsset?: ResolveAsset): AssetAppliers {
   const applied = new WeakMap<HTMLElement, Map<string, AppliedSlot>>();
   let disposed = false;

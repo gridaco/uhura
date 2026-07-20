@@ -3,8 +3,8 @@
 // focused definition at a time as a deterministic behavior graph.
 
 import type {
-  InspectionHandle,
-  InspectionState,
+  RuntimeInspectionHandle,
+  RuntimeInspectionState,
 } from "../protocol/types.js";
 import {
   createDebugController,
@@ -12,6 +12,7 @@ import {
 } from "./debug-controller.js";
 import {
   deriveDebugGraph,
+  formatDebugValue,
   type DebugDefinitionOption,
   type DebugGraphModel,
   type DebugGraphNode,
@@ -57,46 +58,42 @@ function capitalized(value: string): string {
 
 function definitionText(definition: DebugDefinitionOption): string {
   const markers: string[] = [];
-  if (definition.top) markers.push("top");
-  else if (definition.active) markers.push("mounted");
+  if (definition.active) markers.push("mounted");
   if (definition.runtime) markers.push("running");
-  if (definition.transitionTarget) markers.push("transition");
   if (definition.entry) markers.push("entry");
   const suffix = markers.length === 0 ? "" : " · " + markers.join(", ");
   return capitalized(definition.kind) + " · " + definition.label + suffix;
 }
 
-function traceEventLabel(state: InspectionState): string {
-  const trace = state.latest?.trace;
-  if (!trace) return "waiting for first step";
-  if (trace.dispatch) return trace.dispatch.on;
-  const kind = trace.event["kind"];
-  return typeof kind === "string" ? kind : "runtime event";
+function traceEventLabel(
+  publication: RuntimeInspectionState,
+): string {
+  const receipt = publication.latest?.receipt;
+  if (!receipt) return "waiting for first step";
+  if (receipt.kind === "genesis") return "genesis";
+  const value = formatDebugValue(receipt.input.value);
+  return receipt.input.source === "port"
+    ? `${receipt.input.port} · ${value}`
+    : value;
 }
 
-function traceDisposition(state: InspectionState): string {
-  const trace = state.latest?.trace;
-  if (!trace) return "idle";
-  if (trace.dispatch?.aborted) {
-    return "aborted · " + trace.dispatch.aborted;
-  }
-  if (trace.drop) return "dropped · " + trace.drop;
-  if (trace.dispatch?.selected !== null && trace.dispatch?.selected !== undefined) {
-    return "handler " + String(trace.dispatch.selected + 1);
-  }
-  if (trace.reserved) return "reserved · " + trace.reserved.event;
-  return "state updated";
+function traceDisposition(
+  publication: RuntimeInspectionState,
+): string {
+  const receipt = publication.latest?.receipt;
+  if (!receipt) return "idle";
+  if (receipt.kind === "genesis") return "admitted";
+  const resolution = receipt.resolution;
+  return resolution.kind === "fault"
+    ? `fault · ${resolution.fault.code}`
+    : `${resolution.disposition} · ${formatDebugValue(resolution.outcome)}`;
 }
 
 function nodeStatus(node: DebugGraphNode): string {
   const runtime = node.runtime;
   if (runtime.selected) return "selected";
-  if (runtime.consulted) return runtime.consulted;
   if (runtime.written) return "written";
   if (runtime.sent) return "sent";
-  if (runtime.structural) return "transition";
-  if (runtime.projectionApply) return runtime.projectionApply;
-  if (runtime.pending > 0) return String(runtime.pending) + " pending";
   if (runtime.active) return "mounted";
   return node.kind;
 }
@@ -112,12 +109,6 @@ function nodeClasses(node: DebugGraphNode, selected: boolean): string {
   if (runtime.selected) classes.push("is-runtime-selected");
   if (runtime.written) classes.push("is-written");
   if (runtime.sent) classes.push("is-sent");
-  if (runtime.structural) classes.push("is-structural");
-  if (runtime.pending > 0) classes.push("is-pending");
-  if (runtime.projectionFailures > 0 || runtime.projectionApply === "failed") {
-    classes.push("has-failure");
-  }
-  if (runtime.consulted) classes.push("is-consulted-" + runtime.consulted);
   if (selected) classes.push("is-selected");
   return classes.join(" ");
 }
@@ -126,21 +117,9 @@ function nodeRuntimeText(node: DebugGraphNode): string {
   const runtime = node.runtime;
   const states: string[] = [];
   if (runtime.active) states.push("mounted");
-  if (runtime.selected) states.push("selected handler");
-  else if (runtime.consulted) states.push("guard " + runtime.consulted);
+  if (runtime.selected) states.push("selected this step");
   if (runtime.written) states.push("written this step");
   if (runtime.sent) states.push("sent this step");
-  if (runtime.structural) states.push("structural target");
-  if (runtime.pending > 0) states.push(String(runtime.pending) + " pending");
-  if (runtime.projectionApply) {
-    states.push("projection " + runtime.projectionApply);
-  }
-  if (runtime.projectionReady > 0) {
-    states.push(String(runtime.projectionReady) + " projection snapshot");
-  }
-  if (runtime.projectionFailures > 0) {
-    states.push(String(runtime.projectionFailures) + " projection failure");
-  }
   return states.length === 0 ? "No activity in the latest step" : states.join(" · ");
 }
 
@@ -148,8 +127,8 @@ function emptyMessage(reason: DebugGraphModel["emptyReason"]): string {
   switch (reason) {
     case "disposed":
       return "Runtime inspection is unavailable for this Play session.";
-    case "no-definitions":
-      return "The checked program contains no visualizable definitions.";
+    case "no-machines":
+      return "The checked program contains no visualizable machines.";
     case "loading":
       return "Waiting for the checked program and first runtime step.";
     case null:
@@ -159,7 +138,7 @@ function emptyMessage(reason: DebugGraphModel["emptyReason"]): string {
 
 export function mountPlayDebugSurface(
   shell: PlayShell,
-  inspection: InspectionHandle,
+  inspection: RuntimeInspectionHandle,
   options: PlayDebugSurfaceOptions = {},
 ): PlayDebugSurface {
   const view = options.window ?? shell.document.defaultView ?? window;
@@ -185,12 +164,14 @@ export function mountPlayDebugSurface(
   let pinnedDefinitionId: string | null = null;
   let selectedNodeId: string | null = null;
   let userSelectedNode = false;
-  let lastState: InspectionState | null = null;
+  let lastPublication: RuntimeInspectionState | null = null;
   let currentModel: DebugGraphModel | null = null;
   let definitionSignature = "";
   let lastRuntimeNodeId: string | null = null;
+  let disclosed = false;
 
   function setDisclosure(open: boolean): void {
+    disclosed = open;
     shell.debugPanel.hidden = !open;
     shell.debugToggle.setAttribute("aria-expanded", String(open));
     const label = open ? "Close runtime debugger" : "Open runtime debugger";
@@ -237,17 +218,20 @@ export function mountPlayDebugSurface(
       );
     }
     children.push(activity);
-    if (node.span) {
+    const sourceSpans = node.sourceSpans
+      ?? (node.span ? [{ id: null, ...node.span }] : []);
+    for (const span of sourceSpans) {
       children.push(
         element(
           shell.document,
           "p",
           "uh-debug-source",
-          node.span.file
+          span.file
             + ":"
-            + String(node.span.start)
+            + String(span.start)
             + "-"
-            + String(node.span.end)
+            + String(span.end)
+            + (span.id === null ? "" : ` · ${span.id}`)
             + " · UTF-8 bytes",
         ),
       );
@@ -434,7 +418,7 @@ export function mountPlayDebugSurface(
       selectedNodeId = runtimeNode.id;
     } else if (selectedNodeId === null) {
       selectedNodeId = runtimeNode?.id
-        ?? model.nodes.find((node) => node.kind === "handler")?.id
+        ?? model.nodes.find((node) => node.lane === "handler")?.id
         ?? model.nodes[0]?.id
         ?? null;
     }
@@ -523,10 +507,12 @@ export function mountPlayDebugSurface(
     lastRuntimeNodeId = runtimeNodeId;
   }
 
-  function renderInspection(state: InspectionState): void {
-    lastState = state;
+  function renderInspection(
+    publication: RuntimeInspectionState,
+  ): void {
+    lastPublication = publication;
     const previousFocus = currentModel?.focusDefinitionId ?? null;
-    const model = deriveDebugGraph(state, {
+    const model = deriveDebugGraph(publication, {
       focusDefinitionId: followLive ? null : pinnedDefinitionId,
     });
     if (followLive) pinnedDefinitionId = model.focusDefinitionId;
@@ -540,26 +526,26 @@ export function mountPlayDebugSurface(
 
     if (model.disposed) {
       shell.debugSummary.textContent = "Debugger unavailable · inspection retired";
-    } else if (model.revision === null) {
+    } else if (model.exactSequence !== null) {
+      shell.debugSummary.textContent =
+        (model.focusDefinitionId ?? "machine")
+        + " · next sequence "
+        + model.exactSequence
+        + " · "
+        + traceEventLabel(publication)
+        + " · "
+        + traceDisposition(publication);
+    } else {
       shell.debugSummary.textContent = model.generation === null
         ? "Waiting for checked program…"
         : "Program ready · waiting for first runtime step";
-    } else {
-      shell.debugSummary.textContent =
-        (model.focusDefinitionId ?? "program")
-        + " · revision "
-        + String(model.revision)
-        + " · "
-        + traceEventLabel(state)
-        + " · "
-        + traceDisposition(state);
     }
     renderGraph(model);
   }
 
   function renderUpdate(update: DebugControllerUpdate): void {
     if (update.kind === "unavailable") {
-      lastState = null;
+      lastPublication = null;
       currentModel = null;
       definitionSignature = "";
       shell.debugDefinition.disabled = true;
@@ -577,11 +563,11 @@ export function mountPlayDebugSurface(
       renderDetails(null);
       return;
     }
-    renderInspection(update.state);
+    renderInspection(update.publication);
   }
 
   function clearTransientView(): void {
-    lastState = null;
+    lastPublication = null;
     currentModel = null;
     definitionSignature = "";
     lastRuntimeNodeId = null;
@@ -612,45 +598,45 @@ export function mountPlayDebugSurface(
   });
 
   function open(): void {
-    if (disposed || controller.isOpen) return;
+    if (disposed || disclosed) return;
     setDisclosure(true);
     controller.open();
     shell.debugClose.focus();
   }
 
   function close(restoreFocus: boolean): void {
-    if (disposed || !controller.isOpen) return;
-    controller.close();
+    if (disposed || !disclosed) return;
+    if (controller.isOpen) controller.close();
     clearTransientView();
     setDisclosure(false);
     if (restoreFocus) shell.debugToggle.focus();
   }
 
   const onToggle = (): void => {
-    if (controller.isOpen) close(false);
+    if (disclosed) close(false);
     else open();
   };
   const onClose = (): void => close(true);
   const onDefinition = (): void => {
-    if (!lastState || shell.debugDefinition.value.length === 0) return;
+    if (!lastPublication || shell.debugDefinition.value.length === 0) return;
     followLive = false;
     pinnedDefinitionId = shell.debugDefinition.value;
     selectedNodeId = null;
     userSelectedNode = false;
     shell.debugFollowLive.setAttribute("aria-pressed", "false");
-    renderInspection(lastState);
+    renderInspection(lastPublication);
   };
   const onFollowLive = (): void => {
-    if (!lastState) return;
+    if (!lastPublication) return;
     followLive = true;
     pinnedDefinitionId = null;
     selectedNodeId = null;
     userSelectedNode = false;
     shell.debugFollowLive.setAttribute("aria-pressed", "true");
-    renderInspection(lastState);
+    renderInspection(lastPublication);
   };
   const onPanelKeydown = (event: KeyboardEvent): void => {
-    if (event.key !== "Escape" || !controller.isOpen) return;
+    if (event.key !== "Escape" || !disclosed) return;
     event.preventDefault();
     event.stopPropagation();
     close(true);
@@ -709,12 +695,13 @@ export function mountPlayDebugSurface(
 
   return Object.freeze({
     get isOpen() {
-      return controller.isOpen;
+      return disclosed;
     },
     dispose(): void {
       if (disposed) return;
-      const wasOpen = controller.isOpen;
+      const wasOpen = disclosed;
       disposed = true;
+      disclosed = false;
       controller.dispose();
       resizeController.dispose();
       viewportController.dispose();
@@ -731,7 +718,7 @@ export function mountPlayDebugSurface(
       delete shell.container.dataset["debugOpen"];
       if (wasOpen) options.onOpenChange?.(false);
       shell.debugGraphContent.replaceChildren();
-      lastState = null;
+      lastPublication = null;
       currentModel = null;
       selectedNodeId = null;
     },

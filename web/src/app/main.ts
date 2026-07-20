@@ -1,5 +1,6 @@
 import type { SurfaceLoader } from "./router.js";
 import { createRouter } from "./router.js";
+import { publishLocation } from "./location.js";
 
 const root = document.getElementById("uhura-root");
 if (!root) throw new Error("Uhura application entry lost #uhura-root");
@@ -14,4 +15,9 @@ const loadPlay: SurfaceLoader = async () => {
   return mountPlay;
 };
 
-createRouter({ root, loadEditor, loadPlay }).start();
+createRouter({
+  root,
+  loadEditor,
+  loadPlay,
+  locationChanged: publishLocation,
+}).start();

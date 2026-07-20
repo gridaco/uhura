@@ -1,13 +1,18 @@
-import type {
-  Descriptor,
-  InteractionGraph,
-  Snapshot,
-  SurfaceView,
-  VNode,
-  VValue,
-} from "../protocol/types.js";
+import type { InteractionGraph } from "../protocol/types.js";
+import { decodeInteractionGraphArtifacts } from "../protocol/interaction-graph.js";
+import {
+  decodeSemanticProvenance,
+  type SemanticProvenance,
+} from "../protocol/provenance.js";
+import {
+  decodeProjectionSources,
+  decodeRenderDocument,
+  type ProjectionSources,
+  type RenderDocument,
+  type RenderNode,
+} from "../renderer/projection.js";
 
-export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/2" as const;
+export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/4" as const;
 export const EDITOR_EVENT_PROTOCOL = "uhura-editor-event/0" as const;
 export const INTERACTION_GRAPH_PROTOCOL = "uhura-interaction-graph/0" as const;
 
@@ -96,7 +101,7 @@ export type SourceTargetClass =
   | "outcome-handler"
   | "handler-parameter"
   | "example-declaration"
-  | "catalog-element"
+  | "ui-element"
   | "component-invocation"
   | "if-block"
   | "each-block"
@@ -145,24 +150,28 @@ export interface PreviewDocumentation {
   exampleDocId: string | null;
 }
 
-export type RenderRoot =
-  | { kind: "page" }
-  | { kind: "fragment" }
-  | { kind: "surface"; key: string };
-
-export interface RenderNodeRef {
-  root: RenderRoot;
-  path: number[];
-}
-
 export interface TargetOccurrence {
   id: string;
   targetId: string;
-  anchors: RenderNodeRef[];
+  /** Opaque semantic node keys from this preview's `uhura-view/1` document. */
+  anchors: string[];
 }
 
 export interface PreviewProvenance {
   occurrences: TargetOccurrence[];
+}
+
+export interface PreviewEvidence {
+  scenario: string;
+  pin: string;
+  sourceId: string;
+  sources: {
+    registration: JsonValue;
+    pin: JsonValue;
+  };
+  observation: JsonValue;
+  snapshot: JsonValue;
+  scenarioReceiptLog: JsonValue;
 }
 
 export interface ReplayGuard {
@@ -211,12 +220,33 @@ export interface EditorPreview {
   interactions: PreviewInteraction[];
   documentation: PreviewDocumentation;
   provenance: PreviewProvenance;
-  content: Snapshot | VNode;
+  evidence: PreviewEvidence | null;
+  content: PreviewContent;
+}
+
+export interface PreviewContent {
+  kind: "projection";
+  value: {
+    document: RenderDocument;
+    sources: ProjectionSources;
+  };
 }
 
 export interface EditorAsset {
   dataUri: string;
   alt: string;
+}
+
+export interface EditorMachine {
+  protocol: "uhura-machine-inspection/0";
+  identityProtocol: string;
+  deployment: JsonValue;
+  sources: JsonValue;
+  provenance: SemanticProvenance | null;
+  interactionGraph: JsonValue;
+  graphSources: JsonValue;
+  checkpoints: JsonValue;
+  evidence: JsonValue;
 }
 
 export interface EditorRender {
@@ -229,6 +259,7 @@ export interface EditorRender {
   stylesheet: string;
   assets: Record<string, EditorAsset>;
   interactionGraph: InteractionGraph;
+  machine: EditorMachine | null;
 }
 
 export interface EditorState {
@@ -369,7 +400,7 @@ const sourceTargetClasses = [
   "outcome-handler",
   "handler-parameter",
   "example-declaration",
-  "catalog-element",
+  "ui-element",
   "component-invocation",
   "if-block",
   "each-block",
@@ -377,7 +408,7 @@ const sourceTargetClasses = [
 ] as const satisfies readonly SourceTargetClass[];
 
 const annotatableTargetClasses = new Set<SourceTargetClass>([
-  "catalog-element",
+  "ui-element",
   "component-invocation",
   "if-block",
   "each-block",
@@ -485,27 +516,6 @@ const previewDocumentation = (value: unknown, path: string): PreviewDocumentatio
   };
 };
 
-const renderRoot = (value: unknown, path: string): RenderRoot => {
-  const object = record(value, path);
-  const kind = oneOf(object["kind"], `${path}.kind`, ["page", "fragment", "surface"]);
-  if (kind === "surface") {
-    exact(object, path, ["kind", "key"]);
-    return { kind, key: string(object["key"], `${path}.key`) };
-  }
-  exact(object, path, ["kind"]);
-  return { kind };
-};
-
-const renderNodeRef = (value: unknown, path: string): RenderNodeRef => {
-  const object = record(value, path);
-  exact(object, path, ["root", "path"]);
-  return {
-    root: renderRoot(object["root"], `${path}.root`),
-    path: array(object["path"], `${path}.path`).map((item, index) =>
-      nonNegativeInteger(item, `${path}.path[${index}]`)),
-  };
-};
-
 const targetOccurrence = (value: unknown, path: string): TargetOccurrence => {
   const object = record(value, path);
   exact(object, path, ["id", "targetId", "anchors"]);
@@ -513,7 +523,7 @@ const targetOccurrence = (value: unknown, path: string): TargetOccurrence => {
     id: string(object["id"], `${path}.id`),
     targetId: string(object["targetId"], `${path}.targetId`),
     anchors: array(object["anchors"], `${path}.anchors`).map((item, index) =>
-      renderNodeRef(item, `${path}.anchors[${index}]`)),
+      string(item, `${path}.anchors[${index}]`)),
   };
 };
 
@@ -526,113 +536,69 @@ const previewProvenance = (value: unknown, path: string): PreviewProvenance => {
   };
 };
 
-const descriptor = (value: unknown, path: string): Descriptor => {
+const content = (value: unknown, path: string): PreviewContent => {
   const object = record(value, path);
-  exact(object, path, ["kind", "event", "emit", "scope", "payload", "carries"]);
-  const carriesValue = object["carries"];
-  let carries: Record<string, "text" | "bool" | "int"> | undefined;
-  if (carriesValue !== undefined) {
-    carries = Object.fromEntries(Object.entries(record(carriesValue, `${path}.carries`)).map(
-      ([key, item]) => [key, oneOf(item, `${path}.carries.${key}`, ["text", "bool", "int"])],
-    ));
+  const kind = oneOf(object["kind"], `${path}.kind`, ["projection"]);
+  exact(object, path, ["kind", "value"]);
+  const projection = record(object["value"], `${path}.value`);
+  exact(projection, `${path}.value`, ["document", "sources"]);
+  try {
+    const document = decodeRenderDocument(
+      projection["document"],
+      `${path}.value.document`,
+    );
+    return {
+      kind,
+      value: {
+        document,
+        sources: decodeProjectionSources(
+          projection["sources"],
+          document,
+          `${path}.value.sources`,
+        ),
+      },
+    };
+  } catch (error) {
+    throw new EditorContractError(
+      `${path}.value`,
+      error instanceof Error ? error.message : "an Uhura machine render document",
+    );
   }
-  return {
-    kind: oneOf(object["kind"], `${path}.kind`, ["input", "observe"]),
-    event: string(object["event"], `${path}.event`),
-    emit: string(object["emit"], `${path}.emit`),
-    scope: string(object["scope"], `${path}.scope`),
-    payload: jsonValue(object["payload"], `${path}.payload`),
-    ...(carries === undefined ? {} : { carries }),
-  };
 };
 
-const vValue = (value: unknown, path: string): VValue => {
-  if (typeof value === "boolean" || typeof value === "string") return value;
-  if (typeof value === "number") return finiteNumber(value, path);
+const previewEvidence = (value: unknown, path: string): PreviewEvidence | null => {
+  if (value === null) return null;
   const object = record(value, path);
-  const tag = object["t"];
-  if (tag === "plain") {
-    exact(object, path, ["t", "v"]);
-    return { t: "plain", v: string(object["v"], `${path}.v`, true) };
-  }
-  if (tag === "image") {
-    exact(object, path, ["t", "asset"]);
-    return { t: "image", asset: string(object["asset"], `${path}.asset`) };
-  }
-  throw new EditorContractError(path, "a valid Uhura property value");
-};
-
-const vnode = (value: unknown, path: string): VNode => {
-  const object = record(value, path);
-  exact(object, path, ["key", "element", "class", "props", "children", "on"]);
-  const props = Object.fromEntries(Object.entries(record(object["props"], `${path}.props`)).map(
-    ([key, item]) => [key, vValue(item, `${path}.props.${key}`)],
-  ));
-  const childrenValue = object["children"];
-  const onValue = object["on"];
-  const children = childrenValue === undefined
-    ? undefined
-    : array(childrenValue, `${path}.children`).map((item, index) =>
-      vnode(item, `${path}.children[${index}]`));
-  const on = onValue === undefined
-    ? undefined
-    : array(onValue, `${path}.on`).map((item, index) =>
-      descriptor(item, `${path}.on[${index}]`));
+  exact(object, path, [
+    "scenario",
+    "pin",
+    "sourceId",
+    "sources",
+    "observation",
+    "snapshot",
+    "scenarioReceiptLog",
+  ]);
+  const sources = record(object["sources"], `${path}.sources`);
+  exact(sources, `${path}.sources`, ["registration", "pin"]);
   return {
-    key: string(object["key"], `${path}.key`),
-    element: string(object["element"], `${path}.element`),
-    props,
-    ...(object["class"] === undefined
-      ? {}
-      : { class: string(object["class"], `${path}.class`, true) }),
-    ...(children === undefined ? {} : { children }),
-    ...(on === undefined ? {} : { on }),
-  };
-};
-
-const surface = (value: unknown, path: string): SurfaceView => {
-  const object = record(value, path);
-  exact(object, path, ["key", "definition", "modality", "restore-focus", "dismiss", "root"]);
-  return {
-    key: string(object["key"], `${path}.key`),
-    definition: string(object["definition"], `${path}.definition`),
-    modality: string(object["modality"], `${path}.modality`),
-    ...(object["restore-focus"] === undefined
-      ? {}
-      : { "restore-focus": string(object["restore-focus"], `${path}.restore-focus`) }),
-    dismiss: descriptor(object["dismiss"], `${path}.dismiss`),
-    root: vnode(object["root"], `${path}.root`),
-  };
-};
-
-const snapshot = (value: UnknownRecord, path: string): Snapshot => {
-  exact(value, path, ["protocol", "revision", "page", "surfaces"]);
-  if (value["protocol"] !== "uhura-view/0") {
-    throw new EditorContractError(`${path}.protocol`, JSON.stringify("uhura-view/0"));
-  }
-  const page = record(value["page"], `${path}.page`);
-  exact(page, `${path}.page`, ["route", "root"]);
-  return {
-    protocol: "uhura-view/0",
-    revision: nonNegativeInteger(value["revision"], `${path}.revision`),
-    page: {
-      route: string(page["route"], `${path}.page.route`, true),
-      root: vnode(page["root"], `${path}.page.root`),
+    scenario: string(object["scenario"], `${path}.scenario`),
+    pin: string(object["pin"], `${path}.pin`),
+    sourceId: string(object["sourceId"], `${path}.sourceId`),
+    sources: {
+      registration: jsonValue(
+        sources["registration"],
+        `${path}.sources.registration`,
+      ),
+      pin: jsonValue(sources["pin"], `${path}.sources.pin`),
     },
-    surfaces: array(value["surfaces"], `${path}.surfaces`).map((item, index) =>
-      surface(item, `${path}.surfaces[${index}]`)),
+    observation: jsonValue(object["observation"], `${path}.observation`),
+    snapshot: jsonValue(object["snapshot"], `${path}.snapshot`),
+    scenarioReceiptLog: jsonValue(
+      object["scenarioReceiptLog"],
+      `${path}.scenarioReceiptLog`,
+    ),
   };
 };
-
-const content = (value: unknown, path: string): Snapshot | VNode => {
-  const object = record(value, path);
-  return object["protocol"] === "uhura-view/0"
-    ? snapshot(object, path)
-    : vnode(object, path);
-};
-
-const isSnapshotContent = (value: Snapshot | VNode): value is Snapshot =>
-  "protocol" in value && value.protocol === "uhura-view/0";
 
 const dataSource = (value: unknown, path: string): PreviewDataSource | null => {
   if (value === null) return null;
@@ -768,16 +734,11 @@ const preview = (value: unknown, path: string): EditorPreview => {
   const object = record(value, path);
   exact(object, path, [
     "id", "identity", "sourceFile", "default", "pinned", "derived", "inFlight", "from", "note",
-    "replaySteps", "replay", "data", "interactions", "documentation", "provenance", "content",
+    "replaySteps", "replay", "data", "interactions", "documentation", "provenance", "evidence",
+    "content",
   ]);
   const previewIdentity = identity(object["identity"], `${path}.identity`);
   const previewContent = content(object["content"], `${path}.content`);
-  if ((previewIdentity.kind === "page") !== isSnapshotContent(previewContent)) {
-    throw new EditorContractError(
-      `${path}.content`,
-      previewIdentity.kind === "page" ? "an uhura-view/0 snapshot" : "a fragment VNode",
-    );
-  }
   const replaySteps = array(object["replaySteps"], `${path}.replaySteps`).map((item, index) =>
     string(item, `${path}.replaySteps[${index}]`));
   const replay = array(object["replay"], `${path}.replay`).map((item, index) =>
@@ -804,6 +765,7 @@ const preview = (value: unknown, path: string): EditorPreview => {
       interaction(item, `${path}.interactions[${index}]`)),
     documentation: previewDocumentation(object["documentation"], `${path}.documentation`),
     provenance: previewProvenance(object["provenance"], `${path}.provenance`),
+    evidence: previewEvidence(object["evidence"], `${path}.evidence`),
     content: previewContent,
   };
 };
@@ -846,7 +808,11 @@ const validateAuthoring = (
   const targets = new Map(authoring.targets.map((target) => [target.id, target]));
   const entries = new Map(authoring.entries.map((entry) => [entry.id, entry]));
   const orders = new Map<string, number[]>();
-  const annotationTargets = new Set<string>();
+  const projectionSourceTargets = new Set(
+    previews.flatMap((preview) =>
+      preview.provenance.occurrences.map((occurrence) => occurrence.targetId)
+    ),
+  );
 
   for (const [index, entry] of authoring.entries.entries()) {
     const entryPath = `$.render.authoring.entries[${index}]`;
@@ -867,7 +833,6 @@ const validateAuthoring = (
       ) {
         throw new EditorContractError(entryPath, "annotation metadata on an annotatable target");
       }
-      annotationTargets.add(entry.targetId);
     }
     const targetOrders = orders.get(entry.targetId) ?? [];
     targetOrders.push(entry.order);
@@ -884,7 +849,9 @@ const validateAuthoring = (
       }
     });
   }
-  const unusedTarget = authoring.targets.find((target) => !orders.has(target.id));
+  const unusedTarget = authoring.targets.find((target) =>
+    !orders.has(target.id) && !projectionSourceTargets.has(target.id)
+  );
   if (unusedTarget) {
     throw new EditorContractError(
       "$.render.authoring.targets",
@@ -944,22 +911,18 @@ const validateAuthoring = (
       if (
         !target
         || !annotatableTargetClasses.has(target.class)
-        || !annotationTargets.has(occurrence.targetId)
       ) {
         throw new EditorContractError(
           `${occurrencePath}.targetId`,
-          "an annotation-bearing annotatable source target id",
+          "an annotatable source target id",
         );
       }
-      unique(
-        occurrence.anchors.map((anchor) => JSON.stringify(anchor)),
-        `${occurrencePath}.anchors`,
-      );
+      unique(occurrence.anchors, `${occurrencePath}.anchors`);
       for (const [anchorIndex, anchor] of occurrence.anchors.entries()) {
         if (!anchorResolves(preview.content, anchor)) {
           throw new EditorContractError(
             `${occurrencePath}.anchors[${anchorIndex}]`,
-            "a semantic node path in this preview",
+            "a semantic node key in this preview",
           );
         }
       }
@@ -967,25 +930,16 @@ const validateAuthoring = (
   }
 };
 
-const anchorResolves = (contentValue: Snapshot | VNode, anchor: RenderNodeRef): boolean => {
-  let node: VNode | undefined;
-  if (isSnapshotContent(contentValue)) {
-    if (anchor.root.kind === "page") node = contentValue.page.root;
-    else if (anchor.root.kind === "surface") {
-      const key = anchor.root.key;
-      const matching = contentValue.surfaces.filter((surfaceValue) => surfaceValue.key === key);
-      if (matching.length === 1) node = matching[0]?.root;
-    }
-  } else if (anchor.root.kind === "fragment") {
-    node = contentValue;
-  }
-  if (!node) return false;
-  for (const index of anchor.path) {
-    node = node.children?.[index];
-    if (!node) return false;
-  }
-  return true;
-};
+const projectionNodeHasKey = (
+  nodes: readonly RenderNode[],
+  key: string,
+): boolean => nodes.some((node) =>
+  node.key === key
+  || (node.kind === "element" && projectionNodeHasKey(node.children, key))
+);
+
+const anchorResolves = (contentValue: PreviewContent, anchor: string): boolean =>
+  projectionNodeHasKey(contentValue.value.document.nodes, anchor);
 
 const validateReferences = (groups: PreviewGroup[], previews: EditorPreview[]): void => {
   unique(groups.map((item) => item.id), "$.render.groups[].id");
@@ -1088,12 +1042,82 @@ const interactionGraph = (value: unknown, path: string): InteractionGraph => {
   };
 };
 
+const editorMachine = (value: unknown, path: string): EditorMachine | null => {
+  if (value === null) return null;
+  const object = record(value, path);
+  exact(object, path, [
+    "protocol",
+    "identityProtocol",
+    "deployment",
+    "sources",
+    "provenance",
+    "interactionGraph",
+    "graphSources",
+    "checkpoints",
+    "evidence",
+  ]);
+  if (object["protocol"] !== "uhura-machine-inspection/0") {
+    throw new EditorContractError(
+      `${path}.protocol`,
+      JSON.stringify("uhura-machine-inspection/0"),
+    );
+  }
+  const sources = jsonValue(object["sources"], `${path}.sources`);
+  decodeInteractionGraphArtifacts(
+    object["interactionGraph"],
+    object["graphSources"],
+  );
+  const provenance = decodeSemanticProvenance(
+    object["provenance"],
+    `${path}.provenance`,
+  );
+  if (provenance !== null) {
+    const inventory = new Map(
+      array(object["sources"], `${path}.sources`).map((value, index) => {
+        const sourcePath = `${path}.sources[${index}]`;
+        const source = record(value, sourcePath);
+        return [
+          string(source["path"], `${sourcePath}.path`),
+          {
+            sha256: string(source["sha256"], `${sourcePath}.sha256`),
+            bytes: nonNegativeInteger(source["bytes"], `${sourcePath}.bytes`),
+          },
+        ] as const;
+      }),
+    );
+    for (const semanticSource of provenance.sources) {
+      const physical = inventory.get(semanticSource.path);
+      if (
+        physical === undefined
+        || physical.sha256 !== semanticSource.sha256
+        || physical.bytes !== semanticSource.bytes
+      ) {
+        throw new EditorContractError(
+          `${path}.provenance.sources`,
+          "entries matching the accepted source inventory",
+        );
+      }
+    }
+  }
+  return {
+    protocol: "uhura-machine-inspection/0",
+    identityProtocol: string(object["identityProtocol"], `${path}.identityProtocol`),
+    deployment: jsonValue(object["deployment"], `${path}.deployment`),
+    sources,
+    provenance,
+    interactionGraph: jsonValue(object["interactionGraph"], `${path}.interactionGraph`),
+    graphSources: jsonValue(object["graphSources"], `${path}.graphSources`),
+    checkpoints: jsonValue(object["checkpoints"], `${path}.checkpoints`),
+    evidence: jsonValue(object["evidence"], `${path}.evidence`),
+  };
+};
+
 const render = (value: unknown, path: string, sourceRevision: number): EditorRender | null => {
   if (value === null) return null;
   const object = record(value, path);
   exact(object, path, [
     "revision", "freshness", "application", "authoring", "groups", "previews", "stylesheet",
-    "assets", "interactionGraph",
+    "assets", "interactionGraph", "machine",
   ]);
   const revision = positiveRevision(object["revision"], `${path}.revision`);
   const freshness = oneOf(object["freshness"], `${path}.freshness`, ["current", "stale"]);
@@ -1125,6 +1149,7 @@ const render = (value: unknown, path: string, sourceRevision: number): EditorRen
     stylesheet: string(object["stylesheet"], `${path}.stylesheet`, true),
     assets,
     interactionGraph: interactionGraph(object["interactionGraph"], `${path}.interactionGraph`),
+    machine: editorMachine(object["machine"], `${path}.machine`),
   };
 };
 

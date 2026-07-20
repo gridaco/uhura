@@ -1,2 +1,0 @@
-error[UH3009 types/unguarded-projection-read]: `feed-page` is absent until delivered — in markup, read it through `{#match feed-page}` availability arms (§9.2)
-  --> app/feed/page.uhura:197:8

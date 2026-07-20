@@ -13,7 +13,6 @@ uhura-syntax = { workspace = true }
 uhura-check = { workspace = true }
 uhura-port = { workspace = true, features = ["toml"] }
 uhura-core = { workspace = true }
-uhura-fixture = { workspace = true }
 uhura-editor-model = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

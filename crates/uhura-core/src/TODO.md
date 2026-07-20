@@ -13,8 +13,8 @@ difficulty is S/M/L/XL, and every item here necessarily involves engine work.
 
 - [ ] **[P1][L][Engine work: Yes] Decide and encode component runtime-instance
       semantics.**
-  - **Owner:** `state.rs`, `view.rs`, `inspect.rs`, the Wasm ABI, and protocol
-    mirrors.
+  - **Owner:** `runtime.rs`, `render.rs`, `graph.rs`, the Wasm session, and
+    browser protocol mirrors.
   - First decide whether authored components are inspectable runtime instances
     or only reusable static topology in the current language semantics.
   - If they are instances, expose stable instance identity, owning scope,
@@ -27,7 +27,8 @@ difficulty is S/M/L/XL, and every item here necessarily involves engine work.
 
 - [ ] **[P2][L][Engine work: Yes] Record richer evaluated trace facts only when
       a concrete debugger view needs them.**
-  - **Owner:** `trace.rs`, `eval.rs`, `step.rs`, `inspect.rs`, and the Wasm ABI.
+  - **Owner:** reaction receipts and inspection in `runtime.rs`, static
+    topology in `graph.rs`, and the Wasm session ABI.
   - Candidate facts include evaluated guard inputs/results, expression-level
     reads, and explicit value provenance.
   - Keep tracing observational: enabling inspection must not change evaluation
@@ -41,8 +42,8 @@ difficulty is S/M/L/XL, and every item here necessarily involves engine work.
 
 - [ ] **[P2][XL][Engine work: Yes] Design real pause, step, restore, and replay
       semantics.**
-  - **Owner:** `step.rs`, `state.rs`, the driver/provider boundary, Wasm session
-    ownership, and the Play pump.
+  - **Owner:** checkpoints and reactions in `runtime.rs`, Wasm session
+    ownership, and the browser adapter host.
   - Treat this as a runtime project, not a timeline UI feature. Historical
     inspection records are immutable observations and are not valid mutable
     session objects.
@@ -57,7 +58,8 @@ difficulty is S/M/L/XL, and every item here necessarily involves engine work.
 
 - [ ] **[P2][L][Engine work: Yes] Measure and, only if justified, add a compact
       inspection encoding.**
-  - **Owner:** `inspect.rs`, protocol types, Wasm ABI, and the browser store.
+  - **Owner:** `runtime.rs`, `graph.rs`, host-inspection protocol types, the
+    Wasm ABI, and the browser store.
   - Start with representative size and update-frequency measurements; the web
     tracker can impose a byte budget without changing this protocol.
   - If full snapshots are too expensive, design versioned deltas with an

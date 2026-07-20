@@ -14,9 +14,10 @@ import {
   reusablePreviewFrameIds,
   reusablePreviewIds,
 } from "../editor-updates.js";
+import { elementNode, projectionContent, textNode } from "./fixtures/projection.js";
 
 const state = (sourceRevision: number): EditorState => ({
-  protocol: "uhura-editor-state/2",
+  protocol: "uhura-editor-state/4",
   sourceRevision,
   diagnostics: null,
   render: null,
@@ -43,11 +44,10 @@ const preview = (id: string, content = id): EditorPreview => ({
   interactions: [],
   documentation: { declarationDocId: null, exampleDocId: null },
   provenance: { occurrences: [] },
-  content: {
-    key: "root",
-    element: "text",
-    props: { content: { t: "plain", v: content } },
-  },
+  evidence: null,
+  content: projectionContent([
+    elementNode("root", [textNode("content", content)]),
+  ]),
 });
 
 const render = (
@@ -70,6 +70,7 @@ const render = (
     photo: { dataUri: "data:image/png;base64,AA==", alt: "Photo" },
   },
   interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
+  machine: null,
 });
 
 test("every connection open fetches, including equal counters after a restart", () => {
@@ -170,11 +171,13 @@ test("semantic selection survives replacement and disappears with its preview", 
         interactions: [],
         documentation: { declarationDocId: null, exampleDocId: null },
         provenance: { occurrences: [] },
-        content: { key: "root", element: "view", props: {} },
+        evidence: null,
+        content: projectionContent(),
       }],
       stylesheet: "",
       assets: {},
       interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
+      machine: null,
     },
   };
 
@@ -204,7 +207,7 @@ test("authoring-only changes reuse semantic DOM", () => {
   const next = structuredClone(render(4));
   next.authoring.targets.push({
     id: "target",
-    class: "catalog-element",
+    class: "ui-element",
     file: "card.uhura",
     span: {
       offset: 10,
@@ -218,7 +221,7 @@ test("authoring-only changes reuse semantic DOM", () => {
   next.previews[0]!.provenance.occurrences.push({
     id: "occurrence",
     targetId: "target",
-    anchors: [{ root: { kind: "fragment" }, path: [] }],
+    anchors: ["root"],
   });
 
   assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);

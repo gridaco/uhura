@@ -1,26 +1,42 @@
-//! uhura-check: the whole front half as a pure function over in-memory
-//! inputs — routes from file paths, resolution, the catalog-as-data model +
-//! meta-schema (module `catalog`), port linking, typecheck, markup/style
-//! rules, example resolution (replay folds uhura-core's step_u), and
-//! lowering to the checked IR (design §12.1). The CLI walks the filesystem;
-//! this crate never does.
+//! Uhura's pure static semantics and lowering pass.
+//!
+//! The checker consumes a source-spanned project and returns the one canonical
+//! machine program plus diagnostics. Filesystem and host policy stay outside
+//! this crate.
 #![deny(clippy::float_arithmetic)]
 
-pub mod catalog;
-pub mod examples;
-pub mod fixture;
+pub mod assets;
+mod checker;
+mod diagnostic;
 pub mod icon_fonts;
-pub mod infer;
-pub mod lower;
-pub mod manifest;
-pub mod markup;
-pub mod metadata;
-pub mod pipeline;
-pub mod preview;
-pub mod replay;
-pub mod resolve;
-pub mod style;
-pub mod types;
+pub mod project_lock;
+pub mod project_manifest;
+pub mod resource_manifest;
+mod types;
+pub mod v04;
+mod v04_evidence;
+mod v04_parts;
+pub mod v04_provenance;
+mod v04_topology;
+mod v04_updates;
 
+pub use assets::{AssetInput, CheckedAsset, CheckedAssets};
+pub use checker::{CheckOutput, DeferredEvidence, DeferredPresentation, check_project};
+pub use diagnostic::{codes, error, warning};
 pub use icon_fonts::{CheckedIconFamily, CheckedIconFonts, IconFontInput};
-pub use pipeline::{CheckInput, CheckOutput, LockStatus, SourceInput, check};
+pub use v04::{
+    CapturedPackageModules as V04CapturedPackageModules,
+    ResolutionMetadata as V04ResolutionMetadata, ResolvedBinding as V04ResolvedBinding,
+    ResolvedDeclaration as V04ResolvedDeclaration, ResolvedProject as ResolvedV04Project,
+    ResolvedSource as V04ResolvedSource, check_module as check_v04_module,
+    check_package_graph_with_evidence as check_v04_package_graph_with_evidence,
+    check_project_modules as check_v04_project_modules,
+    check_project_modules_with_evidence as check_v04_project_modules_with_evidence,
+    check_resolved_project as check_resolved_v04_project,
+    check_resolved_project_with_evidence as check_resolved_v04_project_with_evidence,
+    resolve_project_modules as resolve_v04_project_modules,
+};
+pub use v04_provenance::{V04ProvenanceBuildError, build_v04_provenance};
+
+#[cfg(test)]
+mod tests;

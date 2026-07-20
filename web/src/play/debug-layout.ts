@@ -81,12 +81,22 @@ const LANE_LABELS: Readonly<Record<DebugLane, string>> = {
 };
 
 const KIND_ORDER: Readonly<Record<DebugGraphNode["kind"], number>> = {
-  event: 0,
-  projection: 1,
-  state: 2,
-  handler: 3,
-  command: 4,
-  definition: 5,
+  module: -2,
+  part: -1,
+  port: 0,
+  "ui-event": 1,
+  input: 2,
+  transition: 3,
+  "commit-hook": 4,
+  computed: 4.5,
+  invariant: 4.55,
+  observation: 4.6,
+  update: 4.7,
+  state: 5,
+  command: 6,
+  outcome: 7,
+  presentation: 8,
+  machine: 9,
 };
 
 function compareText(left: string, right: string): number {

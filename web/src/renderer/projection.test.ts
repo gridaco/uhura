@@ -1,0 +1,948 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { natural } from "../protocol/machine.js";
+import type { Value } from "../protocol/machine.js";
+import {
+  createProjectionRenderer,
+  decodeProjectionSources,
+  decodeRenderDocument,
+} from "./projection.js";
+import type { RenderDocument } from "./projection.js";
+
+const documentValue = (text: string): RenderDocument => ({
+  protocol: "uhura-view/1",
+  presentation: "example@1::Web",
+  machine: "example@1::Machine",
+  instance: "example/1",
+  sequence: natural("0"),
+  nodes: [
+    {
+      kind: "element",
+      key: "main",
+      element: "main",
+      attributes: [{ name: "aria-label", value: "Example" }],
+      events: [],
+      surface: false,
+      children: [
+        {
+          kind: "element",
+          key: "button",
+          element: "button",
+          attributes: [],
+          events: [{ event: "press", binding: "press-1" }],
+          surface: false,
+          children: [{ kind: "text", key: "label", text }],
+        },
+      ],
+    },
+  ],
+});
+
+class FakeClassList {
+  readonly #element: FakeElement;
+
+  constructor(element: FakeElement) {
+    this.#element = element;
+  }
+
+  add(...tokens: string[]): void {
+    const next = new Set(this.#tokens());
+    for (const token of tokens) next.add(token);
+    this.#write(next);
+  }
+
+  contains(token: string): boolean {
+    return this.#tokens().includes(token);
+  }
+
+  toggle(token: string, force?: boolean): boolean {
+    const next = new Set(this.#tokens());
+    const enabled = force ?? !next.has(token);
+    if (enabled) next.add(token);
+    else next.delete(token);
+    this.#write(next);
+    return enabled;
+  }
+
+  #tokens(): string[] {
+    return this.#element.className.split(/\s+/u).filter(Boolean);
+  }
+
+  #write(tokens: ReadonlySet<string>): void {
+    this.#element.className = [...tokens].join(" ");
+  }
+}
+
+abstract class FakeNode {
+  abstract readonly nodeType: number;
+  parentNode: FakeElement | null = null;
+  readonly ownerDocument: FakeDocument;
+
+  constructor(document: FakeDocument) {
+    this.ownerDocument = document;
+  }
+
+  get nextSibling(): FakeNode | null {
+    if (!this.parentNode) return null;
+    const index = this.parentNode.childNodes.indexOf(this);
+    return this.parentNode.childNodes[index + 1] ?? null;
+  }
+
+  remove(): void {
+    if (!this.parentNode) return;
+    const index = this.parentNode.childNodes.indexOf(this);
+    if (index >= 0) this.parentNode.childNodes.splice(index, 1);
+    this.parentNode = null;
+  }
+}
+
+class FakeText extends FakeNode {
+  readonly nodeType = 3;
+  data: string;
+
+  constructor(document: FakeDocument, data: string) {
+    super(document);
+    this.data = data;
+  }
+}
+
+interface FakeEventInit {
+  readonly isComposing?: boolean;
+}
+
+class FakeElement extends FakeNode {
+  readonly nodeType = 1;
+  readonly localName: string;
+  readonly tagName: string;
+  readonly dataset: Record<string, string> = {};
+  readonly classList = new FakeClassList(this);
+  readonly style = { cssText: "" };
+  readonly #attributes = new Map<string, string>();
+  readonly #listeners = new Map<string, Set<EventListener>>();
+  childNodes: FakeNode[] = [];
+  inert = false;
+  value = "";
+  type = "";
+  disabled = false;
+  readOnly = false;
+  autoplay = false;
+  muted = false;
+  loop = false;
+  controls = false;
+  playsInline = false;
+  scrollLeft = 0;
+  scrollTop = 0;
+  scrollWidth = 0;
+  scrollHeight = 0;
+  clientWidth = 0;
+  clientHeight = 0;
+
+  constructor(document: FakeDocument, name: string) {
+    super(document);
+    this.localName = name.toLowerCase();
+    this.tagName = this.localName.toUpperCase();
+  }
+
+  get className(): string {
+    return this.#attributes.get("class") ?? "";
+  }
+
+  set className(value: string) {
+    if (value.length === 0) this.#attributes.delete("class");
+    else this.#attributes.set("class", value);
+  }
+
+  get children(): FakeElement[] {
+    return this.childNodes.filter(
+      (node): node is FakeElement => node.nodeType === 1,
+    );
+  }
+
+  get firstChild(): FakeNode | null {
+    return this.childNodes[0] ?? null;
+  }
+
+  get lastElementChild(): FakeElement | null {
+    return this.children.at(-1) ?? null;
+  }
+
+  get textContent(): string {
+    return this.childNodes.map((node) =>
+      node instanceof FakeText
+        ? node.data
+        : node instanceof FakeElement
+          ? node.textContent
+          : ""
+    ).join("");
+  }
+
+  set textContent(value: string) {
+    this.replaceChildren(
+      ...(value.length === 0 ? [] : [this.ownerDocument.createTextNode(value)]),
+    );
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.#attributes.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.#attributes.get(name) ?? null;
+  }
+
+  hasAttribute(name: string): boolean {
+    return this.#attributes.has(name);
+  }
+
+  removeAttribute(name: string): void {
+    this.#attributes.delete(name);
+  }
+
+  toggleAttribute(name: string, force?: boolean): boolean {
+    const enabled = force ?? !this.hasAttribute(name);
+    if (enabled) this.setAttribute(name, "");
+    else this.removeAttribute(name);
+    return enabled;
+  }
+
+  append(...nodes: FakeNode[]): void {
+    for (const node of nodes) this.insertBefore(node, null);
+  }
+
+  insertBefore(node: FakeNode, reference: FakeNode | null): FakeNode {
+    node.remove();
+    const index = reference === null
+      ? this.childNodes.length
+      : this.childNodes.indexOf(reference);
+    this.childNodes.splice(index < 0 ? this.childNodes.length : index, 0, node);
+    node.parentNode = this;
+    return node;
+  }
+
+  replaceChildren(...nodes: FakeNode[]): void {
+    for (const child of this.childNodes) child.parentNode = null;
+    this.childNodes = [];
+    this.append(...nodes);
+  }
+
+  contains(candidate: FakeElement): boolean {
+    return candidate === this
+      || this.children.some((child) => child.contains(candidate));
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    let eventListeners = this.#listeners.get(type);
+    if (!eventListeners) {
+      eventListeners = new Set();
+      this.#listeners.set(type, eventListeners);
+    }
+    eventListeners.add(listener);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+
+  emit(type: string, init: FakeEventInit = {}): void {
+    const event = {
+      type,
+      isComposing: init.isComposing ?? false,
+      preventDefault: vi.fn<() => void>(),
+    } as unknown as Event;
+    for (const listener of this.#listeners.get(type) ?? []) {
+      listener.call(this as unknown as EventTarget, event);
+    }
+  }
+
+  click(): void {
+    this.emit("click");
+  }
+}
+
+class FakeDocument {
+  readonly defaultView = undefined;
+
+  createElement(name: string): FakeElement {
+    return new FakeElement(this, name);
+  }
+
+  createTextNode(value: string): FakeText {
+    return new FakeText(this, value);
+  }
+}
+
+const fakeRoot = (): {
+  readonly root: HTMLElement;
+  readonly element: FakeElement;
+} => {
+  const document = new FakeDocument();
+  const element = document.createElement("div");
+  return {
+    root: element as unknown as HTMLElement,
+    element,
+  };
+};
+
+type ElementRenderNode = Extract<
+  RenderDocument["nodes"][number],
+  { readonly kind: "element" }
+>;
+
+const elementNode = (
+  key: string,
+  element: string,
+  attributes: readonly {
+    readonly name: string;
+    readonly value: boolean | string;
+  }[] = [],
+  children: readonly RenderDocument["nodes"][number][] = [],
+  events: readonly { readonly event: string; readonly binding: string }[] = [],
+): ElementRenderNode => ({
+  kind: "element",
+  key,
+  element,
+  attributes,
+  events,
+  children,
+  surface: false,
+});
+
+const renderNodes = (
+  nodes: readonly RenderDocument["nodes"][number][],
+): RenderDocument => ({
+  ...documentValue("fixture"),
+  nodes,
+});
+
+describe("Uhura render protocol", () => {
+  it("requires exact-text sequence values", () => {
+    expect(decodeRenderDocument({
+      ...documentValue("valid"),
+      sequence: "9007199254740993",
+    }).sequence).toBe("9007199254740993");
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("invalid"),
+        sequence: 1,
+      })
+    ).toThrow(/sequence must be text/);
+  });
+
+  it("accepts only canonical hash text for live projection identity", () => {
+    expect(decodeRenderDocument({
+      ...documentValue("valid"),
+      projectionHash: "a".repeat(64),
+    }).projectionHash).toBe("a".repeat(64));
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("invalid"),
+        projectionHash: "not-a-hash",
+      })
+    ).toThrow(/Uhura hash/u);
+  });
+
+  it("rejects unknown fields at every document and render-node boundary", () => {
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("document"),
+        ambient: true,
+      })
+    ).toThrow(/Uhura render document.*wrong fields/u);
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("text"),
+        nodes: [{
+          kind: "text",
+          key: "label",
+          text: "Text",
+          ambient: true,
+        }],
+      })
+    ).toThrow(/nodes\[0\].*wrong fields/u);
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("element"),
+        nodes: [{
+          kind: "element",
+          key: "main",
+          element: "main",
+          attributes: [],
+          events: [],
+          children: [],
+          surface: false,
+          ambient: true,
+        }],
+      })
+    ).toThrow(/nodes\[0\].*wrong fields/u);
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("attribute"),
+        nodes: [{
+          kind: "element",
+          key: "main",
+          element: "main",
+          attributes: [{
+            name: "aria-label",
+            value: "Example",
+            ambient: true,
+          }],
+          events: [],
+          children: [],
+          surface: false,
+        }],
+      })
+    ).toThrow(/attributes\[0\].*wrong fields/u);
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("event"),
+        nodes: [{
+          kind: "element",
+          key: "main",
+          element: "main",
+          attributes: [],
+          events: [{
+            event: "press",
+            binding: "press-1",
+            ambient: true,
+          }],
+          children: [],
+          surface: false,
+        }],
+      })
+    ).toThrow(/events\[0\].*wrong fields/u);
+    expect(() =>
+      decodeRenderDocument({
+        ...documentValue("undefined hash"),
+        projectionHash: undefined,
+      })
+    ).toThrow(/projectionHash must be text/u);
+  });
+
+  it("requires projection sources to cover the exact rendered key set", () => {
+    const document = documentValue("ready");
+    const source = {
+      id: "ui/main",
+      path: "app.uhura",
+      start: 0,
+      end: 4,
+    };
+    const decoded = decodeProjectionSources({
+      protocol: "uhura-projection-sources/0",
+      presentation: document.presentation,
+      nodes: {
+        main: source,
+        button: { ...source, id: "ui/button", start: 5, end: 11 },
+        label: { ...source, id: "ui/label", start: 12, end: 17 },
+      },
+    }, document);
+    expect(Object.keys(decoded.nodes)).toEqual(["main", "button", "label"]);
+
+    expect(() => decodeProjectionSources({
+      ...decoded,
+      nodes: { main: source },
+    }, document)).toThrow(/every rendered key exactly/u);
+    expect(() => decodeProjectionSources({
+      ...decoded,
+      presentation: "other@1::Web",
+    }, document)).toThrow(/must match its render document/u);
+  });
+});
+
+describe("Uhura semantic primitive projection", () => {
+  it("maps button state and classes without changing raw HTML passthrough", () => {
+    const { root, element } = fakeRoot();
+    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const renderer = createProjectionRenderer({
+      root,
+      dispatch,
+      mode: "play",
+    });
+    renderer.render(renderNodes([
+      elementNode("main", "main", [
+        { name: "class", value: "document-main" },
+        { name: "aria-label", value: "Raw main" },
+        { name: "data-trace", value: "kept" },
+      ], [
+        elementNode("action", "button", [
+          { name: "class", value: "primary" },
+          { name: "label", value: "Publish" },
+          { name: "busy", value: true },
+          { name: "pressed", value: false },
+          { name: "current", value: true },
+          { name: "disabled", value: true },
+        ]),
+        elementNode(
+          "native-input",
+          "input",
+          [
+            { name: "class", value: "native-search" },
+            { name: "type", value: "text" },
+            { name: "value", value: "initial" },
+            { name: "aria-label", value: "Native search" },
+          ],
+          [],
+          [{ event: "input", binding: "native-change" }],
+        ),
+      ]),
+    ]));
+
+    const main = element.children[0]!;
+    const button = main.children[0]!;
+    const input = main.children[1]!;
+    expect(main.className).toBe("document-main");
+    expect(main.getAttribute("aria-label")).toBe("Raw main");
+    expect(main.getAttribute("data-trace")).toBe("kept");
+    expect(button.className).toBe("uh-button primary");
+    expect(button.getAttribute("type")).toBe("button");
+    expect(button.getAttribute("aria-label")).toBe("Publish");
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(button.getAttribute("aria-current")).toBe("true");
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(button.disabled).toBe(true);
+    expect(button.hasAttribute("label")).toBe(false);
+    expect(button.hasAttribute("busy")).toBe(false);
+    expect(button.hasAttribute("pressed")).toBe(false);
+    expect(button.hasAttribute("current")).toBe(false);
+    expect(input.className).toBe("native-search");
+    expect(input.getAttribute("type")).toBe("text");
+    expect(input.getAttribute("aria-label")).toBe("Native search");
+    expect(input.value).toBe("initial");
+    input.value = "next";
+    input.emit("input");
+    expect(dispatch).toHaveBeenCalledWith("native-change", {
+      $: "record",
+      fields: [{ name: "value", value: { $: "Text", value: "next" } }],
+    });
+
+    renderer.render(renderNodes([
+      elementNode("main", "main", [], [
+        elementNode("action", "button", [
+          { name: "class", value: "secondary" },
+          { name: "label", value: "Publish" },
+          { name: "busy", value: false },
+          { name: "current", value: false },
+          { name: "disabled", value: false },
+        ]),
+      ]),
+    ]));
+    const updated = element.children[0]!.children[0]!;
+    expect(updated).toBe(button);
+    expect(updated.className).toBe("uh-button secondary");
+    expect(updated.hasAttribute("aria-busy")).toBe(false);
+    expect(updated.hasAttribute("aria-pressed")).toBe(false);
+    expect(updated.hasAttribute("aria-current")).toBe(false);
+    expect(updated.hasAttribute("disabled")).toBe(false);
+    expect(updated.disabled).toBe(false);
+
+    renderer.render(renderNodes([{
+      ...elementNode("surface", "dialog", [
+        { name: "class", value: "comments-sheet" },
+      ]),
+      surface: true,
+    }]));
+    const surface = element.children[0]!;
+    expect(surface.className).toBe("uhura-surface comments-sheet");
+    renderer.render(renderNodes([{
+      ...elementNode("surface", "dialog", [
+        { name: "class", value: "policy-sheet" },
+      ]),
+      surface: true,
+    }]));
+    expect(element.children[0]).toBe(surface);
+    expect(surface.className).toBe("uhura-surface policy-sheet");
+  });
+
+  it("realizes scroll and region semantics and keeps Editor effects inert", () => {
+    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const play = fakeRoot();
+    createProjectionRenderer({
+      root: play.root,
+      dispatch,
+      mode: "play",
+    }).render(renderNodes([
+      elementNode("scroll", "scroll", [
+        { name: "class", value: "rail" },
+        { name: "direction", value: "horizontal" },
+      ]),
+      elementNode(
+        "region",
+        "region",
+        [
+          { name: "class", value: "card" },
+          { name: "label", value: "Open profile" },
+          { name: "supplementary", value: true },
+        ],
+        [],
+        [{ event: "activate", binding: "open" }],
+      ),
+    ]));
+    const scroll = play.element.children[0]!;
+    const region = play.element.children[1]!;
+    expect(scroll.className).toBe("uh-scroll rail");
+    expect(scroll.getAttribute("data-direction")).toBe("horizontal");
+    expect(scroll.hasAttribute("direction")).toBe(false);
+    expect(region.className).toBe("uh-region card");
+    expect(region.getAttribute("role")).toBe("button");
+    expect(region.getAttribute("tabindex")).toBe("0");
+    expect(region.getAttribute("aria-label")).toBe("Open profile");
+    expect(region.hasAttribute("label")).toBe(false);
+    expect(region.hasAttribute("supplementary")).toBe(false);
+    region.click();
+    expect(dispatch).toHaveBeenCalledWith("open", {
+      $: "record",
+      fields: [],
+    });
+
+    const editorDispatch =
+      vi.fn<(binding: string, event: Value) => void>();
+    const editor = fakeRoot();
+    createProjectionRenderer({
+      root: editor.root,
+      dispatch: editorDispatch,
+      mode: "editor",
+    }).render(renderNodes([
+      elementNode(
+        "region",
+        "region",
+        [{ name: "label", value: "Open profile" }],
+        [],
+        [{ event: "activate", binding: "open" }],
+      ),
+    ]));
+    const editorRegion = editor.element.children[0]!;
+    expect(editor.element.inert).toBe(true);
+    expect(editorRegion.getAttribute("role")).toBe("button");
+    expect(editorRegion.hasAttribute("tabindex")).toBe(false);
+    editorRegion.click();
+    expect(editorDispatch).not.toHaveBeenCalled();
+  });
+
+  it("owns pager children through a stable track and synchronizes dot mechanics", () => {
+    const { root, element } = fakeRoot();
+    const renderer = createProjectionRenderer({
+      root,
+      dispatch: vi.fn<(binding: string, event: Value) => void>(),
+      mode: "play",
+    });
+    const pages = [
+      elementNode("first", "view", [], [{
+        kind: "text",
+        key: "first-text",
+        text: "First",
+      }]),
+      elementNode("second", "view", [], [{
+        kind: "text",
+        key: "second-text",
+        text: "Second",
+      }]),
+    ] as const;
+    renderer.render(renderNodes([
+      elementNode("pager", "pager", [
+        { name: "class", value: "gallery" },
+        { name: "label", value: "Post media" },
+        { name: "indicator", value: "dots" },
+      ], pages),
+    ]));
+
+    const pager = element.children[0]!;
+    const track = pager.children.find(
+      (child) => child.dataset["uhMechanic"] === "track",
+    )!;
+    const dots = pager.children.find(
+      (child) => child.dataset["uhMechanic"] === "dots",
+    )!;
+    expect(pager.className).toBe("uh-pager gallery");
+    expect(pager.getAttribute("role")).toBe("group");
+    expect(pager.getAttribute("aria-label")).toBe("Post media");
+    expect(pager.hasAttribute("label")).toBe(false);
+    expect(pager.hasAttribute("indicator")).toBe(false);
+    expect(track.className).toBe("uh-track");
+    expect(track.children.map((child) => child.className)).toEqual([
+      "uh-view",
+      "uh-view",
+    ]);
+    expect(dots.className).toBe("uh-dots");
+    expect(dots.children).toHaveLength(2);
+    expect(dots.children[0]!.classList.contains("on")).toBe(true);
+
+    track.clientWidth = 100;
+    track.scrollLeft = 100;
+    track.emit("scroll");
+    expect(dots.children[0]!.classList.contains("on")).toBe(false);
+    expect(dots.children[1]!.classList.contains("on")).toBe(true);
+
+    renderer.render(renderNodes([
+      elementNode("pager", "pager", [
+        { name: "label", value: "Post media" },
+        { name: "indicator", value: "none" },
+      ], pages),
+    ]));
+    const updatedPager = element.children[0]!;
+    expect(
+      updatedPager.children.find(
+        (child) => child.dataset["uhMechanic"] === "track",
+      ),
+    ).toBe(track);
+    expect(
+      updatedPager.children.some(
+        (child) => child.dataset["uhMechanic"] === "dots",
+      ),
+    ).toBe(false);
+  });
+
+  it("realizes textfield as a wrapper and dispatches from its input mechanic", () => {
+    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const play = fakeRoot();
+    createProjectionRenderer({
+      root: play.root,
+      dispatch,
+      mode: "play",
+    }).render(renderNodes([
+      elementNode(
+        "field",
+        "textfield",
+        [
+          { name: "class", value: "query" },
+          { name: "label", value: "Search" },
+          { name: "placeholder", value: "Find people" },
+          { name: "value", value: "mi" },
+          { name: "disabled", value: false },
+        ],
+        [],
+        [{ event: "change", binding: "search" }],
+      ),
+    ]));
+    const wrapper = play.element.children[0]!;
+    const input = wrapper.children[0]!;
+    expect(wrapper.localName).toBe("div");
+    expect(wrapper.className).toBe("uh-textfield query");
+    expect(wrapper.hasAttribute("label")).toBe(false);
+    expect(wrapper.hasAttribute("value")).toBe(false);
+    expect(input.localName).toBe("input");
+    expect(input.dataset["uhMechanic"]).toBe("input");
+    expect(input.getAttribute("aria-label")).toBe("Search");
+    expect(input.getAttribute("placeholder")).toBe("Find people");
+    expect(input.value).toBe("mi");
+    expect(input.readOnly).toBe(false);
+
+    wrapper.emit("input");
+    expect(dispatch).not.toHaveBeenCalled();
+    input.value = "mira";
+    input.emit("input");
+    expect(dispatch).toHaveBeenCalledWith("search", {
+      $: "record",
+      fields: [{ name: "text", value: { $: "Text", value: "mira" } }],
+    });
+
+    const editorDispatch =
+      vi.fn<(binding: string, event: Value) => void>();
+    const editor = fakeRoot();
+    createProjectionRenderer({
+      root: editor.root,
+      dispatch: editorDispatch,
+      mode: "editor",
+    }).render(renderNodes([
+      elementNode(
+        "field",
+        "textfield",
+        [
+          { name: "label", value: "Search" },
+          { name: "value", value: "static" },
+        ],
+        [],
+        [{ event: "change", binding: "search" }],
+      ),
+    ]));
+    const editorInput = editor.element.children[0]!.children[0]!;
+    expect(editorInput.readOnly).toBe(true);
+    editorInput.value = "changed";
+    editorInput.emit("input");
+    expect(editorDispatch).not.toHaveBeenCalled();
+  });
+
+  it("filters media and icon semantics through renderer capabilities", () => {
+    const applyImage = vi.fn<
+      (image: HTMLImageElement, asset: string | undefined) => void
+    >((image, asset) => {
+      if (asset) image.setAttribute("src", `resolved:${asset}`);
+    });
+    const applyVideoSource = vi.fn<
+      (video: HTMLVideoElement, asset: string | undefined) => void
+    >((video, asset) => {
+      if (asset) video.setAttribute("src", `resolved:${asset}`);
+      else video.removeAttribute("src");
+    });
+    const applyVideoPoster = vi.fn<
+      (video: HTMLVideoElement, asset: string | undefined) => void
+    >((video, asset) => {
+      if (asset) video.setAttribute("poster", `resolved:${asset}`);
+    });
+    const applyIcon = vi.fn<
+      (
+        host: HTMLElement,
+        family: string | undefined,
+        name: string,
+      ) => void
+    >((host, _family, name) => {
+      host.textContent = `glyph:${name}`;
+    });
+    const capabilities = {
+      assets: { applyImage, applyVideoSource, applyVideoPoster },
+      icons: {
+        defaultFamily: "lucide",
+        fingerprint: "font-1",
+        apply: applyIcon,
+      },
+    };
+
+    const editor = fakeRoot();
+    createProjectionRenderer({
+      root: editor.root,
+      dispatch: vi.fn<(binding: string, event: Value) => void>(),
+      mode: "editor",
+      ...capabilities,
+    }).render(renderNodes([
+      elementNode("image", "img", [
+        { name: "class", value: "avatar" },
+        { name: "src", value: "avatar-mira" },
+        { name: "decorative", value: true },
+      ]),
+      elementNode("video", "video", [
+        { name: "src", value: "clip" },
+        { name: "poster", value: "cover" },
+        { name: "label", value: "Reel" },
+        { name: "autoplay", value: true },
+        { name: "muted", value: true },
+        { name: "controls", value: true },
+      ]),
+      elementNode("icon", "icon", [
+        { name: "name", value: "heart" },
+        { name: "family", value: "lucide" },
+      ]),
+    ]));
+    const image = editor.element.children[0]!;
+    const video = editor.element.children[1]!;
+    const icon = editor.element.children[2]!;
+    expect(image.className).toBe("uh-img avatar");
+    expect(image.getAttribute("alt")).toBe("");
+    expect(image.getAttribute("src")).toBe("resolved:avatar-mira");
+    expect(image.hasAttribute("decorative")).toBe(false);
+    expect(applyImage).toHaveBeenCalledWith(image, "avatar-mira");
+    expect(video.className).toBe("uh-video");
+    expect(video.getAttribute("aria-label")).toBe("Reel");
+    expect(video.getAttribute("data-video-preview")).toBe("poster");
+    expect(video.hasAttribute("autoplay")).toBe(false);
+    expect(video.hasAttribute("muted")).toBe(false);
+    expect(video.hasAttribute("controls")).toBe(false);
+    expect(video.autoplay).toBe(false);
+    expect(video.muted).toBe(false);
+    expect(applyVideoSource).toHaveBeenCalledWith(video, undefined);
+    expect(applyVideoPoster).toHaveBeenCalledWith(video, "cover");
+    expect(icon.className).toBe("uh-icon");
+    expect(icon.getAttribute("aria-hidden")).toBe("true");
+    expect(icon.hasAttribute("name")).toBe(false);
+    expect(icon.hasAttribute("family")).toBe(false);
+    expect(icon.dataset["icon"]).toBe("heart");
+    expect(icon.textContent).toBe("glyph:heart");
+
+    const play = fakeRoot();
+    createProjectionRenderer({
+      root: play.root,
+      dispatch: vi.fn<(binding: string, event: Value) => void>(),
+      mode: "play",
+      ...capabilities,
+    }).render(renderNodes([
+      elementNode("video", "video", [
+        { name: "src", value: "clip" },
+        { name: "poster", value: "cover" },
+        { name: "label", value: "Reel" },
+        { name: "autoplay", value: true },
+        { name: "muted", value: true },
+        { name: "loop", value: true },
+        { name: "controls", value: true },
+        { name: "playsinline", value: true },
+      ]),
+    ]));
+    const playVideo = play.element.children[0]!;
+    expect(playVideo.getAttribute("src")).toBe("resolved:clip");
+    expect(playVideo.hasAttribute("data-video-preview")).toBe(false);
+    expect(playVideo.hasAttribute("autoplay")).toBe(true);
+    expect(playVideo.hasAttribute("muted")).toBe(true);
+    expect(playVideo.hasAttribute("loop")).toBe(true);
+    expect(playVideo.hasAttribute("controls")).toBe(true);
+    expect(playVideo.hasAttribute("playsinline")).toBe(true);
+    expect(playVideo.autoplay).toBe(true);
+    expect(playVideo.muted).toBe(true);
+    expect(playVideo.loop).toBe(true);
+    expect(playVideo.controls).toBe(true);
+    expect(playVideo.playsInline).toBe(true);
+    expect(applyVideoSource).toHaveBeenLastCalledWith(playVideo, "clip");
+  });
+});
+
+// The repository intentionally has no synthetic DOM package. These checks run
+// when Vitest is given a browser environment; Play's browser smoke test is the
+// required renderer gate in the default toolchain.
+const describeDom = typeof window === "undefined" ? describe.skip : describe;
+
+describeDom("Uhura view renderer", () => {
+  it("reconciles stable keyed DOM and dispatches semantic events", () => {
+    const root = window.document.createElement("div");
+    const dispatch = vi.fn<(binding: string, event: Value) => void>();
+    const observeElement = vi.fn<(key: string, element: HTMLElement) => void>();
+    const renderer = createProjectionRenderer({ root, dispatch, observeElement });
+    renderer.render(documentValue("First"));
+    const button = root.querySelector("button");
+    expect(button?.textContent).toBe("First");
+    expect(observeElement).toHaveBeenCalledWith("button", button);
+    observeElement.mockClear();
+    renderer.render(documentValue("Second"));
+    expect(root.querySelector("button")).toBe(button);
+    expect(observeElement).toHaveBeenCalledWith("button", button);
+    button?.click();
+    expect(dispatch).toHaveBeenCalledWith("press-1", {
+      $: "record",
+      fields: [],
+    });
+  });
+
+  it("keeps a keyed Surface physical dialog across projections", () => {
+    const root = window.document.createElement("div");
+    const renderer = createProjectionRenderer({
+      root,
+      dispatch: () => undefined,
+    });
+    const surface: RenderDocument = {
+      ...documentValue("x"),
+      nodes: [
+        {
+          kind: "element",
+          key: "surface-7",
+          element: "dialog",
+          attributes: [],
+          events: [],
+          surface: true,
+          children: [{ kind: "text", key: "surface-text", text: "Policy" }],
+        },
+      ],
+    };
+    renderer.render(surface);
+    const dialog = root.querySelector("dialog");
+    const surfaceRoot = surface.nodes[0];
+    if (surfaceRoot?.kind !== "element") {
+      throw new Error("expected the surface fixture root");
+    }
+    renderer.render({
+      ...surface,
+      nodes: [
+        {
+          ...surfaceRoot,
+          children: [{ kind: "text", key: "surface-text", text: "Updated" }],
+        },
+      ],
+    });
+    expect(root.querySelector("dialog")).toBe(dialog);
+    expect(dialog?.textContent).toBe("Updated");
+  });
+});

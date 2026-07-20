@@ -13,7 +13,7 @@ use ttf_parser::{Face, Tag};
 use uhura_base::{Ident, hash_json, sha256_hex};
 use wuff::decompress_woff2_with_custom_brotli;
 
-use crate::manifest::IconsConfig;
+use crate::resource_manifest::IconsConfig;
 
 const LUCIDE_FONT: &[u8] = include_bytes!("../../../resources/icon-fonts/lucide/lucide.woff2");
 const LUCIDE_GLYPHS: &str = include_str!("../../../resources/icon-fonts/lucide/glyphs.json");

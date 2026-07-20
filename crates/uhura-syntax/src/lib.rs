@@ -1,15 +1,18 @@
-//! uhura-syntax: mode-switching lexer (Dsl / Markup / Expr / Style /
-//! Examples), recursive-descent parsers with recovery, AST, and the one
-//! canonical trivia-preserving formatter (design §4, §12.2).
+//! The canonical Uhura source layer: a UTF-8 lexer, source-spanned AST,
+//! recursive-descent parser, checked UI parser, and deterministic formatter.
 
 pub mod ast;
-pub mod css;
-mod cursor;
 mod format;
+mod lexer;
 mod parser;
-mod token;
+mod ui;
+pub mod v04;
 
-pub use cursor::Cursor;
-pub use format::{expr_str, format_examples, format_module, type_str};
-pub use parser::{ParseOutput, Parsed, SourceKind, parse};
-pub use token::{Comment, CommentKind, Token, TokenKind};
+pub use ast::SourceId;
+pub use format::format;
+pub use parser::{
+    Parse, ParseDiagnostic, ParseDiagnosticKind, ProjectParse, SourceFile, parse, parse_project,
+};
+
+#[cfg(test)]
+mod tests;

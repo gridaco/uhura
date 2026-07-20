@@ -3,25 +3,33 @@ import { test } from "vitest";
 
 import { RealizationResources } from "../editor-realization.js";
 
-test("registry resolves direct semantic references and transfers one live owner", () => {
+test("registry resolves semantic keys and transfers one live owner", () => {
   const resources = new RealizationResources();
   const firstOwner = {};
   const nextOwner = {};
   const element = {} as HTMLElement;
   resources.claim(firstOwner);
-  resources.register({ root: { kind: "surface", key: "sheet:2" }, path: [1, 0], element });
+  resources.registerKey("sheet:2/action", element);
 
-  assert.equal(
-    resources.resolve({ root: { kind: "surface", key: "sheet:2" }, path: [1, 0] }),
-    element,
-  );
-  assert.equal(resources.resolve({ root: { kind: "surface", key: "sheet:2" }, path: [0] }), null);
+  assert.equal(resources.resolve("sheet:2/action"), element);
+  assert.equal(resources.resolve("sheet:2/missing"), null);
   resources.transfer(firstOwner, nextOwner);
   resources.release(firstOwner);
   assert.equal(resources.disposed, false, "the old model cannot dispose a transplanted registry");
   resources.release(nextOwner);
   assert.equal(resources.disposed, true);
-  assert.equal(resources.resolve({ root: { kind: "surface", key: "sheet:2" }, path: [1, 0] }), null);
+  assert.equal(resources.resolve("sheet:2/action"), null);
+});
+
+test("registry resolves  semantic keys without ShadowRoot queries", () => {
+  const resources = new RealizationResources();
+  const owner = {};
+  const element = {} as HTMLElement;
+  resources.claim(owner);
+  resources.registerKey("main/action", element);
+
+  assert.equal(resources.resolve("main/action"), element);
+  assert.equal(resources.resolve("main/missing"), null);
 });
 
 test("unused candidate resources dispose independently", () => {
@@ -62,7 +70,7 @@ test("watchers move with ownership and release scroll/resize resources", () => {
   const nextOwner = {};
   const resources = new RealizationResources();
   resources.claim(firstOwner);
-  resources.register({ root: { kind: "fragment" }, path: [], element: realized });
+  resources.registerKey("root", realized);
   let firstInvalidations = 0;
   resources.watch(firstOwner, frame, window, () => { firstInvalidations += 1; });
   root.dispatchEvent(new Event("scroll"));

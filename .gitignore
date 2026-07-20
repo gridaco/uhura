@@ -5,4 +5,7 @@
 /web/node_modules
 /web/dist
 /examples/instagram/client/providers/dist
+/examples/instagram/client/build
+/examples/applications/*/answers/*/build
+/examples/programs/answers/*/build
 .DS_Store

@@ -1,0 +1,492 @@
+pub machine BoundedCounter {
+  config {
+    minimum: Int,
+    maximum: Int,
+    initial: Int,
+  }
+
+  require minimum <= initial && initial <= maximum;
+
+  events {
+    Increment,
+    Decrement,
+    Reset,
+  }
+
+  outcomes {
+    commit Accepted,
+  }
+
+  state {
+    count: Int = initial,
+  }
+
+  invariant minimum <= count && count <= maximum;
+
+  observe {
+    count,
+    at_minimum: count == minimum,
+    at_maximum: count == maximum,
+  }
+
+  on Increment {
+    count = min(count + 1, maximum);
+    Accepted
+  }
+
+  on Decrement {
+    count = max(count - 1, minimum);
+    Accepted
+  }
+
+  on Reset {
+    count = initial;
+    Accepted
+  }
+}
+
+enum Side {
+  Left,
+  Right,
+}
+
+enum Entity {
+  Farmer,
+  Wolf,
+  Goat,
+  Cabbage,
+}
+
+enum Cargo {
+  Wolf,
+  Goat,
+  Cabbage,
+}
+
+enum Violation {
+  WolfWithGoat,
+  GoatWithCabbage,
+}
+
+enum RiverStatus {
+  InProgress,
+  Solved,
+}
+
+struct Crossing {
+  passenger: Option<Cargo>,
+  departure: Side,
+  arrival: Side,
+}
+
+enum Refusal {
+  PassengerNotWithFarmer {
+    passenger: Cargo,
+  },
+  Unsafe {
+    violations: NonEmpty<Violation>,
+  },
+}
+
+const INITIAL_POSITIONS: Table<Entity, Side> = Table::from([
+  (Entity::Farmer, Side::Left),
+  (Entity::Wolf, Side::Left),
+  (Entity::Goat, Side::Left),
+  (Entity::Cabbage, Side::Left),
+]);
+
+fn entity(cargo: Cargo) -> Entity {
+  match cargo {
+    Cargo::Wolf => Entity::Wolf,
+    Cargo::Goat => Entity::Goat,
+    Cargo::Cabbage => Entity::Cabbage,
+  }
+}
+
+fn opposite(side: Side) -> Side {
+  match side {
+    Side::Left => Side::Right,
+    Side::Right => Side::Left,
+  }
+}
+
+fn violations(at: Table<Entity, Side>) -> Seq<Violation> {
+  Seq::from_options([
+    if at[Entity::Wolf] == at[Entity::Goat]
+      && at[Entity::Farmer] != at[Entity::Wolf]
+    {
+      Some(Violation::WolfWithGoat)
+    } else {
+      None
+    },
+    if at[Entity::Goat] == at[Entity::Cabbage]
+      && at[Entity::Farmer] != at[Entity::Goat]
+    {
+      Some(Violation::GoatWithCabbage)
+    } else {
+      None
+    },
+  ])
+}
+
+pub machine RiverCrossing {
+  events {
+    Cross(passenger: Option<Cargo>),
+  }
+
+  outcomes {
+    commit Accepted(crossing: Crossing),
+    abort Refused(reason: Refusal),
+  }
+
+  state {
+    positions: Table<Entity, Side> = INITIAL_POSITIONS,
+  }
+
+  invariant violations(positions).is_empty();
+
+  observe {
+    positions,
+    status: if positions.values().all(|side| side == Side::Right) {
+      RiverStatus::Solved
+    } else {
+      RiverStatus::InProgress
+    },
+  }
+
+  on Cross(passenger) {
+    let departure = positions[Entity::Farmer];
+
+    if passenger is Some(cargo)
+      && positions[entity(cargo)] != departure
+    {
+      return Refused(Refusal::PassengerNotWithFarmer {
+        passenger: cargo,
+      });
+    }
+
+    let arrival = opposite(departure);
+    let farmer_moved = positions.set(Entity::Farmer, arrival);
+    let candidate = match passenger {
+      None => farmer_moved,
+      Some(cargo) => farmer_moved.set(entity(cargo), arrival),
+    };
+
+    match NonEmpty::checked_from(violations(candidate)) {
+      Some(harms) => Refused(Refusal::Unsafe {
+        violations: harms,
+      }),
+      None => {
+        positions = candidate;
+        Accepted(Crossing {
+          passenger,
+          departure,
+          arrival,
+        })
+      },
+    }
+  }
+}
+
+pub key TaskId(Text);
+
+enum Terminal {
+  Success,
+  Failure,
+}
+
+enum Phase {
+  Queued,
+  Running {
+    attempt: PositiveInt,
+    progress: Ratio,
+  },
+  Succeeded,
+  Failed,
+  Cancelled,
+}
+
+struct Task {
+  phase: Phase,
+  started: Nat,
+}
+
+struct Running {
+  task: TaskId,
+  attempt: PositiveInt,
+  progress: Ratio,
+}
+
+pub machine KeyedTaskSupervisor {
+  const LIMIT: Nat = 2;
+
+  events {
+    Submit(task: TaskId),
+    Cancel(task: TaskId),
+    Retry(task: TaskId),
+    Progress(task: TaskId, attempt: Int, value: BoundaryNumber),
+    Succeed(task: TaskId, attempt: Int),
+    Fail(task: TaskId, attempt: Int),
+  }
+
+  commands {
+    Start(task: TaskId, attempt: PositiveInt),
+    Cancel(task: TaskId, attempt: PositiveInt),
+  }
+
+  outcomes {
+    commit Accepted,
+    abort Duplicate,
+    abort Stale,
+    abort Invalid,
+  }
+
+  state {
+    tasks: Map<TaskId, Task> = Map::empty(),
+    queue: Seq<TaskId> = [],
+  }
+
+  computed running_count: Nat =
+    tasks.values().count(|task| task.phase is Phase::Running { .. });
+
+  computed running: Set<Running> =
+    Set::filter_map(tasks.entries(), |entry|
+      match entry.value.phase {
+        Phase::Running { attempt, progress } => Some(Running {
+          task: entry.key,
+          attempt,
+          progress,
+        }),
+        _ => None,
+      }
+    );
+
+  computed available_capacity: Nat = LIMIT - running_count;
+
+  invariant {
+    running_count <= LIMIT,
+    queue.is_unique(),
+    queue.all(|id| tasks.get(id) is Some(Task {
+      phase: Phase::Queued,
+      ..
+    })),
+    tasks.entries().all(|entry|
+      (entry.value.phase is Phase::Queued) == queue.contains(entry.key)
+    ),
+    queue.is_empty() || running_count == LIMIT,
+    tasks.values().all(|task|
+      match task.phase {
+        Phase::Running { attempt, .. } => task.started == attempt,
+        _ => true,
+      }
+    ),
+  }
+
+  observe {
+    tasks,
+    queue,
+    running,
+    available_capacity,
+  }
+
+  update resolve_terminal(
+    id: TaskId,
+    attempt: Int,
+    terminal: Terminal,
+  ) -> Outcome {
+    if attempt <= 0 {
+      return Invalid;
+    }
+
+    let task = match tasks.get(id) {
+      None => return Invalid,
+      Some(task) => task,
+    };
+
+    if attempt > task.started {
+      return Invalid;
+    }
+
+    if attempt < task.started {
+      return Stale;
+    }
+
+    match task.phase {
+      Phase::Running {
+        attempt: current_attempt,
+        ..
+      } => {
+        if current_attempt != attempt {
+          unreachable;
+        }
+
+        let phase = match terminal {
+          Terminal::Success => Phase::Succeeded,
+          Terminal::Failure => Phase::Failed,
+        };
+
+        tasks = tasks.put(id, Task {
+          phase,
+          ..task
+        });
+        Accepted
+      },
+      Phase::Succeeded => {
+        if terminal == Terminal::Success {
+          return Duplicate;
+        }
+        Stale
+      },
+      Phase::Failed => {
+        if terminal == Terminal::Failure {
+          return Duplicate;
+        }
+        Stale
+      },
+      Phase::Queued | Phase::Cancelled => Stale,
+    }
+  }
+
+  on Submit(id) {
+    match tasks.get(id) {
+      Some(_) => Invalid,
+      None => {
+        tasks = tasks.put(id, Task {
+          phase: Phase::Queued,
+          started: 0,
+        });
+        queue = queue.append(id);
+        Accepted
+      },
+    }
+  }
+
+  on Cancel(id) {
+    match tasks.get(id) {
+      None => Invalid,
+      Some(task) => match task.phase {
+        Phase::Queued => {
+          queue = queue.without(id);
+          tasks = tasks.put(id, Task {
+            phase: Phase::Cancelled,
+            ..task
+          });
+          Accepted
+        },
+        Phase::Running { attempt, .. } => {
+          tasks = tasks.put(id, Task {
+            phase: Phase::Cancelled,
+            ..task
+          });
+          emit Cancel(id, attempt);
+          Accepted
+        },
+        Phase::Cancelled => Duplicate,
+        Phase::Succeeded | Phase::Failed => Invalid,
+      },
+    }
+  }
+
+  on Retry(id) {
+    match tasks.get(id) {
+      None => Invalid,
+      Some(task) => match task.phase {
+        Phase::Failed | Phase::Cancelled => {
+          tasks = tasks.put(id, Task {
+            phase: Phase::Queued,
+            ..task
+          });
+          queue = queue.append(id);
+          Accepted
+        },
+        Phase::Queued | Phase::Running { .. } | Phase::Succeeded => Invalid,
+      },
+    }
+  }
+
+  on Progress(id, attempt, value) {
+    if attempt <= 0 {
+      return Invalid;
+    }
+
+    let next = match Ratio::checked_from(value) {
+      None => return Invalid,
+      Some(progress) => progress,
+    };
+
+    let task = match tasks.get(id) {
+      None => return Invalid,
+      Some(task) => task,
+    };
+
+    if attempt > task.started {
+      return Invalid;
+    }
+
+    if attempt < task.started {
+      return Stale;
+    }
+
+    match task.phase {
+      Phase::Running {
+        attempt: current_attempt,
+        progress: current,
+      } => {
+        if current_attempt != attempt {
+          unreachable;
+        }
+        if next < current {
+          return Stale;
+        }
+        if next == current {
+          return Duplicate;
+        }
+
+        tasks = tasks.put(id, Task {
+          phase: Phase::Running {
+            attempt,
+            progress: next,
+          },
+          ..task
+        });
+        Accepted
+      },
+      Phase::Queued
+      | Phase::Succeeded
+      | Phase::Failed
+      | Phase::Cancelled => Stale,
+    }
+  }
+
+  on Succeed(id, attempt) {
+    resolve_terminal(id, attempt, Terminal::Success)
+  }
+
+  on Fail(id, attempt) {
+    resolve_terminal(id, attempt, Terminal::Failure)
+  }
+
+  before commit {
+    while running_count < LIMIT
+      && queue.uncons() is Some(Uncons { head: id, tail: rest })
+    decreases(queue.len()) {
+      let task = match tasks.get(id) {
+        None => {
+          unreachable;
+        },
+        Some(task) => task,
+      };
+      let attempt: PositiveInt = task.started + 1;
+
+      queue = rest;
+      tasks = tasks.put(id, Task {
+        phase: Phase::Running {
+          attempt,
+          progress: 0.0,
+        },
+        started: attempt,
+      });
+      emit Start(id, attempt);
+    }
+  }
+}

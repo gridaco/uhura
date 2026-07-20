@@ -1,22 +1,39 @@
-// Pure projection from the versioned inspection protocol into the small,
-// focused behavior graph consumed by Play's developer UI. Runtime values only
-// decorate static nodes: they never decide which nodes exist, so a focused
-// graph keeps the same geometry while the machine advances.
+// Pure projection from admitted machine topology and immutable runtime
+// inspection into the focused behavior graph consumed by Play's developer UI.
+// Receipts decorate the checked graph; they never invent topology or claim
+// execution details that the machine boundary does not expose.
 
 import type {
-  DeepReadonly,
-  InspectProgramEdge,
-  InspectProgramNode,
-  InspectSourceSpan,
-  InspectionState,
-  StepTrace,
-  TraceGuardNote,
+  RuntimeInspectionState,
 } from "../protocol/types.js";
+import type {
+  GraphEdgeKind,
+  GraphNodeKind,
+  GraphSourceRef,
+  OutcomePolicy,
+} from "../protocol/interaction-graph.js";
+import type {
+  ReactionReceipt,
+  ResolvedCommand,
+  ResolvedInput,
+  Value,
+} from "../protocol/machine.js";
 
 export type DebugLane = "input" | "handler" | "effect";
-export type DebugDefinitionKind = "page" | "surface" | "component";
-export type DebugProjectionApply = "applied" | "dropped-stale" | "failed";
+export type DebugDefinitionKind = "machine";
 export type DebugEdgeActivity = "idle" | "context" | "taken";
+export type DebugGraphNodeKind = GraphNodeKind;
+export type DebugGraphEdgeKind = GraphEdgeKind;
+
+export interface DebugSourceSpan {
+  /** Stable source inventory identity from the admitted inspection artifact. */
+  readonly id: string | null;
+  readonly file: string;
+  /** Inclusive UTF-8 byte offset; this is not a JavaScript string index. */
+  readonly start: number;
+  /** Exclusive UTF-8 byte offset; this is not a JavaScript string index. */
+  readonly end: number;
+}
 
 export interface DebugDefinitionOption {
   readonly id: string;
@@ -24,59 +41,53 @@ export interface DebugDefinitionOption {
   readonly label: string;
   readonly entry: boolean;
   readonly active: boolean;
-  readonly top: boolean;
   readonly runtime: boolean;
-  readonly transitionTarget: boolean;
 }
 
 export interface DebugNodeRuntime {
-  /** The owning definition is mounted, or this definition target is mounted. */
+  /** The node belongs to the admitted machine instance. */
   readonly active: boolean;
-  /** The node participated in the latest retained step. */
+  /** The node participated in the latest retained receipt. */
   readonly current: boolean;
   readonly selected: boolean;
-  readonly consulted: TraceGuardNote["guard"] | null;
   readonly written: boolean;
   readonly sent: boolean;
-  readonly pending: number;
-  readonly projectionApply: DebugProjectionApply | null;
-  readonly projectionReady: number;
-  readonly projectionFailures: number;
-  readonly structural: boolean;
 }
 
 export interface DebugGraphNode {
   readonly id: string;
-  readonly kind: InspectProgramNode["kind"];
+  readonly kind: DebugGraphNodeKind;
   readonly lane: DebugLane;
-  readonly definitionId: string | null;
+  readonly definitionId: string;
   readonly label: string;
   readonly detail: string | null;
-  /** Source-order hint. Handler nodes use their absolute handler index. */
+  /** Stable source-order hint within a lane. */
   readonly order: number;
-  readonly span: InspectSourceSpan | null;
+  readonly span: Omit<DebugSourceSpan, "id"> | null;
+  readonly sourceSpans: readonly DebugSourceSpan[];
   readonly runtime: DebugNodeRuntime;
 }
 
 export interface DebugGraphEdge {
   readonly id: string;
-  readonly kind: InspectProgramEdge["kind"];
+  readonly kind: DebugGraphEdgeKind;
   readonly from: string;
   readonly to: string;
   readonly label: string;
-  readonly order: number | null;
-  readonly mode: "push" | "replace" | null;
+  readonly order: number;
   readonly activity: DebugEdgeActivity;
+  readonly sourceSpans: readonly DebugSourceSpan[];
 }
 
-export type DebugEmptyReason = "loading" | "disposed" | "no-definitions";
+export type DebugEmptyReason = "loading" | "disposed" | "no-machines";
 
 export interface DebugGraphModel {
   readonly disposed: boolean;
   readonly emptyReason: DebugEmptyReason | null;
   readonly generation: number | null;
   readonly programHash: string | null;
-  readonly revision: number | null;
+  /** Exact machine sequence text. Never projected through a JavaScript number. */
+  readonly exactSequence: string | null;
   readonly focusDefinitionId: string | null;
   readonly runtimeDefinitionId: string | null;
   readonly definitions: readonly DebugDefinitionOption[];
@@ -85,26 +96,27 @@ export interface DebugGraphModel {
 }
 
 export interface DeriveDebugGraphOptions {
-  /** A valid definition pins focus; absent/invalid focus follows the runtime. */
+  /** A valid machine ID pins focus; absent/invalid focus follows the runtime. */
   readonly focusDefinitionId?: string | null;
 }
 
-type ProgramNode = DeepReadonly<InspectProgramNode>;
-type ProgramEdge = DeepReadonly<InspectProgramEdge>;
-
-const DEFINITION_KIND_ORDER: Readonly<Record<DebugDefinitionKind, number>> = {
-  page: 0,
-  surface: 1,
-  component: 2,
-};
-
-const NODE_KIND_ORDER: Readonly<Record<InspectProgramNode["kind"], number>> = {
-  event: 0,
-  projection: 1,
-  state: 2,
-  handler: 3,
-  command: 4,
-  definition: 5,
+const NODE_KIND_ORDER: Readonly<Record<GraphNodeKind, number>> = {
+  module: -2,
+  part: -1,
+  port: 0,
+  "ui-event": 1,
+  input: 2,
+  transition: 3,
+  "commit-hook": 4,
+  computed: 4.5,
+  invariant: 4.55,
+  observation: 4.6,
+  update: 4.7,
+  state: 5,
+  command: 6,
+  outcome: 7,
+  presentation: 8,
+  machine: 9,
 };
 
 const LANE_ORDER: Readonly<Record<DebugLane, number>> = {
@@ -117,39 +129,11 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function definitionIdForNode(node: ProgramNode): string | null {
-  switch (node.kind) {
-    case "definition":
-      return node.id;
-    case "event":
-    case "handler":
-    case "state":
-      return node.definition;
-    case "command":
-    case "projection":
-      return null;
-  }
-}
-
-/** Maps a canonical dispatch record to the same definition namespace as IR. */
-export function runtimeDefinitionIdForTrace(
-  trace: DeepReadonly<StepTrace> | null,
-): string | null {
-  const dispatch = trace?.dispatch;
-  if (!dispatch) return null;
-  if (dispatch.scope.startsWith("page:")) return `pages.${dispatch.definition}`;
-  if (dispatch.scope.startsWith("surface:")) {
-    return `surfaces.${dispatch.definition}`;
-  }
-  return null;
-}
-
 function stableJson(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) {
-    const items = value.map((item) => stableJson(item) ?? "null");
-    return `[${items.join(",")}]`;
+    return `[${value.map((item) => stableJson(item) ?? "null").join(",")}]`;
   }
   const record = value as Record<string, unknown>;
   const fields = Object.keys(record)
@@ -161,403 +145,225 @@ function stableJson(value: unknown): string | undefined {
   return `{${fields.join(",")}}`;
 }
 
-/** Compact deterministic value text; layout never measures this string. */
-export function formatDebugValue(value: unknown, maxLength = 88): string {
-  const encoded = stableJson(value) ?? "unset";
-  if (encoded.length <= maxLength) return encoded;
-  if (maxLength <= 1) return "…".slice(0, maxLength);
-  return `${encoded.slice(0, maxLength - 1)}…`;
-}
-
-function activeDefinitions(
-  state: InspectionState,
-): { ids: Set<string>; top: string | null } {
-  const snapshot = state.latest?.inspection;
-  if (!snapshot) return { ids: new Set(), top: null };
-  const ids = new Set<string>();
-  for (const entry of snapshot.u.nav) ids.add(`pages.${entry.route}`);
-  for (const surface of snapshot.u.surfaces) {
-    ids.add(`surfaces.${surface.definition}`);
-  }
-  const topSurface = snapshot.u.surfaces.at(-1);
-  if (topSurface) return { ids, top: `surfaces.${topSurface.definition}` };
-  const topPage = snapshot.u.nav.at(-1);
-  return { ids, top: topPage ? `pages.${topPage.route}` : null };
-}
-
-function structuralTargets(trace: DeepReadonly<StepTrace> | null): Set<string> {
-  const targets = new Set<string>();
-  const surfaceDefinition = (instance: string): string =>
-    instance.replace(/:\d+$/, "");
-  for (const operation of trace?.structural ?? []) {
-    switch (operation.op) {
-      case "init":
-      case "navigate":
-      case "replace":
-        targets.add(`pages.${operation.route}`);
-        break;
-      case "back":
-        if (operation.to !== null) targets.add(`pages.${operation.to}`);
-        break;
-      case "open-surface":
-      case "already-open":
-      case "force-close":
-      case "dismiss":
-        targets.add(`surfaces.${surfaceDefinition(operation.surface)}`);
-        break;
-      case "nav-underflow":
-        break;
+function renderValue(value: Value): string {
+  switch (value.$) {
+    case "unit":
+      return "unit";
+    case "bool":
+      return String(value.value);
+    case "Int":
+    case "Nat":
+    case "PositiveInt":
+    case "Decimal":
+    case "Ratio":
+      return value.value;
+    case "BoundaryNumber":
+      return value.case === "finite" ? value.value : value.case;
+    case "Text":
+      return JSON.stringify(value.value);
+    case "key":
+      return `${value.type}(${renderValue(value.value)})`;
+    case "tuple":
+      return `(${value.items.map(renderValue).join(", ")})`;
+    case "record":
+      return `{ ${
+        value.fields
+          .map((field) => `${field.name}: ${renderValue(field.value)}`)
+          .join(", ")
+      } }`;
+    case "variant": {
+      const fields = value.fields.map((field) => {
+        const rendered = renderValue(field.value);
+        return field.name === null ? rendered : `${field.name}: ${rendered}`;
+      });
+      return fields.length === 0
+        ? value.case
+        : `${value.case}(${fields.join(", ")})`;
     }
-  }
-  return targets;
-}
-
-interface DefinitionInstance {
-  readonly definitionId: string;
-  readonly scope: string;
-  readonly state: Readonly<Record<string, unknown>>;
-}
-
-function definitionInstance(
-  state: InspectionState,
-  definitionId: string,
-  exactScope?: string,
-): DefinitionInstance | null {
-  const snapshot = state.latest?.inspection;
-  if (!snapshot) return null;
-  if (definitionId.startsWith("pages.")) {
-    const route = definitionId.slice("pages.".length);
-    const candidates = snapshot.u.nav.filter((item) => item.route === route);
-    const entry = exactScope === undefined
-      ? candidates.at(-1)
-      : candidates.find((item) => `page:${item.serial}` === exactScope);
-    return entry
-      ? { definitionId, scope: `page:${entry.serial}`, state: entry.state }
-      : null;
-  }
-  if (definitionId.startsWith("surfaces.")) {
-    const definition = definitionId.slice("surfaces.".length);
-    const candidates = snapshot.u.surfaces.filter(
-      (item) => item.definition === definition,
-    );
-    const surface = exactScope === undefined
-      ? candidates.at(-1)
-      : candidates.find((item) => `surface:${item.serial}` === exactScope);
-    return surface
-      ? {
-          definitionId,
-          scope: `surface:${surface.serial}`,
-          state: surface.state,
-        }
-      : null;
-  }
-  return null;
-}
-
-function staticEdgeOrder(edge: ProgramEdge): number | null {
-  switch (edge.kind) {
-    case "writes":
-    case "sends":
-    case "opens":
-    case "navigates":
-      return edge.order;
-    case "handles":
-    case "guard-reads":
-    case "body-reads":
-    case "settles":
-      return null;
+    case "seq":
+      return `[${value.items.map(renderValue).join(", ")}]`;
+    case "nonempty":
+      return `NonEmpty[${value.items.map(renderValue).join(", ")}]`;
+    case "set":
+      return `Set{${value.items.map(renderValue).join(", ")}}`;
+    case "map":
+      return `Map{ ${
+        value.entries
+          .map(([key, entry]) =>
+            `${renderValue(key)}: ${renderValue(entry)}`)
+          .join(", ")
+      } }`;
+    case "table":
+      return `${value.keyType}{ ${
+        value.entries
+          .map(([key, entry]) =>
+            `${JSON.stringify(key)}: ${renderValue(entry)}`)
+          .join(", ")
+      } }`;
   }
 }
 
-function staticEdgeMode(edge: ProgramEdge): "push" | "replace" | null {
-  return edge.kind === "navigates" ? edge.mode : null;
-}
-
-function edgeSignature(edge: ProgramEdge): string {
-  return [
-    edge.kind,
-    edge.from,
-    edge.to,
-    String(staticEdgeOrder(edge) ?? -1),
-    staticEdgeMode(edge) ?? "",
-  ].join("|");
-}
-
-function edgeLabel(edge: ProgramEdge): string {
-  switch (edge.kind) {
-    case "handles":
-      return "handles";
-    case "guard-reads":
-      return "guard";
-    case "body-reads":
-      return "reads";
-    case "writes":
-      return "writes";
-    case "sends":
-      return "sends";
-    case "opens":
-      return "opens";
-    case "navigates":
-      return edge.mode;
-    case "settles":
-      return "settles";
+/**
+ * Human-facing Uhura value text. Exact numerics remain canonical text and are
+ * never translated through JavaScript's lossy number domain.
+ */
+export function formatDebugValue(
+  value: Value,
+  maxLength = 120,
+): string {
+  const rendered = renderValue(value);
+  if (
+    value.$ === "Int"
+    || value.$ === "Nat"
+    || value.$ === "PositiveInt"
+    || value.$ === "Decimal"
+    || value.$ === "Ratio"
+    || (value.$ === "BoundaryNumber" && value.case === "finite")
+  ) {
+    return rendered;
   }
+  if (rendered.length <= maxLength) return rendered;
+  if (maxLength <= 1) return "…".slice(0, maxLength);
+  return `${rendered.slice(0, maxLength - 1)}…`;
 }
 
-function laneForNode(
-  node: ProgramNode,
-  writtenStateIds: ReadonlySet<string>,
-): DebugLane {
-  switch (node.kind) {
-    case "handler":
-      return "handler";
-    case "event":
-    case "projection":
+function constructor(value: Value): string | null {
+  return value.$ === "variant" ? value.case : null;
+}
+
+function inputLabel(input: ResolvedInput): string | null {
+  const name = constructor(input.value);
+  if (name === null) return null;
+  return input.source === "port" ? `${input.port}.${name}` : name;
+}
+
+function commandLabel(command: ResolvedCommand): string | null {
+  const name = constructor(command.value);
+  if (name === null) return null;
+  return command.target === "port" ? `${command.port}.${name}` : name;
+}
+
+function labelMatches(graphLabel: string, runtimeLabel: string | null): boolean {
+  return runtimeLabel !== null && graphLabel === runtimeLabel;
+}
+
+function recordFields(
+  value: Value | null,
+): ReadonlyMap<string, Value> {
+  if (value?.$ !== "record") return new Map();
+  return new Map(value.fields.map((field) => [field.name, field.value]));
+}
+
+function valueEqual(
+  left: Value | undefined,
+  right: Value | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return stableJson(left) === stableJson(right);
+}
+
+function sourceSpan(source: GraphSourceRef): DebugSourceSpan {
+  return {
+    id: source.id,
+    file: source.path,
+    start: source.start,
+    end: source.end,
+  };
+}
+
+function lane(kind: GraphNodeKind): DebugLane {
+  switch (kind) {
+    case "module":
+    case "part":
+    case "computed":
+    case "invariant":
+    case "observation":
+    case "port":
+    case "presentation":
+    case "ui-event":
       return "input";
+    case "input":
+    case "transition":
+    case "commit-hook":
+    case "update":
+      return "handler";
+    case "machine":
     case "state":
-      return writtenStateIds.has(node.id) ? "effect" : "input";
     case "command":
-    case "definition":
+    case "outcome":
       return "effect";
   }
 }
 
-function definitionDetail(node: Extract<ProgramNode, { kind: "definition" }>): string {
-  const kind = node["definition-kind"];
-  const label = `${kind[0]?.toUpperCase() ?? ""}${kind.slice(1)}`;
-  return node.entry ? `${label} · entry` : label;
+interface RuntimeFacts {
+  readonly reaction: ReactionReceipt | null;
+  readonly inputLabel: string | null;
+  readonly inputPort: string | null;
+  readonly commandLabels: readonly string[];
+  readonly commandPorts: ReadonlySet<string>;
+  readonly outcomeLabel: string | null;
+  readonly commit: boolean;
+  readonly stateFields: ReadonlyMap<string, Value>;
+  readonly writtenFields: ReadonlySet<string>;
 }
 
-function projectionDetail(
-  node: Extract<ProgramNode, { kind: "projection" }>,
-  state: InspectionState,
-): string {
-  const snapshot = state.latest?.inspection;
-  if (!snapshot) return `Projection · ${node.port}`;
-  const ready = snapshot.x.snapshots.filter(
-    (item) => item.projection === node.name,
+function runtimeFacts(state: RuntimeInspectionState): RuntimeFacts {
+  const latest = state.latest;
+  const receipt = latest?.receipt;
+  const reaction = receipt?.kind === "reaction" ? receipt : null;
+  const stateFields = recordFields(latest?.inspection.state ?? null);
+  const prior = state.history.length > 1
+    ? state.history.at(-2)?.inspection.state ?? null
+    : null;
+  const priorFields = recordFields(prior);
+  const writtenFields = new Set<string>();
+  if (prior !== null) {
+    for (const [field, value] of stateFields) {
+      if (!valueEqual(priorFields.get(field), value)) {
+        writtenFields.add(field);
+      }
+    }
+    for (const field of priorFields.keys()) {
+      if (!stateFields.has(field)) writtenFields.add(field);
+    }
+  }
+  const commandLabels = reaction?.orderedCommands
+    .map(commandLabel)
+    .filter((label): label is string => label !== null) ?? [];
+  const commandPorts = new Set(
+    reaction?.orderedCommands.flatMap((command) =>
+      command.target === "port" ? [command.port] : []) ?? [],
   );
-  const failed = snapshot.x.failed.filter(
-    (item) => item.projection === node.name,
-  );
-  if (ready.length === 0 && failed.length === 0) return "Waiting";
-  if (ready.length === 1 && failed.length === 0) {
-    return `Ready · ${formatDebugValue(ready[0]?.value)}`;
-  }
-  const parts: string[] = [];
-  if (ready.length > 0) parts.push(`${ready.length} ready`);
-  if (failed.length > 0) parts.push(`${failed.length} failed`);
-  return parts.join(" · ");
-}
-
-function presentation(
-  node: ProgramNode,
-  state: InspectionState,
-  instance: DefinitionInstance | null,
-  pendingByCommand: ReadonlyMap<string, number>,
-): { label: string; detail: string | null; order: number } {
-  switch (node.kind) {
-    case "definition":
-      return { label: node.name, detail: definitionDetail(node), order: 0 };
-    case "event": {
-      const detail = node["event-kind"] === "outcome"
-        ? `${node.command ?? "command"}.${node.outcome ?? "outcome"}`
-        : "Semantic event";
-      return { label: node.name, detail, order: 0 };
-    }
-    case "handler":
-      return {
-        label: `Handler ${node.index + 1}`,
-        detail: `on ${node.on}${node.guarded ? " · guarded" : ""}`,
-        order: node.index,
-      };
-    case "state": {
-      const values = instance?.definitionId === node.definition
-        ? instance.state
-        : null;
-      const value = values && Object.hasOwn(values, node.name)
-        ? values[node.name]
-        : node.initial;
-      const prefix = values ? "" : "Initial · ";
-      return {
-        label: node.name,
-        detail: `${prefix}${formatDebugValue(value)}`,
-        order: 0,
-      };
-    }
-    case "projection":
-      return { label: node.name, detail: projectionDetail(node, state), order: 0 };
-    case "command": {
-      const pending = pendingByCommand.get(node.name) ?? 0;
-      const detail = pending > 0
-        ? `${pending} pending`
-        : node.port
-          ? `Command · ${node.port}`
-          : "Command";
-      return { label: node.name, detail, order: 0 };
-    }
-  }
-}
-
-function programSpan(
-  spans: DeepReadonly<Record<string, InspectSourceSpan>>,
-  id: string,
-): InspectSourceSpan | null {
-  const span = spans[id];
-  return span ? { file: span.file, start: span.start, end: span.end } : null;
-}
-
-function projectionRuntime(
-  node: ProgramNode,
-  state: InspectionState,
-  applies: ReadonlyMap<string, DebugProjectionApply>,
-): {
-  apply: DebugProjectionApply | null;
-  ready: number;
-  failures: number;
-} {
-  if (node.kind !== "projection") return { apply: null, ready: 0, failures: 0 };
-  const snapshot = state.latest?.inspection;
+  const completed = reaction?.resolution.kind === "completed"
+    ? reaction.resolution
+    : null;
   return {
-    apply: applies.get(node.name) ?? null,
-    ready: snapshot?.x.snapshots.filter(
-      (item) => item.projection === node.name,
-    ).length ?? 0,
-    failures: snapshot?.x.failed.filter(
-      (item) => item.projection === node.name,
-    ).length ?? 0,
+    reaction,
+    inputLabel: reaction ? inputLabel(reaction.input) : null,
+    inputPort: reaction?.input.source === "port"
+      ? reaction.input.port
+      : null,
+    commandLabels,
+    commandPorts,
+    outcomeLabel: completed === null
+      ? null
+      : constructor(completed.outcome),
+    commit: completed?.disposition === "commit",
+    stateFields,
+    writtenFields,
   };
-}
-
-interface EdgeActivityContext {
-  readonly currentEventId: string | null;
-  readonly selectedHandlerId: string | null;
-  readonly consultedHandlers: ReadonlyMap<string, TraceGuardNote["guard"]>;
-  readonly runtimeWrittenIds: ReadonlySet<string>;
-  readonly sentCommandIds: ReadonlySet<string>;
-  readonly transitionTargets: ReadonlySet<string>;
-}
-
-interface DebugNodeContext extends EdgeActivityContext {
-  readonly state: InspectionState;
-  readonly spans: DeepReadonly<Record<string, InspectSourceSpan>>;
-  readonly writtenStateIds: ReadonlySet<string>;
-  readonly activeIds: ReadonlySet<string>;
-  readonly instance: DefinitionInstance | null;
-  readonly pendingByCommand: ReadonlyMap<string, number>;
-  readonly applies: ReadonlyMap<string, DebugProjectionApply>;
-}
-
-function debugNode(node: ProgramNode, context: DebugNodeContext): DebugGraphNode {
-  const {
-    state,
-    spans,
-    writtenStateIds,
-    activeIds,
-    currentEventId,
-    selectedHandlerId,
-    consultedHandlers,
-    runtimeWrittenIds,
-    sentCommandIds,
-    instance,
-    pendingByCommand,
-    applies,
-    transitionTargets,
-  } = context;
-  const definitionId = definitionIdForNode(node);
-  const view = presentation(node, state, instance, pendingByCommand);
-  const consulted = consultedHandlers.get(node.id) ?? null;
-  const written = runtimeWrittenIds.has(node.id);
-  const sent = sentCommandIds.has(node.id);
-  const projection = projectionRuntime(node, state, applies);
-  const structural = transitionTargets.has(node.id);
-  const selected = node.id === selectedHandlerId;
-  const active = node.kind === "definition"
-    ? activeIds.has(node.id)
-    : definitionId !== null && activeIds.has(definitionId);
-  const current = node.id === currentEventId
-    || consulted !== null
-    || selected
-    || written
-    || sent
-    || projection.apply !== null
-    || structural;
-  return {
-    id: node.id,
-    kind: node.kind,
-    lane: laneForNode(node, writtenStateIds),
-    definitionId,
-    label: view.label,
-    detail: view.detail,
-    order: view.order,
-    span: programSpan(spans, node.id),
-    runtime: {
-      active,
-      current,
-      selected,
-      consulted,
-      written,
-      sent,
-      pending: node.kind === "command"
-        ? pendingByCommand.get(node.name) ?? 0
-        : 0,
-      projectionApply: projection.apply,
-      projectionReady: projection.ready,
-      projectionFailures: projection.failures,
-      structural,
-    },
-  };
-}
-
-function edgeActivity(
-  edge: ProgramEdge,
-  context: EdgeActivityContext,
-): DebugEdgeActivity {
-  const {
-    currentEventId,
-    selectedHandlerId,
-    consultedHandlers,
-    runtimeWrittenIds,
-    sentCommandIds,
-    transitionTargets,
-  } = context;
-  switch (edge.kind) {
-    case "handles":
-      if (edge.from === currentEventId && edge.to === selectedHandlerId) return "taken";
-      if (edge.from === currentEventId && consultedHandlers.has(edge.to)) return "context";
-      return "idle";
-    case "guard-reads":
-      return consultedHandlers.has(edge.to) ? "context" : "idle";
-    case "body-reads":
-      return edge.to === selectedHandlerId ? "context" : "idle";
-    case "writes":
-      return edge.from === selectedHandlerId && runtimeWrittenIds.has(edge.to)
-        ? "taken"
-        : "idle";
-    case "sends":
-      return edge.from === selectedHandlerId && sentCommandIds.has(edge.to)
-        ? "taken"
-        : "idle";
-    case "opens":
-    case "navigates":
-      return edge.from === selectedHandlerId && transitionTargets.has(edge.to)
-        ? "taken"
-        : "idle";
-    case "settles":
-      return edge.to === currentEventId ? "taken" : "idle";
-  }
 }
 
 function emptyModel(
-  state: InspectionState,
+  state: RuntimeInspectionState,
   reason: DebugEmptyReason,
 ): DebugGraphModel {
   return {
     disposed: state.disposed,
     emptyReason: reason,
-    generation: null,
-    programHash: null,
-    revision: null,
+    generation: state.artifacts?.generation ?? null,
+    programHash: state.artifacts?.deployment.machineProgramHash ?? null,
+    exactSequence: state.latest?.inspection.nextSequence ?? null,
     focusDefinitionId: null,
     runtimeDefinitionId: null,
     definitions: [],
@@ -566,226 +372,296 @@ function emptyModel(
   };
 }
 
+function nodeDetail(
+  kind: GraphNodeKind,
+  label: string,
+  state: RuntimeInspectionState,
+  facts: RuntimeFacts,
+  runtimeMachine: boolean,
+  policy: OutcomePolicy | null,
+): string | null {
+  const inspection = state.latest?.inspection;
+  switch (kind) {
+    case "module":
+      return "Source module";
+    case "machine":
+      return runtimeMachine && inspection
+        ? `Machine · ${inspection.lifecycle}`
+        : "Machine";
+    case "part":
+      return "Composed part";
+    case "port":
+      return facts.inputPort === label
+        ? "Inbound port"
+        : facts.commandPorts.has(label)
+          ? "Outbound port"
+          : "Port";
+    case "input":
+      return facts.reaction && labelMatches(label, facts.inputLabel)
+        ? `Input · ${formatDebugValue(facts.reaction.input.value)}`
+        : "Input handler";
+    case "transition":
+      return "Named transition";
+    case "commit-hook":
+      return "Atomic commit hook";
+    case "state": {
+      const value = facts.stateFields.get(label);
+      return value === undefined ? "State" : formatDebugValue(value);
+    }
+    case "computed":
+      return "Computed read";
+    case "invariant":
+      return "Invariant";
+    case "update":
+      return "Callable update";
+    case "observation":
+      return "Committed observation";
+    case "command": {
+      const commands = facts.reaction?.orderedCommands.filter((command) =>
+        labelMatches(label, commandLabel(command))) ?? [];
+      if (commands.length === 0) return "Command";
+      return commands
+        .map((command) => formatDebugValue(command.value))
+        .join(" · ");
+    }
+    case "outcome": {
+      const resolution = facts.reaction?.resolution;
+      return resolution?.kind === "completed"
+        && labelMatches(label, facts.outcomeLabel)
+        ? `${resolution.disposition} · ${
+          formatDebugValue(resolution.outcome)
+        }`
+        : policy === null
+          ? "Outcome"
+          : `Outcome · ${policy}`;
+    }
+    case "presentation":
+      return runtimeMachine && inspection
+        ? `Observation · ${formatDebugValue(inspection.observation)}`
+        : "Presentation";
+    case "ui-event":
+      return "Checked UI event binding";
+  }
+}
+
+function edgeKey(
+  edge: { readonly kind: GraphEdgeKind; readonly from: string; readonly to: string },
+): string {
+  return `${edge.kind}\u0000${edge.from}\u0000${edge.to}`;
+}
+
 /**
- * Produces one definition-sized behavior graph. The returned node and edge set
- * depends only on `(program, focusDefinitionId)`; live state changes labels and
- * runtime marks without moving or adding graph structure.
+ * Projects one inspection publication into a stable, machine-sized graph.
+ * Runtime receipts decorate admitted nodes and edges conservatively.
  */
 export function deriveDebugGraph(
-  state: InspectionState,
+  state: RuntimeInspectionState,
   options: DeriveDebugGraphOptions = {},
 ): DebugGraphModel {
   const artifacts = state.artifacts;
-  if (!artifacts) return emptyModel(state, state.disposed ? "disposed" : "loading");
-
-  const program = artifacts.program;
-  const nodesById = new Map(program.nodes.map((node) => [node.id, node]));
-  const definitionNodes = program.nodes.filter(
-    (node): node is Extract<ProgramNode, { kind: "definition" }> =>
-      node.kind === "definition",
-  );
-  if (definitionNodes.length === 0) {
-    return {
-      ...emptyModel(state, "no-definitions"),
-      generation: artifacts.generation,
-      programHash: program.ir.hash,
-      revision: state.latest?.inspection.revision ?? null,
-    };
+  if (artifacts === null) {
+    return emptyModel(state, state.disposed ? "disposed" : "loading");
   }
-
-  const trace = state.latest?.trace ?? null;
-  const runtimeDefinitionId = runtimeDefinitionIdForTrace(trace);
-  const active = activeDefinitions(state);
-  const transitionTargets = structuralTargets(trace);
-  const validDefinitionIds = new Set(definitionNodes.map((node) => node.id));
+  const deployment = artifacts.deployment;
+  const graph = deployment.interactionGraph;
+  const machineNodes = graph.nodes.filter((node) => node.kind === "machine");
+  if (machineNodes.length === 0) {
+    return emptyModel(state, "no-machines");
+  }
+  const deployedMachineNode = machineNodes.find(
+    (node) => node.machine === deployment.machine,
+  ) ?? null;
+  const validDefinitionIds = new Set(machineNodes.map((node) => node.id));
   const requested = options.focusDefinitionId;
-  const entryId = `pages.${program.ir.entry}`;
   const focusDefinitionId = requested && validDefinitionIds.has(requested)
     ? requested
-    : runtimeDefinitionId && validDefinitionIds.has(runtimeDefinitionId)
-      ? runtimeDefinitionId
-      : active.top && validDefinitionIds.has(active.top)
-        ? active.top
-        : validDefinitionIds.has(entryId)
-          ? entryId
-          : definitionNodes
-              .map((node) => node.id)
-              .sort(compareText)[0] ?? null;
-
-  const definitions = definitionNodes
+    : deployedMachineNode?.id
+      ?? [...validDefinitionIds].sort(compareText)[0]
+      ?? null;
+  const runtimeDefinitionId = state.latest === null
+    ? null
+    : deployedMachineNode?.id ?? null;
+  const definitions = machineNodes
     .map((node): DebugDefinitionOption => ({
       id: node.id,
-      kind: node["definition-kind"],
-      label: node.name,
-      entry: node.entry === true,
-      active: active.ids.has(node.id),
-      top: active.top === node.id,
-      runtime: runtimeDefinitionId === node.id,
-      transitionTarget: transitionTargets.has(node.id),
+      kind: "machine",
+      label: node.label,
+      entry: node.machine === deployment.machine,
+      active: node.machine === deployment.machine
+        && state.latest?.inspection.lifecycle !== "stopped",
+      runtime: node.id === runtimeDefinitionId,
     }))
     .sort((left, right) =>
-      DEFINITION_KIND_ORDER[left.kind] - DEFINITION_KIND_ORDER[right.kind]
-      || compareText(left.label, right.label)
-      || compareText(left.id, right.id));
-
+      compareText(left.label, right.label) || compareText(left.id, right.id));
   if (focusDefinitionId === null) {
     return {
-      disposed: false,
-      emptyReason: "no-definitions",
-      generation: artifacts.generation,
-      programHash: program.ir.hash,
-      revision: state.latest?.inspection.revision ?? null,
-      focusDefinitionId: null,
-      runtimeDefinitionId,
+      ...emptyModel(state, "no-machines"),
       definitions,
-      nodes: [],
-      edges: [],
+    };
+  }
+  const focusedMachine = machineNodes.find(
+    (node) => node.id === focusDefinitionId,
+  )?.machine;
+  if (focusedMachine === undefined) {
+    return {
+      ...emptyModel(state, "no-machines"),
+      definitions,
     };
   }
 
-  const localNodeIds = new Set(
-    program.nodes
-      .filter((node) =>
-        node.kind !== "definition"
-        && definitionIdForNode(node) === focusDefinitionId)
-      .map((node) => node.id),
+  const runtimeMachine = focusedMachine === deployment.machine;
+  const facts: RuntimeFacts = runtimeMachine
+    ? runtimeFacts(state)
+    : {
+        reaction: null,
+        inputLabel: null,
+        inputPort: null,
+        commandLabels: [],
+        commandPorts: new Set(),
+        outcomeLabel: null,
+        commit: false,
+        stateFields: new Map(),
+        writtenFields: new Set(),
+      };
+  const nodeSources = new Map(
+    deployment.graphSources.nodes.map((entry) => [entry.node, entry.sources]),
   );
-  const localHandlerIds = new Set(
-    program.nodes
-      .filter(
-        (node) => node.kind === "handler" && node.definition === focusDefinitionId,
-      )
-      .map((node) => node.id),
-  );
-
-  const focusedEdges = program.edges.filter((edge) =>
-    localHandlerIds.has(edge.from) || localHandlerIds.has(edge.to));
-  const includedNodeIds = new Set(localNodeIds);
-  for (const edge of focusedEdges) {
-    includedNodeIds.add(edge.from);
-    includedNodeIds.add(edge.to);
-  }
-  // Commands sent by this definition can settle into its outcome events.
-  const settleEdges = program.edges.filter((edge) =>
-    edge.kind === "settles"
-    && includedNodeIds.has(edge.from)
-    && localNodeIds.has(edge.to));
-  const includedEdges = [...focusedEdges, ...settleEdges]
-    .filter((edge, index, all) => all.indexOf(edge) === index);
-
-  const writtenStateIds = new Set(
-    focusedEdges.filter((edge) => edge.kind === "writes").map((edge) => edge.to),
-  );
-  const dispatch = trace?.dispatch;
-  const traceMatchesFocus = runtimeDefinitionId === focusDefinitionId;
-  // A dispatch identifies one concrete mounted instance. When there is no
-  // dispatch (for example a projection delivery or a user-pinned definition),
-  // the topmost mounted instance of that definition is the observable one.
-  // If the dispatched instance was structurally removed by this step, do not
-  // fall through to a different duplicate instance with the same definition.
-  const exactScope = traceMatchesFocus ? dispatch?.scope : undefined;
-  const instance = definitionInstance(
-    state,
-    focusDefinitionId,
-    exactScope,
-  );
-  const focusScope = exactScope ?? instance?.scope ?? null;
-  const currentEventId = traceMatchesFocus && dispatch
-    ? `${focusDefinitionId}/event/${dispatch.on}`
-    : null;
-  const selectedHandlerId = traceMatchesFocus && dispatch?.selected !== null
-    && dispatch?.selected !== undefined
-    ? `${focusDefinitionId}/handler/${dispatch.selected}`
-    : null;
-  const consultedHandlers = new Map<string, TraceGuardNote["guard"]>();
-  if (traceMatchesFocus && dispatch) {
-    for (const guard of dispatch.guards) {
-      consultedHandlers.set(
-        `${focusDefinitionId}/handler/${guard.handler}`,
-        guard.guard,
-      );
-    }
-  }
-  const runtimeWrittenIds = new Set<string>();
-  if (traceMatchesFocus && dispatch) {
-    for (const write of dispatch.writes ?? []) {
-      runtimeWrittenIds.add(`${focusDefinitionId}/state/${write.field}`);
-    }
-  }
-  const sentCommandIds = new Set<string>();
-  if (traceMatchesFocus) {
-    for (const message of trace?.c ?? []) {
-      if (message.kind === "command" && message.command) {
-        sentCommandIds.add(`commands.${message.command}`);
-      }
-    }
-  }
-  const pendingByCommand = new Map<string, number>();
-  for (const pending of Object.values(state.latest?.inspection.u.pending ?? {})) {
-    if (focusScope === null || pending.origin !== focusScope) continue;
-    pendingByCommand.set(
-      pending.command,
-      (pendingByCommand.get(pending.command) ?? 0) + 1,
-    );
-  }
-  const applies = new Map<string, DebugProjectionApply>();
-  for (const apply of trace?.applies ?? []) applies.set(apply.projection, apply.apply);
-  const focusedTransitionTargets: ReadonlySet<string> = traceMatchesFocus
-    ? transitionTargets
-    : new Set();
-  const debugContext: DebugNodeContext = {
-    state,
-    spans: program.spans,
-    writtenStateIds,
-    activeIds: active.ids,
-    currentEventId,
-    selectedHandlerId,
-    consultedHandlers,
-    runtimeWrittenIds,
-    sentCommandIds,
-    instance,
-    pendingByCommand,
-    applies,
-    transitionTargets: focusedTransitionTargets,
-  };
-
-  const nodes = [...includedNodeIds]
-    .map((id) => nodesById.get(id))
-    .filter((node): node is ProgramNode => node !== undefined)
-    .map((node) => debugNode(node, debugContext))
+  const included = graph.nodes.filter((node) => node.machine === focusedMachine);
+  const includedIds = new Set(included.map((node) => node.id));
+  const activeMachine = focusedMachine === deployment.machine
+    && state.latest?.inspection.lifecycle !== "stopped";
+  const nodes = included
+    .map((node, order): DebugGraphNode => {
+      const inputCurrent = node.kind === "input"
+        && labelMatches(node.label, facts.inputLabel);
+      const commandCurrent = node.kind === "command"
+        && facts.commandLabels.some((label) =>
+          labelMatches(node.label, label));
+      const outcomeCurrent = node.kind === "outcome"
+        && labelMatches(node.label, facts.outcomeLabel);
+      const hookCurrent = node.kind === "commit-hook" && facts.commit;
+      const stateWritten = node.kind === "state"
+        && facts.writtenFields.has(node.label);
+      const portCurrent = node.kind === "port"
+        && (facts.inputPort === node.label || facts.commandPorts.has(node.label));
+      const machineCurrent = runtimeMachine
+        && node.kind === "machine"
+        && state.latest !== null;
+      const presentationCurrent = node.kind === "presentation"
+        && runtimeMachine
+        && state.latest !== null
+        && node.label === deployment.presentation;
+      const current = inputCurrent
+        || commandCurrent
+        || outcomeCurrent
+        || hookCurrent
+        || stateWritten
+        || portCurrent
+        || machineCurrent
+        || presentationCurrent;
+      const sources = (nodeSources.get(node.id) ?? []).map(sourceSpan);
+      const first = sources[0];
+      return {
+        id: node.id,
+        kind: node.kind,
+        lane: lane(node.kind),
+        definitionId: focusDefinitionId,
+        label: node.label,
+        detail: nodeDetail(
+          node.kind,
+          node.label,
+          state,
+          facts,
+          runtimeMachine,
+          graph.outcomePolicies[node.id] ?? null,
+        ),
+        order,
+        span: first
+          ? { file: first.file, start: first.start, end: first.end }
+          : null,
+        sourceSpans: sources,
+        runtime: {
+          active: activeMachine,
+          current,
+          selected: inputCurrent || hookCurrent,
+          written: stateWritten,
+          sent: commandCurrent,
+        },
+      };
+    })
     .sort((left, right) =>
       LANE_ORDER[left.lane] - LANE_ORDER[right.lane]
       || NODE_KIND_ORDER[left.kind] - NODE_KIND_ORDER[right.kind]
       || left.order - right.order
       || compareText(left.id, right.id));
-
-  const sortedProgramEdges = includedEdges
-    .map((edge, sourceIndex) => ({ edge, sourceIndex, signature: edgeSignature(edge) }))
-    .sort((left, right) =>
-      compareText(left.signature, right.signature)
-      || left.sourceIndex - right.sourceIndex);
-  const duplicateCounts = new Map<string, number>();
-  const edges = sortedProgramEdges.map(({ edge, signature }): DebugGraphEdge => {
-    const duplicate = duplicateCounts.get(signature) ?? 0;
-    duplicateCounts.set(signature, duplicate + 1);
-    return {
-      id: `edge/${signature}/${duplicate}`,
-      kind: edge.kind,
-      from: edge.from,
-      to: edge.to,
-      label: edgeLabel(edge),
-      order: staticEdgeOrder(edge),
-      mode: staticEdgeMode(edge),
-      activity: edgeActivity(edge, debugContext),
-    };
-  });
+  const runtimeById = new Map(nodes.map((node) => [node.id, node.runtime]));
+  const edgeSources = new Map(
+    deployment.graphSources.edges.map((entry) => [
+      edgeKey(entry.edge),
+      entry.sources,
+    ]),
+  );
+  const edges = graph.edges
+    .filter((edge) => includedIds.has(edge.from) && includedIds.has(edge.to))
+    .map((edge, order): DebugGraphEdge => {
+      const from = runtimeById.get(edge.from);
+      const to = runtimeById.get(edge.to);
+      let activity: DebugEdgeActivity = "idle";
+      switch (edge.kind) {
+        case "delivers":
+          if (from?.current && to?.selected) activity = "taken";
+          break;
+        case "writes":
+          if (from?.current && to?.written) activity = "taken";
+          break;
+        case "emits":
+          if (from?.current && to?.sent) activity = "taken";
+          break;
+        case "finishes":
+        case "triggers":
+          if (from?.current && to?.current) activity = "taken";
+          break;
+        case "sends-via":
+          if (from?.sent && to?.current) activity = "taken";
+          break;
+        case "dispatches":
+          if (to?.selected) activity = "context";
+          break;
+        case "projects":
+        case "exposes":
+          if (from?.current || to?.current) activity = "context";
+          break;
+        case "owns":
+        case "composes":
+        case "reads":
+        case "calls":
+        case "observes":
+          if (to?.current) activity = "context";
+          break;
+        case "delegates":
+          // Receipts do not expose internal transition paths.
+          break;
+      }
+      const sources = (edgeSources.get(edgeKey(edge)) ?? []).map(sourceSpan);
+      return {
+        id: `edge/${edge.kind}/${edge.from}/${edge.to}`,
+        kind: edge.kind,
+        from: edge.from,
+        to: edge.to,
+        label: edge.kind,
+        order,
+        activity,
+        sourceSpans: sources,
+      };
+    });
 
   return {
     disposed: false,
     emptyReason: null,
     generation: artifacts.generation,
-    programHash: program.ir.hash,
-    revision: state.latest?.inspection.revision ?? null,
+    programHash: graph.machineProgramHashes[focusedMachine]
+      ?? deployment.machineProgramHash,
+    exactSequence: state.latest?.inspection.nextSequence ?? null,
     focusDefinitionId,
     runtimeDefinitionId,
     definitions,

@@ -1,7 +1,6 @@
-// Instagram's app-local Spock provider. It speaks the same
-// `uhura-provider/0` envelopes as FixtureDriver, but reads one coherent
-// authority snapshot through Spock GraphQL and sends commands through the
-// deliberate REST RPC surface.
+// Instagram's app-local adapter provider. Uhura owns the deterministic
+// machine; this module observes Spock authority and performs requested
+// mutations at the two explicitly admitted application ports.
 
 const PAGE_SIZE = 4;
 const SUPPORTED_IMAGE_TYPES = new Set([
@@ -10,7 +9,49 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
-// Spock v0 caps one collection read at 200 rows. The current demo fits inside
+// Evidence fixtures use stable logical names while Play serves exact captured
+// files. Live Spock storage ids deliberately fall through to signed URLs.
+const LOCAL_PLAY_ASSETS: Readonly<Record<string, string>> = {
+  "avatar-mira": "avatar-mira.webp",
+  "avatar-lena": "avatar-lena.webp",
+  "avatar-marco": "avatar-marco.webp",
+  "avatar-nils": "avatar-nils.webp",
+  "avatar-priya": "avatar-priya.webp",
+  "avatar-ayla": "avatar-ayla.webp",
+  "avatar-june": "avatar-june.webp",
+  "avatar-theo": "avatar-theo.webp",
+  "avatar-kenji": "avatar-kenji.webp",
+  "media-lena-glaze": "media-lena-glaze.webp",
+  "media-marco-baja-1": "media-marco-baja-1.webp",
+  "media-marco-baja-2": "media-marco-baja-2.webp",
+  "media-marco-baja-3": "media-marco-baja-3.webp",
+  "media-nils-aurora-poster": "media-nils-aurora-poster.webp",
+  "media-priya-starter": "media-priya-starter.webp",
+  "media-ayla-ferry": "media-ayla-ferry.webp",
+  "media-june-lookbook": "media-june-lookbook.webp",
+  "media-theo-court": "media-theo-court.webp",
+  "media-kenji-copper": "media-kenji-copper.webp",
+  "thumb-lena-1": "thumb-lena-1.webp",
+  "thumb-lena-2": "thumb-lena-2.webp",
+  "thumb-lena-3": "thumb-lena-3.webp",
+  "thumb-lena-4": "thumb-lena-4.webp",
+  "thumb-lena-5": "thumb-lena-5.webp",
+  "thumb-lena-6": "thumb-lena-6.webp",
+  "thumb-lena-7": "thumb-lena-7.webp",
+  "thumb-lena-8": "thumb-lena-8.webp",
+  "thumb-lena-9": "thumb-lena-9.webp",
+  "thumb-mira-1": "thumb-mira-1.webp",
+  "thumb-mira-2": "thumb-mira-2.webp",
+  "thumb-mira-3": "thumb-mira-3.webp",
+  "thumb-mira-4": "thumb-mira-4.webp",
+  "thumb-mira-5": "thumb-mira-5.webp",
+  "thumb-mira-6": "thumb-mira-6.webp",
+  "video-nils-aurora": "media-nils-aurora.mp4",
+  "video-theo-court": "media-theo-court.mp4",
+  "video-mira-ferry": "media-mira-ferry.mp4",
+};
+
+// The current Spock authority caps one collection read at 200 rows. This demo fits inside
 // that ceiling per table; snapshot-consistent pagination is deferred dogfood
 // rather than pretending a clamped response is complete.
 const SNAPSHOT_QUERY = `
@@ -104,7 +145,7 @@ const COMMAND_REFUSALS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
-export interface SpockDriverConfig {
+export interface SpockProviderConfig {
   /** Standalone fallback for the full Spock `/graphql/v1` endpoint. */
   graphql_url: string;
   /** Standalone fallback for the Spock `/rest/v1/rpc` prefix. */
@@ -125,20 +166,160 @@ export interface ProviderHost {
   pickFile(options: { accept: string }): Promise<File | null>;
 }
 
+interface PortRequirement {
+  readonly port: string;
+  readonly adapter: "app.provider";
+  readonly contractHash: string;
+  readonly contractInstanceHash: string;
+}
+
+interface PortAdapterContext {
+  readonly signal: AbortSignal;
+  deliver(value: WireValue): void;
+}
+
+interface AdapterProviderHost extends ProviderHost {
+  port(name: string): PortRequirement;
+}
+
+interface PortAdapter extends PortRequirement {
+  start?(context: PortAdapterContext): void | Promise<void>;
+  accept(command: WireValue, context: PortAdapterContext): void | Promise<void>;
+  dispose?(): void;
+}
+
+interface WireValue {
+  readonly $: string;
+  readonly [field: string]: unknown;
+}
+
 export interface RemoteSystemInfo {
   actor: string | null;
   actors: Array<{ id: string; username: string; label: string }>;
 }
 
-export interface SpockDriver {
+interface SpockBackend {
   dispose(): void;
-  assembleBoot(): Promise<string>;
-  deliver(commandJson: string): void;
-  tick(): string[];
-  idle(): boolean;
+  load(): Promise<void>;
+  execute(operation: BackendOperation): Promise<BackendSettlement>;
+  authorityValue(): WireValue;
   resolveAsset(asset: string): Promise<string>;
   systemInfo(): RemoteSystemInfo;
 }
+
+const INSTAGRAM_MODULE = "app.instagram@1";
+const INSTAGRAM_MACHINE = `${INSTAGRAM_MODULE}::Instagram`;
+const USER_ID_TYPE = `${INSTAGRAM_MODULE}::UserId`;
+const POST_ID_TYPE = `${INSTAGRAM_MODULE}::PostId`;
+const STORY_ID_TYPE = `${INSTAGRAM_MODULE}::StoryId`;
+const REQUEST_ID_TYPE = `${INSTAGRAM_MODULE}::RequestId`;
+const AUTHORITY_TYPE = `${INSTAGRAM_MODULE}::Authority`;
+const MEDIA_TYPE = `${INSTAGRAM_MODULE}::Media`;
+const MUTATION_TYPE = `${INSTAGRAM_MODULE}::Mutation`;
+const SETTLEMENT_TYPE = `${INSTAGRAM_MODULE}::Settlement`;
+const AUTHORITY_RECEIVE_TYPE =
+  `${INSTAGRAM_MACHINE}::port.authority.Receive`;
+const MUTATIONS_SEND_TYPE =
+  `${INSTAGRAM_MACHINE}::port.mutations.Send`;
+const MUTATIONS_RECEIVE_TYPE =
+  `${INSTAGRAM_MACHINE}::port.mutations.Receive`;
+
+const wireText = (value: string): WireValue => ({ $: "Text", value });
+const wireBool = (value: boolean): WireValue => ({ $: "bool", value });
+const wireNat = (value: number): WireValue => ({
+  $: "Nat",
+  value: String(value),
+});
+const wireKey = (
+  type: string,
+  value: WireValue,
+): WireValue => ({ $: "key", type, value });
+const wireRecord = (
+  fields: ReadonlyArray<readonly [string, WireValue]>,
+): WireValue => ({
+  $: "record",
+  fields: fields.map(([name, value]) => ({ name, value })),
+});
+const wireVariant = (
+  type: string,
+  caseName: string,
+  fields: ReadonlyArray<readonly [string | null, WireValue]> = [],
+): WireValue => ({
+  $: "variant",
+  type,
+  case: caseName,
+  fields: fields.map(([name, value]) => ({ name, value })),
+});
+const wireSeq = (items: readonly WireValue[]): WireValue => ({
+  $: "seq",
+  items,
+});
+const wireMap = (
+  entries: ReadonlyArray<readonly [WireValue, WireValue]>,
+): WireValue => ({ $: "map", entries });
+const textEncoder = new TextEncoder();
+const lengthPrefix = (value: number): number[] => {
+  const bytes: number[] = [];
+  do {
+    let byte = value % 128;
+    value = Math.floor(value / 128);
+    if (value !== 0) byte += 128;
+    bytes.push(byte);
+  } while (value !== 0);
+  return bytes;
+};
+const canonicalTextKeyBytes = (value: string): Uint8Array => {
+  const body = textEncoder.encode(value);
+  return Uint8Array.from([...lengthPrefix(body.length), ...body]);
+};
+const compareBytes = (left: Uint8Array, right: Uint8Array): number => {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const order = (left[index] ?? 0) - (right[index] ?? 0);
+    if (order !== 0) return order;
+  }
+  return left.length - right.length;
+};
+/**
+ * Every map currently emitted by this adapter has a nominal Text-backed key.
+ * Uhura orders a map by the complete canonical key bytes. The nominal type is
+ * constant within one map, so its shared prefix cancels and the order reduces
+ * exactly to the length-framed UTF-8 Text body below.
+ */
+const wireTextKeyMap = (
+  type: string,
+  entries: ReadonlyArray<readonly [string, WireValue]>,
+): WireValue => {
+  const ordered = entries
+    .map(([key, value]) => ({
+      key,
+      value,
+      canonical: canonicalTextKeyBytes(key),
+    }))
+    .sort((left, right) => compareBytes(left.canonical, right.canonical));
+  for (let index = 1; index < ordered.length; index += 1) {
+    if (
+      compareBytes(
+        ordered[index - 1]?.canonical ?? new Uint8Array(),
+        ordered[index]?.canonical ?? new Uint8Array(),
+      ) === 0
+    ) {
+      throw new Error(`duplicate canonical map key \`${ordered[index]?.key}\``);
+    }
+  }
+  return wireMap(ordered.map(({ key, value }) => [
+    wireKey(type, wireText(key)),
+    value,
+  ]));
+};
+const wireOption = (
+  type: string,
+  value: WireValue | null,
+): WireValue => wireVariant(
+  `Option<${type}>`,
+  value === null ? "none" : "some",
+  value === null ? [] : [["value", value]],
+);
 
 /**
  * A picker result is observed immediately so a rejection cannot become
@@ -146,21 +327,18 @@ export interface SpockDriver {
  */
 type PickedFile = Promise<{ file: File | null } | { error: unknown }>;
 
-// A retired driver can have a mutation already accepted by Spock. New driver
-// boot waits for that work before reading its authority snapshot, so a route
+// A retired backend instance can have a mutation already accepted by Spock.
+// A replacement waits for that work before reading its authority snapshot, so a route
 // remount cannot strand a just-accepted mutation behind stale boot data.
 let authorityTail: Promise<void> = Promise.resolve();
 
-const AUTHORITY_COMMANDS = new Set([
-  "feed/like-post",
-  "feed/unlike-post",
-  "feed/save-post",
-  "feed/unsave-post",
-  "comments/add-comment",
-  "feed/mark-story-seen",
-  "profile/follow-user",
-  "profile/unfollow-user",
-  "create/publish-image",
+const AUTHORITY_OPERATIONS = new Set<BackendOperation["kind"]>([
+  "set_like",
+  "set_save",
+  "add_comment",
+  "mark_story",
+  "set_follow",
+  "publish_image_request",
 ]);
 
 const AUTHORITY_REQUEST_TIMEOUT_MS = 15_000;
@@ -272,9 +450,12 @@ function resolveFromEndpoint(reference: string, endpoint: string): string {
   }
 }
 
-function enqueueAuthorityWork(work: () => Promise<void>): Promise<void> {
+function enqueueAuthorityWork<T>(work: () => Promise<T>): Promise<T> {
   const queued = authorityTail.then(work, work);
-  authorityTail = queued.catch(() => {});
+  authorityTail = queued.then(
+    () => {},
+    () => {},
+  );
   return queued;
 }
 
@@ -433,26 +614,32 @@ type RpcReply =
   | { ok: true; result: unknown }
   | { ok: false; error: SpockError };
 
-interface ProviderCommand {
-  kind: "command";
-  port: string;
-  command: string;
-  correlation: string;
-  payload: Record<string, unknown>;
-}
+type BackendOperation =
+  | { kind: "set_like"; post: string; liked: boolean }
+  | { kind: "set_save"; post: string; saved: boolean }
+  | { kind: "load_more" }
+  | { kind: "reload_feed" }
+  | { kind: "set_follow"; user: string; following: boolean }
+  | { kind: "add_comment"; post: string; body: string }
+  | { kind: "search_people"; query: string }
+  | { kind: "choose_image_request" }
+  | {
+      kind: "publish_image_request";
+      object: string;
+      caption: string;
+      alt: string;
+    }
+  | { kind: "mark_story"; story: string };
 
-interface ProjectionUpdate {
-  port: string;
-  projection: string;
-  key: unknown;
-  revision: number;
-  value: unknown;
-}
-
-type CommandOutcome =
-  | { ok: Record<string, never> }
-  | { refused: { refusal: string } }
-  | { unavailable: { reason: string } };
+type BackendSettlement =
+  | { kind: "accepted" }
+  | { kind: "refused"; reason: string }
+  | {
+      kind: "image_ready";
+      object: string;
+      preview: string;
+      name: string;
+    };
 
 interface Database {
   users: Map<string, UserRow>;
@@ -568,21 +755,14 @@ function toRefusalName(code: string): string {
 }
 
 /**
- * Create the Instagram demo's live Spock-backed provider.
- *
- * Delivery is eager: boot queues every keyed post, comment thread, story,
- * profile, and relationship list plus the feed, reels, people search, and
- * create draft. Commands settle by re-reading one authority snapshot and
- * carrying whole-slice updates in their outcome envelope.
- *
- * @param {SpockDriverConfig} config
- * @param {ProviderHost} host
- * @returns {SpockDriver}
+ * Create the app-local Spock authority bridge used by the admitted Uhura
+ * ports. It exposes domain operations and typed authority values directly;
+ * there is no second provider protocol or projection/outcome envelope.
  */
-export function createDriver(
-  { graphql_url, rpc_url, storage_url, actor }: SpockDriverConfig,
+function createSpockBackend(
+  { graphql_url, rpc_url, storage_url, actor }: SpockProviderConfig,
   host: ProviderHost,
-): SpockDriver {
+): SpockBackend {
   const graphqlUrl = graphql_url.replace(/\/+$/, "");
   const rpcUrl = rpc_url.replace(/\/+$/, "");
   const storageUrl = storage_url.replace(/\/+$/, "");
@@ -600,13 +780,10 @@ export function createDriver(
     whoamiUrl: new URL("/~whoami", graphqlUrl).toString(),
   };
 
-  const outbox: string[] = [];
-  let inflight = 0;
-  let commandTail: Promise<void> = Promise.resolve();
-
   const signedAssets = new Map<string, { url: string; refreshAt: number }>();
   const signingAssets = new Map<string, Promise<string>>();
   const uploadedFileNames = new Map<string, string>();
+  let operationTail: Promise<void> = Promise.resolve();
   const cancellable = new AbortController();
   let disposed = host.signal.aborted;
   let authorityResolution: Promise<AuthorityEndpoints> | undefined;
@@ -616,7 +793,6 @@ export function createDriver(
     disposed = true;
     host.signal.removeEventListener("abort", dispose);
     cancellable.abort();
-    outbox.length = 0;
     signedAssets.clear();
     signingAssets.clear();
     uploadedFileNames.clear();
@@ -664,70 +840,6 @@ export function createDriver(
       }
     })();
     return authorityResolution;
-  }
-
-  const revisions = new Map<string, number>();
-
-  /**
-   * @param {string} port
-   * @param {string} projection
-   * @param {unknown} key
-   * @returns {number}
-   */
-  function mintRevision(
-    port: string,
-    projection: string,
-    key: unknown,
-  ): number {
-    const slot = `${port}|${projection}|${encode(key ?? null)}`;
-    const next = (revisions.get(slot) ?? 1) + 1;
-    revisions.set(slot, next);
-    return next;
-  }
-
-  /**
-   * @param {string} port
-   * @param {string} projection
-   * @param {unknown} key
-   * @param {unknown} value
-   * @returns {string}
-   */
-  function projectionMsg(
-    port: string,
-    projection: string,
-    key: unknown,
-    value: unknown,
-  ): string {
-    return encode({
-      kind: "projection",
-      port,
-      projection,
-      key: key ?? null,
-      revision: mintRevision(port, projection, key),
-      value,
-    });
-  }
-
-  /**
-   * @param {string} port
-   * @param {string} projection
-   * @param {unknown} key
-   * @param {unknown} value
-   * @returns {ProjectionUpdate}
-   */
-  function projectionUpdate(
-    port: string,
-    projection: string,
-    key: unknown,
-    value: unknown,
-  ): ProjectionUpdate {
-    return {
-      port,
-      projection,
-      key: key ?? null,
-      revision: mintRevision(port, projection, key),
-      value,
-    };
   }
 
   /**
@@ -816,7 +928,7 @@ export function createDriver(
     try {
       // Once sent, a domain mutation may already be accepted by Spock. Do not
       // abort it merely because its route retired; the module-level authority
-      // barrier makes the next driver wait for settlement. The finite timeout
+      // barrier makes the replacement backend wait for settlement. The finite timeout
       // prevents a broken connection from blocking every future boot forever.
       response = await fetch(`${rpcUrl}/${fn}`, {
         method: "POST",
@@ -853,6 +965,11 @@ export function createDriver(
    * @returns {Promise<string>}
    */
   async function resolveAsset(asset: string): Promise<string> {
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/)/iu.test(asset)) return asset;
+    const local = LOCAL_PLAY_ASSETS[asset];
+    if (local) {
+      return `/api/play/assets/${encodeURIComponent(local)}`;
+    }
     assertLive();
     const cached = signedAssets.get(asset);
     if (cached && Date.now() < cached.refreshAt) return cached.url;
@@ -1064,8 +1181,8 @@ export function createDriver(
     const resolved = data.users.find(
       (user) => user.id === actor || user.username === actor,
     );
-    // Keep the authority-owned user catalog available even when a stale
-    // tab-local actor selection cannot resolve. assembleBoot still refuses
+    // Keep the authority-owned user directory available even when a stale
+    // tab-local actor selection cannot resolve. `load` still refuses
     // that identity, but the system chrome can offer a valid actor and recover
     // by replacing the stored selection.
     viewerRow = resolved ?? null;
@@ -1089,87 +1206,6 @@ export function createDriver(
     const user = db.users.get(id);
     if (!user) throw new Error(`Spock snapshot references missing user \`${id}\``);
     return user;
-  }
-
-  /**
-   * @param {UserRow} user
-   * @returns {Record<string, unknown>}
-   */
-  function userRef(user: UserRow) {
-    return {
-      id: user.id,
-      username: user.username,
-      "display-name": user.display_name,
-      avatar: { src: user.avatar.id, alt: user.avatar_alt },
-    };
-  }
-
-  /**
-   * @param {PostRow} post
-   * @returns {Record<string, unknown>}
-   */
-  function media(post: PostRow) {
-    if (post.media_kind === "carousel") {
-      const slides = db.slidesByPost.get(post.id) ?? [];
-      return {
-        carousel: {
-          slides: slides.map((slide) => ({
-            id: slide.id,
-            src: slide.file,
-            alt: slide.alt,
-          })),
-        },
-      };
-    }
-    if (post.media_file === null || post.media_alt === null) {
-      throw new Error(`post \`${post.id}\` has incomplete ${post.media_kind} media`);
-    }
-    const ref = { src: post.media_file, alt: post.media_alt };
-    if (post.media_kind === "video") {
-      if (post.video_file === null) {
-        throw new Error(`video post \`${post.id}\` has no playable video_file`);
-      }
-      return { video: { src: post.video_file, poster: ref } };
-    }
-    return { image: { image: ref } };
-  }
-
-  /**
-   * @param {PostRow} post
-   * @returns {Record<string, unknown>}
-   */
-  function postSummary(post: PostRow) {
-    return {
-      id: post.id,
-      author: userRef(requireUser(post.author)),
-      media: media(post),
-      caption: post.caption,
-      "like-count": db.likeCounts.get(post.id) ?? 0,
-      "comment-count": (db.commentsByPost.get(post.id) ?? []).length,
-      "viewer-has-liked": db.liked.has(post.id),
-      "viewer-has-saved": db.saved.has(post.id),
-      "posted-label": ageLabel(post.published_at),
-    };
-  }
-
-  /**
-   * @param {string} id
-   * @returns {PostRow}
-   */
-  function requirePost(id: string): PostRow {
-    const post = db.posts.find((candidate) => candidate.id === id);
-    if (!post) throw new Error(`Spock snapshot has no post \`${id}\``);
-    return post;
-  }
-
-  /**
-   * @param {string} id
-   * @returns {StoryRow}
-   */
-  function requireStory(id: string): StoryRow {
-    const story = db.stories.find((candidate) => candidate.id === id);
-    if (!story) throw new Error(`Spock snapshot has no story \`${id}\``);
-    return story;
   }
 
   /**
@@ -1204,89 +1240,109 @@ export function createDriver(
     return db.posts.filter((post) => post.show_in_feed && isHomeAuthor(post.author));
   }
 
-  /**
-   * One tray entry represents one author's current story sequence. Its id is
-   * the next unseen frame (or the first frame after the sequence is exhausted),
-   * so opening a ring always addresses a real keyed story projection.
-   * @returns {Record<string, unknown>[]}
-   */
-  function storyRingsValue() {
-    const grouped = groupBy(
-      db.stories.filter((story) => isHomeAuthor(story.author)),
-      (story) => story.author,
+  function userWire(id: string): WireValue {
+    const user = requireUser(id);
+    return wireRecord([
+      ["id", wireKey(USER_ID_TYPE, wireText(user.id))],
+      ["username", wireText(user.username)],
+      ["display_name", wireText(user.display_name)],
+      [
+        "avatar",
+        wireRecord([
+          ["src", wireText(user.avatar.id)],
+          ["alt", wireText(user.avatar_alt)],
+        ]),
+      ],
+    ]);
+  }
+
+  function imageWire(src: string, alt: string): WireValue {
+    return wireRecord([
+      ["src", wireText(src)],
+      ["alt", wireText(alt)],
+    ]);
+  }
+
+  function mediaWire(post: PostRow): WireValue {
+    if (post.media_kind === "carousel") {
+      const slides = db.slidesByPost.get(post.id) ?? [];
+      return wireVariant(MEDIA_TYPE, "Carousel", [[
+        "images",
+        wireSeq(slides.map((slide) => imageWire(slide.file, slide.alt))),
+      ]]);
+    }
+    if (post.media_file === null || post.media_alt === null) {
+      throw new Error(
+        `post \`${post.id}\` has incomplete ${post.media_kind} media`,
+      );
+    }
+    const poster = imageWire(post.media_file, post.media_alt);
+    if (post.media_kind === "video") {
+      if (post.video_file === null) {
+        throw new Error(`video post \`${post.id}\` has no playable video_file`);
+      }
+      return wireVariant(MEDIA_TYPE, "Video", [
+        ["src", wireText(post.video_file)],
+        ["poster", poster],
+      ]);
+    }
+    return wireVariant(MEDIA_TYPE, "Image", [["image", poster]]);
+  }
+
+  function postWire(post: PostRow): WireValue {
+    return wireRecord([
+      ["id", wireKey(POST_ID_TYPE, wireText(post.id))],
+      ["author", userWire(post.author)],
+      ["caption", wireText(post.caption)],
+      ["media", mediaWire(post)],
+      ["like_count", wireNat(db.likeCounts.get(post.id) ?? 0)],
+      [
+        "comment_count",
+        wireNat((db.commentsByPost.get(post.id) ?? []).length),
+      ],
+      ["viewer_liked", wireBool(db.liked.has(post.id))],
+      ["viewer_saved", wireBool(db.saved.has(post.id))],
+      ["posted_label", wireText(ageLabel(post.published_at))],
+    ]);
+  }
+
+  function tileWire(post: PostRow): WireValue {
+    const thumb = postThumb(post);
+    return wireRecord([
+      ["post", wireKey(POST_ID_TYPE, wireText(post.id))],
+      ["image", imageWire(thumb.src, thumb.alt)],
+    ]);
+  }
+
+  function connectionWire(id: string): WireValue {
+    return wireRecord([
+      ["user", userWire(id)],
+      ["follows_viewer", wireBool(db.follows.has(edgeKey(id, viewerId())))],
+      [
+        "viewer_follows",
+        wireBool(db.follows.has(edgeKey(viewerId(), id))),
+      ],
+    ]);
+  }
+
+  function connectionSequence(ids: readonly string[]): WireValue {
+    const unique = [...new Set(ids)];
+    unique.sort((left, right) =>
+      requireUser(left).username.localeCompare(requireUser(right).username)
     );
-    const rings = [...grouped.entries()].map(([author, stories]) => {
-      stories.sort(
-        (left, right) => left.position - right.position || left.id.localeCompare(right.id),
-      );
-      const unseen = stories.filter(
-        (story) => !db.storyViews.has(edgeKey(viewerId(), story.id)),
-      );
-      const isSelf = author === viewerId();
-      const selected = isSelf ? stories[0] : unseen[0] ?? stories[0];
-      if (!selected) throw new Error(`story author \`${author}\` has no frames`);
-      const newest = stories.reduce((latest, story) =>
-        newestFirst(latest.published_at, story.published_at) <= 0 ? latest : story,
-      );
-      return {
-        author,
-        selected,
-        newest,
-        hasUnseen: !isSelf && unseen.length > 0,
-      };
-    });
-    rings.sort((left, right) => {
-      const leftSelf = left.author === viewerId() ? 1 : 0;
-      const rightSelf = right.author === viewerId() ? 1 : 0;
-      return (
-        rightSelf - leftSelf ||
-        newestFirst(left.newest.published_at, right.newest.published_at) ||
-        requireUser(left.author).username.localeCompare(requireUser(right.author).username)
-      );
-    });
-    return rings.map((ring) => ({
-      id: ring.selected.id,
-      user: userRef(requireUser(ring.author)),
-      "has-unseen": ring.hasUnseen,
-      "is-self": ring.author === viewerId(),
-    }));
+    return wireSeq(unique.map(connectionWire));
   }
 
-  /** @returns {Record<string, unknown>} */
-  function feedPageValue() {
-    const posts = feedPosts();
-    const shown = posts.slice(0, feedCount);
-    const hasMore = feedCount < posts.length;
-    return {
-      stories: storyRingsValue(),
-      posts: shown.map((post) => postSummary(post)),
-      cursor: hasMore ? `offset:${feedCount}` : null,
-      "has-more": hasMore,
-    };
+  function commentWire(comment: CommentRow): WireValue {
+    return wireRecord([
+      ["id", wireText(comment.id)],
+      ["author", userWire(comment.author)],
+      ["body", wireText(comment.body)],
+      ["posted_label", wireText(ageLabel(comment.created_at))],
+    ]);
   }
 
-  /**
-   * @param {string} postId
-   * @returns {Record<string, unknown>}
-   */
-  function threadValue(postId: string) {
-    const rows = db.commentsByPost.get(postId) ?? [];
-    return {
-      comments: rows.map((comment) => ({
-        id: comment.id,
-        author: userRef(requireUser(comment.author)),
-        body: comment.body,
-        "posted-label": ageLabel(comment.created_at),
-      })),
-    };
-  }
-
-  /**
-   * @param {string} storyId
-   * @returns {Record<string, unknown>}
-   */
-  function storyValue(storyId: string) {
-    const story = requireStory(storyId);
+  function storyDetailWire(story: StoryRow): WireValue {
     const sequence = db.stories
       .filter((candidate) => candidate.author === story.author)
       .sort(
@@ -1294,211 +1350,213 @@ export function createDriver(
           left.position - right.position || left.id.localeCompare(right.id),
       );
     const index = sequence.findIndex((candidate) => candidate.id === story.id);
-    if (index < 0) throw new Error(`story sequence lost frame \`${story.id}\``);
-    return {
-      id: story.id,
-      author: userRef(requireUser(story.author)),
-      image: { src: story.media_file, alt: story.media_alt },
-      caption: story.caption ?? "",
-      "posted-label": ageLabel(story.published_at),
-      "viewer-has-viewed": db.storyViews.has(edgeKey(viewerId(), story.id)),
-      previous: index > 0 ? sequence[index - 1]?.id ?? null : null,
-      next:
-        index + 1 < sequence.length ? sequence[index + 1]?.id ?? null : null,
-      progress: sequence.map((frame) => ({
-        id: frame.id,
-        "is-current": frame.id === story.id,
-        "is-viewed": db.storyViews.has(edgeKey(viewerId(), frame.id)),
-      })),
-    };
+    if (index < 0) {
+      throw new Error(`story sequence lost frame \`${story.id}\``);
+    }
+    const previous = index > 0 ? sequence[index - 1]?.id ?? null : null;
+    const next = index + 1 < sequence.length
+      ? sequence[index + 1]?.id ?? null
+      : null;
+    return wireRecord([
+      ["id", wireKey(STORY_ID_TYPE, wireText(story.id))],
+      ["author", userWire(story.author)],
+      ["image", imageWire(story.media_file, story.media_alt)],
+      ["caption", wireText(story.caption ?? "")],
+      ["posted_label", wireText(ageLabel(story.published_at))],
+      [
+        "viewed",
+        wireBool(db.storyViews.has(edgeKey(viewerId(), story.id))),
+      ],
+      [
+        "previous",
+        wireOption(
+          STORY_ID_TYPE,
+          previous === null
+            ? null
+            : wireKey(STORY_ID_TYPE, wireText(previous)),
+        ),
+      ],
+      [
+        "next",
+        wireOption(
+          STORY_ID_TYPE,
+          next === null ? null : wireKey(STORY_ID_TYPE, wireText(next)),
+        ),
+      ],
+      [
+        "progress",
+        wireSeq(sequence.map((frame) =>
+          wireRecord([
+            ["id", wireKey(STORY_ID_TYPE, wireText(frame.id))],
+            ["current", wireBool(frame.id === story.id)],
+            [
+              "viewed",
+              wireBool(db.storyViews.has(edgeKey(viewerId(), frame.id))),
+            ],
+          ])
+        )),
+      ],
+    ]);
   }
 
-  /** @returns {Record<string, unknown>} */
-  function reelsValue() {
-    return {
-      posts: db.posts
-        .filter((post) => post.media_kind === "video")
-        .map((post) => postSummary(post)),
-    };
+  function storyRingWires(): WireValue[] {
+    const grouped = groupBy(
+      db.stories.filter((story) => isHomeAuthor(story.author)),
+      (story) => story.author,
+    );
+    const rings = [...grouped.entries()].map(([author, stories]) => {
+      stories.sort(
+        (left, right) =>
+          left.position - right.position || left.id.localeCompare(right.id),
+      );
+      const unseen = stories.filter(
+        (story) => !db.storyViews.has(edgeKey(viewerId(), story.id)),
+      );
+      const self = author === viewerId();
+      const selected = self ? stories[0] : unseen[0] ?? stories[0];
+      if (!selected) throw new Error(`story author \`${author}\` has no frames`);
+      const newest = stories.reduce((latest, story) =>
+        newestFirst(latest.published_at, story.published_at) <= 0
+          ? latest
+          : story
+      );
+      return {
+        author,
+        selected,
+        newest,
+        unseen: !self && unseen.length > 0,
+        self,
+      };
+    });
+    rings.sort((left, right) =>
+      Number(right.self) - Number(left.self)
+      || newestFirst(left.newest.published_at, right.newest.published_at)
+      || requireUser(left.author).username.localeCompare(
+        requireUser(right.author).username,
+      )
+    );
+    return rings.map((ring) =>
+      wireRecord([
+        ["id", wireKey(STORY_ID_TYPE, wireText(ring.selected.id))],
+        ["user", userWire(ring.author)],
+        ["unseen", wireBool(ring.unseen)],
+        ["is_self", wireBool(ring.self)],
+      ])
+    );
   }
 
-  /**
-   * @param {string} userId
-   * @returns {Record<string, unknown>}
-   */
-  function profileValue(userId: string) {
-    const user = requireUser(userId);
-    const posts = db.posts.filter((post) => post.author === userId);
-    const reels = posts.filter((post) => post.media_kind === "video");
-    const saved =
-      userId === viewerId()
-        ? db.posts.filter((post) => db.saved.has(post.id))
-        : [];
-    const taggedIds = new Set(db.taggedPostsByUser.get(userId) ?? []);
-    const tagged = db.posts.filter((post) => taggedIds.has(post.id));
-    return {
-      user: userRef(user),
-      bio: user.bio ?? "",
-      "is-self": userId === viewerId(),
-      "viewer-follows": db.follows.has(edgeKey(viewerId(), userId)),
-      "post-count": posts.length,
-      "follower-count": (db.followersByUser.get(userId) ?? []).length,
-      "following-count": (db.followingByUser.get(userId) ?? []).length,
-      posts: posts.map((post) => postThumb(post)),
-      reels: reels.map((post) => postThumb(post)),
-      saved: saved.map((post) => postThumb(post)),
-      tagged: tagged.map((post) => postThumb(post)),
-    };
+  function profileWire(id: string): WireValue {
+    const user = requireUser(id);
+    const posts = db.posts.filter((post) => post.author === id);
+    const tagged = new Set(db.taggedPostsByUser.get(id) ?? []);
+    return wireRecord([
+      ["user", userWire(id)],
+      ["bio", wireText(user.bio ?? "")],
+      ["post_count", wireNat(posts.length)],
+      [
+        "follower_count",
+        wireNat((db.followersByUser.get(id) ?? []).length),
+      ],
+      [
+        "following_count",
+        wireNat((db.followingByUser.get(id) ?? []).length),
+      ],
+      [
+        "viewer_follows",
+        wireBool(db.follows.has(edgeKey(viewerId(), id))),
+      ],
+      ["posts", wireSeq(posts.map(tileWire))],
+      [
+        "reels",
+        wireSeq(posts.filter((post) => post.media_kind === "video").map(tileWire)),
+      ],
+      [
+        "tagged",
+        wireSeq(db.posts.filter((post) => tagged.has(post.id)).map(tileWire)),
+      ],
+      [
+        "saved",
+        wireSeq(
+          id === viewerId()
+            ? db.posts.filter((post) => db.saved.has(post.id)).map(tileWire)
+            : [],
+        ),
+      ],
+    ]);
   }
 
-  /**
-   * @param {string[]} userIds
-   * @returns {Record<string, unknown>}
-   */
-  function connectionsValue(userIds: string[]) {
-    return {
-      people: userIds
-        .map((id) => requireUser(id))
-        .sort((left, right) => left.username.localeCompare(right.username))
-        .map((user) => ({
-          user: userRef(user),
-          "viewer-follows": db.follows.has(edgeKey(viewerId(), user.id)),
-        })),
-    };
-  }
-
-  /**
-   * @param {string} userId
-   * @returns {Record<string, unknown>}
-   */
-  function followersValue(userId: string) {
-    requireUser(userId);
-    return connectionsValue(db.followersByUser.get(userId) ?? []);
-  }
-
-  /**
-   * @param {string} userId
-   * @returns {Record<string, unknown>}
-   */
-  function followingValue(userId: string) {
-    requireUser(userId);
-    return connectionsValue(db.followingByUser.get(userId) ?? []);
-  }
-
-  /**
-   * @param {string} query
-   * @returns {Record<string, unknown>}
-   */
-  function searchValue(query: string) {
-    const needle = query.trim().toLocaleLowerCase();
-    const people = [...db.users.values()]
+  function authorityValue(): WireValue {
+    const home = feedPosts();
+    const visible = home.slice(0, feedCount);
+    const needle = searchQuery.trim().toLocaleLowerCase();
+    const searchPeople = [...db.users.values()]
       .filter((user) => user.id !== viewerId())
-      .filter(
-        (user) =>
-          needle.length === 0 ||
-          user.username.toLocaleLowerCase().includes(needle) ||
-          user.display_name.toLocaleLowerCase().includes(needle),
+      .filter((user) =>
+        needle.length === 0
+        || user.username.toLocaleLowerCase().includes(needle)
+        || user.display_name.toLocaleLowerCase().includes(needle)
       )
       .map((user) => user.id);
-    const posts = db.posts.filter((post) => {
-      if (needle.length === 0) return true;
-      const author = requireUser(post.author);
-      return (
-        post.caption.toLocaleLowerCase().includes(needle) ||
-        author.username.toLocaleLowerCase().includes(needle) ||
-        author.display_name.toLocaleLowerCase().includes(needle)
-      );
-    });
-    return {
-      people: connectionsValue(people).people,
-      posts: posts.map((post) => postThumb(post)),
-    };
-  }
-
-  /**
-   * @param {string} postId
-   * @param {boolean} includeThread
-   * @returns {ProjectionUpdate[]}
-   */
-  function postSettlementUpdates(
-    postId: string,
-    includeThread: boolean,
-  ): ProjectionUpdate[] {
-    const updates = [
-      projectionUpdate("feed", "feed-page", null, feedPageValue()),
-      projectionUpdate(
-        "feed",
-        "post-by-id",
-        postId,
-        postSummary(requirePost(postId)),
-      ),
-      projectionUpdate("feed", "reels", null, reelsValue()),
-    ];
-    if (includeThread) {
-      updates.push(
-        projectionUpdate("comments", "for-post", postId, threadValue(postId)),
-      );
-    }
-    return updates;
-  }
-
-  /**
-   * Saving changes every viewer-specific rendering of a post plus the private
-   * Saved grid on the actor's own profile.
-   * @param {string} postId
-   * @returns {ProjectionUpdate[]}
-   */
-  function saveSettlementUpdates(postId: string): ProjectionUpdate[] {
-    return [
-      ...postSettlementUpdates(postId, false),
-      projectionUpdate(
-        "profile",
-        "profile",
-        viewerId(),
-        profileValue(viewerId()),
-      ),
-    ];
-  }
-
-  /**
-   * A viewed edge changes the ring and every frame's progress strip in that
-   * author's sequence, so settle them as one authority snapshot.
-   * @param {string} storyId
-   * @returns {ProjectionUpdate[]}
-   */
-  function storySettlementUpdates(storyId: string): ProjectionUpdate[] {
-    const author = requireStory(storyId).author;
-    return [
-      projectionUpdate("feed", "feed-page", null, feedPageValue()),
-      ...db.stories
-        .filter((story) => story.author === author)
-        .map((story) =>
-          projectionUpdate(
-            "feed",
-            "story-by-id",
-            story.id,
-            storyValue(story.id),
+    const users = [...db.users.keys()];
+    return wireVariant(AUTHORITY_TYPE, "Ready", [[
+      "data",
+      wireRecord([
+        ["viewer", userWire(viewerId())],
+        [
+          "posts",
+          wireTextKeyMap(POST_ID_TYPE, db.posts.map((post) => [
+            post.id,
+            postWire(post),
+          ])),
+        ],
+        ["feed_posts", wireSeq(visible.map(postWire))],
+        ["feed_has_more", wireBool(feedCount < home.length)],
+        [
+          "reels",
+          wireSeq(
+            db.posts.filter((post) => post.media_kind === "video").map(postWire),
           ),
-        ),
-    ];
-  }
-
-  /** @returns {ProjectionUpdate[]} */
-  function allSocialUpdates(): ProjectionUpdate[] {
-    const updates: ProjectionUpdate[] = [
-      projectionUpdate("feed", "feed-page", null, feedPageValue()),
-    ];
-    for (const userId of db.users.keys()) {
-      updates.push(
-        projectionUpdate("profile", "profile", userId, profileValue(userId)),
-        projectionUpdate("profile", "followers", userId, followersValue(userId)),
-        projectionUpdate("profile", "following", userId, followingValue(userId)),
-      );
-    }
-    updates.push(
-      projectionUpdate("profile", "search-results", null, searchValue(searchQuery)),
-    );
-    return updates;
+        ],
+        ["stories", wireSeq(storyRingWires())],
+        [
+          "story_details",
+          wireTextKeyMap(STORY_ID_TYPE, db.stories.map((story) => [
+            story.id,
+            storyDetailWire(story),
+          ])),
+        ],
+        [
+          "profiles",
+          wireTextKeyMap(USER_ID_TYPE, users.map((id) => [
+            id,
+            profileWire(id),
+          ])),
+        ],
+        [
+          "followers",
+          wireTextKeyMap(USER_ID_TYPE, users.map((id) => [
+            id,
+            connectionSequence(db.followersByUser.get(id) ?? []),
+          ])),
+        ],
+        [
+          "following",
+          wireTextKeyMap(USER_ID_TYPE, users.map((id) => [
+            id,
+            connectionSequence(db.followingByUser.get(id) ?? []),
+          ])),
+        ],
+        [
+          "comments",
+          wireTextKeyMap(POST_ID_TYPE, db.posts.map((post) => [
+            post.id,
+            wireSeq((db.commentsByPost.get(post.id) ?? []).map(commentWire)),
+          ])),
+        ],
+        ["search_people", connectionSequence(searchPeople)],
+        ["explore_tiles", wireSeq(db.posts.map(tileWire))],
+      ]),
+    ]]);
   }
 
   /**
@@ -1515,202 +1573,139 @@ export function createDriver(
       : `Image uploaded by ${author.display_name}`;
   }
 
-  /**
-   * @param {ProviderCommand} command
-   * @param {string} field
-   * @returns {string}
-   */
-  function payloadString(command: ProviderCommand, field: string): string {
-    const value = command.payload[field];
-    if (typeof value !== "string") {
-      throw new Error(`command \`${command.port}/${command.command}\` needs string \`${field}\``);
-    }
-    return value;
-  }
-
-  /**
-   * @param {string} route
-   * @param {SpockError} error
-   * @returns {CommandOutcome}
-   */
-  function refuseOrUnavailable(
+  function refusal(
     route: string,
     error: SpockError,
-  ): CommandOutcome {
-    const refusal = toRefusalName(error.code ?? "");
-    if ((COMMAND_REFUSALS[route] ?? []).includes(refusal)) {
-      return { refused: { refusal } };
+  ): BackendSettlement {
+    const reason = toRefusalName(error.code ?? "");
+    if ((COMMAND_REFUSALS[route] ?? []).includes(reason)) {
+      return { kind: "refused", reason };
     }
     return {
-      unavailable: { reason: error.message ?? error.code ?? "provider error" },
+      kind: "refused",
+      reason: error.message ?? error.code ?? "provider-error",
     };
   }
 
-  /**
-   * @param {ProviderCommand} command
-   * @param {CommandOutcome} result
-   * @param {ProjectionUpdate[]} [updates]
-   * @returns {void}
-   */
-  function outcome(
-    command: ProviderCommand,
-    result: CommandOutcome,
-    updates: ProjectionUpdate[] = [],
-  ): void {
-    if (disposed) return;
-    outbox.push(
-      encode({
-        kind: "outcome",
-        correlation: command.correlation,
-        outcome: result,
-        updates,
-      }),
-    );
-  }
-
-  /**
-   * @param {ProviderCommand} command
-   * @param {PickedFile | undefined} pickedFile
-   * @returns {Promise<void>}
-   */
   async function handle(
-    command: ProviderCommand,
+    operation: BackendOperation,
     pickedFile: PickedFile | undefined,
-  ): Promise<void> {
-    const route = `${command.port}/${command.command}`;
+  ): Promise<BackendSettlement> {
     try {
-      switch (route) {
-        case "feed/like-post":
-        case "feed/unlike-post": {
-          const post = payloadString(command, "post");
-          const fn = command.command === "like-post" ? "like_post" : "unlike_post";
-          const reply = await rpc(fn, { post });
+      switch (operation.kind) {
+        case "set_like": {
+          const route = operation.liked
+            ? "feed/like-post"
+            : "feed/unlike-post";
+          const reply = await rpc(
+            operation.liked ? "like_post" : "unlike_post",
+            { post: operation.post },
+          );
           if (reply.ok === false) {
-            outcome(command, refuseOrUnavailable(route, reply.error));
-            return;
+            return refusal(route, reply.error);
           }
           await loadAll();
-          outcome(command, { ok: {} }, postSettlementUpdates(post, false));
-          return;
+          return { kind: "accepted" };
         }
-        case "feed/save-post":
-        case "feed/unsave-post": {
-          const post = payloadString(command, "post");
-          const fn = command.command === "save-post" ? "save_post" : "unsave_post";
-          const reply = await rpc(fn, { post });
+        case "set_save": {
+          const route = operation.saved
+            ? "feed/save-post"
+            : "feed/unsave-post";
+          const reply = await rpc(
+            operation.saved ? "save_post" : "unsave_post",
+            { post: operation.post },
+          );
           if (reply.ok === false) {
-            outcome(command, refuseOrUnavailable(route, reply.error));
-            return;
+            return refusal(route, reply.error);
           }
           await loadAll();
-          outcome(command, { ok: {} }, saveSettlementUpdates(post));
-          return;
+          return { kind: "accepted" };
         }
-        case "comments/add-comment": {
-          const post = payloadString(command, "post");
-          const body = payloadString(command, "body");
-          const reply = await rpc("add_comment", { post, body });
+        case "add_comment": {
+          const route = "comments/add-comment";
+          const reply = await rpc("add_comment", {
+            post: operation.post,
+            body: operation.body,
+          });
           if (reply.ok === false) {
-            outcome(command, refuseOrUnavailable(route, reply.error));
-            return;
+            return refusal(route, reply.error);
           }
           await loadAll();
-          outcome(command, { ok: {} }, postSettlementUpdates(post, true));
-          return;
+          return { kind: "accepted" };
         }
-        case "feed/load-next-page": {
+        case "load_more": {
           await loadAll();
           feedCount = Math.min(feedCount + PAGE_SIZE, feedPosts().length);
-          outcome(command, { ok: {} }, [
-            projectionUpdate("feed", "feed-page", null, feedPageValue()),
-          ]);
-          return;
+          return { kind: "accepted" };
         }
-        case "feed/reload": {
+        case "reload_feed": {
           feedCount = PAGE_SIZE;
           await loadAll();
-          outcome(command, { ok: {} }, [
-            projectionUpdate("feed", "feed-page", null, feedPageValue()),
-          ]);
-          return;
+          return { kind: "accepted" };
         }
-        case "feed/mark-story-seen": {
-          const story = payloadString(command, "story");
-          const reply = await rpc("mark_story_viewed", { story });
+        case "mark_story": {
+          const route = "feed/mark-story-seen";
+          const reply = await rpc("mark_story_viewed", {
+            story: operation.story,
+          });
           if (reply.ok === false) {
-            outcome(command, refuseOrUnavailable(route, reply.error));
-            return;
+            return refusal(route, reply.error);
           }
           await loadAll();
-          outcome(command, { ok: {} }, storySettlementUpdates(story));
-          return;
+          return { kind: "accepted" };
         }
-        case "profile/follow-user":
-        case "profile/unfollow-user": {
-          const user = payloadString(command, "user");
-          const fn = command.command === "follow-user" ? "follow_user" : "unfollow_user";
-          const reply = await rpc(fn, { target: user });
+        case "set_follow": {
+          const route = operation.following
+            ? "profile/follow-user"
+            : "profile/unfollow-user";
+          const reply = await rpc(
+            operation.following ? "follow_user" : "unfollow_user",
+            { target: operation.user },
+          );
           if (reply.ok === false) {
-            outcome(command, refuseOrUnavailable(route, reply.error));
-            return;
+            return refusal(route, reply.error);
           }
           await loadAll();
-          outcome(command, { ok: {} }, allSocialUpdates());
-          return;
+          return { kind: "accepted" };
         }
-        case "profile/search-people": {
-          searchQuery = payloadString(command, "query");
+        case "search_people": {
+          searchQuery = operation.query;
           await loadAll();
-          outcome(command, { ok: {} }, [
-            projectionUpdate(
-              "profile",
-              "search-results",
-              null,
-              searchValue(searchQuery),
-            ),
-          ]);
-          return;
+          return { kind: "accepted" };
         }
-        case "create/choose-image": {
+        case "choose_image_request": {
           if (!pickedFile) {
             throw new Error("this play host cannot choose local files");
           }
           const picked = await pickedFile;
           if ("error" in picked) throw picked.error;
           if (picked.file === null) {
-            outcome(command, { ok: {} });
-            return;
+            return { kind: "refused", reason: "selection-cancelled" };
           }
           if (!SUPPORTED_IMAGE_TYPES.has(picked.file.type.trim().toLowerCase())) {
-            outcome(command, {
-              refused: { refusal: "unsupported-media-type" },
-            });
-            return;
+            return { kind: "refused", reason: "unsupported-media-type" };
           }
           const object = await uploadFile(picked.file);
           uploadedFileNames.set(object, picked.file.name);
-          outcome(command, { ok: {} }, [
-            projectionUpdate("create", "draft", null, {
-              uploaded: {
-                object,
-                preview: object,
-                name: picked.file.name,
-              },
-            }),
-          ]);
-          return;
+          return {
+            kind: "image_ready",
+            object,
+            preview: object,
+            name: picked.file.name,
+          };
         }
-        case "create/publish-image": {
-          const image = payloadString(command, "image");
-          const caption = payloadString(command, "caption");
-          const requestedAlt = payloadString(command, "alt");
-          const alt = requestedAlt.trim().length > 0
-            ? requestedAlt
-            : fallbackUploadAlt(image);
-          const reply = await rpc("create_image_post", { image, caption, alt });
+        case "publish_image_request": {
+          const route = "create/publish-image";
+          const alt = operation.alt.trim().length > 0
+            ? operation.alt
+            : fallbackUploadAlt(operation.object);
+          const reply = await rpc("create_image_post", {
+            image: operation.object,
+            caption: operation.caption,
+            alt,
+          });
           if (reply.ok === false) {
-            outcome(command, refuseOrUnavailable(route, reply.error));
-            return;
+            return refusal(route, reply.error);
           }
           if (
             typeof reply.result !== "object" ||
@@ -1720,36 +1715,13 @@ export function createDriver(
           ) {
             throw new Error("create_image_post returned no post id");
           }
-          const post = reply.result.id;
           await loadAll();
-          uploadedFileNames.delete(image);
-          outcome(command, { ok: {} }, [
-            projectionUpdate("feed", "feed-page", null, feedPageValue()),
-            projectionUpdate(
-              "feed",
-              "post-by-id",
-              post,
-              postSummary(requirePost(post)),
-            ),
-            projectionUpdate("comments", "for-post", post, threadValue(post)),
-            projectionUpdate("profile", "profile", viewerId(), profileValue(viewerId())),
-            projectionUpdate(
-              "profile",
-              "search-results",
-              null,
-              searchValue(searchQuery),
-            ),
-            projectionUpdate("create", "draft", null, { empty: {} }),
-          ]);
-          return;
+          uploadedFileNames.delete(operation.object);
+          return { kind: "accepted" };
         }
-        default:
-          outcome(command, {
-            unavailable: { reason: `no binding for command \`${route}\`` },
-          });
       }
     } catch (error) {
-      outcome(command, { unavailable: { reason: errorMessage(error) } });
+      return { kind: "refused", reason: errorMessage(error) };
     }
   }
 
@@ -1769,7 +1741,7 @@ export function createDriver(
       };
     },
 
-    async assembleBoot() {
+    async load() {
       await authorityTail;
       assertLive();
       await loadAll();
@@ -1777,63 +1749,15 @@ export function createDriver(
       const viewer = viewerRow;
       if (!viewer) throw new Error(`actor \`${actor}\` is not a seeded user`);
       await verifyViewer();
-
-      outbox.push(projectionMsg("feed", "feed-page", null, feedPageValue()));
-      for (const post of db.posts) {
-        outbox.push(
-          projectionMsg("comments", "for-post", post.id, threadValue(post.id)),
-          projectionMsg("feed", "post-by-id", post.id, postSummary(post)),
-        );
-      }
-      for (const story of db.stories) {
-        outbox.push(
-          projectionMsg(
-            "feed",
-            "story-by-id",
-            story.id,
-            storyValue(story.id),
-          ),
-        );
-      }
-      outbox.push(projectionMsg("feed", "reels", null, reelsValue()));
-      for (const userId of db.users.keys()) {
-        outbox.push(
-          projectionMsg("profile", "profile", userId, profileValue(userId)),
-          projectionMsg("profile", "followers", userId, followersValue(userId)),
-          projectionMsg("profile", "following", userId, followingValue(userId)),
-        );
-      }
-      outbox.push(
-        projectionMsg(
-          "profile",
-          "search-results",
-          null,
-          searchValue(searchQuery),
-        ),
-      );
-      outbox.push(projectionMsg("create", "draft", null, { empty: {} }));
-
-      return encode({
-        updates: [
-          {
-            port: "feed",
-            projection: "viewer",
-            key: null,
-            revision: 1,
-            value: userRef(viewer),
-          },
-        ],
-      });
     },
 
-    deliver(commandJson: string) {
-      if (disposed) return;
-      const command = JSON.parse(commandJson) as ProviderCommand;
+    execute(operation: BackendOperation): Promise<BackendSettlement> {
+      assertLive();
       let pickedFile: PickedFile | undefined;
-      if (`${command.port}/${command.command}` === "create/choose-image") {
+      if (operation.kind === "choose_image_request") {
         try {
           // This must happen in the click's synchronous call stack. Deferring
-          // it behind commandTail would lose browser user activation.
+          // it behind the operation queue would lose browser user activation.
           pickedFile = host.pickFile({ accept: "image/jpeg,image/png,image/webp" })
             .then(
               (file) => ({ file }),
@@ -1843,34 +1767,323 @@ export function createDriver(
           pickedFile = Promise.resolve({ error });
         }
       }
-      inflight += 1;
-      // Preserve delivery order inside this driver. Only domain mutations
-      // enter the cross-driver authority barrier: a picker, upload draft, or
-      // ordinary read must never strand a later Play boot.
-      const route = `${command.port}/${command.command}`;
-      const predecessor = commandTail;
-      commandTail = predecessor
-        .then(() => {
-          if (disposed) return;
-          const work = () => handle(command, pickedFile);
-          return AUTHORITY_COMMANDS.has(route)
-            ? enqueueAuthorityWork(work)
-            : work();
-        })
-        .finally(() => {
-          inflight -= 1;
-        });
+      const work = operationTail.then(() => {
+        assertLive();
+        const run = () => handle(operation, pickedFile);
+        return AUTHORITY_OPERATIONS.has(operation.kind)
+          ? enqueueAuthorityWork(run)
+          : run();
+      });
+      operationTail = work.then(
+        () => {},
+        () => {},
+      );
+      return work;
     },
 
-    tick() {
-      if (disposed) return [];
-      return outbox.splice(0, outbox.length);
-    },
-
-    idle() {
-      return inflight === 0 && outbox.length === 0;
-    },
-
+    authorityValue,
     resolveAsset,
+  };
+}
+
+function wireObject(value: unknown, context: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${context} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function variantFields(
+  value: WireValue,
+  type: string,
+  caseName?: string,
+): Map<string | null, WireValue> {
+  if (value.$ !== "variant" || value.type !== type) {
+    throw new TypeError(`expected Uhura variant ${type}`);
+  }
+  if (caseName !== undefined && value.case !== caseName) {
+    throw new TypeError(`expected Uhura variant ${type}.${caseName}`);
+  }
+  if (!Array.isArray(value.fields)) {
+    throw new TypeError(`Uhura variant ${type} has no fields`);
+  }
+  const fields = new Map<string | null, WireValue>();
+  for (const raw of value.fields) {
+    const field = wireObject(raw, `${type} field`);
+    const name = field.name;
+    if (name !== null && typeof name !== "string") {
+      throw new TypeError(`${type} field name must be text or null`);
+    }
+    const child = wireObject(field.value, `${type} field value`) as WireValue;
+    if (fields.has(name)) throw new TypeError(`${type} repeats field ${String(name)}`);
+    fields.set(name, child);
+  }
+  return fields;
+}
+
+function requiredField(
+  fields: ReadonlyMap<string | null, WireValue>,
+  name: string,
+): WireValue {
+  const value = fields.get(name);
+  if (!value) throw new TypeError(`Uhura value has no field \`${name}\``);
+  return value;
+}
+
+function keyText(value: WireValue, type: string): string {
+  if (value.$ !== "key" || value.type !== type) {
+    throw new TypeError(`expected Uhura key ${type}`);
+  }
+  const body = wireObject(value.value, `${type} body`);
+  if (body.$ !== "Text" || typeof body.value !== "string") {
+    throw new TypeError(`${type} must wrap Text`);
+  }
+  return body.value;
+}
+
+function requestText(value: WireValue): string {
+  if (value.$ !== "key" || value.type !== REQUEST_ID_TYPE) {
+    throw new TypeError(`expected Uhura key ${REQUEST_ID_TYPE}`);
+  }
+  const body = wireObject(value.value, `${REQUEST_ID_TYPE} body`);
+  if (
+    body.$ !== "PositiveInt"
+    || typeof body.value !== "string"
+    || !/^[1-9]\d*$/u.test(body.value)
+  ) {
+    throw new TypeError(`${REQUEST_ID_TYPE} must wrap PositiveInt`);
+  }
+  return body.value;
+}
+
+function textValue(value: WireValue): string {
+  if (value.$ !== "Text" || typeof value.value !== "string") {
+    throw new TypeError("expected Uhura Text");
+  }
+  return value.value;
+}
+
+function boolValue(value: WireValue): boolean {
+  if (value.$ !== "bool" || typeof value.value !== "boolean") {
+    throw new TypeError("expected Uhura Bool");
+  }
+  return value.value;
+}
+
+interface AdaptedRequest {
+  readonly request: WireValue;
+  readonly operation: BackendOperation;
+}
+
+function adaptRequest(command: WireValue): AdaptedRequest {
+  const requestFields = variantFields(
+    command,
+    MUTATIONS_SEND_TYPE,
+    "request",
+  );
+  const request = requiredField(requestFields, "id");
+  requestText(request);
+  const payload = requiredField(requestFields, "payload");
+  const fields = variantFields(payload, MUTATION_TYPE);
+  const mutation = String(payload.case);
+
+  switch (mutation) {
+    case "SetLike":
+      return {
+        request,
+        operation: {
+          kind: "set_like",
+          post: keyText(requiredField(fields, "post"), POST_ID_TYPE),
+          liked: boolValue(requiredField(fields, "liked")),
+        },
+      };
+    case "SetSave":
+      return {
+        request,
+        operation: {
+          kind: "set_save",
+          post: keyText(requiredField(fields, "post"), POST_ID_TYPE),
+          saved: boolValue(requiredField(fields, "saved")),
+        },
+      };
+    case "LoadMore":
+      return { request, operation: { kind: "load_more" } };
+    case "ReloadFeed":
+      return { request, operation: { kind: "reload_feed" } };
+    case "SetFollow":
+      return {
+        request,
+        operation: {
+          kind: "set_follow",
+          user: keyText(requiredField(fields, "user"), USER_ID_TYPE),
+          following: boolValue(requiredField(fields, "following")),
+        },
+      };
+    case "AddComment":
+      return {
+        request,
+        operation: {
+          kind: "add_comment",
+          post: keyText(requiredField(fields, "post"), POST_ID_TYPE),
+          body: textValue(requiredField(fields, "body")),
+        },
+      };
+    case "SearchPeople":
+      return {
+        request,
+        operation: {
+          kind: "search_people",
+          query: textValue(requiredField(fields, "query")),
+        },
+      };
+    case "ChooseImage":
+      return { request, operation: { kind: "choose_image_request" } };
+    case "PublishImage":
+      return {
+        request,
+        operation: {
+          kind: "publish_image_request",
+          object: textValue(requiredField(fields, "object")),
+          caption: textValue(requiredField(fields, "caption")),
+          alt: textValue(requiredField(fields, "alt")),
+        },
+      };
+    case "MarkStory":
+      return {
+        request,
+        operation: {
+          kind: "mark_story",
+          story: keyText(requiredField(fields, "story"), STORY_ID_TYPE),
+        },
+      };
+    default:
+      throw new TypeError(`unsupported Instagram mutation \`${mutation}\``);
+  }
+}
+
+function observed(value: WireValue): WireValue {
+  return wireVariant(
+    AUTHORITY_RECEIVE_TYPE,
+    "authority.observed",
+    [["value", value]],
+  );
+}
+
+function refused(reason: string): WireValue {
+  return wireVariant(SETTLEMENT_TYPE, "Refused", [[
+    "reason",
+    wireText(reason),
+  ]]);
+}
+
+function settlementValue(result: BackendSettlement): WireValue {
+  switch (result.kind) {
+    case "accepted":
+      return wireVariant(SETTLEMENT_TYPE, "Accepted");
+    case "refused":
+      return refused(result.reason);
+    case "image_ready":
+      return wireVariant(SETTLEMENT_TYPE, "ImageReady", [
+        ["object", wireText(result.object)],
+        ["preview", wireText(result.preview)],
+        ["name", wireText(result.name)],
+      ]);
+  }
+}
+
+function settled(request: WireValue, result: WireValue): WireValue {
+  return wireVariant(
+    MUTATIONS_RECEIVE_TYPE,
+    "mutations.settled",
+    [
+      ["id", request],
+      ["result", result],
+    ],
+  );
+}
+
+function providerConfig(
+  config: Readonly<Record<string, unknown>>,
+): SpockProviderConfig {
+  const value = (name: keyof SpockProviderConfig): string => {
+    const entry = config[name];
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw new TypeError(`Instagram provider needs nonempty \`${name}\``);
+    }
+    return entry;
+  };
+  return {
+    graphql_url: value("graphql_url"),
+    rpc_url: value("rpc_url"),
+    storage_url: value("storage_url"),
+    actor: value("actor"),
+  };
+}
+
+/**
+ * Current Uhura adapter entry point. Contract identities come from the
+ * admitted Play deployment; the app provider never calculates or hardcodes
+ * compiler-owned hashes.
+ */
+export function createUhuraAdapters(
+  config: Readonly<Record<string, unknown>>,
+  host: AdapterProviderHost,
+): {
+  readonly adapters: readonly PortAdapter[];
+  resolveAsset(asset: string): Promise<string>;
+  systemInfo(): RemoteSystemInfo;
+  dispose(): void;
+} {
+  const backend = createSpockBackend(providerConfig(config), host);
+  const authorityRequirement = host.port("authority");
+  const mutationsRequirement = host.port("mutations");
+  let authorityContext: PortAdapterContext | null = null;
+
+  const authority: PortAdapter = {
+    ...authorityRequirement,
+    async start(context): Promise<void> {
+      authorityContext = context;
+      try {
+        await backend.load();
+        context.deliver(observed(backend.authorityValue()));
+      } catch (error) {
+        context.deliver(
+          observed(
+            wireVariant(AUTHORITY_TYPE, "Failed", [[
+              "reason",
+              wireText(errorMessage(error)),
+            ]]),
+          ),
+        );
+      }
+    },
+    accept(): never {
+      throw new Error("Observation<Authority> does not accept commands");
+    },
+  };
+
+  const mutations: PortAdapter = {
+    ...mutationsRequirement,
+    accept(command, context): Promise<void> {
+      const adapted = adaptRequest(command);
+      const work = backend.execute(adapted.operation).then((settlement) => {
+        const result = settlementValue(settlement);
+        if (
+          result.case === "Accepted"
+          && adapted.operation.kind !== "choose_image_request"
+        ) {
+          authorityContext?.deliver(observed(backend.authorityValue()));
+        }
+        context.deliver(settled(adapted.request, result));
+      });
+      return work;
+    },
+  };
+
+  return {
+    adapters: [authority, mutations],
+    resolveAsset: (asset) => backend.resolveAsset(asset),
+    systemInfo: () => backend.systemInfo(),
+    dispose: () => backend.dispose(),
   };
 }

@@ -1,43 +1,24 @@
-// Host-owned controls for a running `uhura play` prototype. Changing a
-// system setting intentionally reloads instead of trying to transplant a
-// live Session: a hard reload is the lifecycle boundary that retires every
-// timer, DOM listener, picker, and in-flight provider queue together. The
-// selections are tab-local host state, not part of the app's URL contract.
+// Host-owned controls for a running `uhura play` prototype. Changing the
+// selected application actor intentionally reloads instead of trying to
+// transplant a live Session. The selection is tab-local host state, not part
+// of the application's URL or deterministic machine state.
 
 import type {
-  ProviderMode,
   SystemActor,
   SystemInfo,
   SystemState,
   SystemStatus,
 } from "../protocol/types.js";
 
-export type { ProviderMode, SystemActor, SystemInfo, SystemState, SystemStatus };
+export type { SystemActor, SystemInfo, SystemState, SystemStatus };
 
 export const SYSTEM_STATE_EVENT = "uhura:system-state";
-export const SYSTEM_PROVIDER_STORAGE_KEY = "uhura:play:provider";
 export const SYSTEM_ACTOR_STORAGE_KEY = "uhura:play:actor";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** @param {unknown} value @returns {ProviderMode[]} */
-function providerModes(value: unknown): ProviderMode[] {
-  if (!Array.isArray(value)) return [];
-  const modes: ProviderMode[] = [];
-  for (const candidate of value) {
-    if (
-      (candidate === "remote" || candidate === "fixture") &&
-      !modes.includes(candidate)
-    ) {
-      modes.push(candidate);
-    }
-  }
-  return modes;
-}
-
-/** @param {unknown} value @returns {SystemActor[]} */
 function systemActors(value: unknown): SystemActor[] {
   if (!Array.isArray(value)) return [];
   const actors: SystemActor[] = [];
@@ -61,12 +42,10 @@ function systemActors(value: unknown): SystemActor[] {
   return actors;
 }
 
-/** @param {SystemState} state @returns {SystemState} */
 function copyState(state: SystemState): SystemState {
   const copy = {
     status: state.status,
-    provider: state.provider,
-    providers: [...state.providers],
+    hasProvider: state.hasProvider,
     actor: state.actor,
     actors: state.actors.map((actor) => ({ ...actor })),
     canSwitchActor: state.canSwitchActor,
@@ -74,57 +53,35 @@ function copyState(state: SystemState): SystemState {
   return state.error === undefined ? copy : { ...copy, error: state.error };
 }
 
-/**
- * @param {SystemState} previous
- * @param {SystemStatus} status
- * @param {SystemInfo} info
- * @param {string | undefined} error
- * @returns {SystemState}
- */
 function mergeState(
   previous: SystemState,
   status: SystemStatus,
   info: SystemInfo,
   error?: string,
 ): SystemState {
-  const provider = info.provider === undefined ? previous.provider : info.provider;
-  const providers =
-    info.providers === undefined ? [...previous.providers] : providerModes(info.providers);
+  const hasProvider = info.hasProvider ?? previous.hasProvider;
   const actors = info.actors === undefined ? previous.actors : systemActors(info.actors);
   let actor = info.actor === undefined ? previous.actor : info.actor;
   if (typeof actor === "string") actor = actor.trim() || null;
 
-  // A provider may be configured with a username, while its live metadata
-  // names the normalized auth-table id. Expose one stable id to the shell.
+  // An adapter provider may be configured with a username while its metadata
+  // names the normalized authority ID. Expose one stable ID to the shell.
   const current = actors.find(
     (candidate) => candidate.id === actor || candidate.username === actor,
   );
   if (current) actor = current.id;
 
-  const remoteActors = provider === "remote" ? actors : [];
-  const remoteActor = provider === "remote" ? actor : null;
-  const canSwitchActor =
-    provider === "remote" &&
-    remoteActors.some((candidate) => candidate.id !== remoteActor);
+  const canSwitchActor = actors.some((candidate) => candidate.id !== actor);
   const next = {
     status,
-    provider,
-    providers,
-    actor: remoteActor,
-    actors: remoteActors,
+    hasProvider,
+    actor,
+    actors,
     canSwitchActor,
   };
   return error === undefined ? next : { ...next, error };
 }
 
-/**
- * @param {{
- *   target: Pick<Window, "dispatchEvent">,
- *   storage: Pick<Storage, "setItem">,
- *   reload: () => void,
- *   eventFactory?: (detail: SystemState) => Event,
- * }} wiring
- */
 interface SystemControlsWiring {
   target: Pick<Window, "dispatchEvent">;
   storage: Pick<Storage, "setItem">;
@@ -139,7 +96,6 @@ export interface SystemControls {
   failed(error: unknown, info?: SystemInfo): void;
   restart(): void;
   setActor(requested: string): void;
-  setProvider(requested: ProviderMode): void;
 }
 
 export function createSystemControls({
@@ -151,46 +107,35 @@ export function createSystemControls({
 }: SystemControlsWiring): SystemControls {
   let state: SystemState = {
     status: "starting",
-    provider: null,
-    providers: [],
+    hasProvider: false,
     actor: null,
     actors: [],
     canSwitchActor: false,
   };
 
-  /** @param {SystemState} next */
   function publish(next: SystemState): void {
     state = copyState(next);
     target.dispatchEvent(eventFactory(copyState(state)));
   }
 
-  /**
-   * @param {SystemStatus} status
-   * @param {SystemInfo} [info]
-   * @param {string} [error]
-   */
-  function transition(status: SystemStatus, info: SystemInfo = {}, error?: string): void {
+  function transition(
+    status: SystemStatus,
+    info: SystemInfo = {},
+    error?: string,
+  ): void {
     publish(mergeState(state, status, info, error));
   }
 
-  /** @param {string} message @returns {never} */
   function rejectSelection(message: string): never {
     transition("error", {}, message);
     throw new Error(message);
   }
 
-  /**
-   * Persist and reload after publishing the pending system state. If storage
-   * or reload fails, restore the previous selection and surface the failure
-   * instead of leaving the chrome on a phantom actor.
-   * @param {SystemInfo} pending
-   * @param {() => void} persist
-   */
-  function persistAndReload(pending: SystemInfo, persist: () => void): void {
+  function persistActorAndReload(actor: string): void {
     const previous = copyState(state);
-    transition("starting", pending);
+    transition("starting", { actor });
     try {
-      persist();
+      storage.setItem(SYSTEM_ACTOR_STORAGE_KEY, actor);
       reload();
     } catch (error) {
       publish(mergeState(previous, "error", {}, errorMessage(error)));
@@ -199,22 +144,18 @@ export function createSystemControls({
   }
 
   return {
-    /** @returns {SystemState} */
     get state() {
       return copyState(state);
     },
 
-    /** @param {SystemInfo} info */
     starting(info: SystemInfo) {
       transition("starting", info);
     },
 
-    /** @param {SystemInfo} [info] */
-    ready(info = {}) {
+    ready(info: SystemInfo = {}) {
       transition("ready", info);
     },
 
-    /** @param {unknown} error @param {SystemInfo} [info] */
     failed(error: unknown, info: SystemInfo = {}) {
       transition("error", info, errorMessage(error));
     },
@@ -230,31 +171,14 @@ export function createSystemControls({
       }
     },
 
-    /** @param {string} requested */
     setActor(requested: string) {
-      if (state.provider !== "remote") {
-        rejectSelection("the fixture provider does not support auth actors");
-      }
       const value = String(requested).trim();
       const actor = state.actors.find(
         (candidate) => candidate.id === value || candidate.username === value,
       );
-      if (!actor) rejectSelection(`unknown auth actor \`${value}\``);
+      if (!actor) rejectSelection(`unknown application actor \`${value}\``);
       if (actor.id === state.actor && state.status !== "error") return;
-      persistAndReload({ actor: actor.id }, () => {
-        storage.setItem(SYSTEM_ACTOR_STORAGE_KEY, actor.id);
-      });
-    },
-
-    /** @param {ProviderMode} requested */
-    setProvider(requested: ProviderMode) {
-      if (!state.providers.includes(requested)) {
-        rejectSelection(`provider \`${requested}\` is not available`);
-      }
-      if (requested === state.provider && state.status !== "error") return;
-      persistAndReload({ provider: requested }, () => {
-        storage.setItem(SYSTEM_PROVIDER_STORAGE_KEY, requested);
-      });
+      persistActorAndReload(actor.id);
     },
   };
 }

@@ -1,758 +1,703 @@
-//! The AST for `.uhura` files (design §4) and `.examples.uhura` files
-//! (design §6.1). Parsing always yields a tree; unparseable regions become
-//! `…::Error` nodes so downstream passes and the formatter keep working.
+//! Source-spanned syntax tree for the Uhura machine language.
+//!
+//! The tree intentionally stops before name or type resolution.  In
+//! particular, a bare name is not classified as a binding, constructor, or
+//! builtin here, and braces are retained as records or blocks according to
+//! their concrete syntactic role.  Every order that is semantically
+//! observable later (declarations, variants, statements, commands, UI nodes,
+//! and evidence steps) remains source ordered.
 
-use uhura_base::Span;
+use std::fmt;
 
-use crate::token::{Comment, CommentKind};
+use serde::{Deserialize, Serialize};
 
-// ── source trivia and authoring metadata ───────────────────────────────────
+use uhura_base::{FileId, Span};
 
-/// One normalized, non-empty DSL documentation run. `pieces` below retains
-/// the exact interleaving with ordinary comments for formatting; this table is
-/// the structured attachment consumed by checking.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DocComment {
-    pub form: DocForm,
-    pub text: String,
-    /// Envelope from the first doc sigil through the final doc token.
-    pub span: Span,
+/// A serialisation-friendly source identity.
+///
+/// `FileId` is process-local and deliberately tiny.  Persisted syntax also
+/// needs the logical path, so this frontend carries both rather than teaching the
+/// shared v0 source map a new wire contract.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SourceId {
+    pub file: u32,
+    pub path: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DocForm {
-    Outer,
-    Inner,
-}
-
-/// Ordered DSL trivia attached to one legal item/list boundary.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DslTrivia {
-    /// Exact lexical pieces, in source order. Empty doc runs remain here so
-    /// they can act as run boundaries; the formatter omits their doc lines.
-    pub pieces: Vec<Comment>,
-    /// Normalized, non-empty documentation runs.
-    pub docs: Vec<DocComment>,
-}
-
-impl DslTrivia {
-    pub fn new(pieces: Vec<Comment>) -> Self {
-        let mut docs = Vec::new();
-        let mut cursor = 0;
-        while cursor < pieces.len() {
-            let form = match pieces[cursor].kind {
-                CommentKind::Ordinary => {
-                    cursor += 1;
-                    continue;
-                }
-                CommentKind::OuterDoc => DocForm::Outer,
-                CommentKind::InnerDoc => DocForm::Inner,
-            };
-            let start = cursor;
-            let mut end = cursor;
-            let mut lines = Vec::new();
-            let mut last_doc = cursor;
-            while end < pieces.len() {
-                let piece_form = match pieces[end].kind {
-                    CommentKind::Ordinary => None,
-                    CommentKind::OuterDoc => Some(DocForm::Outer),
-                    CommentKind::InnerDoc => Some(DocForm::Inner),
-                };
-                if piece_form.is_some_and(|candidate| candidate != form) {
-                    break;
-                }
-                if piece_form == Some(form) {
-                    lines.push(pieces[end].normalized_doc_line());
-                    last_doc = end;
-                }
-                end += 1;
-            }
-            while lines.last().is_some_and(String::is_empty) {
-                lines.pop();
-            }
-            if !lines.is_empty() {
-                docs.push(DocComment {
-                    form,
-                    text: lines.join("\n"),
-                    span: pieces[start].span.to(pieces[last_doc].span),
-                });
-            }
-            cursor = end;
+impl SourceId {
+    pub fn new(file: FileId, path: impl Into<String>) -> Self {
+        Self {
+            file: file.0,
+            path: path.into(),
         }
-        Self { pieces, docs }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
-    }
-
-    /// Whether canonical formatting will emit at least one trivia line.
-    /// Empty normalized doc runs remain lexical pieces so they can separate
-    /// runs during parsing, but they must not affect canonical layout.
-    pub fn has_formattable_content(&self) -> bool {
-        !self.docs.is_empty()
-            || self
-                .pieces
-                .iter()
-                .any(|piece| piece.kind == CommentKind::Ordinary)
+    pub fn file_id(&self) -> FileId {
+        FileId(self.file)
     }
 }
 
-// ── file ────────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct File {
-    /// Trivia before the component/page/surface header. Inner docs target the
-    /// source module; outer docs target the header declaration.
-    pub preamble: DslTrivia,
-    pub kind: DefKind,
-    pub uses: Vec<Use>,
-    pub props_present: bool,
-    pub props_leading: DslTrivia,
-    pub props: Vec<PropDecl>,
-    pub props_trailing: DslTrivia,
-    pub emits_present: bool,
-    pub emits_leading: DslTrivia,
-    pub emits: Vec<EmitDecl>,
-    pub emits_trailing: DslTrivia,
-    pub params: Vec<ParamDecl>,
-    pub store: Option<Store>,
-    /// Legal DSL trivia immediately before markup, style, or EOF.
-    pub trailing_dsl: DslTrivia,
-    pub markup: MarkupList,
-    pub style: Option<StyleBlock>,
+/// A UTF-8 byte range in one current-generation Uhura source.
+#[derive(
+    Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+pub struct SourceSpan {
+    pub file: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
-#[derive(Debug)]
-pub enum DefKind {
-    Component {
-        name: String,
-        span: Span,
-    },
-    Page {
-        span: Span,
-    },
-    Surface {
-        name: String,
-        modality: Option<String>,
-        span: Span,
-    },
-    /// Header failed to parse; the rest of the file is still attempted.
-    Error {
-        span: Span,
-    },
+impl SourceSpan {
+    pub const fn new(file: u32, start: u32, end: u32) -> Self {
+        Self { file, start, end }
+    }
+
+    pub const fn empty(file: u32, at: u32) -> Self {
+        Self::new(file, at, at)
+    }
+
+    pub fn to(self, other: Self) -> Self {
+        debug_assert_eq!(self.file, other.file);
+        Self::new(
+            self.file,
+            self.start.min(other.start),
+            self.end.max(other.end),
+        )
+    }
+
+    pub fn as_base(self) -> Span {
+        Span::new(FileId(self.file), self.start, self.end)
+    }
 }
 
-#[derive(Debug)]
-pub enum Use {
-    Component {
-        name: String,
-        span: Span,
-        leading: DslTrivia,
-    },
-    Surface {
-        name: String,
-        span: Span,
-        leading: DslTrivia,
-    },
-    Port {
-        name: String,
-        items: Vec<PortItem>,
-        span: Span,
-        leading: DslTrivia,
-    },
-    /// `.examples.uhura` only.
-    Fixture {
-        name: String,
-        span: Span,
-        leading: DslTrivia,
-    },
+impl From<Span> for SourceSpan {
+    fn from(value: Span) -> Self {
+        Self::new(value.file.0, value.start, value.end)
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PortItemKind {
-    Projection,
-    Command,
-    Type,
+/// A syntax value plus its exact source extent.
+///
+/// Structural equality intentionally ignores locations.  This makes
+/// parse-format-parse comparisons useful while retaining spans for
+/// diagnostics, editor selection, and lowering.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Spanned<T> {
+    pub value: T,
+    pub span: SourceSpan,
 }
 
-#[derive(Debug)]
-pub struct PortItem {
-    pub kind: PortItemKind,
-    pub name: String,
-    pub span: Span,
+impl<T> Spanned<T> {
+    pub const fn new(value: T, span: SourceSpan) -> Self {
+        Self { value, span }
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
+        Spanned::new(f(self.value), self.span)
+    }
+
+    pub fn as_ref(&self) -> Spanned<&T> {
+        Spanned::new(&self.value, self.span)
+    }
 }
 
-#[derive(Debug)]
-pub struct PropDecl {
-    pub name: String,
+impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Spanned")
+            .field("value", &self.value)
+            .field("span", &self.span)
+            .finish()
+    }
+}
+
+impl<T: PartialEq> PartialEq for Spanned<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl<T: Eq> Eq for Spanned<T> {}
+
+pub type Name = Spanned<String>;
+pub type TypeExpr = Spanned<TypeExprKind>;
+pub type Pattern = Spanned<PatternKind>;
+pub type Expr = Spanned<ExprKind>;
+pub type Statement = Spanned<StatementKind>;
+pub type Declaration = Spanned<DeclarationKind>;
+pub type MachineMember = Spanned<MachineMemberKind>;
+pub type UiNode = Spanned<UiNodeKind>;
+pub type EvidenceStep = Spanned<EvidenceStepKind>;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Module {
+    pub source_id: SourceId,
+    pub span: SourceSpan,
+    pub language: LanguageHeader,
+    pub identity: ModuleIdentity,
+    pub uses: Vec<UseDecl>,
+    pub imports: Vec<ImportDecl>,
+    pub declarations: Vec<Declaration>,
+    /// The accepted source is retained so comments, author-selected blank
+    /// lines, UI text, and literal spellings survive a syntax-only round trip.
+    pub source: String,
+}
+
+impl PartialEq for Module {
+    fn eq(&self, other: &Self) -> bool {
+        self.language == other.language
+            && self.identity == other.identity
+            && self.uses == other.uses
+            && self.imports == other.imports
+            && self.declarations == other.declarations
+    }
+}
+
+impl Eq for Module {}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct LanguageHeader {
+    pub name: Name,
+    /// Exact decimal spelling of the minor-version pair, currently `0.3`.
+    pub version: String,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ModuleIdentity {
+    pub path: Vec<Name>,
+    pub major: String,
+    pub span: SourceSpan,
+}
+
+impl ModuleIdentity {
+    pub fn logical_name(&self) -> String {
+        self.path
+            .iter()
+            .map(|part| part.value.as_str())
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct UseDecl {
+    pub feature: Name,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ImportDecl {
+    pub names: Vec<Name>,
+    /// The quoted logical identity, retained exactly as decoded text.
+    pub target: String,
+    /// Parsed exact logical identity.  Kept alongside the decoded spelling so
+    /// resolvers never need to reinterpret a string.
+    pub identity: ModuleIdentity,
+    pub target_span: SourceSpan,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum DeclarationKind {
+    Const(ConstDecl),
+    Key(KeyDecl),
+    Type(TypeDecl),
+    Function(FunctionDecl),
+    Machine(MachineDecl),
+    Ui(UiDecl),
+    Scenario(ScenarioDecl),
+    Example(EvidenceAliasDecl),
+    Checkpoint(EvidenceAliasDecl),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConstDecl {
+    pub name: Name,
     pub ty: TypeExpr,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-#[derive(Debug)]
-pub struct EmitDecl {
-    pub name: String,
-    pub params: Vec<EmitParam>,
-    pub params_trailing: DslTrivia,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-#[derive(Debug)]
-pub struct EmitParam {
-    pub name: String,
-    pub ty: TypeExpr,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-#[derive(Debug)]
-pub struct ParamDecl {
-    pub name: String,
-    pub ty: TypeExpr,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-// ── types ───────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct TypeExpr {
-    pub kind: TypeKind,
-    pub span: Span,
-}
-
-#[derive(Debug)]
-pub enum TypeKind {
-    /// `bool`, `int`, `text`, `id`, `tag`, or a port-declared type name.
-    Name(String),
-    /// `list[T]`
-    List(Box<TypeExpr>),
-    /// `map[K]V` — K is a name (`id` | `tag`, checked later).
-    Map(String, Box<TypeExpr>),
-    /// `T?`
-    Option(Box<TypeExpr>),
-    Error,
-}
-
-// ── store ───────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct Store {
-    pub state_present: bool,
-    pub state: Vec<StateField>,
-    pub handlers: Vec<Handler>,
-    pub state_leading: DslTrivia,
-    pub state_trailing: DslTrivia,
-    pub trailing: DslTrivia,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-#[derive(Debug)]
-pub struct StateField {
-    pub name: String,
-    pub ty: TypeExpr,
-    pub init: Literal,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-/// State initializers are literals only (design §4.3).
-#[derive(Debug, Clone, PartialEq)]
-pub enum Literal {
-    Int(i64),
-    Str(String),
-    Bool(bool),
-    None,
-    /// `{}` — the empty map.
-    EmptyMap,
-    Error,
-}
-
-#[derive(Debug)]
-pub struct Handler {
-    pub event: EventRef,
-    /// UI-event handlers declare typed params; outcome handlers are
-    /// name-only (`ty` is `None`, types come from the contract — §4.2).
-    pub params: Vec<HandlerParam>,
-    pub params_trailing: DslTrivia,
-    pub guard: Option<Expr>,
-    pub body: Vec<Stmt>,
-    pub body_trailing: DslTrivia,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-#[derive(Debug)]
-pub struct HandlerParam {
-    pub name: String,
-    pub ty: Option<TypeExpr>,
-    pub span: Span,
-    pub leading: DslTrivia,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OutcomeKind {
-    Ok,
-    Err,
-}
-
-#[derive(Debug)]
-pub enum EventRef {
-    /// `on like-toggled(...)`
-    Semantic { name: String, span: Span },
-    /// `on like-post.ok(...)` / `.err(...)`
-    Outcome {
-        command: String,
-        which: OutcomeKind,
-        span: Span,
-    },
-}
-
-/// The five statements — closed set (design §4.2).
-#[derive(Debug)]
-pub enum Stmt {
-    Set {
-        path: SetPath,
-        value: Expr,
-        span: Span,
-        leading: DslTrivia,
-    },
-    Send {
-        command: String,
-        args: Vec<Arg>,
-        bind: Option<String>,
-        span: Span,
-        leading: DslTrivia,
-    },
-    OpenSurface {
-        name: String,
-        args: Vec<Arg>,
-        span: Span,
-        leading: DslTrivia,
-    },
-    Dismiss {
-        span: Span,
-        leading: DslTrivia,
-    },
-    Navigate {
-        target: NavTarget,
-        span: Span,
-        leading: DslTrivia,
-    },
-    Error {
-        span: Span,
-    },
-}
-
-#[derive(Debug)]
-pub struct SetPath {
-    pub field: String,
-    /// `field[key]` — at most one level (micro-decision: paths are `field`
-    /// or `field[key]` only).
-    pub key: Option<Expr>,
-    pub span: Span,
-}
-
-#[derive(Debug)]
-pub enum NavTarget {
-    Route { name: String, args: Vec<Arg> },
-    Replace { name: String, args: Vec<Arg> },
-    Back,
-}
-
-/// A named argument (`name: expr`) — all argument lists are named.
-#[derive(Debug)]
-pub struct Arg {
-    pub name: String,
     pub value: Expr,
-    pub span: Span,
 }
 
-// ── expressions ─────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct Expr {
-    pub kind: ExprKind,
-    pub span: Span,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct KeyDecl {
+    pub name: Name,
+    pub over: TypeExpr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryOp {
-    Not,
-    Neg,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct TypeDecl {
+    pub name: Name,
+    pub parameters: Vec<Name>,
+    pub body: TypeBody,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Concat,
-    Eq,
-    NotEq,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    And,
-    Or,
-    Coalesce,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum TypeBody {
+    Alias(TypeExpr),
+    Sum(ClosedSum),
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum TypeExprKind {
+    Named {
+        path: Vec<Name>,
+        arguments: Vec<TypeExpr>,
+    },
+    Record(Vec<TypeField>),
+    Tuple(Vec<TypeExpr>),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct TypeField {
+    pub name: Name,
+    pub ty: TypeExpr,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ClosedSum {
+    pub variants: Vec<Variant>,
+    pub leading_pipe: bool,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Variant {
+    pub name: Name,
+    pub payload: VariantPayload,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum VariantPayload {
+    Unit,
+    Positional(Vec<TypeExpr>),
+    Named(Vec<TypeField>),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct FunctionDecl {
+    pub name: Name,
+    pub parameters: Vec<Parameter>,
+    pub result: TypeExpr,
+    pub body: Expr,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Parameter {
+    pub name: Name,
+    pub ty: TypeExpr,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct MachineDecl {
+    pub name: Name,
+    /// Kept in source order.  Ordering and cardinality are checker concerns.
+    pub members: Vec<MachineMember>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum MachineMemberKind {
+    Const(ConstDecl),
+    Key(KeyDecl),
+    Type(TypeDecl),
+    Port(PortDecl),
+    Config(FieldBlock),
+    Require(Expr),
+    Input(SumDomain),
+    Command(SumDomain),
+    Outcome(OutcomeDecl),
+    State(StateDecl),
+    Function(FunctionDecl),
+    Derive(DeriveDecl),
+    Invariant(InvariantDecl),
+    Observe(ObserveDecl),
+    Transition(TransitionDecl),
+    Handler(HandlerDecl),
+    BeforeCommit(Block),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PortDecl {
+    pub name: Name,
+    pub contract: TypeExpr,
+    pub configuration: Vec<Expr>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct FieldBlock {
+    pub fields: Vec<TypeField>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum SumDomain {
+    Never(Name),
+    Sum(ClosedSum),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct OutcomeDecl {
+    pub variants: Vec<OutcomeVariant>,
+    pub leading_pipe: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutcomePolicy {
+    Commit,
+    Abort,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct OutcomeVariant {
+    pub variant: Variant,
+    pub policy: Spanned<OutcomePolicy>,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct StateDecl {
+    pub fields: Vec<InitializedField>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct InitializedField {
+    pub name: Name,
+    pub ty: TypeExpr,
+    pub value: Expr,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct DeriveDecl {
+    pub name: Name,
+    pub ty: Option<TypeExpr>,
+    pub value: Expr,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct InvariantDecl {
+    pub expressions: Vec<Expr>,
+    pub braced: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ObserveDecl {
+    pub fields: Vec<ObserveField>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ObserveField {
+    pub name: Name,
+    pub ty: Option<TypeExpr>,
+    pub value: Expr,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct TransitionDecl {
+    pub name: Name,
+    pub parameters: Vec<Parameter>,
+    pub body: Block,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct HandlerDecl {
+    pub input: Pattern,
+    pub body: HandlerBody,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum HandlerBody {
+    Block(Block),
+    Delegate(Expr),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Block {
+    pub statements: Vec<Statement>,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum StatementKind {
+    Let {
+        name: Name,
+        ty: Option<TypeExpr>,
+        value: Expr,
+    },
+    Set {
+        target: Name,
+        value: Expr,
+    },
+    Emit(Expr),
+    While {
+        condition: Expr,
+        decreases: Expr,
+        body: Block,
+    },
+    Expr(Expr),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ExprKind {
-    /// Name reference: state field, prop, param, binding, or projection.
-    Ident(String),
-    Int(i64),
-    Str(String),
+    Integer(String),
+    Decimal(String),
+    Text(String),
     Bool(bool),
-    None,
-    /// `base.field`
-    Field {
-        base: Box<Expr>,
-        name: String,
-    },
-    /// `base[key]` — option-returning (§4.3).
-    Index {
-        base: Box<Expr>,
-        key: Box<Expr>,
-    },
-    /// `name(args…)` — builtins (`to-text`, `count`) and keyed projection
-    /// reads (`for-post(post)`); resolution decides which.
-    Call {
-        name: String,
-        args: Vec<Expr>,
-    },
+    Name(Name),
+    Tuple(Vec<Expr>),
+    Sequence(Vec<Expr>),
+    Record(Vec<RecordEntry>),
+    Block(Block),
     Unary {
-        op: UnaryOp,
-        expr: Box<Expr>,
+        op: Spanned<UnaryOp>,
+        operand: Box<Expr>,
     },
     Binary {
-        op: BinaryOp,
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        left: Box<Expr>,
+        op: Spanned<BinaryOp>,
+        right: Box<Expr>,
     },
-    /// `if c then a else b`
+    Is {
+        value: Box<Expr>,
+        pattern: Pattern,
+    },
+    Call {
+        callee: Box<Expr>,
+        arguments: Vec<Expr>,
+    },
+    Member {
+        receiver: Box<Expr>,
+        member: Name,
+    },
+    Index {
+        receiver: Box<Expr>,
+        index: Box<Expr>,
+    },
+    Update {
+        base: Box<Expr>,
+        fields: Vec<RecordEntry>,
+    },
+    Lambda {
+        parameters: Vec<Pattern>,
+        body: Box<Expr>,
+    },
     If {
-        cond: Box<Expr>,
-        then: Box<Expr>,
-        els: Box<Expr>,
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
     },
-    /// `{ field: expr, … }` — legal on `set` rhs and in example pins.
-    Record(Vec<(String, Expr)>),
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+    Collect(Vec<CollectClause>),
+    SetComprehension {
+        binding: Pattern,
+        source: Box<Expr>,
+        filters: Vec<Expr>,
+        value: Box<Expr>,
+    },
+    Finish(Box<Expr>),
+    Unreachable,
     Error,
 }
 
-// ── markup ──────────────────────────────────────────────────────────────────
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnaryOp {
+    Not,
+    Negate,
+}
 
-#[derive(Debug)]
-pub enum Node {
-    Element(Element),
-    /// Text content — only meaningful inside `<text>` (checked later).
-    Text {
-        runs: Vec<TextRun>,
-        span: Span,
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinaryOp {
+    Or,
+    And,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Add,
+    Subtract,
+    Multiply,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RecordEntry {
+    pub key: Expr,
+    pub value: Expr,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct CollectClause {
+    pub condition: Expr,
+    pub value: Expr,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum PatternKind {
+    Wildcard,
+    Rest,
+    Integer(String),
+    Decimal(String),
+    Text(String),
+    Bool(bool),
+    Name(Name),
+    Constructor {
+        path: Vec<Name>,
+        arguments: Vec<Pattern>,
     },
+    Tuple(Vec<Pattern>),
+    Record {
+        fields: Vec<RecordPatternField>,
+        open: bool,
+    },
+    Alternative(Vec<Pattern>),
+    Error,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RecordPatternField {
+    pub name: Name,
+    pub pattern: Pattern,
+    pub span: SourceSpan,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct UiDecl {
+    pub name: Name,
+    pub machine: Name,
+    pub binding: Name,
+    pub nodes: Vec<UiNode>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum UiNodeKind {
+    Text(String),
+    Interpolation(Expr),
+    Element(UiElement),
     If {
-        annotations: Vec<MarkupAnnotation>,
-        cond: Expr,
-        then: MarkupList,
-        els: Option<MarkupList>,
-        span: Span,
-    },
-    Each {
-        annotations: Vec<MarkupAnnotation>,
-        item: String,
-        seq: Expr,
-        key: Expr,
-        body: MarkupList,
-        span: Span,
+        condition: Expr,
+        children: Vec<UiNode>,
     },
     Match {
-        annotations: Vec<MarkupAnnotation>,
-        scrutinee: Expr,
-        /// Source layout before the first arm. It may contain ordinary
-        /// comments but no valid semantic nodes.
-        before_arms: MarkupList,
-        arms: Vec<MatchArm>,
-        span: Span,
+        subject: Expr,
+        cases: Vec<UiCase>,
     },
-    Error {
-        span: Span,
+    Each {
+        source: Expr,
+        pattern: Pattern,
+        key: Expr,
+        children: Vec<UiNode>,
     },
 }
 
-#[derive(Debug)]
-pub struct MatchArm {
-    pub pattern: MatchPattern,
-    /// `{:when carousel c}` — the optional value binding.
-    pub binding: Option<String>,
-    pub body: MarkupList,
-    pub span: Span,
-}
-
-#[derive(Debug)]
-pub enum MatchPattern {
-    /// A union variant, or an availability arm (`loading` / `failed` /
-    /// `ready`) — resolution decides which (design §9.2).
-    Variant(String),
-    Else,
-}
-
-#[derive(Debug)]
-pub struct Element {
-    /// Catalog element or imported component name.
-    pub name: String,
-    pub attrs: Vec<Attr>,
-    pub events: Vec<EventAttr>,
-    pub children: MarkupList,
-    pub annotations: Vec<MarkupAnnotation>,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct UiElement {
+    pub name: Name,
+    pub attributes: Vec<UiAttribute>,
+    pub children: Vec<UiNode>,
     pub self_closing: bool,
-    pub span: Span,
 }
 
-/// An attached, normalized markup annotation. It is duplicated in the
-/// sibling list's source layout so formatting remains independent from the
-/// checked metadata projection.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MarkupAnnotation {
-    pub kind: String,
-    pub text: String,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MarkupCommentKind {
-    Ordinary,
-    Annotation {
-        kind: String,
-    },
-    /// Kept only for recovery/layout. It never becomes metadata. Retaining
-    /// termination state lets formatting preserve the lexical error instead
-    /// of silently manufacturing a valid comment or annotation.
-    Malformed {
-        terminated: bool,
-    },
-    /// A well-formed annotation encountered a recovery node that canonical
-    /// formatting cannot reproduce. The formatter emits a stable malformed
-    /// carrier which retains the visible kind and prose without allowing the
-    /// annotation to attach to a later valid target.
-    RejectedAnnotation {
-        kind: String,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MarkupComment {
-    pub kind: MarkupCommentKind,
-    /// Normalized body/payload. For malformed recovery this is best-effort
-    /// body text.
-    pub text: String,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PlacedMarkupComment {
-    /// Semantic node index before which this comment formats. `nodes.len()`
-    /// is trailing sibling-list trivia.
-    pub before: usize,
-    pub comment: MarkupComment,
-}
-
-/// A markup sibling list with source layout separate from semantic nodes.
-/// Ordinary comments and annotation carriers therefore never affect node,
-/// child, or root cardinality.
-#[derive(Debug, Default)]
-pub struct MarkupList {
-    pub nodes: Vec<Node>,
-    pub comments: Vec<PlacedMarkupComment>,
-}
-
-impl MarkupList {
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    pub fn first(&self) -> Option<&Node> {
-        self.nodes.first()
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, Node> {
-        self.nodes.iter()
-    }
-}
-
-impl std::ops::Index<usize> for MarkupList {
-    type Output = Node;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.nodes[index]
-    }
-}
-
-impl<'a> IntoIterator for &'a MarkupList {
-    type Item = &'a Node;
-    type IntoIter = std::slice::Iter<'a, Node>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.nodes.iter()
-    }
-}
-
-#[derive(Debug)]
-pub enum TextRun {
-    Literal(String),
-    Interp(Expr),
-}
-
-#[derive(Debug)]
-pub struct Attr {
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct UiAttribute {
     pub name: String,
-    pub value: AttrValue,
-    pub span: Span,
+    pub value: UiAttributeValue,
+    pub span: SourceSpan,
 }
 
-#[derive(Debug)]
-pub enum AttrValue {
-    /// `attr="literal"`
-    Literal(String),
-    /// `attr={expr}`
-    Expr(Expr),
-    /// bare `attr` — boolean true.
-    Bare,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum UiAttributeValue {
+    Text(String),
+    Expression(Expr),
+    Event { event: Name, input: Expr },
 }
 
-#[derive(Debug)]
-pub struct EventAttr {
-    /// The event name after `on:` — a catalog event on elements, an emit
-    /// name on components.
-    pub event: String,
-    pub binding: EventBinding,
-    pub span: Span,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct UiCase {
+    pub pattern: Pattern,
+    pub children: Vec<UiNode>,
+    pub span: SourceSpan,
 }
 
-#[derive(Debug)]
-pub enum EventBinding {
-    /// `on:press={emit like-toggled(post: p.id)}`
-    Emit { name: String, args: Vec<Arg> },
-    /// Bare `on:like-toggled` — forwards same name + payload to the
-    /// enclosing machine scope (component emits only, §4.4).
-    Forward,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ScenarioDecl {
+    pub name: Name,
+    pub origin: ScenarioOrigin,
+    pub steps: Vec<EvidenceStep>,
 }
 
-// ── style ───────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct StyleBlock {
-    pub rules: Vec<StyleRule>,
-    /// The whole `<style>…</style>` inner text, verbatim.
-    pub raw: String,
-    pub span: Span,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum ScenarioOrigin {
+    Machine {
+        machine: Name,
+        configuration: Option<Expr>,
+    },
+    Snapshot(EvidenceRef),
 }
 
-#[derive(Debug)]
-pub struct StyleRule {
-    /// Selector text, verbatim (normalized whitespace).
-    pub selector: String,
-    /// Class names referenced by the selector, for rooting/existence checks.
-    pub classes: Vec<String>,
-    /// Declaration block, verbatim, without the outer braces.
-    pub decls: String,
-    pub span: Span,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceRef {
+    pub path: Vec<Name>,
+    pub span: SourceSpan,
 }
 
-// ── examples files (design §6.1) ────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct ExamplesFile {
-    pub preamble: DslTrivia,
-    pub uses: Vec<Use>,
-    pub examples: Vec<ExampleDecl>,
-    pub trailing: DslTrivia,
-}
-
-#[derive(Debug)]
-pub struct ExampleDecl {
-    pub name: String,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceAliasDecl {
+    pub name: Name,
+    pub presentation: Option<Name>,
+    pub kind: Option<EvidencePresentationKind>,
     pub is_default: bool,
-    pub clauses: Vec<ExampleClause>,
-    /// Parallel to `clauses`; keeps ordinary comments and rejected docs at
-    /// the legal clause boundary without making them semantic clauses.
-    pub clause_leading: Vec<DslTrivia>,
-    pub trailing: DslTrivia,
-    pub span: Span,
-    pub leading: DslTrivia,
+    pub note: Option<String>,
+    pub target: EvidenceRef,
 }
 
-#[derive(Debug)]
-pub enum ExampleClause {
-    From {
-        name: String,
-        span: Span,
-    },
-    Note {
-        text: String,
-        span: Span,
-    },
-    /// `params { user = "…" }` (pages with dynamic segments).
-    Params {
-        entries: Vec<(String, Expr)>,
-        span: Span,
-    },
-    /// `props { post = fixture.posts.x, … }` (components/surfaces).
-    Props {
-        entries: Vec<(String, Expr)>,
-        span: Span,
-    },
-    /// `state { field = expr }` — literal state pin.
-    State {
-        entries: Vec<(String, Expr)>,
-        span: Span,
-    },
-    /// `projection feed.feed-page = fixture.feed.page-1`
-    /// `projection comments.for-post("post-1") = fixture.comments.x`
-    Projection(ProjectionPin),
-    /// `events [ … ]` — the derivation timeline.
-    Events {
-        entries: Vec<ExampleEvent>,
-        span: Span,
-    },
-    Error {
-        span: Span,
-    },
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EvidencePresentationKind {
+    Page,
+    Component,
+    Surface,
 }
 
-#[derive(Debug)]
-pub struct ProjectionPin {
-    pub port: String,
-    pub projection: String,
-    pub key: Option<Expr>,
-    pub value: Expr,
-    pub span: Span,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum EvidenceStepKind {
+    Bind {
+        port: Name,
+        fixture: Expr,
+    },
+    Start,
+    Send(Expr),
+    Deliver(Expr),
+    ExpectReaction {
+        outcome: Pattern,
+        commands: Vec<Expr>,
+    },
+    ExpectObservationPattern(Pattern),
+    ExpectInspectionPattern(Pattern),
+    ExpectObservationWhere(Expr),
+    ExpectRestore {
+        commands: Vec<Expr>,
+    },
+    ExpectSnapshot {
+        target: EvidenceRef,
+    },
+    Pin(Name),
 }
 
-#[derive(Debug)]
-pub enum ExampleEvent {
-    /// `like-toggled(post: "post-1", now-liked: true)`
-    Semantic {
-        name: String,
-        args: Vec<Arg>,
-        span: Span,
-    },
-    /// `outcome like-post.err(refusal: rate-limited)`
-    Outcome {
-        command: String,
-        which: OutcomeKind,
-        args: Vec<Arg>,
-        span: Span,
-    },
-    /// `projection feed.feed-page = fixture.feed.pages-1-2`
-    Projection(ProjectionPin),
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Project {
+    pub modules: Vec<Module>,
 }

@@ -5,18 +5,18 @@ import type { PreparedAuthoring, PreviewOccurrence } from "../editor-authoring.j
 import {
   AnnotationOverlay,
   composedParent,
+  renderSourcePanel,
   validateAnnotationRealizations,
 } from "../annotation-overlay.js";
 import { RealizationResources } from "../editor-realization.js";
 import type {
-  RenderNodeRef,
   SourceMetadataEntry,
   SourceTarget,
 } from "../editor-state.js";
 
 const sourceTarget: SourceTarget = {
   id: "target",
-  class: "catalog-element",
+  class: "ui-element",
   file: "example.uhura",
   span: {
     offset: 0,
@@ -28,7 +28,7 @@ const sourceTarget: SourceTarget = {
   owner: { kind: "component", name: "card" },
 };
 
-const anchor: RenderNodeRef = { root: { kind: "fragment" }, path: [0, 2] };
+const anchor = "primary-action";
 const occurrence: PreviewOccurrence = {
   previewId: "preview",
   occurrence: { id: "occurrence", targetId: sourceTarget.id, anchors: [anchor] },
@@ -142,6 +142,14 @@ class OverlayTestElement {
     this.#listeners.set(type, current);
   }
 
+  click(): void {
+    const event = { type: "click", stopPropagation: () => {} } as Event;
+    for (const listener of this.#listeners.get("click") ?? []) {
+      if (typeof listener === "function") listener.call(this, event);
+      else listener.handleEvent(event);
+    }
+  }
+
   removeEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
     const current = this.#listeners.get(type);
     if (!current) return;
@@ -214,7 +222,7 @@ const overlayElements = (
 test("validates every protocol anchor against its direct realization registry", () => {
   const resources = new RealizationResources();
   resources.claim({});
-  resources.register({ root: anchor.root, path: anchor.path, element: {} as HTMLElement });
+  resources.registerKey(anchor, {} as HTMLElement);
   assert.doesNotThrow(() => validateAnnotationRealizations({
     render: null,
     authoring,
@@ -229,7 +237,7 @@ test("validates every protocol anchor against its direct realization registry", 
       authoring,
       resourcesByPreviewId: new Map([[occurrence.previewId, incomplete]]),
     }),
-    /internal error.*target.*occurrence.*preview.*fragment\|0\.2.*did not register/s,
+    /internal error.*target.*occurrence.*preview.*key\|primary-action.*did not register/s,
   );
   assert.throws(
     () => validateAnnotationRealizations({
@@ -239,6 +247,76 @@ test("validates every protocol anchor against its direct realization registry", 
     }),
     /internal error.*target.*occurrence.*preview.*no direct realization resources/s,
   );
+});
+
+test("presents entryless projection provenance as navigation without annotation UI", () => {
+  const document = new OverlayTestDocument();
+  const viewport = document.createElement("div");
+  const overlayRoot = document.createElement("div");
+  const panel = document.createElement("div");
+  const realized = document.createElement("h1");
+  const projectionAnchor = "heading";
+  const projectionOccurrence: PreviewOccurrence = {
+    previewId: "page/ready",
+    occurrence: {
+      id: "occurrence/heading",
+      targetId: sourceTarget.id,
+      anchors: [projectionAnchor],
+    },
+  };
+  const projectionAuthoring: PreparedAuthoring = {
+    targetsById: new Map([[sourceTarget.id, sourceTarget]]),
+    entriesById: new Map(),
+    entriesByTarget: new Map(),
+    occurrencesByTarget: new Map([[sourceTarget.id, [projectionOccurrence]]]),
+    annotationTargets: [],
+    documentedTargets: [],
+  };
+  const resources = new RealizationResources();
+  resources.claim({});
+  resources.registerKey(projectionAnchor, realized as unknown as HTMLElement);
+  let focusedPreview: string | null = null;
+  let focusedAnchors: readonly HTMLElement[] | undefined;
+  const focusedSources: string[] = [];
+  const overlay = new AnnotationOverlay({
+    viewport: viewport as unknown as HTMLElement,
+    root: overlayRoot as unknown as HTMLElement,
+    focusPreview: (previewId, anchors) => {
+      focusedPreview = previewId;
+      focusedAnchors = anchors;
+    },
+    focusSourceTarget: (targetId) => focusedSources.push(targetId),
+  });
+  overlay.install({
+    render: null,
+    authoring: projectionAuthoring,
+    resourcesByPreviewId: new Map([[projectionOccurrence.previewId, resources]]),
+  });
+
+  renderSourcePanel(
+    panel as unknown as HTMLElement,
+    projectionAuthoring,
+    false,
+    (targetId) => {
+      assert.equal(overlay.selectSourceTarget(targetId), true);
+    },
+  );
+  const entries = overlayElements(panel, "source-entry");
+  const actions = overlayElements(panel, "source-target-select");
+  assert.equal(entries.length, 1, "occurrence-backed targets appear in Source without metadata");
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0]?.textContent, "Show");
+  assert.equal(actions[0]?.getAttribute("aria-label"), `Show ${sourceTarget.label} on canvas`);
+  assert.equal(overlayElements(panel, "annotation-entry").length, 0);
+  assert.equal(overlayElements(overlayRoot, "annotation-marker").length, 0);
+  assert.equal(overlayElements(overlayRoot, "annotation-card").length, 0);
+
+  actions[0]?.click();
+  assert.equal(focusedPreview, projectionOccurrence.previewId);
+  assert.deepEqual(focusedAnchors, [realized]);
+  assert.deepEqual(focusedSources, [sourceTarget.id]);
+
+  overlay.dispose();
 });
 
 test("composed parent traversal reaches a ShadowRoot host", () => {
@@ -367,18 +445,10 @@ test("focused preview filters presentation without becoming annotation selection
   };
   const firstResources = new RealizationResources();
   firstResources.claim({});
-  firstResources.register({
-    root: anchor.root,
-    path: anchor.path,
-    element: firstTarget as unknown as HTMLElement,
-  });
+  firstResources.registerKey(anchor, firstTarget as unknown as HTMLElement);
   const secondResources = new RealizationResources();
   secondResources.claim({});
-  secondResources.register({
-    root: anchor.root,
-    path: anchor.path,
-    element: secondTarget as unknown as HTMLElement,
-  });
+  secondResources.registerKey(anchor, secondTarget as unknown as HTMLElement);
   const overlay = new AnnotationOverlay({
     viewport: viewport as unknown as HTMLElement,
     root: root as unknown as HTMLElement,
@@ -490,7 +560,7 @@ test("focused preview expands one collision-aware card per annotated target", ()
     id: "target/secondary",
     label: "secondary button",
   };
-  const secondAnchor: RenderNodeRef = { root: { kind: "fragment" }, path: [0, 4] };
+  const secondAnchor = "secondary-action";
   const entries: SourceMetadataEntry[] = [
     {
       id: "annotation/first",
@@ -554,16 +624,8 @@ test("focused preview expands one collision-aware card per annotated target", ()
   };
   const resources = new RealizationResources();
   resources.claim({});
-  resources.register({
-    root: anchor.root,
-    path: anchor.path,
-    element: firstElement as unknown as HTMLElement,
-  });
-  resources.register({
-    root: secondAnchor.root,
-    path: secondAnchor.path,
-    element: secondElement as unknown as HTMLElement,
-  });
+  resources.registerKey(anchor, firstElement as unknown as HTMLElement);
+  resources.registerKey(secondAnchor, secondElement as unknown as HTMLElement);
   const overlay = new AnnotationOverlay({
     viewport: viewport as unknown as HTMLElement,
     root: root as unknown as HTMLElement,

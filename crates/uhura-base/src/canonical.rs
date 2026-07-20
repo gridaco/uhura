@@ -5,29 +5,57 @@
 //! minimal escapes (serde_json's), integers only, compact (no whitespace),
 //! no trailing newline (callers add LF where a file format wants it).
 
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 use sha2::{Digest, Sha256};
 
-/// Renders a `serde_json::Value` to canonical form. Panics (debug) on any
-/// non-integer number — floats are unrepresentable in the Uhura value model
-/// and must never reach a hash.
-pub fn to_canonical_json(v: &serde_json::Value) -> String {
-    let mut out = String::new();
-    write_canonical(v, &mut out);
-    out
+/// A value that cannot be represented by Uhura's integer-only canonical JSON.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalJsonError {
+    pub path: String,
+    pub message: String,
 }
 
-fn write_canonical(v: &serde_json::Value, out: &mut String) {
+impl fmt::Display for CanonicalJsonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.path, self.message)
+    }
+}
+
+impl std::error::Error for CanonicalJsonError {}
+
+/// Renders a `serde_json::Value` to canonical form, rejecting floating-point
+/// numbers at every depth in every build profile.
+pub fn try_to_canonical_json(v: &serde_json::Value) -> Result<String, CanonicalJsonError> {
+    let mut out = String::new();
+    write_canonical(v, &mut out, "$")?;
+    Ok(out)
+}
+
+/// Infallible convenience for values already admitted by a checked Uhura
+/// boundary. User-controlled JSON must use [`try_to_canonical_json`].
+pub fn to_canonical_json(v: &serde_json::Value) -> String {
+    try_to_canonical_json(v).expect("checked Uhura JSON must contain integers only")
+}
+
+fn write_canonical(
+    v: &serde_json::Value,
+    out: &mut String,
+    path: &str,
+) -> Result<(), CanonicalJsonError> {
     use serde_json::Value as J;
     match v {
         J::Null => out.push_str("null"),
         J::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         J::Number(n) => {
-            debug_assert!(
-                n.is_i64() || n.is_u64(),
-                "float reached canonical JSON: {n} — the value model has no floats (§7.5)"
-            );
+            if !n.is_i64() && !n.is_u64() {
+                return Err(CanonicalJsonError {
+                    path: path.to_string(),
+                    message: format!(
+                        "floating-point JSON number `{n}` is not canonical Uhura data"
+                    ),
+                });
+            }
             let _ = write!(out, "{n}");
         }
         J::String(s) => {
@@ -40,7 +68,7 @@ fn write_canonical(v: &serde_json::Value, out: &mut String) {
                 if i > 0 {
                     out.push(',');
                 }
-                write_canonical(x, out);
+                write_canonical(x, out, &format!("{path}[{i}]"))?;
             }
             out.push(']');
         }
@@ -57,11 +85,12 @@ fn write_canonical(v: &serde_json::Value, out: &mut String) {
                 }
                 let _ = write!(out, "{}", serde_json::Value::String(k.clone()));
                 out.push(':');
-                write_canonical(&fields[k], out);
+                write_canonical(&fields[k], out, &format!("{path}.{k}"))?;
             }
             out.push('}');
         }
     }
+    Ok(())
 }
 
 /// SHA-256 of `bytes`, lowercase hex.
@@ -74,9 +103,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Convenience: canonical JSON of `v`, hashed.
+/// Convenience for already-admitted JSON: canonical JSON of `v`, hashed.
+/// User-controlled values must use [`try_hash_json`].
 pub fn hash_json(v: &serde_json::Value) -> String {
     sha256_hex(to_canonical_json(v).as_bytes())
+}
+
+/// Fallible canonical JSON hash for user-controlled values.
+pub fn try_hash_json(v: &serde_json::Value) -> Result<String, CanonicalJsonError> {
+    Ok(sha256_hex(try_to_canonical_json(v)?.as_bytes()))
 }
 
 #[cfg(test)]
@@ -109,10 +144,26 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "float reached canonical JSON")]
-    #[cfg(debug_assertions)]
-    fn floats_panic_in_debug() {
-        let v = json!(1.5);
-        let _ = to_canonical_json(&v);
+    fn rejects_float_recursively_in_every_build_profile() {
+        let error = try_to_canonical_json(&json!({
+            "ok": [1, 2],
+            "nested": [{ "ratio": 1.5 }],
+        }))
+        .unwrap_err();
+        assert_eq!(error.path, "$.nested[0].ratio");
+        assert_eq!(
+            error.message,
+            "floating-point JSON number `1.5` is not canonical Uhura data"
+        );
+    }
+
+    #[test]
+    fn fallible_hash_rejects_the_same_float_tree() {
+        assert_eq!(
+            try_hash_json(&json!({ "nested": [1, { "ratio": 0.25 }] }))
+                .unwrap_err()
+                .path,
+            "$.nested[1].ratio"
+        );
     }
 }

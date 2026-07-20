@@ -7,7 +7,7 @@
 # https://grida.co/library/license
 #
 # `cargo run -p uhura-cli --bin gen-assets -- examples/instagram/client`
-# validates and preserves sourced files; it only renders legacy motif entries.
+# validates and preserves sourced files; it only renders declared motif entries.
 
 [assets.avatar-mira]
 file = "avatar-mira.webp"

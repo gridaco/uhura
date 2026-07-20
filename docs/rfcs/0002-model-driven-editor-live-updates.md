@@ -22,9 +22,9 @@ Editor and Play are routes of one web application:
 ```text
 Uhura source
   -> native capture, check, and evaluation
-  -> uhura-editor-state/2
+  -> uhura-editor-state/4 carrying uhura-view/1 projections
   -> HTTP state + SSE revision notification
-  -> shared semantic browser renderer
+  -> canonical projection renderer
   -> Editor at / or Play at /play
 ```
 
@@ -92,25 +92,30 @@ Concrete icon geometry is browser-renderer data. Native model and host layers
 may carry checked icon-name tokens inside semantic content, but never SVG
 paths, font codepoints, or glyph-family tables.
 
-The shared semantic renderer exposes two policies:
+The canonical projection renderer exposes two policies:
 
-- **Editor:** one-shot realization, inert controls, no descriptor dispatch,
+- **Editor:** static realization, inert controls, no binding delivery,
   no provider effects, and safe static media.
-- **Play:** keyed reconciliation, descriptors, runtime delivery, focus,
+- **Play:** keyed reconciliation, runtime binding delivery, focus,
   scrolling, surfaces, media, and other existing effects.
 
-The Editor policy must make runtime dispatch structurally unavailable rather
-than relying on consumers to remember not to call it.
+The Editor mounts the projection in an inert subtree and supplies no runtime
+binding delivery path.
 
 ## 4. `EditorState` contract
 
 The initial browser-facing protocol was `uhura-editor-state/0`. The RFC 0003
 implementation advanced the contract to `uhura-editor-state/1`, adding
 render-owned authoring metadata, explicit preview documentation references,
-and source-target occurrences. The current `uhura-editor-state/2` removes
-concrete icon geometry from the native read model; glyph realization now
-belongs entirely to the browser renderer. Canonical language and view IR are
-unchanged. EditorState remains an Editor read model, not canonical language IR.
+and source-target occurrences. Version 2 removed concrete icon geometry from
+the native read model; glyph realization belongs entirely to the browser
+renderer. Version 3 added tagged render content, nullable per-preview evidence,
+and nullable machine inspection. The current `uhura-editor-state/4` removes
+the retired snapshot/fragment payloads and structural path anchors. Every
+preview now carries exactly one `uhura-view/1` projection plus its
+projection-source sidecar, and every provenance anchor is an opaque
+rendered-node key. EditorState remains an Editor read model, not canonical
+language IR.
 
 ```text
 EditorState

@@ -1,145 +1,128 @@
-import type { SurfaceView } from "../protocol/types.js";
-import type { EditorPreview, JsonValue } from "./editor-state.js";
+import type { RenderNode } from "../renderer/projection.js";
+import type { EditorPreview } from "./editor-state.js";
 
 export interface MountedSurface {
+  /** Stable semantic identity from the canonical projection. */
   key: string;
+  /** Best available authored label, falling back to the semantic key. */
   definition: string;
+  /** Honest rendered modality; canonical Surface currently projects to dialog. */
   modality: string;
+  /** Deterministic pre-order among every mounted surface in this projection. */
   stackIndex: number;
-  relation: "direct" | "inherited" | "mounted";
+  /** Comparison with the direct evidence parent, when one exists. */
+  relation: "introduced" | "retained" | "present";
 }
 
 export interface SurfaceHierarchyNode {
   surface: MountedSurface;
+  /** Nearest containing surface key, not an inferred runtime opener. */
   opener: string | null;
   children: SurfaceHierarchyNode[];
 }
 
 export interface SurfaceHierarchy {
-  page: string;
-  /** Bottom-to-top mounted surface order. */
+  presentation: string;
+  /** Deterministic pre-order over canonical `surface: true` nodes. */
   surfaces: MountedSurface[];
-  /** Opener-derived parent/child forest rooted at the current page. */
+  /** Render-tree containment forest. */
   roots: SurfaceHierarchyNode[];
 }
 
-const stringField = (value: JsonValue, field: string): string | null => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const candidate = value[field];
-  return typeof candidate === "string" ? candidate : null;
+const textAttribute = (
+  node: Extract<RenderNode, { kind: "element" }>,
+  names: readonly string[],
+): string | null => {
+  for (const name of names) {
+    const value = node.attributes.find((attribute) => attribute.name === name)?.value;
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return null;
 };
 
-interface SurfaceOpen {
-  surface: string;
-  opener: string | null;
-}
+const surfaceKeys = (nodes: readonly RenderNode[]): Set<string> => {
+  const keys = new Set<string>();
+  const visit = (node: RenderNode): void => {
+    if (node.kind !== "element") return;
+    if (node.surface) keys.add(node.key);
+    node.children.forEach(visit);
+  };
+  nodes.forEach(visit);
+  return keys;
+};
 
-const openedSurfaces = (preview: EditorPreview): SurfaceOpen[] =>
-  preview.replay.flatMap((step) => step.effects.structural.flatMap((effect) => {
-    if (stringField(effect, "op") !== "open-surface") return [];
-    const surface = stringField(effect, "surface");
-    const opener = stringField(effect, "opener");
-    return surface === null ? [] : [{ surface, opener }];
-  }));
-
-const previewLineage = (
+const parentPreview = (
   preview: EditorPreview,
   relatedPreviews: readonly EditorPreview[],
-): EditorPreview[] => {
-  const byExample = new Map(
-    relatedPreviews
-      .filter((candidate) =>
-        candidate.identity.kind === preview.identity.kind
-        && candidate.identity.subject === preview.identity.subject)
-      .map((candidate) => [candidate.identity.example, candidate] as const),
-  );
-  byExample.set(preview.identity.example, preview);
-
-  const lineage: EditorPreview[] = [];
-  const visited = new Set<string>();
-  let current: EditorPreview | undefined = preview;
-  while (current && !visited.has(current.id)) {
-    lineage.unshift(current);
-    visited.add(current.id);
-    current = current.from === null ? undefined : byExample.get(current.from);
-  }
-  return lineage;
+): EditorPreview | null => {
+  if (preview.from === null) return null;
+  return relatedPreviews.find((candidate) =>
+    candidate.identity.kind === preview.identity.kind
+    && candidate.identity.subject === preview.identity.subject
+    && candidate.identity.example === preview.from
+  ) ?? null;
 };
-
-const inheritedOpeners = (
-  preview: EditorPreview,
-  relatedPreviews: readonly EditorPreview[],
-): Map<string, string> => {
-  const openerBySurface = new Map<string, string>();
-  for (const ancestor of previewLineage(preview, relatedPreviews)) {
-    for (const step of ancestor.replay) {
-      for (const effect of step.effects.structural) {
-        const op = stringField(effect, "op");
-        const surface = stringField(effect, "surface");
-        if (op === "open-surface") {
-          const opener = stringField(effect, "opener");
-          if (surface !== null && opener !== null) openerBySurface.set(surface, opener);
-        } else if ((op === "dismiss" || op === "force-close") && surface !== null) {
-          openerBySurface.delete(surface);
-        }
-      }
-    }
-  }
-  return openerBySurface;
-};
-
-const mountedSurface = (
-  surface: SurfaceView,
-  stackIndex: number,
-  directlyOpened: ReadonlySet<string>,
-  hasReplayParent: boolean,
-): MountedSurface => ({
-  key: surface.key,
-  definition: surface.definition,
-  modality: surface.modality,
-  stackIndex,
-  relation: directlyOpened.has(surface.key)
-    ? "direct"
-    : hasReplayParent
-      ? "inherited"
-      : "mounted",
-});
 
 export const surfaceHierarchy = (
   preview: EditorPreview,
   relatedPreviews: readonly EditorPreview[] = [preview],
 ): SurfaceHierarchy | null => {
-  if (!("protocol" in preview.content) || preview.content.protocol !== "uhura-view/0") return null;
-  const directlyOpened = new Set(openedSurfaces(preview).map(({ surface }) => surface));
-  const surfaces = preview.content.surfaces.map((surface, index) =>
-    mountedSurface(surface, index, directlyOpened, preview.from !== null));
-  const nodeByKey = new Map<string, SurfaceHierarchyNode>();
-  const nodeByScope = new Map<string, SurfaceHierarchyNode>();
-  for (const [index, surface] of preview.content.surfaces.entries()) {
-    const node: SurfaceHierarchyNode = {
-      surface: surfaces[index]!,
-      opener: null,
-      children: [],
-    };
-    nodeByKey.set(surface.key, node);
-    nodeByScope.set(surface.dismiss.scope, node);
-  }
-
-  const openerBySurface = inheritedOpeners(preview, relatedPreviews);
+  const document = preview.content.value.document;
+  const parent = parentPreview(preview, relatedPreviews);
+  const retainedKeys = parent === null
+    ? null
+    : surfaceKeys(parent.content.value.document.nodes);
+  const surfaces: MountedSurface[] = [];
   const roots: SurfaceHierarchyNode[] = [];
-  for (const surface of surfaces) {
-    const node = nodeByKey.get(surface.key)!;
-    node.opener = openerBySurface.get(surface.key) ?? null;
-    const parent = node.opener === null ? undefined : nodeByScope.get(node.opener);
-    if (parent && parent.surface.stackIndex < surface.stackIndex) parent.children.push(node);
-    else roots.push(node);
-  }
+
+  const visit = (
+    nodes: readonly RenderNode[],
+    parent: SurfaceHierarchyNode | null,
+  ): void => {
+    for (const node of nodes) {
+      if (node.kind !== "element") continue;
+      let childParent = parent;
+      if (node.surface) {
+        const surface: MountedSurface = {
+          key: node.key,
+          definition: textAttribute(node, ["aria-label", "title", "name", "id"])
+            ?? `Surface ${surfaces.length + 1}`,
+          modality: textAttribute(node, ["data-modality", "role"]) ?? node.element,
+          stackIndex: surfaces.length,
+          relation: retainedKeys === null
+            ? "present"
+            : retainedKeys.has(node.key)
+              ? "retained"
+              : "introduced",
+        };
+        const hierarchyNode: SurfaceHierarchyNode = {
+          surface,
+          opener: parent?.surface.key ?? null,
+          children: [],
+        };
+        surfaces.push(surface);
+        if (parent === null) roots.push(hierarchyNode);
+        else parent.children.push(hierarchyNode);
+        childParent = hierarchyNode;
+      }
+      visit(node.children, childParent);
+    }
+  };
+
+  visit(document.nodes, null);
+  if (surfaces.length === 0) return null;
   return {
-    page: preview.content.page.route,
+    presentation: document.presentation,
     surfaces,
     roots,
   };
 };
 
-export const directlyOpenedSurfaces = (preview: EditorPreview): MountedSurface[] =>
-  surfaceHierarchy(preview)?.surfaces.filter((surface) => surface.relation === "direct") ?? [];
+/** Surfaces present in a derived projection but absent from its direct parent. */
+export const introducedSurfaces = (
+  preview: EditorPreview,
+  relatedPreviews: readonly EditorPreview[] = [preview],
+): MountedSurface[] =>
+  surfaceHierarchy(preview, relatedPreviews)?.surfaces.filter(
+    (surface) => surface.relation === "introduced",
+  ) ?? [];

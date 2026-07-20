@@ -595,18 +595,8 @@ body.uh-play-shell {
   border-color: #7aa7ff;
   box-shadow: 0 0 0 2px rgba(122, 167, 255, 0.16), 0 5px 16px rgba(0, 0, 0, 0.3);
 }
-#uh-debug-panel button.uh-debug-node.is-consulted-unsatisfied {
-  border-color: #b98343;
-  border-style: dashed;
-}
-#uh-debug-panel button.uh-debug-node.is-consulted-not-ready,
-#uh-debug-panel button.uh-debug-node.has-failure {
-  border-color: #bd6262;
-  border-style: dashed;
-}
 #uh-debug-panel button.uh-debug-node.is-written,
-#uh-debug-panel button.uh-debug-node.is-sent,
-#uh-debug-panel button.uh-debug-node.is-structural {
+#uh-debug-panel button.uh-debug-node.is-sent {
   background: #1d2a27;
   border-color: #4f8877;
 }
@@ -730,6 +720,19 @@ body.uh-play-shell {
 }
 #uh-page, .uh-page-root { block-size: 100%; min-block-size: 0; }
 .uh-page-root > * { block-size: 100%; }
+.uh-projection-error {
+  block-size: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: #e4e4e7;
+  background: #111113;
+  text-align: center;
+}
+.uh-projection-error strong { font-size: 15px; }
+.uh-projection-error p { max-inline-size: 54ch; color: #f0a6a6; }
+.uh-projection-error code { color: #a1a1aa; font: 12px/1.5 ui-monospace, monospace; }
 
 /* semantic element bases used by the shared browser renderer */
 .uh-view { display: block; min-inline-size: 0; }

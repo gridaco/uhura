@@ -1,76 +1,84 @@
-//! `uhura graph [path] [--out=<file>]` — checked IR → deterministic,
-//! renderer-neutral interaction graph. The graph is a derived read model for
-//! NCC and other visualizers; Uhura remains the only owner of UI semantics.
+//! `uhura graph [path] [--out=<file>]` — canonical checked interaction graph.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use uhura_base::{Severity, render_text, to_canonical_json};
-use uhura_check::check;
-use uhura_check::lower::SpanEntry;
-use uhura_editor_model::interaction_graph::{
-    SourceRef, SpanLookup, build_interaction_graph_with_spans,
-};
-
 use crate::CommonArgs;
 
-struct CheckSpans<'a>(&'a BTreeMap<String, SpanEntry>);
-
-impl SpanLookup for CheckSpans<'_> {
-    fn source_ref(&self, ir_path: &str) -> Option<SourceRef> {
-        self.0.get(ir_path).map(|span| SourceRef {
-            file: span.file.clone(),
-            start: span.start,
-            end: span.end,
-            ir_path: ir_path.to_string(),
-        })
-    }
-}
-
 pub fn run(common: &CommonArgs, out: Option<&str>) -> ExitCode {
-    let input = match super::assemble_input(&common.root) {
-        Ok(input) => input,
+    let program = match super::project::require_program(&common.root, "graph") {
+        Ok(program) => program,
         Err(code) => return code,
     };
-    let output = check(&input);
-    if output
-        .diagnostics
+    let artifacts = uhura_core::build_interaction_graph_artifacts(&program);
+    if let Some((identity, hash)) = artifacts
+        .graph
+        .machine_program_hashes
         .iter()
-        .any(|d| d.severity == Severity::Error)
+        .chain(artifacts.graph.presentation_hashes.iter())
+        .find(|(_, hash)| !is_lower_sha256(hash))
     {
-        print!("{}", render_text(&output.diagnostics, &output.source_map));
-        eprintln!("uhura graph: the check must come up clean first");
-        return ExitCode::from(1);
+        eprintln!("uhura graph: identity `{identity}` has invalid semantic hash `{hash}`");
+        return ExitCode::from(2);
     }
-    let Some(lowered) = &output.lowered else {
-        eprintln!("uhura graph: no checked program");
-        return ExitCode::from(1);
-    };
-
-    let graph = build_interaction_graph_with_spans(&lowered.program, &CheckSpans(&lowered.spans));
-    let value = serde_json::to_value(&graph).expect("interaction graph serializes");
-    let mut json = to_canonical_json(&value);
+    let mut json = uhura_base::to_canonical_json(
+        &serde_json::to_value(&artifacts.graph).expect("interaction graph serializes"),
+    );
     json.push('\n');
-
     let path = out
         .map(PathBuf::from)
         .unwrap_or_else(|| common.root.join("build/interaction-graph.json"));
     if let Some(parent) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
+        && let Err(error) = std::fs::create_dir_all(parent)
     {
-        eprintln!("uhura graph: {}: {e}", parent.display());
+        eprintln!("uhura graph: {}: {error}", parent.display());
         return ExitCode::from(2);
     }
-    if let Err(e) = std::fs::write(&path, json.as_bytes()) {
-        eprintln!("uhura graph: {}: {e}", path.display());
+    if let Err(error) = std::fs::write(&path, json) {
+        eprintln!("uhura graph: {}: {error}", path.display());
         return ExitCode::from(2);
     }
     println!(
         "wrote {} ({} nodes, {} edges)",
         path.display(),
-        graph.nodes.len(),
-        graph.edges.len()
+        artifacts.graph.nodes.len(),
+        artifacts.graph.edges.len()
     );
     ExitCode::SUCCESS
+}
+
+fn is_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_is_closed_and_uses_canonical_protocols() {
+        let program = super::super::project::checked_test_program();
+        let graph = uhura_core::build_interaction_graph(&program);
+        assert_eq!(graph.protocol, uhura_core::INTERACTION_GRAPH_PROTOCOL);
+        assert!(
+            graph
+                .machine_program_hashes
+                .values()
+                .all(|hash| is_lower_sha256(hash))
+        );
+        let ids = graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            graph
+                .edges
+                .iter()
+                .all(|edge| ids.contains(edge.from.as_str()) && ids.contains(edge.to.as_str()))
+        );
+    }
 }

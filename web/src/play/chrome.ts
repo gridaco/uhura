@@ -1,4 +1,4 @@
-// Route-owned Play controls. Frame size, provider, actor, and restart remain
+// Route-owned Play controls. Frame size, application actor, and restart remain
 // host state rather than Uhura application state.
 
 import type { SystemState } from "../protocol/types.js";
@@ -160,28 +160,16 @@ export function mountPlayChrome(
 
   function renderSystem(system: SystemState): void {
     if (disposed) return;
-    renderStatus(system.status, system.error);
+    const boundary = system.hasProvider
+      ? "Application adapters admitted"
+      : "Built-in adapters only";
+    renderStatus(system.status, system.error ?? boundary);
     shell.restart.disabled = system.status === "starting";
-    shell.providerControl.hidden = system.providers.length < 2;
-
-    const priorProvider = shell.providerSelect.value;
-    clearOptions(shell.providerSelect);
-    for (const provider of system.providers) {
-      const option = shell.document.createElement("option");
-      option.value = provider;
-      option.textContent = provider === "remote" ? "Remote" : "Fixture";
-      shell.providerSelect.append(option);
-    }
-    if (system.provider) shell.providerSelect.value = system.provider;
-    else if (priorProvider) shell.providerSelect.value = priorProvider;
-    shell.providerSelect.disabled =
-      system.status === "starting" || system.providers.length < 2;
 
     clearOptions(shell.actorSelect);
     if (system.actors.length === 0) {
       const option = shell.document.createElement("option");
-      option.textContent =
-        system.provider === "fixture" ? "Fixture identity" : "Unavailable";
+      option.textContent = system.hasProvider ? "Not exposed" : "Local session";
       shell.actorSelect.append(option);
     } else {
       const hasCurrent = system.actors.some((actor) => actor.id === system.actor);
@@ -221,12 +209,6 @@ export function mountPlayChrome(
       renderSystem(detail as SystemState);
     }
   };
-  const onProviderChange = (): void => {
-    const provider = shell.providerSelect.value;
-    if (provider === "remote" || provider === "fixture") {
-      view.__uhura?.setProvider(provider);
-    }
-  };
   const onActorChange = (): void => {
     view.__uhura?.setActor(shell.actorSelect.value);
   };
@@ -258,7 +240,6 @@ export function mountPlayChrome(
   };
 
   view.addEventListener("uhura:system-state", onSystemState);
-  shell.providerSelect.addEventListener("change", onProviderChange);
   shell.actorSelect.addEventListener("change", onActorChange);
   shell.fullscreen.addEventListener("click", onFullscreen);
   shell.document.addEventListener("fullscreenchange", renderFullscreen);
@@ -294,7 +275,6 @@ export function mountPlayChrome(
       autoHideTimer = undefined;
       observer.disconnect();
       view.removeEventListener("uhura:system-state", onSystemState);
-      shell.providerSelect.removeEventListener("change", onProviderChange);
       shell.actorSelect.removeEventListener("change", onActorChange);
       shell.fullscreen.removeEventListener("click", onFullscreen);
       shell.document.removeEventListener("fullscreenchange", renderFullscreen);

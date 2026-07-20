@@ -1,0 +1,7 @@
+[project]
+name = "examples.programs"
+version = 1
+language = "0.4"
+
+[modules]
+programs = "programs.uhura"
