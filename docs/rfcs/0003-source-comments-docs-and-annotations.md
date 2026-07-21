@@ -2,9 +2,10 @@
 
 - **Status:** Accepted
 - **Implementation:** Pending
-- **Scope:** `.uhura` and `.examples.uhura` ordinary comments, declaration
-  documentation, tagged markup annotations, attachment, canonical formatting,
-  checked authoring metadata, and diagnostics
+- **Scope:** `.uhura` ordinary comments, declaration documentation, tagged
+  markup annotations, attachment, canonical formatting, checked authoring
+  metadata, and diagnostics. The accepted 0.3 `.examples.uhura` target maps to
+  ordinary 0.4 evidence modules selected by `[evidence.modules]`.
 - **Supersedes:** None
 - **Related work:** [RFC 0001](0001-project-foundation.md),
   [Spock RFD 0016](https://github.com/gridaco/spock/blob/main/docs/rfd/0016-doc-comments.md)
@@ -26,7 +27,7 @@ The forms are:
 |---|---|---|---|
 | DSL regions | `// …` at a comment-bearing boundary | `/// …`, with `//! …` for the file | None |
 | Markup | `<!-- … -->` | None | `<!-- @kind … -->` |
-| `<style>` body | CSS syntax, outside this RFC | None | None |
+| Historical 0.3 `<style>` body | CSS syntax, outside this RFC | None | None |
 
 For example:
 
@@ -107,11 +108,15 @@ The historical mapping is explicit:
 | Store state field | Machine/part state field |
 | Event/outcome handler | Machine/part `on` handler |
 | `{#match}` block | Removed; 0.4 uses core `match` expressions and does not annotate an expression as a markup occurrence |
+| Component invocation | Unselected in 0.4; there is no active annotation target until a future UI grammar selects invocation |
+| Inline `<style>` region | Removed; 0.4 selects external CSS through `host.toml`, outside Uhura source metadata |
 
 Git history preserves the original spelling and rationale; this reconciliation
-does not pretend those forms were always 0.4 forms. Evidence now uses the same
-0.4 frontend under a manifest-enforced tooling role. Its file and example
-documentation rules below remain part of this RFC's accepted metadata
+does not pretend those forms were always 0.4 forms. Later references to
+component invocation or inline `<style>` describe the accepted 0.3 target set
+only and impose no 0.4 parser or conformance requirement. Evidence now uses
+the same 0.4 frontend under a manifest-enforced tooling role. Its file and
+example documentation rules below remain part of this RFC's accepted metadata
 decision.
 
 ## 2. Motivation
@@ -303,8 +308,8 @@ owning boundary.
 
 The parser retains a valid comment as leading trivia of the following complete
 item, or as trailing trivia of the containing list at `)`, `}`, or EOF. A
-comment at the DSL-to-markup/style transition is module trailing DSL trivia and
-is emitted immediately before the first markup node or `<style>`. A source
+comment at the DSL-to-markup transition is module trailing DSL trivia and is
+emitted immediately before the first markup node. A source
 trailing comment such as `item // note` is therefore legal only when the next
 position is one of the listed boundaries; it canonicalizes to its own line
 there. `// @kind …` follows these same rules and remains ordinary in DSL mode.
@@ -313,14 +318,16 @@ there. `// @kind …` follows these same rules and remains ordinary in DSL mode.
 
 `//!` is legal only in the file preamble. The preamble ends at the first
 non-comment syntactic item: the first `use`, `pub use`, top-level declaration,
-or activated-profile declaration in `.uhura`, or the first `use`/`example`
-item in `.examples.uhura`. Whitespace, ordinary comments, and other `//!`
-lines may coexist before that item.
+or activated-profile declaration in a deployable `.uhura` module, or the first
+`use`/`example` item in an evidence module. Whitespace, ordinary comments, and
+other `//!` lines may coexist before that item.
 
-In a `.uhura` file, `//!` documents the source module. In an
-`.examples.uhura` file, it documents the examples source module. It does not
-replace `///` documentation for a machine, part, type, value, `ui`, or example
-declared inside that file.
+In Uhura 0.4, `//!` documents the source module. Evidence is not distinguished
+by a filename suffix: an ordinary `.uhura` file becomes an evidence module
+only when mapped under `[evidence.modules]`. This is the 0.4 successor to the
+RFC's original `.examples.uhura` file-doc target. File docs do not replace
+`///` documentation for a machine, part, type, value, `ui`, scenario,
+checkpoint, or example declared inside that module.
 
 A non-empty `//!` after the preamble is
 `UH0018 syntax/misplaced-inner-doc`.
@@ -520,8 +527,7 @@ Metadata never crosses any of these boundaries:
 - a parameter-list open or close;
 - transition from the DSL region into markup;
 - `</element>`;
-- `{:else}` or a block close; or
-- transition from markup into `<style>`.
+- `{:else}` or a block close.
 
 Reaching a closing delimiter, arm boundary, region transition, or EOF without
 encountering any construct to target is dangling. Encountering an incompatible
@@ -529,7 +535,8 @@ construct is incompatible; metadata does not skip it in search of a later
 target. An opening delimiter encountered after an ineligible construct has
 already begun belongs to that incompatible construct and is not a dangling
 case. Closing delimiters, arm labels, and region-transition markers such as
-`<style>` are boundaries, not incompatible target constructs.
+the DSL-to-markup transition are boundaries, not incompatible target
+constructs.
 
 A parameter doc is valid only after the parameter-list open and immediately
 before its parameter. A doc between a function, update, part, or protocol
@@ -546,13 +553,16 @@ opening tag.
 Markup annotations may target:
 
 - a UI element;
-- a component invocation; or
 - a complete `{#if}` or keyed `{#each}` block.
 
 Raw text nodes, interpolations, attributes, event bindings, expressions,
-arguments, `{:else}` arms, `<style>`, CSS, and parser recovery nodes
-are not annotatable. Authors annotate their nearest owning element or complete
-structural block.
+arguments, `{:else}` arms, and parser recovery nodes are not annotatable.
+External CSS is outside Uhura source metadata. Authors annotate the nearest
+owning element or complete structural block.
+
+Uhura 0.4 has no component-invocation target. If a later UI grammar selects
+reusable invocation, its RFC must explicitly restore the historical target
+class and define its span.
 
 All annotation kinds, including `@doc`, use this same target table. The kind
 does not change target eligibility.
@@ -585,7 +595,7 @@ indentation. It emits each ordinary DSL comment on its own line at the
 following item's indentation. Trailing list trivia is emitted at the list's
 member indentation, one level inside `)` or `}`; trailing file trivia uses
 top-level indentation, and module transition trivia remains immediately before
-the first markup node or `<style>`. Any ordinary comment or doc inside a
+the first markup node. Any ordinary comment or doc inside a
 declaration parameter list forces the canonical multiline parameter layout.
 
 For an ordinary DSL comment, formatting preserves the body bytes after the
@@ -678,7 +688,7 @@ part-composition | port-declaration
 state-field | computed-declaration | observation-field
 event-handler | update-declaration | reconciliation-block
 example-declaration
-ui-element | component-invocation
+ui-element
 if-block | each-block
 ```
 
@@ -713,8 +723,8 @@ line ending:
 | event handler | first byte of `on` through the handler body's closing `}` |
 | update declaration | first byte of `update` through the body's closing `}`; excludes leading `pub` |
 | reconciliation block | first byte of `before` through the body's closing `}` |
-| `example-declaration` | first byte of `example` through the example body's closing `}` |
-| UI element/component invocation | opening `<` through the self-closing `>`, or through the matching closing tag's `>` including children |
+| `example-declaration` | first byte of `example` through its terminating `;` |
+| UI element | opening `<` through the self-closing `>`, or through the matching closing tag's `>` including children |
 | `if-block`/`each-block` | opening block `{` through the matching block-close `}` including every arm |
 
 The exact Rust representation, serialization protocol, artifact filename, and
@@ -901,9 +911,10 @@ only when tests demonstrate all of the following:
    trailing-`-` restrictions; well-formed comments elsewhere receive `UH0001`.
 7. All valid lower-kebab annotation kinds—including `doc`—survive exactly in
    target-local source order and remain annotation-class metadata.
-8. Markup annotations attach only to elements, component invocations, and
-   complete `if`/`each` structural blocks without crossing parent or arm
-   boundaries.
+8. Markup annotations attach only to elements and complete `if`/`each`
+   structural blocks without crossing parent or arm boundaries. Component
+   invocation remains outside the 0.4 gate unless a future UI grammar selects
+   and specifies that target.
 9. Formatter output is idempotent, selects markup shape from normalized text,
    and retains ordinary comments at item/list, trailing scope, and source-mode
    transition boundaries without consuming structural node bounds.
@@ -912,5 +923,7 @@ only when tests demonstrate all of the following:
 11. Adding or editing valid docs and annotations leaves canonical runtime IR,
     program hashes, checkpoints, observations, receipts, commands, traces, and
     runtime diagnostic meaning unchanged; only source locations may shift.
-12. `.examples.uhura` file docs, example docs, and existing `note` clauses
-    remain distinct through checking and formatting.
+12. Evidence-module file docs, example docs, and existing `note` clauses
+    remain distinct through checking and formatting. In 0.4 the evidence
+    module is an ordinary `.uhura` file selected by `[evidence.modules]`; the
+    original `.examples.uhura` spelling remains historical RFC context only.

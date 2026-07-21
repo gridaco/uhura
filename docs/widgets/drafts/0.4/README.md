@@ -97,6 +97,19 @@ that file. It is a generated-or-verified implementation contract, not a second
 semantic catalogue; attributes, constraints, and events remain owned by the
 checker catalogue above.
 
+Play realizes `<Surface>` as a keyed dialog in a frame-owned surface layer,
+never in the browser's document-wide modal top layer. The page and lower
+surfaces are inert, focus enters the top surface, keyboard focus remains
+contained within the application layers, and focus returns to the prior
+application owner when that surface disappears. Host-owned Play chrome remains
+operable and retains focus across surface updates or closure. Because content
+outside the application frame is deliberately available, the contained dialog
+does not claim document-wide `aria-modal` semantics.
+Static Editor previews use the same contained visual stack but remain wholly
+inert. The 0.4 `<Surface>` contract declares no dismissal event, so Escape and
+the scrim cannot invent a machine input; authors provide an explicit checked
+control when dismissal is part of the machine.
+
 The `tablist` token is deliberately not admitted on `<view>`. A parent
 `role="tablist"` without checked tab children, selection, focus movement, and
 keyboard behavior is not an accessible tabs contract. A future tabs

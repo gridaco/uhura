@@ -22,7 +22,7 @@ Editor and Play are routes of one web application:
 ```text
 Uhura source
   -> native capture, check, and evaluation
-  -> uhura-editor-state/4 carrying uhura-view/1 projections
+  -> uhura-editor-state/5 carrying uhura-view/1 projections
   -> HTTP state + SSE revision notification
   -> canonical projection renderer
   -> Editor at / or Play at /play
@@ -110,12 +110,16 @@ render-owned authoring metadata, explicit preview documentation references,
 and source-target occurrences. Version 2 removed concrete icon geometry from
 the native read model; glyph realization belongs entirely to the browser
 renderer. Version 3 added tagged render content, nullable per-preview evidence,
-and nullable machine inspection. The current `uhura-editor-state/4` removes
-the retired snapshot/fragment payloads and structural path anchors. Every
-preview now carries exactly one `uhura-view/1` projection plus its
-projection-source sidecar, and every provenance anchor is an opaque
-rendered-node key. EditorState remains an Editor read model, not canonical
-language IR.
+and nullable machine inspection. Version 4 removed the retired
+snapshot/fragment payloads and structural path anchors. Every preview carries
+exactly one `uhura-view/1` projection plus its projection-source sidecar, and
+every provenance anchor is an opaque rendered-node key. The current
+`uhura-editor-state/5` bounds evidence transport: its nested
+`uhura-machine-inspection/1` carries `uhura-evidence-summary/0`, while preview
+evidence carries only scenario/pin identity and source references. Full
+snapshots, observations, and receipt logs remain native evaluation artifacts;
+they are not part of the Editor wire. EditorState remains an Editor read
+model, not canonical language IR.
 
 ```text
 EditorState

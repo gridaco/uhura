@@ -174,8 +174,8 @@ language = "0.4"
 programs = "programs.uhura"
 "shared::notice" = "src/shared/notice.uhura"
 
-[evidence]
-sources = ["evidence/programs.uhura"]
+[evidence.modules]
+programs = "evidence/programs.uhura"
 
 [dependencies]
 vendor = { package = "vendor.icons", version = 1, path = "vendor/icons" }

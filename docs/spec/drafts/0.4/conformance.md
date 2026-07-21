@@ -142,7 +142,7 @@ The closed project boundary has isolated rejection fixtures for:
 - duplicate physical mapping, wrong extension, missing file, invalid UTF-8,
   unsafe path, symlink escape, or unmapped project-owned `.uhura` source;
 - an unknown, empty, duplicated, unsafe, missing, or core-module-overlapping
-  `[evidence].sources` entry;
+  `[evidence.modules]` logical module mapping;
 - dependency alias collision or use of reserved `crate` or `uhura`;
 - a dependency without a lock, a lock without dependencies, or an unknown
   lock key;

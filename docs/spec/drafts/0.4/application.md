@@ -69,6 +69,12 @@ The candidate reuses:
 - `{#if}`, `{:else}`, and `{/if}`;
 - keyed `{#each}` repetition.
 
+The `ui` declaration itself is brace-delimited. At its root sibling level, an
+un-nested `}` therefore always closes the declaration; the same bytes cannot
+also mean raw root text. Render a literal right brace there with the ordinary
+text interpolation `{"}"}`. Inside an element, element nesting disambiguates
+the declaration delimiter, so a raw `}` remains ordinary element text.
+
 A core `match` expression may appear inside an interpolation. No separate
 Svelte-like match block is selected by 0.4.
 
@@ -178,6 +184,41 @@ port router = Router<Location> { routes: return_routes };
 
 The live host binds it before admission. Location changes return as later
 qualified inputs; navigation requests publish as commands.
+
+### Web host route ownership
+
+`Routes<Location>` is a host-agnostic checked language value. The checker
+validates pattern totality, field use, and ambiguity, but does not reserve
+deployment URLs: a headless or custom host may legitimately own `/play`.
+Checked candidates expose the pathname semantics selected by the deployed
+machine's `web.history` Router port so hosts can apply composition policy
+without reparsing source or depending on private IR. Unselected route-table
+constants are inert and do not participate in deployment admission. A host
+claim also states whether ownership is decided on the raw pathname or after
+exactly one percent-decode layer; Uhura applies that choice to its checked path
+shape.
+
+The bundled standalone web host applies that policy during Play admission.
+`/` remains the application's logical root and the browser shell represents it
+as exact path `/play`. A literal or dynamic route pattern cannot reach Play
+when a selected route can encode:
+
+- exact `/play` or exact `/_uhura/editor`;
+- a descendant of `/api/`;
+- `/assets` or one of its descendants; or
+- exact `/favicon.ico`.
+
+Those URLs belong to Play mounting, Editor, protocol endpoints, or host assets
+and cannot reach the machine router. The checked Editor graph remains current
+and reports the deployment-admission error while Play is rejected. This
+reservation is segment-aware: `/api` itself, `/play/child`, and
+`/_uhura/editor/child` remain ordinary application paths under the current
+standalone-host contract.
+
+A companion meta-framework may own more origin paths. Those additional
+namespaces are deployment admission, not ambient Uhura language semantics; the
+integration must reject overlapping checked route patterns before starting the
+application.
 
 Filename and directory conventions are not ambient language semantics.
 Projects may use a framework tool to generate `use` declarations and
@@ -369,6 +410,13 @@ Its semantic operations are:
 - pin a reachable committed state;
 - name a checkpoint; and
 - bind a pin to a UI example.
+
+Scenarios execute in semantic dependency order. A scenario that restores or
+compares another scenario's pin runs after that terminal producer; checkpoint
+alias chains are resolved to the same terminal `scenario::pin` dependency.
+Ready scenarios that do not depend on one another are ordered by resolved
+scenario identity. Physical source path, byte position, and declaration order
+do not schedule evidence execution.
 
 Evidence cannot:
 

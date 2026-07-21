@@ -7,19 +7,26 @@ one process and one port.
 
 > **RFD 0024 implementation preview — experimental, unstable, and
 > non-normative.** The backend uses proposed Spock `error` declarations that
-> the `0.5.2` and `0.5.3` toolchains accept as implementation evidence. RFD
-> 0024 remains
-> draft; this inclusion is not language acceptance or a compatibility promise.
-> Published `spock@0.5.0` and `spock@0.5.1` cannot parse these declarations.
+> the `0.5.2` and `0.5.3` backend toolchains accept as implementation evidence.
+> RFD 0024 remains draft; this inclusion is not language acceptance or a
+> compatibility promise.
 
-Install the exact preview CLI, build the app-owned Play provider once, then
-start the project from this repository root:
+The client is strict Uhura 0.4. Published `spock@0.5.3` and earlier embed the
+retired client frontend and cannot run this checkout. Until a compatible npm
+release exists, initialize this repository as the `uhura/` submodule of the
+companion Spock source checkout, then run from the Spock repository root:
 
 ```sh
-npm install --global spock@0.5.3
-corepack pnpm@10.11.0 -C web install --frozen-lockfile
-corepack pnpm@10.11.0 -C web build:provider
-spock start examples/instagram
+git submodule update --init --recursive
+corepack pnpm@10.11.0 -C crates/spock-runtime/studio install --frozen-lockfile
+corepack pnpm@10.11.0 -C crates/spock-runtime/studio build
+corepack pnpm@10.11.0 -C uhura/web install --frozen-lockfile
+corepack pnpm@10.11.0 -C uhura/web build
+bash uhura/scripts/build-wasm.sh
+
+SPOCK_UHURA_WEB_DIST="$PWD/uhura/web/dist" \
+SPOCK_UHURA_WASM_DIST="$PWD/uhura/crates/uhura-wasm/pkg/web" \
+cargo run --locked -p spock-cli -- start uhura/examples/instagram
 ```
 
 Open <http://127.0.0.1:4000/> for Uhura Editor and use **Play** to enter the
@@ -28,6 +35,8 @@ live Instagram app at `/play`. Spock Studio is available at `/~studio`.
 while publishing valid client saves live. Invalid client saves retain the last
 good Play generation. Backend, seed, and backend-affecting `spock.toml` changes
 are observed as `restart_required`; they are not migrated or swapped live.
+If `build-wasm.sh` reports a missing or mismatched `wasm-bindgen-cli`, run the
+lockfile-exact project-local install command it prints and repeat the build.
 
 ## Layout
 
@@ -54,11 +63,13 @@ different lifecycles and must not be deduplicated.
 
 The checked-in provider source is `client/providers/spock.ts`. Its generated
 `client/providers/dist/spock.js` output is ignored, so a source checkout must
-run `pnpm -C web build:provider` after cloning or changing the provider.
+run `corepack pnpm@10.11.0 -C uhura/web build:provider` from the companion
+Spock repository root after cloning or changing the provider.
 The module exports typed adapters for the exact admitted `authority` and
 `mutations` port instances; browser history is supplied separately by Uhura's
-built-in `web.history` adapter. The published Spock CLI hosts the generated
-provider artifact but does not currently compile app-specific TypeScript.
+built-in `web.history` adapter. The Spock framework host serves the generated
+provider artifact but does not currently compile app-specific TypeScript. A
+future compatible npm distribution will carry that same boundary.
 
 ## What the example proves
 
@@ -82,8 +93,8 @@ is a local integration proof, not a production authentication boundary.
 The client remains independently checkable:
 
 ```sh
-cargo run --locked -p uhura-cli -- \
-  check examples/instagram/client --deny-warnings
+cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
+  check uhura/examples/instagram/client --deny-warnings
 ```
 
 That command checks the machine, Web presentation, and evidence corpus and
@@ -92,7 +103,7 @@ does not require a running Spock backend.
 To inspect one authored scenario through the same evidence runner:
 
 ```sh
-cargo run --locked -p uhura-cli -- \
-  trace examples/instagram/client \
+cargo run --locked --manifest-path uhura/Cargo.toml -p uhura-cli -- \
+  trace uhura/examples/instagram/client \
   --script=feed_like_refused_scenario --expanded
 ```
