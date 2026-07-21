@@ -3,8 +3,8 @@
 - **Status:** Non-normative candidate study for the future `ui` sub-specification
 - **Lifetime:** Disposable study
 - **Method:** Primary-source reading of the referenced specifications retrieved
-  July 20, 2026, plus direct verification against the code on `main` and
-  `feature/uhura-0.4-language-rewrite`
+  July 20, 2026, plus direct verification against the code both before and
+  after the 0.4 replacement landed on `main` (#24, merge `896aa6b`)
 - **Origin:** The "Carousel and existing pager" candidate in the widget
   candidate landscape ([#19](https://github.com/gridaco/uhura/issues/19))
 - **Doctrine:** [Mission and identity](../doctrine/mission.md),
@@ -41,16 +41,16 @@ Non-goals:
 
 ### 2.1 The v0 spike contract
 
-The spike catalog (`examples/instagram/client/catalog/base.toml` on `main`)
-declares `pager` as a layout viewport with keyed children, an
+The 0.3 spike catalog (`examples/instagram/client/catalog/base.toml`,
+removed from `main` when #24 landed and preserved in git history) declares `pager` as a layout viewport with keyed children, an
 `indicator` token (`none | dots`), a required `label`, and a `page-change`
 event of kind `observe`. The catalog is self-describing about its own gaps:
 the current page is "uncontrolled in the spike", and `page-change` is
 "Declared for controlled use; the spike never binds it".
 
-### 2.2 The 0.4 branch
+### 2.2 Uhura 0.4 (merged as `main` by #24)
 
-On `feature/uhura-0.4-language-rewrite`:
+On `main` after the replacement:
 
 - The checked vocabulary keeps `pager` as a native element with attributes
   restricted to `indicator` (`none | dots`) and a required `label`, a
@@ -65,13 +65,14 @@ On `feature/uhura-0.4-language-rewrite`:
   renderer as `round(track.scrollLeft / track.clientWidth)`
   (`web/src/renderer/primitives/pager.ts` after the primitive-adapter
   refactor). Dots are non-interactive and marked `aria-hidden`.
-- As of the current PR head (`7f69fc0`), the renderer **does** dispatch
+- Since the primitive-adapter refactor that landed with #24, the renderer
+  **does** dispatch
   `page-change`: the pager primitive fires it whenever its rounded active
   index changes during scrolling. The catalog types the payload as `Unit`
   (`crates/uhura-check/src/ui_catalog/elements.rs`), so the machine is told
   *that* the page changed but not *which* page is current. Earlier states of
   both v0 and 0.4 declared the event while binding it in zero renderers; no
-  example binds it yet on either branch.
+  example binds it yet.
 
 So the notification half of the contract has just been realized, but the
 position half remains renderer-owned: with a `Unit` payload there is still no
