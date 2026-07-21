@@ -54,9 +54,9 @@ function assertArtifacts(artifacts: RuntimeInspectionArtifacts): void {
       "Uhura machine inspection artifact generation must be a non-negative safe integer",
     );
   }
-  if (artifacts.deployment.protocol !== "uhura-inspection/0") {
+  if (artifacts.deployment.protocol !== "uhura-inspection/1") {
     throw new TypeError(
-      "Uhura machine inspection artifacts must contain uhura-inspection/0 deployment metadata",
+      "Uhura machine inspection artifacts must contain uhura-inspection/1 deployment metadata",
     );
   }
 }

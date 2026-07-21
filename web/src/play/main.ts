@@ -514,12 +514,17 @@ export function startPlayRuntime(
         requirements.provider,
       );
       try {
-        provider = await loadUhuraAdapterProvider(
+        const loadedProvider = await loadUhuraAdapterProvider(
           config.provider.module,
           providerConfig(config.provider.config),
           boundary,
           requirements.provider,
         );
+        if (disposed) {
+          release(loadedProvider);
+          return;
+        }
+        provider = loadedProvider;
         view.sessionStorage.removeItem("uh-provider-retry");
       } catch (error) {
         if (
@@ -555,6 +560,10 @@ export function startPlayRuntime(
       adapters: [...browserAdapters, ...(provider?.adapters ?? [])],
       assets: playAssets,
       icons,
+      resolveLinkHref(href): string {
+        const destination = browserUrlForApplication(href, view.location.href);
+        return `${destination.pathname}${destination.search}${destination.hash}`;
+      },
       publishRuntimeStep(snapshot, receipt): void {
         inspection.record(snapshot, receipt);
       },

@@ -47,7 +47,7 @@ use uhura_editor_model::{
     PreviewContent, PreviewDocumentation, PreviewEvidence, PreviewField, PreviewFieldGroup,
     PreviewFieldValue, PreviewGroup, PreviewIdentity, PreviewKind, PreviewProvenance,
     RenderFreshness, SourceTarget, SourceTargetClass, SourceTargetOwner, SourceTargetOwnerKind,
-    TargetOccurrence, stable_group_id, stable_preview_id,
+    TargetOccurrence, UHURA_EVIDENCE_SUMMARY_PROTOCOL, stable_group_id, stable_preview_id,
 };
 
 pub mod source;
@@ -56,7 +56,7 @@ pub use source::{ProjectSourceFingerprint, ProjectSourceSnapshot, capture_projec
 
 const EDITOR_EVENT_PROTOCOL: &str = "uhura-editor-event/0";
 const ICON_FONT_MANIFEST_PROTOCOL: &str = "uhura-icon-fonts/0";
-const UHURA_INSPECTION_PROTOCOL: &str = "uhura-inspection/0";
+const UHURA_INSPECTION_PROTOCOL: &str = "uhura-inspection/1";
 const UHURA_PLAY_CONFIG_PROTOCOL: &str = "uhura-play-config/1";
 const UHURA_ADAPTER_PROVIDER_PROTOCOL: &str = "uhura-adapter-provider/0";
 const UHURA_STYLESHEET_CONTENT_PROTOCOL: &str = "text/css";
@@ -163,6 +163,7 @@ pub struct ClientCandidate {
     source_revision_id: String,
     editor: EditorBuildOutcome,
     play: Result<GoodBuild, serde_json::Value>,
+    checked_routes: Option<Vec<CheckedRoutePattern>>,
 }
 
 /// Build-time facts used by terminal and aggregate-host presentation.
@@ -173,6 +174,278 @@ pub struct CandidateSummary {
     pub preview_count: Option<usize>,
     pub replay_derived_count: Option<usize>,
     pub play_ok: bool,
+}
+
+/// One route pattern selected by the exact checked deployment behind a
+/// candidate.
+///
+/// Aggregate hosts consume this semantic view for composition policy without
+/// reparsing Uhura source or depending on Uhura's private IR encoding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedRoutePattern {
+    table: String,
+    constructor: String,
+    pattern: String,
+    path: CheckedRoutePath,
+}
+
+impl CheckedRoutePattern {
+    #[must_use]
+    pub fn table(&self) -> &str {
+        &self.table
+    }
+
+    #[must_use]
+    pub fn constructor(&self) -> &str {
+        &self.constructor
+    }
+
+    #[must_use]
+    pub fn display_pattern(&self) -> &str {
+        &self.pattern
+    }
+
+    /// Whether this checked route can produce a path in a host-owned claim.
+    ///
+    /// The route's source spelling remains diagnostic text only. Uhura owns
+    /// the checked path shape and the claim's single optional decode layer, so
+    /// aggregate hosts never need to parse or decode Uhura syntax.
+    #[must_use]
+    pub fn overlaps(&self, claim: RoutePathClaim<'_>) -> bool {
+        self.path.overlaps(claim)
+    }
+}
+
+/// The path representation used by a host before it decides route ownership.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoutePathDecode {
+    /// Compare the origin-form pathname exactly as delivered by the server.
+    Raw,
+    /// Percent-decode the pathname exactly once before comparing ownership.
+    PercentDecodedOnce,
+}
+
+/// The topology occupied by one host-owned path claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoutePathScope {
+    /// Only the named path.
+    Exact,
+    /// The named path and all of its descendants.
+    Namespace,
+    /// Descendants of the named path, excluding the path itself.
+    Descendants,
+    /// Every path whose pathname text begins with the named prefix.
+    Prefix,
+}
+
+/// A host-owned path topology evaluated against a checked Uhura route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RoutePathClaim<'a> {
+    pub path: &'a str,
+    pub scope: RoutePathScope,
+    pub decode: RoutePathDecode,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CheckedRoutePath {
+    raw: Vec<CheckedRoutePathPart>,
+    decoded_once: Vec<CheckedRoutePathPart>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CheckedRoutePathPart {
+    Literal(String),
+    Dynamic,
+}
+
+impl CheckedRoutePath {
+    fn from_checked_parts(parts: &[uhura_port::RoutePathPart]) -> Self {
+        let raw = parts
+            .iter()
+            .map(|part| match part {
+                uhura_port::RoutePathPart::Literal(literal) => {
+                    CheckedRoutePathPart::Literal(literal.clone())
+                }
+                uhura_port::RoutePathPart::Field(_) => CheckedRoutePathPart::Dynamic,
+            })
+            .collect();
+        let decoded_once = parts
+            .iter()
+            .flat_map(|part| match part {
+                uhura_port::RoutePathPart::Field(_) => {
+                    vec![CheckedRoutePathPart::Dynamic]
+                }
+                uhura_port::RoutePathPart::Literal(literal) => {
+                    let decoded = uhura_port::decode_query_value(literal)
+                        .expect("checked literal route components are canonical");
+                    decoded
+                        .split('/')
+                        .map(|segment| CheckedRoutePathPart::Literal(segment.to_string()))
+                        .collect()
+                }
+            })
+            .collect();
+        Self { raw, decoded_once }
+    }
+
+    fn overlaps(&self, claim: RoutePathClaim<'_>) -> bool {
+        let Some(claim_segments) = route_claim_segments(claim.path) else {
+            return false;
+        };
+        let (parts, dynamic_expands) = match claim.decode {
+            RoutePathDecode::Raw => (self.raw.as_slice(), false),
+            RoutePathDecode::PercentDecodedOnce => (self.decoded_once.as_slice(), true),
+        };
+        match claim.scope {
+            RoutePathScope::Exact => {
+                route_path_matches_exact(parts, &claim_segments, dynamic_expands)
+            }
+            RoutePathScope::Namespace => {
+                route_path_matches_exact(parts, &claim_segments, dynamic_expands)
+                    || route_path_matches_descendant(parts, &claim_segments, dynamic_expands)
+            }
+            RoutePathScope::Descendants => {
+                route_path_matches_descendant(parts, &claim_segments, dynamic_expands)
+            }
+            RoutePathScope::Prefix => route_path_matches_prefix(parts, claim.path, dynamic_expands),
+        }
+    }
+}
+
+fn route_claim_segments(path: &str) -> Option<Vec<&str>> {
+    let relative = path.strip_prefix('/')?;
+    if relative.is_empty() {
+        Some(Vec::new())
+    } else {
+        Some(relative.split('/').collect())
+    }
+}
+
+fn route_path_matches_exact(
+    parts: &[CheckedRoutePathPart],
+    target: &[&str],
+    dynamic_expands: bool,
+) -> bool {
+    if parts.is_empty() {
+        return target.is_empty();
+    }
+    let Some((part, rest)) = parts.split_first() else {
+        return target.is_empty();
+    };
+    match part {
+        CheckedRoutePathPart::Literal(literal) => {
+            target.first().is_some_and(|segment| *segment == literal)
+                && route_path_matches_exact(rest, &target[1..], dynamic_expands)
+        }
+        CheckedRoutePathPart::Dynamic if !dynamic_expands => {
+            !target.is_empty() && route_path_matches_exact(rest, &target[1..], dynamic_expands)
+        }
+        CheckedRoutePathPart::Dynamic => (1..=target.len())
+            .any(|consumed| route_path_matches_exact(rest, &target[consumed..], dynamic_expands)),
+    }
+}
+
+fn route_path_matches_descendant(
+    parts: &[CheckedRoutePathPart],
+    namespace: &[&str],
+    dynamic_expands: bool,
+) -> bool {
+    if namespace.is_empty() {
+        return !parts.is_empty();
+    }
+    let Some((part, rest)) = parts.split_first() else {
+        return false;
+    };
+    match part {
+        CheckedRoutePathPart::Literal(literal) => {
+            namespace.first().is_some_and(|segment| *segment == literal)
+                && route_path_matches_descendant(rest, &namespace[1..], dynamic_expands)
+        }
+        CheckedRoutePathPart::Dynamic if !dynamic_expands => {
+            route_path_matches_descendant(rest, &namespace[1..], dynamic_expands)
+        }
+        // One decoded dynamic component may existentially encode every
+        // remaining namespace segment plus at least one descendant segment.
+        CheckedRoutePathPart::Dynamic => true,
+    }
+}
+
+fn route_path_matches_prefix(
+    parts: &[CheckedRoutePathPart],
+    prefix: &str,
+    dynamic_expands: bool,
+) -> bool {
+    let Some(relative) = prefix.strip_prefix('/') else {
+        return false;
+    };
+    if relative.is_empty() {
+        return true;
+    }
+    let segments = relative.split('/').collect::<Vec<_>>();
+    let (segment_prefix, exact_prefix) = segments
+        .split_last()
+        .expect("a non-empty relative prefix has one segment");
+    route_path_matches_segment_prefix(parts, exact_prefix, segment_prefix, dynamic_expands)
+}
+
+fn route_path_matches_segment_prefix(
+    parts: &[CheckedRoutePathPart],
+    exact_prefix: &[&str],
+    segment_prefix: &str,
+    dynamic_expands: bool,
+) -> bool {
+    let Some((part, rest)) = parts.split_first() else {
+        return false;
+    };
+    if exact_prefix.is_empty() {
+        return match part {
+            CheckedRoutePathPart::Literal(literal) => literal.starts_with(segment_prefix),
+            CheckedRoutePathPart::Dynamic => true,
+        };
+    }
+    match part {
+        CheckedRoutePathPart::Literal(literal) => {
+            literal == exact_prefix[0]
+                && route_path_matches_segment_prefix(
+                    rest,
+                    &exact_prefix[1..],
+                    segment_prefix,
+                    dynamic_expands,
+                )
+        }
+        CheckedRoutePathPart::Dynamic if !dynamic_expands => route_path_matches_segment_prefix(
+            rest,
+            &exact_prefix[1..],
+            segment_prefix,
+            dynamic_expands,
+        ),
+        // The one decoded component can encode the remaining exact segments
+        // and the segment beginning with the claimed text prefix.
+        CheckedRoutePathPart::Dynamic => true,
+    }
+}
+
+/// One aggregate-host deployment rejection attached to an otherwise checked
+/// candidate before publication.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlayAdmissionRejection {
+    code: String,
+    rule: String,
+    message: String,
+}
+
+impl PlayAdmissionRejection {
+    pub fn new(
+        code: impl Into<String>,
+        rule: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            rule: rule.into(),
+            message: message.into(),
+        }
+    }
 }
 
 /// Structured diagnostics produced while building one client candidate.
@@ -216,6 +489,38 @@ impl ClientCandidate {
             Err(diagnostics) => diagnostics,
         };
         CandidateDiagnostics { editor, play }
+    }
+
+    /// Checked application route patterns for aggregate-host admission.
+    ///
+    /// `None` means no checked selected `web.history` deployment could be
+    /// resolved. A candidate retains this view when route ownership rejects
+    /// that otherwise valid deployment, allowing aggregate hosts to compose
+    /// diagnostics without source or private-IR access.
+    #[must_use]
+    pub fn checked_route_patterns(&self) -> Option<&[CheckedRoutePattern]> {
+        self.checked_routes.as_deref()
+    }
+
+    /// Reject this candidate's Play artifact at an aggregate-host admission
+    /// boundary while retaining its current Editor graph and checked semantic
+    /// views.
+    ///
+    /// Callers must attach every composition rejection before passing the
+    /// candidate to [`Host::new`] or [`Host::publish`]. Publishing then updates
+    /// Editor diagnostics and preserves any last-good Play artifact atomically.
+    pub fn reject_play_admission(&mut self, rejection: PlayAdmissionRejection) {
+        let envelope = host_failure(&rejection.code, &rejection.rule, rejection.message);
+        if let Ok(editor) = &mut self.editor {
+            editor.diagnostics = merge_diagnostics([editor.diagnostics.clone(), envelope.clone()]);
+        }
+        let previous = self
+            .play
+            .as_ref()
+            .err()
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        self.play = Err(merge_diagnostics([previous, envelope]));
     }
 
     /// Content identity of the exact coherent source snapshot consumed by
@@ -376,13 +681,14 @@ fn materialize_editor_state(
 
 /// Build Editor and Play from exactly the bytes in `snapshot`.
 pub fn build_candidate(snapshot: &ProjectSourceSnapshot, revision: u64) -> ClientCandidate {
-    let (editor, play) = build_machine_candidate(snapshot, revision);
+    let (editor, play, checked_routes) = build_machine_candidate(snapshot, revision);
     ClientCandidate {
         revision,
         source_fingerprint: snapshot.fingerprint.clone(),
         source_revision_id: snapshot.source_revision_id().to_string(),
         editor,
         play,
+        checked_routes,
     }
 }
 
@@ -479,6 +785,71 @@ struct PlayAuthority {
     provider_js: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvidenceSummary {
+    passed: bool,
+    scenarios: EvidenceScenarioCounts,
+    artifacts: EvidenceArtifactCounts,
+    failure_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvidenceScenarioCounts {
+    total: usize,
+    passed: usize,
+    failed: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvidenceArtifactCounts {
+    pins: usize,
+    examples: usize,
+    checkpoints: usize,
+}
+
+impl EvidenceSummary {
+    fn from_report(report: &EvidenceReport) -> Self {
+        let passed = report
+            .scenarios
+            .iter()
+            .filter(|scenario| scenario.status == uhura_core::ScenarioStatus::Passed)
+            .count();
+        let failed = report.scenarios.len() - passed;
+        Self {
+            passed: report.passed,
+            scenarios: EvidenceScenarioCounts {
+                total: report.scenarios.len(),
+                passed,
+                failed,
+            },
+            artifacts: EvidenceArtifactCounts {
+                pins: report.artifacts.pins.len(),
+                examples: report.artifacts.examples.len(),
+                checkpoints: report.artifacts.checkpoints.len(),
+            },
+            failure_count: report.failures.len(),
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "protocol": UHURA_EVIDENCE_SUMMARY_PROTOCOL,
+            "passed": self.passed,
+            "scenarios": {
+                "total": self.scenarios.total,
+                "passed": self.scenarios.passed,
+                "failed": self.scenarios.failed,
+            },
+            "artifacts": {
+                "pins": self.artifacts.pins,
+                "examples": self.artifacts.examples,
+                "checkpoints": self.artifacts.checkpoints,
+            },
+            "failureCount": self.failure_count,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HostAdapter {
     /// The browser delegates route encoding and decoding to the checked
@@ -494,17 +865,42 @@ enum HostAdapter {
 fn build_machine_candidate(
     snapshot: &ProjectSourceSnapshot,
     revision: u64,
-) -> (EditorBuildOutcome, Result<GoodBuild, serde_json::Value>) {
+) -> (
+    EditorBuildOutcome,
+    Result<GoodBuild, serde_json::Value>,
+    Option<Vec<CheckedRoutePattern>>,
+) {
     let checked = match check_project_snapshot(snapshot) {
         Ok(checked) => checked,
         Err(diagnostics) => {
             return (
                 Err(EditorBuildRejection::new(diagnostics.clone())),
                 Err(diagnostics),
+                None,
             );
         }
     };
     let authority = admit_play(snapshot, &checked.program, &checked.selector_packages);
+    let checked_routes = authority
+        .as_ref()
+        .ok()
+        .map(|authority| checked_route_patterns(&checked.program, &authority.deployment));
+    let authority = authority.and_then(|authority| {
+        if let Some((route, reserved)) =
+            standalone_web_host_route_collision(checked_routes.as_deref().unwrap_or_default())
+        {
+            return Err(host_failure(
+                "R3014",
+                "uhura/reserved-web-host-route",
+                format!(
+                    "route `{}` pattern `{}` can encode standalone-host path `{reserved}`; the checked graph remains valid, but this deployment cannot route that path to the machine",
+                    route.constructor(),
+                    route.display_pattern(),
+                ),
+            ));
+        }
+        Ok(authority)
+    });
     let admission_diagnostics = authority.as_ref().err().cloned();
     let editor_diagnostics = merge_diagnostics([
         checked.diagnostics.clone(),
@@ -519,7 +915,7 @@ fn build_machine_candidate(
     )
     .map_err(EditorBuildRejection::new);
     let play = authority.map(|authority| build_play(&checked, authority));
-    (editor, play)
+    (editor, play, checked_routes)
 }
 
 fn check_project_snapshot(
@@ -1173,6 +1569,60 @@ fn diagnostics_envelope(
     })
 }
 
+const STANDALONE_WEB_HOST_PATHS: &[(RoutePathClaim<'static>, &str)] = &[
+    (
+        RoutePathClaim {
+            path: "/play",
+            scope: RoutePathScope::Exact,
+            decode: RoutePathDecode::Raw,
+        },
+        "/play",
+    ),
+    (
+        RoutePathClaim {
+            path: "/_uhura/editor",
+            scope: RoutePathScope::Exact,
+            decode: RoutePathDecode::Raw,
+        },
+        "/_uhura/editor",
+    ),
+    (
+        RoutePathClaim {
+            path: "/api",
+            scope: RoutePathScope::Descendants,
+            decode: RoutePathDecode::Raw,
+        },
+        "/api/*",
+    ),
+    (
+        RoutePathClaim {
+            path: "/assets",
+            scope: RoutePathScope::Namespace,
+            decode: RoutePathDecode::PercentDecodedOnce,
+        },
+        "/assets and /assets/*",
+    ),
+    (
+        RoutePathClaim {
+            path: "/favicon.ico",
+            scope: RoutePathScope::Exact,
+            decode: RoutePathDecode::PercentDecodedOnce,
+        },
+        "/favicon.ico",
+    ),
+];
+
+fn standalone_web_host_route_collision(
+    routes: &[CheckedRoutePattern],
+) -> Option<(&CheckedRoutePattern, &'static str)> {
+    routes.iter().find_map(|route| {
+        STANDALONE_WEB_HOST_PATHS
+            .iter()
+            .find(|(claim, _)| route.overlaps(*claim))
+            .map(|(_, label)| (route, *label))
+    })
+}
+
 fn admit_play(
     snapshot: &ProjectSourceSnapshot,
     program: &Program,
@@ -1303,6 +1753,7 @@ fn build_play(checked: &CheckedProject, authority: PlayAuthority) -> GoodBuild {
         admitted_ports,
         provider_js.as_deref(),
     );
+    let evidence = EvidenceSummary::from_report(&checked.evidence).to_json();
     let inspect_json = to_canonical_json(&serde_json::json!({
         "protocol": UHURA_INSPECTION_PROTOCOL,
         "identityProtocol": identity.protocol,
@@ -1317,7 +1768,7 @@ fn build_play(checked: &CheckedProject, authority: PlayAuthority) -> GoodBuild {
         "provenance": checked.semantic_provenance,
         "interactionGraph": checked.interaction_graph,
         "graphSources": checked.graph_sources,
-        "evidence": checked.evidence,
+        "evidence": evidence,
     }));
 
     GoodBuild {
@@ -1330,6 +1781,48 @@ fn build_play(checked: &CheckedProject, authority: PlayAuthority) -> GoodBuild {
         play_assets: checked.play_assets.clone(),
         icon_fonts: Some(IconFontResources::from(&checked.icon_fonts)),
     }
+}
+
+fn checked_route_patterns(program: &Program, deployment: &Deployment) -> Vec<CheckedRoutePattern> {
+    let Some(machine) = program.machine_program.machines.get(&deployment.machine) else {
+        return Vec::new();
+    };
+    machine
+        .ports
+        .iter()
+        .filter(|port| {
+            deployment
+                .ports
+                .get(&port.name)
+                .is_some_and(|adapter| adapter == WEB_HISTORY_ADAPTER)
+        })
+        .filter_map(|port| {
+            let Some(Expr::Name { name }) = &port.configuration else {
+                return None;
+            };
+            program.route_tables.get_key_value(name).or_else(|| {
+                program
+                    .route_tables
+                    .iter()
+                    .find(|(candidate, _)| candidate.ends_with(&format!("::{name}")))
+            })
+        })
+        .flat_map(|(table, routes)| {
+            routes.patterns().iter().map(move |route| {
+                let checked_path = routes
+                    .checked_paths()
+                    .iter()
+                    .find(|path| path.constructor() == route.constructor)
+                    .expect("checked route table retains one path per pattern");
+                CheckedRoutePattern {
+                    table: table.clone(),
+                    constructor: route.constructor.clone(),
+                    pattern: route.pattern.clone(),
+                    path: CheckedRoutePath::from_checked_parts(checked_path.parts()),
+                }
+            })
+        })
+        .collect()
 }
 
 fn host_failure(code: &str, rule: &str, message: impl Into<String>) -> serde_json::Value {
@@ -2278,18 +2771,10 @@ fn editor_render(
         groups[index].previews.push(preview.id.clone());
     }
 
-    let mut scenarios = serde_json::to_value(&evidence.scenarios)
-        .expect("Uhura evidence scenario reports are serializable");
-    exactify_sequences(&mut scenarios);
     let mut checkpoints = serde_json::to_value(&evidence.artifacts.checkpoints)
         .expect("Uhura evidence checkpoints are serializable");
     exactify_sequences(&mut checkpoints);
-    let mut evidence_json = serde_json::json!({
-        "passed": evidence.passed,
-        "scenarios": scenarios,
-        "failures": evidence.failures,
-    });
-    exactify_sequences(&mut evidence_json);
+    let evidence_summary = EvidenceSummary::from_report(evidence).to_json();
 
     let deployment = authority.map(|authority| MachineDeployment {
         entry: authority.deployment.entry.clone(),
@@ -2309,7 +2794,7 @@ fn editor_render(
         interaction_graph: (*interaction_graph).clone(),
         graph_sources: (*graph_sources).clone(),
         checkpoints,
-        evidence: evidence_json,
+        evidence: evidence_summary,
     });
     let application_name = authority
         .map(|authority| authority.deployment.entry.clone())
@@ -5453,7 +5938,12 @@ mod tests {
         ConstructorDef as MachineConstructorDef, Expr as MachineExpr, Machine as MachineDef,
         PortDef as MachinePortDef, SourceRef,
     };
-    use uhura_core::{MACHINE_PROGRAM_ID_PROTOCOL, Program, TypeDef, TypeRef};
+    use uhura_core::{
+        EVIDENCE_REPORT_PROTOCOL, EvidenceArtifacts, EvidenceExampleArtifact, EvidenceFailure,
+        EvidenceFailureCode, EvidenceRef, EvidenceReport, EvidenceSnapshot, InstanceLifecycle,
+        MACHINE_PROGRAM_ID_PROTOCOL, Program, ScenarioReport, ScenarioStatus, TypeDef, TypeRef,
+        Value,
+    };
     use uhura_editor_model::{
         Application, AuthoringMetadata, EditorRender, Preview, RenderFreshness,
     };
@@ -5461,13 +5951,15 @@ mod tests {
     use super::{
         APPLICATION_PROVIDER_ADAPTER, ApiRoute, BLOCKING_EVENT_STREAM_WRITE_BOUNDARY,
         ClientCandidate, ClientRegistry, EditorBuildArtifact, EditorBuildRejection,
-        EditorHostState, EventStream, EventStreamPoll, GoodBuild, Host, IconFontFamilyResource,
-        IconFontResources, MAX_EVENT_STREAMS_PER_HOST, PlayArtifact, ProjectSourceFingerprint,
-        RequestMethod, RouteBody, RouteRequest, RouteResponse, WEB_HISTORY_ADAPTER, WebAssets,
-        WebFile, api_route, app_document, application_path, broadcast, captured_play_asset,
-        content_type, decode_play_asset_path, deployment_identity, editor_sse_payload,
-        evidence_failure, index_asset_references, load_web_app_from, parse_host_manifest,
-        serve_file_map, split_request_url, subscribe, subscribe_with_blocking_keepalive, tool_root,
+        EditorHostState, EventStream, EventStreamPoll, EvidenceSummary, GoodBuild, Host,
+        IconFontFamilyResource, IconFontResources, MAX_EVENT_STREAMS_PER_HOST,
+        PlayAdmissionRejection, PlayArtifact, ProjectSourceFingerprint, RequestMethod, RouteBody,
+        RoutePathClaim, RoutePathDecode, RoutePathScope, RouteRequest, RouteResponse,
+        UHURA_EVIDENCE_SUMMARY_PROTOCOL, WEB_HISTORY_ADAPTER, WebAssets, WebFile, api_route,
+        app_document, application_path, broadcast, captured_play_asset, content_type,
+        decode_play_asset_path, deployment_identity, editor_sse_payload, evidence_failure,
+        index_asset_references, load_web_app_from, parse_host_manifest, serve_file_map,
+        split_request_url, subscribe, subscribe_with_blocking_keepalive, tool_root,
         validate_deployment,
     };
 
@@ -5618,6 +6110,105 @@ mod tests {
         paths
     }
 
+    fn evidence_report_with_payload(payload: &str) -> EvidenceReport {
+        let source = SourceRef::synthetic("evidence-summary-test");
+        let snapshot = EvidenceSnapshot {
+            machine: "example@1::Machine".into(),
+            machine_program_hash: "a".repeat(64),
+            instance: "example-1".into(),
+            configuration: Value::Text(payload.into()),
+            state: Value::Text(payload.into()),
+            observation: Value::Text(payload.into()),
+            inbox: vec![Value::Text(payload.into())],
+            lifecycle: InstanceLifecycle::Running,
+            next_sequence: 1,
+            fixtures: BTreeMap::new(),
+            trace_prefix_hash: "b".repeat(64),
+        };
+        let mut artifacts = EvidenceArtifacts::default();
+        artifacts.examples.insert(
+            "default".into(),
+            EvidenceExampleArtifact {
+                name: "default".into(),
+                reference: EvidenceRef {
+                    scenario: "canonical".into(),
+                    pin: "frame".into(),
+                },
+                source: source.clone(),
+                metadata: Default::default(),
+                observation: Value::Text(payload.into()),
+                snapshot: snapshot.clone(),
+            },
+        );
+        EvidenceReport {
+            protocol: EVIDENCE_REPORT_PROTOCOL.into(),
+            passed: true,
+            scenarios: vec![ScenarioReport {
+                scenario: "canonical".into(),
+                machine: Some("example@1::Machine".into()),
+                status: ScenarioStatus::Passed,
+                total_steps: 1,
+                executed_steps: 1,
+                genesis: None,
+                receipts: Vec::new(),
+                final_snapshot: Some(snapshot),
+                published_pins: vec!["frame".into()],
+                failure: None,
+            }],
+            artifacts,
+            failures: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn evidence_summary_is_independent_of_runtime_payload_size() {
+        let small = EvidenceSummary::from_report(&evidence_report_with_payload("small"));
+        let large_payload = "play-evidence-large-sentinel".repeat(64 * 1024);
+        let large = EvidenceSummary::from_report(&evidence_report_with_payload(&large_payload));
+
+        assert_eq!(small, large);
+        let encoded = to_canonical_json(&large.to_json());
+        assert!(!encoded.contains("play-evidence-large-sentinel"));
+        assert_eq!(
+            large.to_json(),
+            serde_json::json!({
+                "protocol": "uhura-evidence-summary/0",
+                "passed": true,
+                "scenarios": { "total": 1, "passed": 1, "failed": 0 },
+                "artifacts": { "pins": 0, "examples": 1, "checkpoints": 0 },
+                "failureCount": 0,
+            }),
+        );
+    }
+
+    #[test]
+    fn evidence_summary_reports_failed_scenarios_and_failures() {
+        let mut report = evidence_report_with_payload("failed");
+        let failure = EvidenceFailure {
+            code: EvidenceFailureCode::ExpectationMismatch,
+            scenario: Some("canonical".into()),
+            step_index: Some(0),
+            source_id: "evidence-summary-test".into(),
+            source: SourceRef::synthetic("evidence-summary-test"),
+            message: "the authored expectation failed".into(),
+        };
+        report.passed = false;
+        report.scenarios[0].status = ScenarioStatus::Failed;
+        report.scenarios[0].failure = Some(failure.clone());
+        report.failures.push(failure);
+
+        assert_eq!(
+            EvidenceSummary::from_report(&report).to_json(),
+            serde_json::json!({
+                "protocol": "uhura-evidence-summary/0",
+                "passed": false,
+                "scenarios": { "total": 1, "passed": 0, "failed": 1 },
+                "artifacts": { "pins": 0, "examples": 1, "checkpoints": 0 },
+                "failureCount": 1,
+            }),
+        );
+    }
+
     fn copy_a0_fixture(label: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -5700,6 +6291,309 @@ default = "lucide"
         .unwrap();
         fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
         root
+    }
+
+    fn v04_route_project(label: &str, pattern: &str) -> std::path::PathBuf {
+        let root = v04_project(label, "");
+        let location = if pattern.contains("{segment}") {
+            "Page { segment: Text }"
+        } else {
+            "Page"
+        };
+        fs::write(
+            root.join("counter.uhura"),
+            format!(
+                r#"use uhura::web_router::{{Router, Routes}};
+
+pub enum Location {{
+  {location},
+}}
+
+pub const ROUTES: Routes<Location> = Routes::from([
+  ("Page", "{pattern}"),
+]);
+
+pub machine Counter {{
+  port router = Router<Location> {{ routes: ROUTES }};
+
+  outcomes {{
+    commit Accepted,
+  }}
+
+  on router.Changed(location) {{
+    Accepted
+  }}
+}}"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("host.toml"),
+            r#"[entry.counter]
+machine = "crate::Counter"
+lifetime = "application-session"
+
+[entry.counter.ports]
+router = "web.history"
+"#,
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn standalone_web_route_ownership_rejects_play_but_keeps_editor_current() {
+        for (label, pattern) in [
+            ("play", "/play"),
+            ("editor", "/_uhura/editor"),
+            ("api-child", "/api/application"),
+            ("assets", "/assets"),
+            ("asset-child", "/assets/application.js"),
+            ("encoded-asset-child", "/assets%2Fapplication.js"),
+            ("favicon", "/favicon.ico"),
+            ("dynamic", "/{segment}"),
+        ] {
+            let root = v04_route_project(label, pattern);
+            let candidate =
+                super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+            assert!(
+                candidate.summary().editor_current,
+                "{pattern} editor diagnostics: {:#}",
+                candidate.diagnostics().editor
+            );
+            assert!(!candidate.summary().play_ok, "{pattern}");
+            assert_eq!(
+                candidate.checked_route_patterns().unwrap()[0].display_pattern(),
+                pattern
+            );
+            for diagnostics in [candidate.diagnostics().editor, candidate.diagnostics().play] {
+                assert_eq!(
+                    diagnostics["diagnostics"][0]["rule"], "uhura/reserved-web-host-route",
+                    "{pattern}: {diagnostics:#}"
+                );
+                assert!(
+                    diagnostics["diagnostics"][0]["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains(pattern)),
+                    "{pattern}: {diagnostics:#}"
+                );
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn standalone_web_route_admission_is_segment_aware() {
+        for (label, pattern) in [
+            ("api-root", "/api"),
+            ("encoded-api-child", "/api%2Fapplication"),
+            ("play-child", "/play/child"),
+            ("editor-child", "/_uhura/editor/child"),
+        ] {
+            let root = v04_route_project(label, pattern);
+            let candidate =
+                super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+            assert!(
+                candidate.summary().play_ok,
+                "{pattern} diagnostics: {:#}",
+                candidate.diagnostics().play
+            );
+            assert_eq!(
+                candidate.checked_route_patterns().unwrap()[0].display_pattern(),
+                pattern
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn checked_route_claims_preserve_raw_and_decoded_path_semantics() {
+        let dynamic_root = v04_route_project("claim-dynamic", "/{segment}");
+        let candidate =
+            super::build_candidate(&crate::source::capture_project_snapshot(&dynamic_root), 1);
+        let route = &candidate.checked_route_patterns().unwrap()[0];
+        assert!(route.overlaps(RoutePathClaim {
+            path: "/play",
+            scope: RoutePathScope::Exact,
+            decode: RoutePathDecode::Raw,
+        }));
+        assert!(!route.overlaps(RoutePathClaim {
+            path: "/api",
+            scope: RoutePathScope::Descendants,
+            decode: RoutePathDecode::Raw,
+        }));
+        assert!(route.overlaps(RoutePathClaim {
+            path: "/graphql",
+            scope: RoutePathScope::Namespace,
+            decode: RoutePathDecode::PercentDecodedOnce,
+        }));
+        assert!(route.overlaps(RoutePathClaim {
+            path: "/~",
+            scope: RoutePathScope::Prefix,
+            decode: RoutePathDecode::PercentDecodedOnce,
+        }));
+        fs::remove_dir_all(dynamic_root).unwrap();
+
+        let encoded = v04_route_project("claim-encoded", "/graphql%2Fv2");
+        let candidate =
+            super::build_candidate(&crate::source::capture_project_snapshot(&encoded), 1);
+        let route = &candidate.checked_route_patterns().unwrap()[0];
+        assert!(!route.overlaps(RoutePathClaim {
+            path: "/graphql",
+            scope: RoutePathScope::Namespace,
+            decode: RoutePathDecode::Raw,
+        }));
+        assert!(route.overlaps(RoutePathClaim {
+            path: "/graphql",
+            scope: RoutePathScope::Namespace,
+            decode: RoutePathDecode::PercentDecodedOnce,
+        }));
+        fs::remove_dir_all(encoded).unwrap();
+    }
+
+    #[test]
+    fn route_admission_ignores_unselected_route_tables() {
+        let root = v04_project("unselected-route-table", "");
+        fs::write(
+            root.join("counter.uhura"),
+            r#"use uhura::web_router::{Router, Routes};
+
+pub enum Location {
+  Page,
+}
+
+pub enum UnusedLocation {
+  Reserved,
+}
+
+pub const ROUTES: Routes<Location> = Routes::from([
+  ("Page", "/page"),
+]);
+
+pub const UNUSED_ROUTES: Routes<UnusedLocation> = Routes::from([
+  ("Reserved", "/assets"),
+]);
+
+pub machine Counter {
+  port router = Router<Location> { routes: ROUTES };
+
+  outcomes {
+    commit Accepted,
+  }
+
+  on router.Changed(location) {
+    Accepted
+  }
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("host.toml"),
+            r#"[entry.counter]
+machine = "crate::Counter"
+lifetime = "application-session"
+
+[entry.counter.ports]
+router = "web.history"
+"#,
+        )
+        .unwrap();
+        let candidate = super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+        assert!(
+            candidate.summary().play_ok,
+            "unused route table diagnostics: {:#}",
+            candidate.diagnostics().play
+        );
+        let routes = candidate.checked_route_patterns().unwrap();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].display_pattern(), "/page");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn candidate_exposes_checked_route_patterns_without_source_or_ir_reparsing() {
+        let root = copy_a0_fixture("checked-route-view");
+        let candidate = super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+        assert!(
+            candidate.summary().play_ok,
+            "play diagnostics: {:#}",
+            candidate.diagnostics().play
+        );
+        let routes = candidate
+            .checked_route_patterns()
+            .expect("usable Play candidate has a checked route view");
+        let view = routes
+            .iter()
+            .map(|route| (route.table(), route.constructor(), route.display_pattern()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            view,
+            vec![
+                (
+                    "app.returndesk@1::RETURN_ROUTES",
+                    "Flow",
+                    "/orders/{order}/return?step={step?}",
+                ),
+                (
+                    "app.returndesk@1::RETURN_ROUTES",
+                    "Order",
+                    "/orders/{order}",
+                ),
+                (
+                    "app.returndesk@1::RETURN_ROUTES",
+                    "Receipt",
+                    "/returns/{return_id}",
+                ),
+            ]
+        );
+
+        fs::write(root.join("machine.uhura"), "not valid Uhura").unwrap();
+        let rejected = super::build_candidate(&crate::source::capture_project_snapshot(&root), 2);
+        assert!(rejected.checked_route_patterns().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn aggregate_play_rejection_keeps_current_editor_and_last_good_play() {
+        let root = copy_a0_fixture("aggregate-play-rejection");
+        let snapshot = crate::source::capture_project_snapshot(&root);
+        let initial = super::build_candidate(&snapshot, 1);
+        let (host, initial_report) = Host::new(test_web_assets(), initial).unwrap();
+        assert!(initial_report.editor_current);
+        assert!(initial_report.play_ok);
+
+        let mut rejected = super::build_candidate(&snapshot, 2);
+        rejected.reject_play_admission(PlayAdmissionRejection::new(
+            "SPK1001",
+            "spock/reserved-client-route",
+            "checked route overlaps an aggregate-host namespace",
+        ));
+        assert!(rejected.summary().editor_current);
+        assert!(!rejected.summary().play_ok);
+        assert!(!rejected.checked_route_patterns().unwrap().is_empty());
+
+        let report = host.publish(rejected).unwrap();
+        assert!(report.editor_current);
+        assert!(!report.play_ok);
+        assert!(report.has_good_play);
+        let editor: serde_json::Value =
+            serde_json::from_slice(&response_bytes(host.route(RouteRequest {
+                method: RequestMethod::Get,
+                url: "/api/editor/state",
+            })))
+            .unwrap();
+        assert_eq!(editor["sourceRevision"], 2);
+        assert_eq!(
+            editor["diagnostics"]["diagnostics"][0]["rule"],
+            "spock/reserved-client-route"
+        );
+        let play = host.route(RouteRequest {
+            method: RequestMethod::Get,
+            url: "/api/play/ir.json",
+        });
+        assert_eq!(play.status, 200, "last-good Play remains served");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -6533,6 +7427,7 @@ dependencies = {{}}
                 resources.clone(),
             )),
             play: Ok(good_build(resources)),
+            checked_routes: Some(Vec::new()),
         }
     }
 
@@ -6571,6 +7466,7 @@ dependencies = {{}}
             source_revision_id: "test-source-revision".into(),
             editor: Ok(artifact(1, "test")),
             play: Err(diagnostics("no Play build")),
+            checked_routes: Some(Vec::new()),
         };
         Host::new(web, candidate).unwrap().0
     }
@@ -6635,12 +7531,12 @@ dependencies = {{}}
     fn uhura_editor_last_good_becomes_stale_without_changing_its_render_revision() {
         let cold = EditorHostState::initial(Err(editor_rejection("cold Uhura machine"))).unwrap();
         let cold = state_json(&cold);
-        assert_eq!(cold["protocol"], "uhura-editor-state/4");
+        assert_eq!(cold["protocol"], "uhura-editor-state/5");
         assert_eq!(cold["render"], serde_json::Value::Null);
 
         let mut state = EditorHostState::initial(Ok(uhura_editor_artifact(1))).unwrap();
         let current = state_json(&state);
-        assert_eq!(current["protocol"], "uhura-editor-state/4");
+        assert_eq!(current["protocol"], "uhura-editor-state/5");
         assert_eq!(current["sourceRevision"], 1);
         assert_eq!(current["render"]["revision"], 1);
         assert_eq!(current["render"]["freshness"], "current");
@@ -6649,7 +7545,7 @@ dependencies = {{}}
             .apply(2, Err(editor_rejection("broken Uhura machine")))
             .unwrap();
         let stale = state_json(&state);
-        assert_eq!(stale["protocol"], "uhura-editor-state/4");
+        assert_eq!(stale["protocol"], "uhura-editor-state/5");
         assert_eq!(stale["sourceRevision"], 2);
         assert_eq!(stale["render"]["revision"], 1);
         assert_eq!(stale["render"]["freshness"], "stale");
@@ -7339,6 +8235,7 @@ module = "provider.mjs"
             source_revision_id: "test-source-revision".into(),
             editor: Ok(uhura_editor_artifact(1)),
             play: Ok(uhura_good_build()),
+            checked_routes: Some(Vec::new()),
         };
         let host = Host::new(test_web_assets(), candidate).unwrap().0;
         let response = host.route(RouteRequest {
@@ -7909,9 +8806,9 @@ returns = "return-desk.returns"
         let editor = accepted_editor_render(&candidate);
         assert_eq!(editor["machine"]["evidence"]["passed"], false);
         assert!(
-            editor["machine"]["evidence"]["failures"]
-                .as_array()
-                .is_some_and(|failures| !failures.is_empty())
+            editor["machine"]["evidence"]["failureCount"]
+                .as_u64()
+                .is_some_and(|failures| failures > 0)
         );
         assert_eq!(editor["previews"].as_array().unwrap().len(), 12);
         assert!(
@@ -7927,9 +8824,9 @@ returns = "return-desk.returns"
         let inspection: serde_json::Value = serde_json::from_str(&play.inspect_json).unwrap();
         assert_eq!(inspection["evidence"]["passed"], false);
         assert!(
-            inspection["evidence"]["failures"]
-                .as_array()
-                .is_some_and(|failures| !failures.is_empty())
+            inspection["evidence"]["failureCount"]
+                .as_u64()
+                .is_some_and(|failures| failures > 0)
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -7964,7 +8861,7 @@ returns = "return-desk.returns"
                 url: "/api/editor/state",
             })))
             .unwrap();
-        assert_eq!(editor["protocol"], "uhura-editor-state/4");
+        assert_eq!(editor["protocol"], "uhura-editor-state/5");
         let render = &editor["render"];
         let machine = &render["machine"];
         let source_inventory = machine["sources"]
@@ -8072,7 +8969,16 @@ returns = "return-desk.returns"
             let projection = &preview["content"]["value"];
             assert_eq!(projection["document"]["protocol"], "uhura-view/1");
             assert!(projection["document"]["sequence"].is_string());
-            assert!(preview["evidence"]["snapshot"]["next_sequence"].is_string());
+            assert_eq!(
+                preview["evidence"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>(),
+                BTreeSet::from(["pin", "scenario", "sourceId", "sources"]),
+                "Editor preview evidence is an identity and source-navigation record"
+            );
             assert_eq!(
                 projection["sources"]["protocol"],
                 "uhura-projection-sources/0"
@@ -8117,51 +9023,14 @@ returns = "return-desk.returns"
                 let bytes = source_inventory[source["path"].as_str().unwrap()];
                 assert!(source["end"].as_u64().unwrap() <= bytes);
             }
-            let next_sequence = preview["evidence"]["snapshot"]["next_sequence"]
-                .as_str()
-                .unwrap()
-                .parse::<u64>()
-                .unwrap();
-            let receipt_log = &preview["evidence"]["scenarioReceiptLog"];
-            assert_eq!(
-                receipt_log["nextSequence"].as_str().unwrap(),
-                next_sequence.to_string()
-            );
-            assert!(
-                receipt_log["receipts"].as_array().unwrap().iter().all(
-                    |receipt| receipt["sequence"]
-                        .as_str()
-                        .unwrap()
-                        .parse::<u64>()
-                        .unwrap()
-                        < next_sequence
-                ),
-                "a pin receipt log must not include reactions after its snapshot"
-            );
         }
-        assert!(
-            render["previews"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|preview| {
-                    let scenario_id = &preview["evidence"]["scenario"];
-                    let Some(scenario) = machine["evidence"]["scenarios"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|scenario| &scenario["scenario"] == scenario_id)
-                    else {
-                        return false;
-                    };
-                    preview["evidence"]["scenarioReceiptLog"]["receipts"]
-                        .as_array()
-                        .unwrap()
-                        .len()
-                        < scenario["receipts"].as_array().unwrap().len()
-                }),
-            "at least one intermediate pin must expose only its receipt prefix"
+        assert_eq!(
+            machine["evidence"]["protocol"],
+            UHURA_EVIDENCE_SUMMARY_PROTOCOL
         );
+        assert_eq!(machine["evidence"]["artifacts"]["examples"], 12);
+        assert!(machine["evidence"].get("failures").is_none());
+        assert!(machine["evidence"].get("snapshots").is_none());
 
         let inspection: serde_json::Value =
             serde_json::from_slice(&response_bytes(host.route(RouteRequest {
@@ -8169,7 +9038,7 @@ returns = "return-desk.returns"
                 url: "/api/play/inspect.json",
             })))
             .unwrap();
-        assert_eq!(inspection["protocol"], "uhura-inspection/0");
+        assert_eq!(inspection["protocol"], "uhura-inspection/1");
         assert_eq!(
             inspection["interactionGraph"], machine["interactionGraph"],
             "Editor and Play inspection must publish the same semantic graph"
@@ -8217,15 +9086,15 @@ returns = "return-desk.returns"
         assert_eq!(
             inspection["evidence"]["passed"], true,
             "evidence failures: {:#}",
-            inspection["evidence"]["failures"]
+            inspection["evidence"]["failureCount"]
         );
         assert_eq!(
-            inspection["evidence"]["artifacts"]["examples"]
-                .as_object()
-                .unwrap()
-                .len(),
-            12
+            inspection["evidence"]["protocol"],
+            "uhura-evidence-summary/0"
         );
+        assert_eq!(inspection["evidence"]["failureCount"], 0);
+        assert_eq!(inspection["evidence"]["artifacts"]["examples"], 12);
+        assert!(inspection["evidence"].get("snapshots").is_none());
     }
 
     #[test]
@@ -8319,7 +9188,7 @@ ui = "ui.uhura"
                 url: "/api/editor/state",
             })))
             .unwrap();
-        assert_eq!(editor["protocol"], "uhura-editor-state/4");
+        assert_eq!(editor["protocol"], "uhura-editor-state/5");
         assert_eq!(editor["render"]["previews"], serde_json::json!([]));
         assert_eq!(
             editor["render"]["machine"]["sources"]
@@ -8663,6 +9532,7 @@ glyphs = "icons/brand/missing.json"
                 source_revision_id: "test-source-revision-2".into(),
                 editor: Err(editor_rejection("broken Editor")),
                 play: Err(diagnostics("broken Play")),
+                checked_routes: None,
             })
             .unwrap();
         assert_eq!(report.source_revision, 2);
@@ -8769,7 +9639,7 @@ glyphs = "icons/brand/missing.json"
         let machine = inspection["machine"].as_str().expect("inspected machine");
 
         assert_eq!(good.inspect_json, to_canonical_json(&inspection));
-        assert_eq!(inspection["protocol"], "uhura-inspection/0");
+        assert_eq!(inspection["protocol"], "uhura-inspection/1");
         assert_eq!(
             inspection["machineProgramHash"],
             program.machine_program.program_hashes[machine]
@@ -9369,6 +10239,70 @@ glyphs = "icons/brand/missing.json"
         assert_eq!(replay["dispatch"]["on"], replay["label"]);
         assert!(replay["dispatch"]["selected"].is_u64());
         assert_eq!(replay["dispatch"]["guards"][0]["result"], "satisfied");
+
+        let (host, _) = Host::new(test_web_assets(), first).unwrap();
+        let editor_bytes = response_bytes(host.route(RouteRequest {
+            method: RequestMethod::Get,
+            url: "/api/editor/state",
+        }));
+        assert!(
+            editor_bytes.len() <= 30 * 1024 * 1024,
+            "Instagram Editor state is {} bytes, above the 30 MiB transport cap",
+            editor_bytes.len()
+        );
+        let editor_state: serde_json::Value = serde_json::from_slice(&editor_bytes).unwrap();
+        assert_eq!(editor_state["protocol"], "uhura-editor-state/5");
+        let machine = &editor_state["render"]["machine"];
+        assert_eq!(machine["protocol"], "uhura-machine-inspection/1");
+        assert_eq!(
+            machine["evidence"]["protocol"],
+            UHURA_EVIDENCE_SUMMARY_PROTOCOL
+        );
+        assert_eq!(
+            machine["evidence"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "artifacts",
+                "failureCount",
+                "passed",
+                "protocol",
+                "scenarios",
+            ])
+        );
+        for preview in editor_state["render"]["previews"].as_array().unwrap() {
+            let evidence = preview["evidence"]
+                .as_object()
+                .expect("Instagram previews retain evidence identity");
+            assert_eq!(
+                evidence.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+                BTreeSet::from(["pin", "scenario", "sourceId", "sources"])
+            );
+            for retired in ["observation", "snapshot", "scenarioReceiptLog"] {
+                assert!(
+                    !evidence.contains_key(retired),
+                    "preview evidence must not publish raw {retired}"
+                );
+            }
+        }
+
+        let inspection_bytes = response_bytes(host.route(RouteRequest {
+            method: RequestMethod::Get,
+            url: "/api/play/inspect.json",
+        }));
+        assert!(
+            inspection_bytes.len() <= 2 * 1024 * 1024,
+            "Instagram Play inspection is {} bytes, above the 2 MiB transport cap",
+            inspection_bytes.len()
+        );
+        let play_inspection: serde_json::Value = serde_json::from_slice(&inspection_bytes).unwrap();
+        assert_eq!(
+            play_inspection["evidence"]["protocol"],
+            UHURA_EVIDENCE_SUMMARY_PROTOCOL
+        );
     }
 
     #[test]

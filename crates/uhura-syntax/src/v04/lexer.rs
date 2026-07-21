@@ -459,6 +459,13 @@ fn ui_header_open(tokens: &[Token], start: usize) -> Option<usize> {
 fn find_ui_body_close(source: &str, mut position: usize) -> Option<usize> {
     let mut brace_depth = 1u32;
     let mut in_tag = false;
+    let mut closing_tag = false;
+    let mut tag_start = 0usize;
+    let mut tag_paren_depth = 0u32;
+    let mut tag_bracket_depth = 0u32;
+    let mut element_depth = 0u32;
+    let mut directive_depth = 0u32;
+    let mut recovery_close = None;
 
     while position < source.len() {
         let rest = &source[position..];
@@ -491,20 +498,59 @@ fn find_ui_body_close(source: &str, mut position: usize) -> Option<usize> {
         }
 
         match value {
-            '<' if brace_depth == 1 => in_tag = true,
-            '>' if in_tag => in_tag = false,
-            '{' if !in_tag => brace_depth += 1,
-            '}' if !in_tag => {
-                brace_depth -= 1;
-                if brace_depth == 0 {
+            '<' if brace_depth == 1 && !in_tag => {
+                in_tag = true;
+                closing_tag = rest.starts_with("</");
+                tag_start = position;
+                tag_paren_depth = 0;
+                tag_bracket_depth = 0;
+            }
+            '>' if in_tag
+                && brace_depth == 1
+                && tag_paren_depth == 0
+                && tag_bracket_depth == 0
+                && !source[..position].ends_with('-') =>
+            {
+                let self_closing = source[tag_start..position].trim_end().ends_with('/');
+                if closing_tag {
+                    element_depth = element_depth.saturating_sub(1);
+                } else if !self_closing {
+                    element_depth += 1;
+                }
+                in_tag = false;
+            }
+            '(' if in_tag => tag_paren_depth += 1,
+            ')' if in_tag => tag_paren_depth = tag_paren_depth.saturating_sub(1),
+            '[' if in_tag => tag_bracket_depth += 1,
+            ']' if in_tag => tag_bracket_depth = tag_bracket_depth.saturating_sub(1),
+            '{' => {
+                if brace_depth == 1 && !in_tag {
+                    if rest.starts_with("{#if") || rest.starts_with("{#each") {
+                        directive_depth += 1;
+                    } else if rest.starts_with("{/if}") || rest.starts_with("{/each}") {
+                        directive_depth = directive_depth.saturating_sub(1);
+                    }
+                }
+                brace_depth += 1;
+            }
+            '}' => {
+                if brace_depth > 1 {
+                    brace_depth -= 1;
+                } else if !in_tag && element_depth == 0 && directive_depth == 0 {
                     return Some(position);
+                } else if !in_tag {
+                    // Keep the last plausible declaration close for malformed
+                    // markup/directives. A later balanced close wins; if none
+                    // exists, the UI parser still receives the body and can
+                    // report the missing inner close precisely.
+                    recovery_close = Some(position);
                 }
             }
             _ => {}
         }
         position += value.len_utf8();
     }
-    None
+    recovery_close
 }
 
 struct Lexer<'a> {

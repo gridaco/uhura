@@ -144,6 +144,33 @@ pub struct RouteTable {
     location_type: TypeRef,
     constructors: Vec<RouteConstructorDecl>,
     patterns: Vec<RoutePatternDecl>,
+    checked_paths: Vec<CheckedRoutePath>,
+}
+
+/// The checked path-only meaning of one route pattern.
+///
+/// Query fields do not participate in pathname ownership. Hosts consume this
+/// shape instead of reparsing the diagnostic source spelling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckedRoutePath {
+    constructor: String,
+    parts: Vec<RoutePathPart>,
+}
+
+impl CheckedRoutePath {
+    pub fn constructor(&self) -> &str {
+        &self.constructor
+    }
+
+    pub fn parts(&self) -> &[RoutePathPart] {
+        &self.parts
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RoutePathPart {
+    Literal(String),
+    Field(String),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -289,10 +316,18 @@ impl RouteTable {
             }
         }
 
+        let checked_paths = parsed
+            .into_iter()
+            .map(|(constructor, parsed)| CheckedRoutePath {
+                constructor: constructor.to_string(),
+                parts: parsed.path,
+            })
+            .collect();
         Ok(Self {
             location_type,
             constructors,
             patterns: canonical_patterns,
+            checked_paths,
         })
     }
 
@@ -306,6 +341,10 @@ impl RouteTable {
 
     pub fn patterns(&self) -> &[RoutePatternDecl] {
         &self.patterns
+    }
+
+    pub fn checked_paths(&self) -> &[CheckedRoutePath] {
+        &self.checked_paths
     }
 
     /// Encodes one typed Location value to a canonical origin-form URL.
@@ -347,8 +386,8 @@ impl RouteTable {
             for part in &parsed.path {
                 output.push('/');
                 match part {
-                    PathPart::Literal(literal) => output.push_str(literal),
-                    PathPart::Field(name) => {
+                    RoutePathPart::Literal(literal) => output.push_str(literal),
+                    RoutePathPart::Field(name) => {
                         let declaration = fields_by_name[name.as_str()];
                         let value = &location.fields[name];
                         let Some(text) = declaration.kind.text(value)? else {
@@ -425,7 +464,7 @@ impl RouteTable {
             .collect();
         let mut fields = BTreeMap::new();
         for (part, segment) in parsed.path.iter().zip(path_segments.iter()) {
-            if let PathPart::Field(name) = part {
+            if let RoutePathPart::Field(name) = part {
                 let text = decode_opaque_path_component(segment).map_err(|mut error| {
                     error.route = Some(constructor.name.clone());
                     error
@@ -531,14 +570,8 @@ impl RouteLocation {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ParsedPattern {
-    path: Vec<PathPart>,
+    path: Vec<RoutePathPart>,
     query: Vec<QueryPart>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PathPart {
-    Literal(String),
-    Field(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -605,7 +638,7 @@ fn parse_pattern(
                     format!("field `{field}` occurs more than once in its route"),
                 ));
             }
-            path_parts.push(PathPart::Field(field.to_string()));
+            path_parts.push(RoutePathPart::Field(field.to_string()));
         } else {
             if segment.contains('{') || segment.contains('}') {
                 return Err(RouteError::for_route(
@@ -628,7 +661,7 @@ fn parse_pattern(
                     format!("literal path component `{segment}` is reserved"),
                 ));
             }
-            path_parts.push(PathPart::Literal(segment.to_string()));
+            path_parts.push(RoutePathPart::Literal(segment.to_string()));
         }
     }
 
@@ -756,19 +789,19 @@ fn path_patterns_overlap(left: &ParsedPattern, right: &ParsedPattern) -> bool {
             .iter()
             .zip(right.path.iter())
             .all(|(left, right)| match (left, right) {
-                (PathPart::Literal(left), PathPart::Literal(right)) => left == right,
+                (RoutePathPart::Literal(left), RoutePathPart::Literal(right)) => left == right,
                 _ => true,
             })
 }
 
-fn path_matches(pattern: &[PathPart], segments: &[&str]) -> bool {
+fn path_matches(pattern: &[RoutePathPart], segments: &[&str]) -> bool {
     pattern.len() == segments.len()
         && pattern
             .iter()
             .zip(segments.iter())
             .all(|(part, segment)| match part {
-                PathPart::Literal(literal) => literal == segment,
-                PathPart::Field(_) => true,
+                RoutePathPart::Literal(literal) => literal == segment,
+                RoutePathPart::Field(_) => true,
             })
 }
 

@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 
 use num_bigint::BigInt;
-use num_traits::Signed as _;
 use serde::{Deserialize, Serialize};
 
 use super::codec::{decode_hex_32, frame, hash, hex, nat, nat_u64};
@@ -1719,16 +1718,14 @@ impl<'a> EvalContext<'a> {
                 }
                 Statement::While {
                     condition,
-                    decreases,
                     body,
                     break_local,
                     source,
                 } => {
-                    let mut previous = None;
                     loop {
-                        // The condition and decrease measure belong to the next
-                        // loop step. Observe the draft produced by the previous
-                        // body before evaluating either one.
+                        // The statically proved loop condition belongs to the
+                        // next step. Observe the draft produced by the previous
+                        // body before evaluating it.
                         self.state.clone_from(draft);
                         self.derives.borrow_mut().clear();
                         let (keep_going, bindings) = self
@@ -1737,26 +1734,6 @@ impl<'a> EvalContext<'a> {
                         if !keep_going {
                             break Control::Continue;
                         }
-                        let measure =
-                            integer_value(&self.eval(decreases).map_err(|error| error.at(source))?)
-                                .ok_or_else(|| {
-                                    RuntimeError::new("loop decrease measure is not an integer")
-                                        .at(source)
-                                })?;
-                        if measure.is_negative() {
-                            return Err(
-                                RuntimeError::new("loop decrease measure is negative").at(source)
-                            );
-                        }
-                        if let Some(previous) = previous
-                            && measure >= previous
-                        {
-                            return Err(RuntimeError::new(
-                                "loop decrease measure did not become strictly smaller",
-                            )
-                            .at(source));
-                        }
-                        previous = Some(measure);
                         let saved = self.locals.clone();
                         self.locals.extend(bindings);
                         let control = self.run_statements(body, draft, commands)?;
@@ -3600,9 +3577,6 @@ mod tests {
                 right: Box::new(Expr::Literal {
                     value: Value::int(0),
                 }),
-            },
-            decreases: Expr::Name {
-                name: "count".into(),
             },
             body: vec![Statement::Set {
                 field: "count".into(),

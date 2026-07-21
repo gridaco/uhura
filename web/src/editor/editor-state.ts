@@ -5,6 +5,10 @@ import {
   type SemanticProvenance,
 } from "../protocol/provenance.js";
 import {
+  decodeEvidenceSummary,
+  type EvidenceSummary,
+} from "../protocol/evidence-summary.js";
+import {
   decodeProjectionSources,
   decodeRenderDocument,
   type ProjectionSources,
@@ -12,7 +16,7 @@ import {
   type RenderNode,
 } from "../renderer/projection.js";
 
-export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/4" as const;
+export const EDITOR_STATE_PROTOCOL = "uhura-editor-state/5" as const;
 export const EDITOR_EVENT_PROTOCOL = "uhura-editor-event/0" as const;
 export const INTERACTION_GRAPH_PROTOCOL = "uhura-interaction-graph/0" as const;
 
@@ -169,9 +173,6 @@ export interface PreviewEvidence {
     registration: JsonValue;
     pin: JsonValue;
   };
-  observation: JsonValue;
-  snapshot: JsonValue;
-  scenarioReceiptLog: JsonValue;
 }
 
 export interface ReplayGuard {
@@ -238,7 +239,7 @@ export interface EditorAsset {
 }
 
 export interface EditorMachine {
-  protocol: "uhura-machine-inspection/0";
+  protocol: "uhura-machine-inspection/1";
   identityProtocol: string;
   deployment: JsonValue;
   sources: JsonValue;
@@ -246,7 +247,7 @@ export interface EditorMachine {
   interactionGraph: JsonValue;
   graphSources: JsonValue;
   checkpoints: JsonValue;
-  evidence: JsonValue;
+  evidence: EvidenceSummary;
 }
 
 export interface EditorRender {
@@ -569,15 +570,7 @@ const content = (value: unknown, path: string): PreviewContent => {
 const previewEvidence = (value: unknown, path: string): PreviewEvidence | null => {
   if (value === null) return null;
   const object = record(value, path);
-  exact(object, path, [
-    "scenario",
-    "pin",
-    "sourceId",
-    "sources",
-    "observation",
-    "snapshot",
-    "scenarioReceiptLog",
-  ]);
+  exact(object, path, ["scenario", "pin", "sourceId", "sources"]);
   const sources = record(object["sources"], `${path}.sources`);
   exact(sources, `${path}.sources`, ["registration", "pin"]);
   return {
@@ -591,12 +584,6 @@ const previewEvidence = (value: unknown, path: string): PreviewEvidence | null =
       ),
       pin: jsonValue(sources["pin"], `${path}.sources.pin`),
     },
-    observation: jsonValue(object["observation"], `${path}.observation`),
-    snapshot: jsonValue(object["snapshot"], `${path}.snapshot`),
-    scenarioReceiptLog: jsonValue(
-      object["scenarioReceiptLog"],
-      `${path}.scenarioReceiptLog`,
-    ),
   };
 };
 
@@ -1056,10 +1043,10 @@ const editorMachine = (value: unknown, path: string): EditorMachine | null => {
     "checkpoints",
     "evidence",
   ]);
-  if (object["protocol"] !== "uhura-machine-inspection/0") {
+  if (object["protocol"] !== "uhura-machine-inspection/1") {
     throw new EditorContractError(
       `${path}.protocol`,
-      JSON.stringify("uhura-machine-inspection/0"),
+      JSON.stringify("uhura-machine-inspection/1"),
     );
   }
   const sources = jsonValue(object["sources"], `${path}.sources`);
@@ -1098,7 +1085,7 @@ const editorMachine = (value: unknown, path: string): EditorMachine | null => {
     }
   }
   return {
-    protocol: "uhura-machine-inspection/0",
+    protocol: "uhura-machine-inspection/1",
     identityProtocol: string(object["identityProtocol"], `${path}.identityProtocol`),
     deployment: jsonValue(object["deployment"], `${path}.deployment`),
     sources,
@@ -1106,7 +1093,16 @@ const editorMachine = (value: unknown, path: string): EditorMachine | null => {
     interactionGraph: jsonValue(object["interactionGraph"], `${path}.interactionGraph`),
     graphSources: jsonValue(object["graphSources"], `${path}.graphSources`),
     checkpoints: jsonValue(object["checkpoints"], `${path}.checkpoints`),
-    evidence: jsonValue(object["evidence"], `${path}.evidence`),
+    evidence: (() => {
+      try {
+        return decodeEvidenceSummary(object["evidence"], `${path}.evidence`);
+      } catch (error) {
+        throw new EditorContractError(
+          `${path}.evidence`,
+          error instanceof Error ? error.message : "a bounded Uhura evidence summary",
+        );
+      }
+    })(),
   };
 };
 

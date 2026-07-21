@@ -640,14 +640,18 @@ export const EDITOR_STYLES = `
 export const PREVIEW_BASE_STYLES = `
   :host, #uh-app { display: block; inline-size: 100%; block-size: 100%; color: #16181c; }
   *, *::before, *::after { box-sizing: border-box; }
-  .screen-root, .preview-root { position: relative; inline-size: 100%; block-size: 100%; overflow: hidden; }
-  .screen-root { isolation: isolate; }
+  .screen-root, .preview-root { position: relative; inline-size: 100%; block-size: 100%; overflow: hidden; isolation: isolate; }
   .screen-root > * { block-size: 100%; }
   .preview-root > * { min-inline-size: 0; }
   ${PRIMITIVE_BASE_STYLES}
-  .uh-surface-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; isolation: isolate; }
-  .uh-scrim { position: absolute; inset: 0; z-index: 0; background: rgb(0 0 0 / 40%); }
-  .uh-surface { position: relative; z-index: 1; block-size: 72%; max-block-size: 72%; overflow: hidden; border-radius: 16px 16px 0 0; background: #fff; box-shadow: 0 -8px 32px rgb(0 0 0 / 35%); }
+  .screen-root:has(.uhura-surface[open])::before,
+  .preview-root:has(.uhura-surface[open])::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+    background: rgb(0 0 0 / 40%);
+  }
 `;
 
 /**

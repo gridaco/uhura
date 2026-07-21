@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   decodeHostInspection,
+  UHURA_EVIDENCE_SUMMARY_PROTOCOL,
   UHURA_HOST_INSPECTION_PROTOCOL,
 } from "./host-inspection.js";
 import {
@@ -83,7 +84,13 @@ const artifact = {
     }],
     edges: [],
   },
-  evidence: { passed: true },
+  evidence: {
+    protocol: UHURA_EVIDENCE_SUMMARY_PROTOCOL,
+    passed: true,
+    scenarios: { total: 2, passed: 2, failed: 0 },
+    artifacts: { pins: 2, examples: 1, checkpoints: 1 },
+    failureCount: 0,
+  },
 } as const;
 
 describe("Uhura host inspection", () => {
@@ -92,6 +99,7 @@ describe("Uhura host inspection", () => {
     expect(decoded.machineProgramHash).toBe(hash);
     expect(decoded.interactionGraph.nodes[0]?.kind).toBe("machine");
     expect(decoded.graphSources.nodes[0]?.sources[0]?.path).toBe("app.uhura");
+    expect(decoded.evidence.scenarios.total).toBe(2);
 
     expect(decoded.identityProtocol).toBe(UHURA_MACHINE_PROGRAM_ID_PROTOCOL);
     expect(() =>
@@ -140,5 +148,41 @@ describe("Uhura host inspection", () => {
         },
       })
     ).toThrow(/source inventory/u);
+  });
+
+  it("strictly decodes the bounded evidence summary", () => {
+    expect(() =>
+      decodeHostInspection({
+        ...artifact,
+        evidence: null,
+      })
+    ).toThrow(/evidence must be an object/u);
+    expect(() =>
+      decodeHostInspection({
+        ...artifact,
+        evidence: {
+          ...artifact.evidence,
+          snapshots: ["unbounded"],
+        },
+      })
+    ).toThrow(/wrong fields/u);
+    expect(() =>
+      decodeHostInspection({
+        ...artifact,
+        evidence: {
+          ...artifact.evidence,
+          scenarios: { total: 3, passed: 2, failed: 0 },
+        },
+      })
+    ).toThrow(/add up to total/u);
+    expect(() =>
+      decodeHostInspection({
+        ...artifact,
+        evidence: {
+          ...artifact.evidence,
+          passed: false,
+        },
+      })
+    ).toThrow(/agree with failureCount/u);
   });
 });

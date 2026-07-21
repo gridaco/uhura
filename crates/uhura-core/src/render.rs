@@ -301,6 +301,18 @@ impl Projector<'_> {
                 }
 
                 let surface = name == "Surface";
+                let surface_identity = if surface {
+                    let identity = surface_key
+                        .ok_or_else(|| RenderError("Surface is missing a checked `key`".into()))?;
+                    if !self.surfaces.insert(identity.clone()) {
+                        return Err(RenderError(
+                            "one projection contains duplicate Surface keys".into(),
+                        ));
+                    }
+                    Some(identity)
+                } else {
+                    None
+                };
                 let element = if name == "Link" {
                     let (routes_expression, _) = semantic
                         .get("routes")
@@ -319,18 +331,14 @@ impl Projector<'_> {
                     });
                     "a".to_string()
                 } else if surface {
-                    let key = surface_key
-                        .ok_or_else(|| RenderError("Surface is missing a checked `key`".into()))?;
-                    if !self.surfaces.insert(key) {
-                        return Err(RenderError(
-                            "one projection contains duplicate Surface keys".into(),
-                        ));
-                    }
                     "dialog".to_string()
                 } else {
                     name.clone()
                 };
-                let key = self.render_key(source, path)?;
+                let key = match surface_identity {
+                    Some(identity) => self.render_surface_key(source, identity)?,
+                    None => self.render_key(source, path)?,
+                };
                 output.push(RenderNode::Element {
                     key,
                     element,
@@ -430,6 +438,23 @@ impl Projector<'_> {
 
     fn render_key(&mut self, source: &SourceRef, path: &str) -> Result<String, RenderError> {
         let key = node_key(&source.id, path);
+        self.record_render_key(key, source)
+    }
+
+    fn render_surface_key(
+        &mut self,
+        source: &SourceRef,
+        identity: Vec<u8>,
+    ) -> Result<String, RenderError> {
+        let key = surface_node_key(identity);
+        self.record_render_key(key, source)
+    }
+
+    fn record_render_key(
+        &mut self,
+        key: String,
+        source: &SourceRef,
+    ) -> Result<String, RenderError> {
         if self.sources.insert(key.clone(), source.clone()).is_some() {
             return Err(RenderError(format!(
                 "duplicate rendered-node identity `{key}`"
@@ -479,6 +504,10 @@ fn node_key(source: &str, path: &str) -> String {
         "ui-node",
         &[source.as_bytes().to_vec(), path.as_bytes().to_vec()],
     ))
+}
+
+fn surface_node_key(identity: Vec<u8>) -> String {
+    hex(&hash("ui-surface-node", &[identity]))
 }
 
 fn event_key(source: &str, path: &str, event: &str) -> String {
@@ -833,6 +862,30 @@ mod tests {
         (program, instance)
     }
 
+    fn keyed_surface_program(surface_count: usize) -> (Program, Instance) {
+        let (mut program, mut instance) = duplicate_each_program(Vec::new(), &[]);
+        let presentation = program.presentations.get_mut(PRESENTATION).unwrap();
+        presentation.binding = "surface_key".into();
+        presentation.nodes = (0..surface_count)
+            .map(|index| UiNode::Element {
+                name: "Surface".into(),
+                attributes: vec![UiAttribute {
+                    name: "key".into(),
+                    value: UiAttributeValue::Expression {
+                        value: Expr::Name {
+                            name: "surface_key".into(),
+                        },
+                    },
+                    source: SourceRef::synthetic(format!("test/surface-{index}/key")),
+                }],
+                children: Vec::new(),
+                source: SourceRef::synthetic(format!("test/surface-{index}")),
+            })
+            .collect();
+        instance.observation = Value::Text("first".into());
+        (program, instance)
+    }
+
     #[test]
     fn display_never_rounds_exact_values() {
         assert_eq!(
@@ -856,6 +909,86 @@ mod tests {
         assert_ne!(
             node_key(&source.id, "root.0"),
             node_key(&source.id, "root.1")
+        );
+    }
+
+    #[test]
+    fn surface_node_identity_includes_the_evaluated_checked_key() {
+        let (program, mut instance) = keyed_surface_program(1);
+        let first = program.project(&instance, PRESENTATION).unwrap();
+        instance.observation = Value::Text("second".into());
+        let second = program.project(&instance, PRESENTATION).unwrap();
+        let RenderNode::Element {
+            key: first_key,
+            surface: true,
+            ..
+        } = &first.document.nodes[0]
+        else {
+            panic!("expected first Surface projection")
+        };
+        let RenderNode::Element {
+            key: second_key,
+            surface: true,
+            ..
+        } = &second.document.nodes[0]
+        else {
+            panic!("expected second Surface projection")
+        };
+        assert_ne!(first_key, second_key);
+        assert_eq!(
+            first.sources.nodes[first_key].id,
+            second.sources.nodes[second_key].id
+        );
+    }
+
+    #[test]
+    fn surface_lifetime_key_survives_source_and_render_path_changes() {
+        let (mut program, instance) = keyed_surface_program(1);
+        let first = program.project(&instance, PRESENTATION).unwrap();
+        let RenderNode::Element {
+            key: first_key,
+            surface: true,
+            ..
+        } = &first.document.nodes[0]
+        else {
+            panic!("expected first Surface projection")
+        };
+
+        let presentation = program.presentations.get_mut(PRESENTATION).unwrap();
+        let UiNode::Element { source, .. } = &mut presentation.nodes[0] else {
+            panic!("expected authored Surface")
+        };
+        *source = SourceRef::synthetic("test/moved-surface");
+        presentation.nodes.insert(
+            0,
+            UiNode::Text {
+                value: "before".into(),
+                source: SourceRef::synthetic("test/before-surface"),
+            },
+        );
+
+        let second = program.project(&instance, PRESENTATION).unwrap();
+        let RenderNode::Element {
+            key: second_key,
+            surface: true,
+            ..
+        } = &second.document.nodes[1]
+        else {
+            panic!("expected moved Surface projection")
+        };
+        assert_eq!(first_key, second_key);
+        assert_eq!(second.sources.nodes[second_key].id, "test/moved-surface");
+    }
+
+    #[test]
+    fn surface_key_still_rejects_duplicate_lifetimes_in_one_projection() {
+        let (program, instance) = keyed_surface_program(2);
+        assert_eq!(
+            program
+                .project(&instance, PRESENTATION)
+                .unwrap_err()
+                .to_string(),
+            "one projection contains duplicate Surface keys"
         );
     }
 

@@ -742,11 +742,22 @@ button.uh-button[disabled] { cursor: default; }
 .uh-region { cursor: pointer; }
 .uh-pager .uh-track { scrollbar-width: none; }
 
-/* interactive Play surface stack */
-.uh-surface-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; z-index: 10; }
-.uh-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.4); }
-.uh-surface { position: relative; background: #fff; border-radius: 16px 16px 0 0; max-block-size: 72%; block-size: 72%; box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35); outline: none; }
-.uh-surface > * { block-size: 100%; }
+/* Machine-owned surfaces stay inside the selected prototype frame. */
+#uh-surfaces {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+#uh-surfaces:empty { display: none; }
+#uh-surfaces::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 40%);
+  pointer-events: auto;
+}
+#uh-surfaces > .uhura-surface { pointer-events: auto; }
 
 /* keyboard affordance for non-native interactives */
 .uh-region:focus-visible, button.uh-button:focus-visible { outline: 2px solid #4a90e2; outline-offset: 2px; }

@@ -211,18 +211,7 @@ export const inspectMachine = (machine: EditorMachine): MachineInspection => {
   const entry = nonEmptyString(deployment?.["entry"]);
   const machineName = nonEmptyString(deployment?.["machine"]);
   const presentation = nonEmptyString(deployment?.["presentation"]);
-  const evidence = jsonRecord(machine.evidence);
-  const scenarios = Array.isArray(evidence?.["scenarios"])
-    ? evidence["scenarios"]
-    : [];
-  const passedScenarios = scenarios.filter((scenario) =>
-    jsonRecord(scenario)?.["status"] === "passed").length;
-  const failedScenarios = scenarios.filter((scenario) =>
-    jsonRecord(scenario)?.["status"] === "failed").length;
-  const reportedFailures = Array.isArray(evidence?.["failures"])
-    ? evidence["failures"].length
-    : failedScenarios;
-  const passed = evidence?.["passed"];
+  const evidence = machine.evidence;
 
   return {
     identity: [
@@ -230,10 +219,10 @@ export const inspectMachine = (machine: EditorMachine): MachineInspection => {
       machineName ? { label: "Machine", value: machineName } : null,
       presentation ? { label: "Presentation", value: presentation } : null,
     ].filter((row): row is InspectionRow => row !== null),
-    status: passed === true ? "passed" : passed === false ? "failed" : "unknown",
-    passes: passedScenarios,
-    failures: reportedFailures,
-    checkpoints: collectionSize(machine.checkpoints),
+    status: evidence.passed ? "passed" : "failed",
+    passes: evidence.scenarios.passed,
+    failures: evidence.failureCount,
+    checkpoints: evidence.artifacts.checkpoints,
     sources: collectionSize(machine.sources),
     ownership: ownershipRows(machine.interactionGraph, machineName),
     outcomes: outcomeRows(machine.interactionGraph, machineName),

@@ -83,6 +83,8 @@ export interface StartPlayOptions {
   readonly adapters: readonly PortAdapter[];
   readonly assets?: AssetAppliers;
   readonly icons?: IconFontRegistry;
+  /** Maps checked application links into the browser host's mounted topology. */
+  readonly resolveLinkHref?: (href: string) => string;
   /**
    * Publishes one correlated receipt and bounded current-state snapshot.
    * Complete audit inspection remains explicit and never enters this hot path.
@@ -721,9 +723,11 @@ export function startPlay(
   function createRenderer(): ProjectionRenderer {
     return createProjectionRenderer({
       root: shell.pageHost,
+      surfaceRoot: shell.surfaceHost,
       mode: "play",
       assets: options.assets,
       icons: options.icons,
+      resolveLinkHref: options.resolveLinkHref,
       dispatch(binding, projectionRevision, event): void {
         if (disposed || currentView === null) return;
         if (projectionRevision === undefined) {

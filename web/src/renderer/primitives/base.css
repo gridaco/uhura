@@ -90,6 +90,30 @@ button.uh-button[aria-busy="true"] {
   scroll-snap-align: center;
 }
 
+dialog.uhura-surface[open] {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 10;
+  display: block;
+  inline-size: 100%;
+  max-inline-size: none;
+  block-size: 72%;
+  max-block-size: 72%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 16px 16px 0 0;
+  outline: none;
+  color: inherit;
+  background: #fff;
+  box-shadow: 0 -8px 32px rgb(0 0 0 / 35%);
+}
+
+dialog.uhura-surface[open] > * {
+  block-size: 100%;
+}
+
 .uh-dots {
   position: absolute;
   inset-block-end: 10px;

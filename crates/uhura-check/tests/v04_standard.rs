@@ -122,6 +122,57 @@ pub machine StandardProbe {
 }
 
 #[test]
+fn route_tables_remain_host_agnostic_language_values() {
+    for path in [
+        "/play",
+        "/_uhura/editor",
+        "/api/application",
+        "/assets",
+        "/favicon.ico",
+    ] {
+        let output = check(&format!(
+            r#"
+use uhura::web_router::Routes;
+
+pub enum Location {{
+  Page,
+}}
+
+pub const ROUTES: Routes<Location> = Routes::from([
+  ("Page", "{path}"),
+]);
+"#
+        ));
+        assert!(
+            output.diagnostics.is_empty(),
+            "{path} diagnostics:\n{:#?}",
+            output.diagnostics
+        );
+        assert!(output.program.is_some());
+    }
+
+    let dynamic = check(
+        r#"
+use uhura::web_router::Routes;
+
+pub enum Location {
+  Dynamic { segment: Text },
+}
+
+pub const ROUTES: Routes<Location> = Routes::from([
+  ("Dynamic", "/{segment}"),
+]);
+"#,
+    );
+    assert!(
+        dynamic.diagnostics.is_empty(),
+        "dynamic diagnostics:\n{:#?}",
+        dynamic.diagnostics
+    );
+    assert!(dynamic.program.is_some());
+}
+
+#[test]
 fn standard_aliases_are_lexical_and_unknown_exports_are_rejected() {
     let aliased = check(
         r#"

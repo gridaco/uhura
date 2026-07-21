@@ -1,5 +1,8 @@
 import type { HostInspection } from "../../protocol/host-inspection.js";
-import { decodeHostInspection } from "../../protocol/host-inspection.js";
+import {
+  decodeHostInspection,
+  UHURA_EVIDENCE_SUMMARY_PROTOCOL,
+} from "../../protocol/host-inspection.js";
 import {
   UHURA_INTERACTION_GRAPH_PROTOCOL,
   UHURA_INTERACTION_GRAPH_PROVENANCE_PROTOCOL,
@@ -93,7 +96,7 @@ const source = (id: string, index: number) => ({
 
 export function machineTestDeployment(): HostInspection {
   return decodeHostInspection({
-    protocol: "uhura-inspection/0",
+    protocol: "uhura-inspection/1",
     identityProtocol: UHURA_MACHINE_PROGRAM_ID_PROTOCOL,
     entry: "counter",
     machine: UHURA_TEST_MACHINE,
@@ -151,7 +154,13 @@ export function machineTestDeployment(): HostInspection {
         sources: [source(`edge-${String(index)}`, nodes.length + index)],
       })),
     },
-    evidence: null,
+    evidence: {
+      protocol: UHURA_EVIDENCE_SUMMARY_PROTOCOL,
+      passed: true,
+      scenarios: { total: 0, passed: 0, failed: 0 },
+      artifacts: { pins: 0, examples: 0, checkpoints: 0 },
+      failureCount: 0,
+    },
   });
 }
 

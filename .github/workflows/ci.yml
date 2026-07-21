@@ -202,7 +202,7 @@ jobs:
           import sys
 
           state = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          assert state["protocol"] == "uhura-editor-state/4"
+          assert state["protocol"] == "uhura-editor-state/5"
           assert isinstance(state["sourceRevision"], int)
           assert state["sourceRevision"] >= 1
           render = state["render"]

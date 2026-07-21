@@ -35,7 +35,7 @@ const stateFixture = (): {
   diagnostics: unknown;
   render: Record<string, any> | null;
 } => ({
-  protocol: "uhura-editor-state/4",
+  protocol: "uhura-editor-state/5",
   sourceRevision: 3,
   diagnostics: null,
   render: {
@@ -172,9 +172,6 @@ const stateFixture = (): {
           registration: { path: "evidence.uhura", start: 0, end: 8 },
           pin: { path: "evidence.uhura", start: 9, end: 12 },
         },
-        observation: { state: "ready" },
-        snapshot: { sequence: "0" },
-        scenarioReceiptLog: null,
       },
       content: {
         kind: "projection",
@@ -227,7 +224,7 @@ const stateFixture = (): {
       }],
     },
     machine: {
-      protocol: "uhura-machine-inspection/0",
+      protocol: "uhura-machine-inspection/1",
       identityProtocol: "uhura-machine-program/0",
       deployment: { machine: "example@1::App" },
       sources: [],
@@ -256,12 +253,18 @@ const stateFixture = (): {
         edges: [],
       },
       checkpoints: {},
-      evidence: {},
+      evidence: {
+        protocol: "uhura-evidence-summary/0",
+        passed: true,
+        scenarios: { total: 1, passed: 1, failed: 0 },
+        artifacts: { pins: 1, examples: 1, checkpoints: 0 },
+        failureCount: 0,
+      },
     },
   },
 });
 
-test("decodes the canonical projection-only EditorState/4 contract", () => {
+test("decodes the canonical projection-only EditorState/5 contract", () => {
   const state = decodeEditorState(stateFixture());
   const preview = state.render?.previews[0];
 
@@ -271,6 +274,7 @@ test("decodes the canonical projection-only EditorState/4 contract", () => {
   assert.deepEqual(preview?.provenance.occurrences[0]?.anchors, ["root"]);
   assert.equal(preview?.evidence?.scenario, "ready");
   assert.equal(state.render?.machine?.identityProtocol, "uhura-machine-program/0");
+  assert.equal(state.render?.machine?.evidence.scenarios.passed, 1);
   assert.deepEqual(state.render?.interactionGraph.edges[0], {
     kind: "present",
     from: "page:feed",
@@ -290,8 +294,8 @@ test("strictly decodes the same machine graph artifact consumed by Play", () => 
 
 test("rejects every retired Editor view and structural anchor encoding", () => {
   const oldProtocol = stateFixture();
-  oldProtocol.protocol = "uhura-editor-state/3";
-  assert.throws(() => decodeEditorState(oldProtocol), /uhura-editor-state\/4/);
+  oldProtocol.protocol = "uhura-editor-state/4";
+  assert.throws(() => decodeEditorState(oldProtocol), /uhura-editor-state\/5/);
 
   for (const kind of ["snapshot", "fragment"]) {
     const oldContent = stateFixture();
@@ -306,6 +310,28 @@ test("rejects every retired Editor view and structural anchor encoding", () => {
     path: [],
   }];
   assert.throws(() => decodeEditorState(pathAnchor), /non-empty string/);
+});
+
+test("rejects unbounded machine and preview evidence from the retired transport", () => {
+  const rawMachineEvidence = stateFixture();
+  rawMachineEvidence.render!.machine.evidence = {
+    passed: true,
+    scenarios: [],
+    failures: [],
+  };
+  assert.throws(
+    () => decodeEditorState(rawMachineEvidence),
+    /evidence has the wrong fields/u,
+  );
+
+  for (const field of ["observation", "snapshot", "scenarioReceiptLog"]) {
+    const rawPreviewEvidence = stateFixture();
+    rawPreviewEvidence.render!.previews[0].evidence[field] = {};
+    assert.throws(
+      () => decodeEditorState(rawPreviewEvidence),
+      /no unknown property/u,
+    );
+  }
 });
 
 test("validates projection source coverage and semantic anchor keys", () => {

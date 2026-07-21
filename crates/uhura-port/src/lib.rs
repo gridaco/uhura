@@ -19,9 +19,9 @@ pub use envelope::{
     EnvelopeIssue, QualifiedPortEnvelope, QualifiedReceiveEnvelope, QualifiedSendEnvelope,
 };
 pub use route::{
-    OPAQUE_PATH_CODEC, QUERY_VALUE_CODEC, RouteAtom, RouteConstructorDecl, RouteError,
-    RouteErrorCode, RouteFieldDecl, RouteFieldKind, RouteFieldValue, RouteLocation,
-    RoutePatternDecl, RouteTable, decode_opaque_path_component, decode_query_value,
+    CheckedRoutePath, OPAQUE_PATH_CODEC, QUERY_VALUE_CODEC, RouteAtom, RouteConstructorDecl,
+    RouteError, RouteErrorCode, RouteFieldDecl, RouteFieldKind, RouteFieldValue, RouteLocation,
+    RoutePathPart, RoutePatternDecl, RouteTable, decode_opaque_path_component, decode_query_value,
     encode_opaque_path_component, encode_query_value,
 };
 pub use standard::{

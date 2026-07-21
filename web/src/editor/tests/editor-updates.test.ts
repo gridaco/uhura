@@ -17,7 +17,7 @@ import {
 import { elementNode, projectionContent, textNode } from "./fixtures/projection.js";
 
 const state = (sourceRevision: number): EditorState => ({
-  protocol: "uhura-editor-state/4",
+  protocol: "uhura-editor-state/5",
   sourceRevision,
   diagnostics: null,
   render: null,

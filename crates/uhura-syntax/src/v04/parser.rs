@@ -44,15 +44,22 @@ impl<'a> Parser<'a> {
             uses.push(self.parse_use());
         }
 
-        let mut declarations = Vec::new();
+        let mut declarations: Vec<Declaration> = Vec::new();
         while !self.at_simple(TokenKind::Eof) {
             let start = self.cursor;
             let diagnostics_before = self.diagnostics.len();
+            let follows_ui = declarations
+                .last()
+                .is_some_and(|declaration| matches!(&declaration.kind, DeclarationKind::Ui(_)));
             if let Some(declaration) = self.parse_declaration() {
                 declarations.push(declaration);
             } else {
                 if self.diagnostics.len() == diagnostics_before {
-                    self.invalid_declaration_here();
+                    if follows_ui {
+                        self.invalid_after_ui_declaration_here();
+                    } else {
+                        self.invalid_declaration_here();
+                    }
                 }
                 self.synchronize_module();
             }
@@ -2647,6 +2654,42 @@ impl<'a> Parser<'a> {
                 token.span,
             );
         }
+    }
+
+    fn invalid_after_ui_declaration_here(&mut self) {
+        let known_declaration_typo = matches!(
+            &self.current().kind,
+            TokenKind::Identifier(value) if declaration_keyword_typo(value).is_some()
+        );
+        if known_declaration_typo {
+            self.invalid_declaration_here();
+        } else if self.source_after_ui_looks_like_ui_tail() {
+            self.error(
+                ParseDiagnosticKind::InvalidUi,
+                "unexpected source after a UI declaration; an un-nested `}` at the UI root closes the declaration, so render a literal right brace as `{\"}\"}`",
+                self.current().span,
+            );
+        } else {
+            self.invalid_declaration_here();
+        }
+    }
+
+    fn source_after_ui_looks_like_ui_tail(&self) -> bool {
+        let mut depth = 0u32;
+        for token in &self.tokens[self.cursor..] {
+            match token.kind {
+                TokenKind::Less if depth == 0 => return true,
+                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket if depth == 0 => {
+                    return true;
+                }
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => depth -= 1,
+                TokenKind::Semicolon if depth == 0 => return false,
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     fn current(&self) -> &Token {

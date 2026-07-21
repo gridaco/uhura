@@ -25,7 +25,7 @@ use super::value::Value;
 
 pub const EVIDENCE_REPORT_PROTOCOL: &str = "uhura-evidence-report/0";
 
-/// Executes a program's checked evidence suite in deterministic source order.
+/// Executes checked evidence in deterministic semantic dependency order.
 pub struct EvidenceRunner<'program> {
     program: &'program Program,
 }
@@ -50,13 +50,10 @@ impl<'program> EvidenceRunner<'program> {
         };
         let mut published_pins = BTreeMap::<PinKey, EvidencePinArtifact>::new();
         let mut seen_scenario_ids = BTreeSet::new();
-        let mut scenarios = self.program.evidence.scenarios.iter().collect::<Vec<_>>();
-        scenarios.sort_by(|(left_key, left), (right_key, right)| {
-            source_order(&left.source)
-                .cmp(&source_order(&right.source))
-                .then_with(|| left.id.cmp(&right.id))
-                .then_with(|| left_key.cmp(right_key))
-        });
+        let scenarios = semantic_scenario_order(
+            &self.program.evidence.scenarios,
+            &self.program.evidence.checkpoints,
+        );
 
         for (map_key, scenario) in scenarios {
             let id_is_new = seen_scenario_ids.insert(scenario.id.clone());
@@ -840,13 +837,7 @@ impl<'program> EvidenceRunner<'program> {
             {
                 return Ok(pin);
             }
-            let alias = if current.pin.is_empty() {
-                self.program.evidence.checkpoints.get(&current.scenario)
-            } else if current.scenario.is_empty() {
-                self.program.evidence.checkpoints.get(&current.pin)
-            } else {
-                None
-            };
+            let alias = checkpoint_alias(current, &self.program.evidence.checkpoints);
             let Some(alias) = alias else {
                 return Err(format!(
                     "unknown evidence snapshot `{}::{}`",
@@ -1365,8 +1356,134 @@ fn standard_fixture_contract_hash(contract: &str) -> Option<&'static str> {
     }
 }
 
-fn source_order(source: &SourceRef) -> (&str, u32, u32, &str) {
-    (&source.path, source.start, source.end, &source.id)
+fn checkpoint_alias<'a>(
+    reference: &EvidenceRef,
+    checkpoints: &'a BTreeMap<String, EvidenceRef>,
+) -> Option<&'a EvidenceRef> {
+    if reference.pin.is_empty() {
+        checkpoints.get(&reference.scenario)
+    } else if reference.scenario.is_empty() {
+        checkpoints.get(&reference.pin)
+    } else {
+        None
+    }
+}
+
+fn terminal_reference_scenario<'a>(
+    reference: &'a EvidenceRef,
+    checkpoints: &'a BTreeMap<String, EvidenceRef>,
+) -> Option<&'a str> {
+    let mut current = reference;
+    let mut visited = BTreeSet::new();
+    loop {
+        if !current.scenario.is_empty() && !current.pin.is_empty() {
+            return Some(&current.scenario);
+        }
+        let marker = format!("{}::{}", current.scenario, current.pin);
+        if !visited.insert(marker) {
+            return None;
+        }
+        current = checkpoint_alias(current, checkpoints)?;
+    }
+}
+
+fn semantic_scenario_order<'a>(
+    scenarios: &'a BTreeMap<String, Scenario>,
+    checkpoints: &BTreeMap<String, EvidenceRef>,
+) -> Vec<(&'a String, &'a Scenario)> {
+    let mut incoming = scenarios
+        .keys()
+        .map(|key| (key.clone(), 0usize))
+        .collect::<BTreeMap<_, _>>();
+    let mut dependents = BTreeMap::<String, BTreeSet<String>>::new();
+
+    for (key, scenario) in scenarios {
+        for dependency in scenario_dependencies(scenario, checkpoints) {
+            if scenarios.contains_key(&dependency) {
+                *incoming
+                    .get_mut(key)
+                    .expect("every scenario has an incoming count") += 1;
+                dependents
+                    .entry(dependency)
+                    .or_default()
+                    .insert(key.clone());
+            }
+        }
+    }
+
+    let semantic_key = |key: &str| {
+        (
+            scenarios
+                .get(key)
+                .map(|scenario| scenario.id.clone())
+                .unwrap_or_else(|| key.into()),
+            key.to_owned(),
+        )
+    };
+    let mut ready = incoming
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(key, _)| semantic_key(key))
+        .collect::<BTreeSet<_>>();
+    let mut ordered = Vec::with_capacity(scenarios.len());
+    let mut visited = BTreeSet::new();
+
+    while let Some((_, key)) = ready.pop_first() {
+        if !visited.insert(key.clone()) {
+            continue;
+        }
+        ordered.push(key.clone());
+        if let Some(children) = dependents.get(&key) {
+            for child in children {
+                let count = incoming
+                    .get_mut(child)
+                    .expect("a dependent scenario has an incoming count");
+                *count -= 1;
+                if *count == 0 {
+                    ready.insert(semantic_key(child));
+                }
+            }
+        }
+    }
+
+    // Checked evidence is acyclic. Externally supplied malformed IR may still
+    // contain a cycle; visit its members in stable semantic order so the
+    // ordinary missing-snapshot failures remain deterministic.
+    let mut remaining = scenarios
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !visited.contains(*key))
+        .map(semantic_key)
+        .collect::<Vec<_>>();
+    remaining.sort_unstable();
+    ordered.extend(remaining.into_iter().map(|(_, key)| key));
+
+    ordered
+        .into_iter()
+        .filter_map(|key| scenarios.get_key_value(&key))
+        .collect()
+}
+
+fn scenario_dependencies(
+    scenario: &Scenario,
+    checkpoints: &BTreeMap<String, EvidenceRef>,
+) -> BTreeSet<String> {
+    let mut dependencies = BTreeSet::new();
+    if let ScenarioOrigin::Snapshot { reference } = &scenario.origin
+        && let Some(dependency) = terminal_reference_scenario(reference, checkpoints)
+        && dependency != scenario.id
+    {
+        dependencies.insert(dependency.to_string());
+    }
+    for step in &scenario.steps {
+        if let EvidenceStep::ExpectSnapshot { reference, .. } = step
+            && let Some(dependency) = terminal_reference_scenario(reference, checkpoints)
+            && dependency != scenario.id
+        {
+            dependencies.insert(dependency.to_string());
+        }
+    }
+    dependencies
 }
 
 fn source_id(source: &SourceRef) -> String {
@@ -1800,6 +1917,272 @@ mod tests {
             serde_json::from_str::<EvidenceReport>(&canonical).unwrap(),
             report
         );
+    }
+
+    #[test]
+    fn scenario_dependencies_ignore_physical_source_order_and_location() {
+        let relocate = |program: &mut Program, locations: [(&str, &str, u32); 3]| {
+            for (scenario, path, start) in locations {
+                let source = &mut program
+                    .evidence
+                    .scenarios
+                    .get_mut(scenario)
+                    .expect("scenario")
+                    .source;
+                source.path = path.into();
+                source.start = start;
+                source.end = start + 1;
+            }
+            program.freeze_program_hashes();
+        };
+
+        let mut reversed = counter_program();
+        relocate(
+            &mut reversed,
+            [
+                ("canonical", "z/producer.uhura", 900),
+                ("replay", "m/dependent.uhura", 500),
+                ("replay_again", "a/comparison.uhura", 100),
+            ],
+        );
+        let reversed_report = reversed.run_evidence();
+        assert!(reversed_report.passed, "{:#?}", reversed_report.failures);
+        assert_eq!(
+            reversed_report
+                .scenarios
+                .iter()
+                .map(|scenario| scenario.scenario.as_str())
+                .collect::<Vec<_>>(),
+            ["canonical", "replay", "replay_again"],
+        );
+
+        let mut moved = reversed.clone();
+        relocate(
+            &mut moved,
+            [
+                ("canonical", "a/producer.uhura", 7),
+                ("replay", "z/dependent.uhura", 3),
+                ("replay_again", "m/comparison.uhura", 1),
+            ],
+        );
+        let moved_report = moved.run_evidence();
+        assert!(moved_report.passed, "{:#?}", moved_report.failures);
+        assert_eq!(
+            reversed.evidence_hashes, moved.evidence_hashes,
+            "physical evidence layout is excluded from evidence identity",
+        );
+        assert_eq!(
+            reversed_report
+                .scenarios
+                .iter()
+                .map(|scenario| (&scenario.scenario, scenario.status))
+                .collect::<Vec<_>>(),
+            moved_report
+                .scenarios
+                .iter()
+                .map(|scenario| (&scenario.scenario, scenario.status))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            reversed_report.artifacts.pins["replay::final"].snapshot,
+            moved_report.artifacts.pins["replay::final"].snapshot,
+        );
+    }
+
+    #[test]
+    fn local_snapshot_comparison_does_not_create_a_scheduling_cycle() {
+        let mut program = counter_program();
+        program.evidence.scenarios.remove("replay_again");
+        program.evidence.examples.clear();
+        program.evidence.example_metadata.clear();
+        program.evidence.example_sources.clear();
+        program.evidence.checkpoints.clear();
+        program.evidence.checkpoint_sources.clear();
+
+        let mut producer = program
+            .evidence
+            .scenarios
+            .remove("canonical")
+            .expect("producer scenario");
+        producer.id = "z_producer".into();
+        producer.source.path = "z/producer.uhura".into();
+        producer.steps.push(EvidenceStep::ExpectSnapshot {
+            reference: EvidenceRef {
+                scenario: producer.id.clone(),
+                pin: "after_one".into(),
+            },
+            source: source("producer.local-comparison", 20),
+        });
+        program
+            .evidence
+            .scenarios
+            .insert(producer.id.clone(), producer);
+
+        let mut dependent = program
+            .evidence
+            .scenarios
+            .remove("replay")
+            .expect("dependent scenario");
+        dependent.id = "a_dependent".into();
+        dependent.source.path = "a/dependent.uhura".into();
+        let ScenarioOrigin::Snapshot { reference } = &mut dependent.origin else {
+            panic!("dependent restores the producer pin");
+        };
+        reference.scenario = "z_producer".into();
+        dependent.steps.insert(
+            1,
+            EvidenceStep::ExpectSnapshot {
+                reference: EvidenceRef {
+                    scenario: "z_producer".into(),
+                    pin: "after_one".into(),
+                },
+                source: source("dependent.producer-comparison", 21),
+            },
+        );
+        program
+            .evidence
+            .scenarios
+            .insert(dependent.id.clone(), dependent);
+        program.freeze_program_hashes();
+
+        let report = program.run_evidence();
+        assert!(report.passed, "{:#?}", report.failures);
+        assert_eq!(
+            report
+                .scenarios
+                .iter()
+                .map(|scenario| scenario.scenario.as_str())
+                .collect::<Vec<_>>(),
+            ["z_producer", "a_dependent"],
+        );
+    }
+
+    #[test]
+    fn checkpoint_alias_dependencies_schedule_the_terminal_producer() {
+        let mut program = counter_program();
+        program.evidence.scenarios.remove("replay_again");
+        program.evidence.examples.clear();
+        program.evidence.example_metadata.clear();
+        program.evidence.example_sources.clear();
+        program.evidence.checkpoints.clear();
+        program.evidence.checkpoint_sources.clear();
+
+        let mut producer = program
+            .evidence
+            .scenarios
+            .remove("canonical")
+            .expect("producer scenario");
+        producer.id = "z_producer".into();
+        program
+            .evidence
+            .scenarios
+            .insert(producer.id.clone(), producer);
+
+        program.evidence.checkpoints.insert(
+            "saved".into(),
+            EvidenceRef {
+                scenario: "z_producer".into(),
+                pin: "after_one".into(),
+            },
+        );
+        program.evidence.checkpoints.insert(
+            "comparison".into(),
+            EvidenceRef {
+                scenario: "saved".into(),
+                pin: String::new(),
+            },
+        );
+
+        let mut dependent = program
+            .evidence
+            .scenarios
+            .remove("replay")
+            .expect("dependent scenario");
+        dependent.id = "a_dependent".into();
+        dependent.origin = ScenarioOrigin::Snapshot {
+            reference: EvidenceRef {
+                scenario: "saved".into(),
+                pin: String::new(),
+            },
+        };
+        dependent.steps.insert(
+            1,
+            EvidenceStep::ExpectSnapshot {
+                reference: EvidenceRef {
+                    scenario: String::new(),
+                    pin: "comparison".into(),
+                },
+                source: source("dependent.alias-comparison", 25),
+            },
+        );
+        program
+            .evidence
+            .scenarios
+            .insert(dependent.id.clone(), dependent);
+        program.freeze_program_hashes();
+
+        let report = program.run_evidence();
+        assert!(report.passed, "{:#?}", report.failures);
+        assert_eq!(
+            report
+                .scenarios
+                .iter()
+                .map(|scenario| scenario.scenario.as_str())
+                .collect::<Vec<_>>(),
+            ["z_producer", "a_dependent"],
+        );
+    }
+
+    #[test]
+    fn checkpoint_alias_dependency_resolution_is_cycle_safe() {
+        let checkpoints = BTreeMap::from([
+            (
+                "first".into(),
+                EvidenceRef {
+                    scenario: "second".into(),
+                    pin: String::new(),
+                },
+            ),
+            (
+                "second".into(),
+                EvidenceRef {
+                    scenario: String::new(),
+                    pin: "first".into(),
+                },
+            ),
+        ]);
+        assert_eq!(
+            terminal_reference_scenario(
+                &EvidenceRef {
+                    scenario: "first".into(),
+                    pin: String::new(),
+                },
+                &checkpoints,
+            ),
+            None,
+        );
+
+        let mut program = counter_program();
+        program.evidence.checkpoints = checkpoints;
+        program
+            .evidence
+            .scenarios
+            .get_mut("replay")
+            .expect("dependent scenario")
+            .origin = ScenarioOrigin::Snapshot {
+            reference: EvidenceRef {
+                scenario: "first".into(),
+                pin: String::new(),
+            },
+        };
+        let ordered = || {
+            semantic_scenario_order(&program.evidence.scenarios, &program.evidence.checkpoints)
+                .into_iter()
+                .map(|(_, scenario)| scenario.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ordered(), ordered());
+        assert_eq!(ordered().len(), program.evidence.scenarios.len());
     }
 
     #[test]

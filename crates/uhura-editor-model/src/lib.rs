@@ -17,8 +17,9 @@ use uhura_core::{
 
 pub use uhura_core::{ProjectionSources, RenderDocument};
 
-pub const EDITOR_STATE_PROTOCOL: &str = "uhura-editor-state/4";
-pub const MACHINE_SIDECAR_PROTOCOL: &str = "uhura-machine-inspection/0";
+pub const EDITOR_STATE_PROTOCOL: &str = "uhura-editor-state/5";
+pub const MACHINE_SIDECAR_PROTOCOL: &str = "uhura-machine-inspection/1";
+pub const UHURA_EVIDENCE_SUMMARY_PROTOCOL: &str = "uhura-evidence-summary/0";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorState {
@@ -646,11 +647,15 @@ impl MachineSidecar {
             ("interactionGraph", &self.interaction_graph),
             ("graphSources", &self.graph_sources),
             ("checkpoints", &self.checkpoints),
-            ("evidence", &self.evidence),
         ] {
             if !value.is_object() {
                 return invalid(format!("machine sidecar {field} must be an object"));
             }
+        }
+        if !valid_evidence_summary(&self.evidence) {
+            return invalid(format!(
+                "machine sidecar evidence must be `{UHURA_EVIDENCE_SUMMARY_PROTOCOL}`"
+            ));
         }
         if let Some(deployment) = &self.deployment {
             for (field, value) in [
@@ -699,6 +704,55 @@ impl MachineSidecar {
             "evidence": self.evidence,
         })
     }
+}
+
+fn valid_evidence_summary(value: &serde_json::Value) -> bool {
+    let Some(summary) = value.as_object() else {
+        return false;
+    };
+    if summary.len() != 5
+        || summary.get("protocol").and_then(serde_json::Value::as_str)
+            != Some(UHURA_EVIDENCE_SUMMARY_PROTOCOL)
+    {
+        return false;
+    }
+    let Some(passed) = summary.get("passed").and_then(serde_json::Value::as_bool) else {
+        return false;
+    };
+    let Some(failure_count) = summary
+        .get("failureCount")
+        .and_then(serde_json::Value::as_u64)
+    else {
+        return false;
+    };
+    let Some(scenarios) = summary
+        .get("scenarios")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+    let Some(artifacts) = summary
+        .get("artifacts")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+    let scenario_count = |name| scenarios.get(name).and_then(serde_json::Value::as_u64);
+    let (Some(total), Some(passed_scenarios), Some(failed_scenarios)) = (
+        scenario_count("total"),
+        scenario_count("passed"),
+        scenario_count("failed"),
+    ) else {
+        return false;
+    };
+    let artifact_count = |name| artifacts.get(name).and_then(serde_json::Value::as_u64);
+    scenarios.len() == 3
+        && artifacts.len() == 3
+        && passed_scenarios.checked_add(failed_scenarios) == Some(total)
+        && artifact_count("pins").is_some()
+        && artifact_count("examples").is_some()
+        && artifact_count("checkpoints").is_some()
+        && passed == (failure_count == 0)
 }
 
 impl ProjectionContent {
@@ -885,9 +939,6 @@ impl PreviewEvidence {
                 "registration": self.registration_source,
                 "pin": self.pin_source,
             },
-            "observation": self.observation,
-            "snapshot": self.snapshot,
-            "scenarioReceiptLog": self.scenario_receipt_log,
         })
     }
 }
@@ -1512,7 +1563,13 @@ mod tests {
                 interaction_graph: serde_json::json!({}),
                 graph_sources: serde_json::json!({}),
                 checkpoints: serde_json::json!({}),
-                evidence: serde_json::json!({}),
+                evidence: serde_json::json!({
+                    "protocol": UHURA_EVIDENCE_SUMMARY_PROTOCOL,
+                    "passed": true,
+                    "scenarios": { "total": 0, "passed": 0, "failed": 0 },
+                    "artifacts": { "pins": 0, "examples": 0, "checkpoints": 0 },
+                    "failureCount": 0,
+                }),
             })
         };
         assert!(sidecar(MACHINE_PROGRAM_ID_PROTOCOL).validate().is_ok());
@@ -1520,5 +1577,8 @@ mod tests {
         let mut invalid_provenance = sidecar(MACHINE_PROGRAM_ID_PROTOCOL);
         invalid_provenance.provenance.protocol = "uhura-provenance/retired".into();
         assert!(invalid_provenance.validate().is_err());
+        let mut raw_evidence = sidecar(MACHINE_PROGRAM_ID_PROTOCOL);
+        raw_evidence.evidence = serde_json::json!({ "scenarios": [] });
+        assert!(raw_evidence.validate().is_err());
     }
 }

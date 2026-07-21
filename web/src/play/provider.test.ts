@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { hash } from "../protocol/machine.js";
 import {
@@ -7,7 +7,12 @@ import {
   type PortAdapter,
   type PortRequirement,
 } from "./adapter-host.js";
-import { admitProviderAdapterSet } from "./provider.js";
+import {
+  admitProviderAdapterSet,
+  loadUhuraAdapterProvider,
+  type UhuraAdapterProvider,
+  type UhuraProviderHost,
+} from "./provider.js";
 
 const requirement: PortRequirement = {
   port: "authority",
@@ -71,5 +76,47 @@ describe("application adapter provider admission", () => {
       [requirement],
       "provider.js",
     )).toThrow(/incompatible provider adapter/u);
+  });
+
+  it("disposes a provider that resolves after its Play route is aborted", async () => {
+    let beginFactory = (): void => undefined;
+    const factoryStarted = new Promise<void>((resolve) => {
+      beginFactory = resolve;
+    });
+    let resolveProvider = (_provider: UhuraAdapterProvider): void => undefined;
+    const providerReady = new Promise<UhuraAdapterProvider>((resolve) => {
+      resolveProvider = resolve;
+    });
+    const globals = globalThis as typeof globalThis & {
+      __uhuraDeferredProvider?: () => Promise<UhuraAdapterProvider>;
+    };
+    globals.__uhuraDeferredProvider = () => {
+      beginFactory();
+      return providerReady;
+    };
+    const module = `data:text/javascript,${
+      encodeURIComponent(
+        "export const createUhuraAdapters = () => globalThis.__uhuraDeferredProvider();",
+      )
+    }`;
+    const abort = new AbortController();
+    const disposed = vi.fn<() => void>();
+
+    try {
+      const pending = loadUhuraAdapterProvider(
+        module,
+        {},
+        { signal: abort.signal } as UhuraProviderHost,
+        [],
+      );
+      await factoryStarted;
+      abort.abort();
+      resolveProvider({ adapters: [], dispose: disposed });
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(disposed).toHaveBeenCalledOnce();
+    } finally {
+      delete globals.__uhuraDeferredProvider;
+    }
   });
 });

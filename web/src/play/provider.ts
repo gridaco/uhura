@@ -84,6 +84,17 @@ const providerInstance = (
   return candidate as UhuraAdapterProvider;
 };
 
+const providerAbort = (): DOMException =>
+  new DOMException("Uhura adapter provider loading was aborted", "AbortError");
+
+const disposeProvider = (provider: UhuraAdapterProvider): void => {
+  try {
+    provider.dispose?.();
+  } catch (error) {
+    console.error("uhura provider cleanup failed", error);
+  }
+};
+
 export const admitProviderAdapterSet = (
   provider: UhuraAdapterProvider,
   requirements: readonly PortRequirement[],
@@ -156,14 +167,25 @@ export async function loadUhuraAdapterProvider(
   host: UhuraProviderHost,
   requirements: readonly PortRequirement[],
 ): Promise<UhuraAdapterProvider> {
+  if (host.signal.aborted) throw providerAbort();
   const loaded = providerModule(
     await import(/* @vite-ignore */ module) as unknown,
     module,
   );
+  if (host.signal.aborted) throw providerAbort();
   const provider = providerInstance(
     await loaded.createUhuraAdapters(config, host),
     module,
   );
-  admitProviderAdapterSet(provider, requirements, module);
+  if (host.signal.aborted) {
+    disposeProvider(provider);
+    throw providerAbort();
+  }
+  try {
+    admitProviderAdapterSet(provider, requirements, module);
+  } catch (error) {
+    disposeProvider(provider);
+    throw error;
+  }
   return provider;
 }

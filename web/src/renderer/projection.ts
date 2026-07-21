@@ -91,6 +91,12 @@ export interface ProjectionRenderer {
 
 export interface ProjectionRendererOptions {
   readonly root: HTMLElement;
+  /**
+   * Optional sibling host for machine-owned surfaces. Play supplies the
+   * prototype frame's surface layer so dialogs remain inside that frame;
+   * static Editor previews keep surfaces in the projection tree.
+   */
+  readonly surfaceRoot?: HTMLElement;
   readonly dispatch: (
     binding: string,
     projectionRevision: NaturalText | undefined,
@@ -109,11 +115,12 @@ export interface ProjectionRendererOptions {
    */
   readonly observeElement?: (key: string, element: HTMLElement) => void;
   /**
-   * Live Play projects keyed surfaces into the browser top layer. Static
-   * Editor examples keep them open in-card without acquiring document-wide
-   * modality.
+   * Live Play makes the page inert while a contained surface is present.
+   * Static Editor examples keep surfaces open in-card without interaction.
    */
   readonly modalSurfaces?: boolean;
+  /** Maps checked application URLs onto the browser host's route topology. */
+  readonly resolveLinkHref?: (href: string) => string;
 }
 
 const record = (
@@ -425,6 +432,7 @@ const physicalAttributes = (
   node: ElementNode,
   mode: RendererMode,
   listItem: boolean,
+  options: ProjectionRendererOptions,
 ): readonly RenderAttribute[] => {
   const adapter = primitiveAdapter(node.element);
   let projected: readonly RenderAttribute[];
@@ -444,6 +452,27 @@ const physicalAttributes = (
       : [...node.attributes];
   } else {
     projected = adapter.attributes(node, mode);
+  }
+  if (node.element === "a") {
+    const disabled = projected.find((candidate) => candidate.name === "disabled");
+    projected = projected
+      .filter((candidate) => candidate.name !== "disabled")
+      .map((candidate) =>
+        candidate.name === "href"
+          && typeof candidate.value === "string"
+          && options.resolveLinkHref
+          ? {
+            ...candidate,
+            value: options.resolveLinkHref(candidate.value),
+          }
+          : candidate
+      );
+    if (disabled !== undefined) {
+      projected = [
+        ...projected,
+        { name: "aria-disabled", value: disabled.value },
+      ];
+    }
   }
   if (!listItem) return projected;
   const semanticRole = projected.find((candidate) => candidate.name === "role");
@@ -615,6 +644,14 @@ const applyEvents = (
     },
     eventAllowed,
   }) ?? []);
+  if (element.localName === "a") {
+    attach([{
+      type: "click",
+      listener: (event) => {
+        if (!eventAllowed(element)) event.preventDefault();
+      },
+    }]);
+  }
   listeners.set(element, next);
 };
 
@@ -645,6 +682,79 @@ const disposeRealizationTree = (root: HTMLElement): void => {
   if (semantic !== undefined) primitiveAdapter(semantic)?.dispose?.(root);
 };
 
+const focusWithoutScroll = (element: HTMLElement | null): void => {
+  if (!element || typeof element.focus !== "function") return;
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    element.focus();
+  }
+};
+
+const focusableSurfaceChildren = (surface: HTMLElement): HTMLElement[] => {
+  if (typeof surface.querySelectorAll !== "function") return [];
+  return Array.from(surface.querySelectorAll<HTMLElement>(
+    "[autofocus], a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])",
+  )).filter((candidate) =>
+    !candidate.inert
+    && !candidate.hasAttribute("disabled")
+    && candidate.getAttribute("aria-disabled") !== "true"
+    && candidate.getAttribute("aria-hidden") !== "true"
+  );
+};
+
+const focusInitialSurface = (surface: HTMLElement): void => {
+  const focusable = focusableSurfaceChildren(surface);
+  focusWithoutScroll(
+    focusable.find((candidate) => candidate.hasAttribute("autofocus"))
+      ?? focusable[0]
+      ?? surface,
+  );
+};
+
+const restoreSurfaceFocus = (
+  document: Document,
+  candidate: HTMLElement | null | undefined,
+): void => {
+  if (!candidate || candidate.ownerDocument !== document) return;
+  const connected = (candidate as HTMLElement & { isConnected?: boolean })
+    .isConnected;
+  if (connected === false || (connected === undefined && !candidate.parentNode)) {
+    return;
+  }
+  focusWithoutScroll(candidate);
+};
+
+const trapSurfaceKeyboard = (
+  surface: HTMLElement,
+  event: KeyboardEvent,
+): void => {
+  if (event.key === "Escape") {
+    // Surface lifetime is machine-owned. The current Surface contract has no
+    // implicit dismissal event, so browser Escape cannot invent one.
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = focusableSurfaceChildren(surface);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    focusWithoutScroll(surface);
+    return;
+  }
+  const active = surface.ownerDocument.activeElement;
+  const first = focusable[0]!;
+  const last = focusable[focusable.length - 1]!;
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    focusWithoutScroll(last);
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    focusWithoutScroll(first);
+  }
+};
+
 const elementFor = (
   document: Document,
   node: ElementNode,
@@ -658,11 +768,14 @@ const elementFor = (
   semanticElements.set(element, node.element);
   if (node.surface && element.localName === "dialog") {
     element.classList.add("uhura-surface");
-    element.setAttribute("aria-modal", "true");
+    element.setAttribute("tabindex", "-1");
     element.addEventListener("cancel", (event) => {
       // Surface lifetime belongs to the machine. Browser Escape cannot close
       // it behind the Uhura machine's committed observation.
       event.preventDefault();
+    });
+    element.addEventListener("keydown", (event) => {
+      trapSurfaceKeyboard(element, event);
     });
   }
   return element;
@@ -671,7 +784,6 @@ const elementFor = (
 const reconcile = (
   parent: HTMLElement,
   nodes: readonly RenderNode[],
-  modalSurfaces: boolean,
   observed: Array<{ readonly key: string; readonly element: HTMLElement }>,
   options: ProjectionRendererOptions,
   mode: RendererMode,
@@ -720,7 +832,7 @@ const reconcile = (
       }
       applyAttributes(
         child,
-        physicalAttributes(node, mode, parentIsList),
+        physicalAttributes(node, mode, parentIsList, options),
       );
       const adapter = primitiveAdapter(node.element);
       const context = primitiveContext(options, mode, projectionRevision);
@@ -740,7 +852,6 @@ const reconcile = (
         reconcile(
           hosts.children,
           node.children,
-          modalSurfaces,
           observed,
           options,
           mode,
@@ -759,18 +870,10 @@ const reconcile = (
       && child.localName === "dialog"
       && !(child as HTMLDialogElement).open
     ) {
-      const dialog = child as HTMLDialogElement;
-      if (modalSurfaces && typeof dialog.showModal === "function") {
-        try {
-          dialog.showModal();
-        } catch {
-          // DOM implementations without a top layer still preserve the
-          // visible, semantically owned surface.
-          child.setAttribute("open", "");
-        }
-      } else {
-        child.setAttribute("open", "");
-      }
+      // Uhura is commonly hosted inside a scaled prototype frame. Native
+      // showModal() would escape that frame into the document-wide top layer
+      // and make the Editor/Play chrome inert, so the host owns containment.
+      child.setAttribute("open", "");
     }
     cursor = child.nextSibling;
   }
@@ -788,12 +891,73 @@ const reconcile = (
   }
 };
 
+interface ProjectionLayers {
+  readonly content: readonly RenderNode[];
+  readonly surfaces: readonly ElementNode[];
+}
+
+const projectionLayers = (
+  nodes: readonly RenderNode[],
+): ProjectionLayers => {
+  const content: RenderNode[] = [];
+  const surfaces: ElementNode[] = [];
+  for (const node of nodes) {
+    if (node.kind === "text") {
+      content.push(node);
+      continue;
+    }
+    const children = projectionLayers(node.children);
+    const projected = children.content === node.children
+      ? node
+      : { ...node, children: children.content };
+    if (node.surface) surfaces.push(projected);
+    else content.push(projected);
+    surfaces.push(...children.surfaces);
+  }
+  // Ordinary projections are the common path. Preserve the checked document
+  // slice itself when no Surface was extracted so every element remains
+  // zero-copy across this host-only layering pass.
+  return surfaces.length === 0 ? { content: nodes, surfaces } : { content, surfaces };
+};
+
 export const createProjectionRenderer = (
   options: ProjectionRendererOptions,
 ): ProjectionRenderer => {
   let disposed = false;
   const mode = options.mode ?? "play";
+  const modalSurfaces = options.modalSurfaces ?? true;
+  let surfaceKeys: string[] = [];
+  const surfaceReturnFocus = new Map<string, HTMLElement | null>();
+  let activeTopSurface: HTMLElement | null = null;
+  const focusDocument = options.root.ownerDocument;
+  const containSurfaceFocus = (event: FocusEvent): void => {
+    if (
+      !activeTopSurface
+      || !isHtmlElement(event.target)
+      || activeTopSurface.contains(event.target)
+    ) {
+      return;
+    }
+    // The renderer owns only the application page and its surface stack.
+    // Play chrome (toolbar, debugger, restart controls) is a host sibling and
+    // must remain operable while an application modal is open.
+    if (
+      options.root.contains(event.target)
+      || options.surfaceRoot?.contains(event.target)
+    ) {
+      focusInitialSurface(activeTopSurface);
+    }
+  };
+  const ownsFocusListener =
+    mode === "play"
+    && modalSurfaces
+    && options.surfaceRoot !== undefined
+    && typeof focusDocument.addEventListener === "function";
+  if (ownsFocusListener) {
+    focusDocument.addEventListener("focusin", containSurfaceFocus);
+  }
   options.root.inert = mode === "editor";
+  if (options.surfaceRoot) options.surfaceRoot.inert = mode === "editor";
   return {
     render(document, projectionRevision): void {
       if (disposed) throw new Error("Uhura renderer is disposed");
@@ -804,15 +968,125 @@ export const createProjectionRenderer = (
         readonly key: string;
         readonly element: HTMLElement;
       }> = [];
+      const layers = options.surfaceRoot
+        ? projectionLayers(document.nodes)
+        : { content: document.nodes, surfaces: [] };
+      const nextSurfaceKeys = layers.surfaces.map((surface) => surface.key);
+      const previousSurfaceCount = surfaceKeys.length;
+      let sharedSurfacePrefix = 0;
+      while (
+        sharedSurfacePrefix < surfaceKeys.length
+        && sharedSurfacePrefix < nextSurfaceKeys.length
+        && surfaceKeys[sharedSurfacePrefix]
+          === nextSurfaceKeys[sharedSurfacePrefix]
+      ) {
+        sharedSurfacePrefix += 1;
+      }
+      const activeBefore = isHtmlElement(options.root.ownerDocument.activeElement)
+        ? options.root.ownerDocument.activeElement
+        : null;
+      const activeBeforeWasInApplication =
+        activeBefore !== null
+        && (
+          options.root.contains(activeBefore)
+          || options.surfaceRoot?.contains(activeBefore) === true
+        );
+      const preserveHostFocus =
+        previousSurfaceCount > 0
+        && activeBefore !== null
+        && !activeBeforeWasInApplication;
+      const restoreAfter = surfaceKeys.length > sharedSurfacePrefix
+        ? surfaceReturnFocus.get(surfaceKeys[sharedSurfacePrefix]!) ?? null
+        : activeBefore;
+      for (const key of surfaceKeys.slice(sharedSurfacePrefix)) {
+        surfaceReturnFocus.delete(key);
+      }
       reconcile(
         options.root,
-        document.nodes,
-        options.modalSurfaces ?? true,
+        layers.content,
         observed,
         options,
         mode,
         projectionRevision,
       );
+      if (options.surfaceRoot) {
+        reconcile(
+          options.surfaceRoot,
+          layers.surfaces,
+          observed,
+          options,
+          mode,
+          projectionRevision,
+        );
+        const stacked = Array.from(options.surfaceRoot.children)
+          .filter(isHtmlElement);
+        activeTopSurface =
+          modalSurfaces ? stacked.at(-1) ?? null : null;
+        for (const [index, surface] of stacked.entries()) {
+          const inactive = modalSurfaces && index !== stacked.length - 1;
+          surface.inert = inactive;
+          if (inactive) surface.setAttribute("aria-hidden", "true");
+          else surface.removeAttribute("aria-hidden");
+        }
+        options.root.inert =
+          mode === "editor" || (modalSurfaces && stacked.length > 0);
+        for (
+          let index = sharedSurfacePrefix;
+          index < nextSurfaceKeys.length;
+          index += 1
+        ) {
+          const key = nextSurfaceKeys[index]!;
+          surfaceReturnFocus.set(
+            key,
+            index === sharedSurfacePrefix
+              ? restoreAfter
+              : stacked[index - 1] ?? null,
+          );
+        }
+        const previousTop = surfaceKeys.at(-1);
+        const nextTop = nextSurfaceKeys.at(-1);
+        surfaceKeys = nextSurfaceKeys;
+        if (
+          previousTop !== nextTop
+          && mode === "play"
+          && modalSurfaces
+          && !preserveHostFocus
+        ) {
+          if (
+            nextSurfaceKeys.length === sharedSurfacePrefix
+            && nextSurfaceKeys.length < previousSurfaceCount
+          ) {
+            restoreSurfaceFocus(options.root.ownerDocument, restoreAfter);
+          } else if (nextTop) {
+            focusInitialSurface(stacked.at(-1)!);
+          } else {
+            restoreSurfaceFocus(options.root.ownerDocument, restoreAfter);
+          }
+        }
+        const topSurface = stacked.at(-1);
+        const activeAfter = options.root.ownerDocument.activeElement;
+        const activeAfterIsInApplication =
+          isHtmlElement(activeAfter)
+          && (
+            options.root.contains(activeAfter)
+            || options.surfaceRoot.contains(activeAfter)
+          );
+        if (
+          topSurface
+          && mode === "play"
+          && modalSurfaces
+          && (!isHtmlElement(activeAfter) || !topSurface.contains(activeAfter))
+          && (
+            !isHtmlElement(activeAfter)
+            || activeAfterIsInApplication
+            // A keyed update can detach the focused application descendant
+            // while the document still reports it as active.
+            || (activeAfter === activeBefore && activeBeforeWasInApplication)
+          )
+        ) {
+          focusInitialSurface(topSurface);
+        }
+      }
       for (const realization of observed) {
         options.observeElement?.(realization.key, realization.element);
       }
@@ -822,6 +1096,18 @@ export const createProjectionRenderer = (
       disposed = true;
       disposeRealizationTree(options.root);
       options.root.replaceChildren();
+      options.root.inert = false;
+      surfaceKeys = [];
+      surfaceReturnFocus.clear();
+      activeTopSurface = null;
+      if (ownsFocusListener) {
+        focusDocument.removeEventListener("focusin", containSurfaceFocus);
+      }
+      if (options.surfaceRoot) {
+        disposeRealizationTree(options.surfaceRoot);
+        options.surfaceRoot.replaceChildren();
+        options.surfaceRoot.inert = false;
+      }
     },
   };
 };

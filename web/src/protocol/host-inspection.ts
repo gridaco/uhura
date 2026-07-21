@@ -13,8 +13,16 @@ import {
   decodeSemanticProvenance,
   type SemanticProvenance,
 } from "./provenance.js";
+import {
+  decodeEvidenceSummary,
+  type EvidenceSummary,
+} from "./evidence-summary.js";
 
-export const UHURA_HOST_INSPECTION_PROTOCOL = "uhura-inspection/0" as const;
+export {
+  UHURA_EVIDENCE_SUMMARY_PROTOCOL,
+} from "./evidence-summary.js";
+
+export const UHURA_HOST_INSPECTION_PROTOCOL = "uhura-inspection/1" as const;
 
 export interface InspectionSource {
   readonly file: number;
@@ -37,7 +45,7 @@ export interface HostInspection {
   readonly provenance: SemanticProvenance;
   readonly interactionGraph: InteractionGraph;
   readonly graphSources: InteractionGraphSources;
-  readonly evidence: unknown;
+  readonly evidence: EvidenceSummary;
 }
 
 const object = (
@@ -211,6 +219,10 @@ export const decodeHostInspection = (
       );
     }
   }
+  const evidence = decodeEvidenceSummary(
+    source["evidence"],
+    `${context}.evidence`,
+  );
   return {
     protocol: UHURA_HOST_INSPECTION_PROTOCOL,
     identityProtocol,
@@ -229,6 +241,6 @@ export const decodeHostInspection = (
     provenance,
     interactionGraph: interaction.graph,
     graphSources: interaction.sources,
-    evidence: source["evidence"],
+    evidence,
   };
 };

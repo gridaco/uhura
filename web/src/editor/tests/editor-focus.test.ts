@@ -55,7 +55,7 @@ const render = (previews: EditorPreview[]): EditorRender => ({
 });
 
 const state = (value: EditorRender | null): EditorState => ({
-  protocol: "uhura-editor-state/4",
+  protocol: "uhura-editor-state/5",
   sourceRevision: 1,
   diagnostics: null,
   render: value,

@@ -11,6 +11,7 @@ import {
 import type {
   ProjectionRendererOptions,
   RenderDocument,
+  RenderNode,
 } from "./projection.js";
 import {
   PRIMITIVE_ADAPTER_IDS,
@@ -176,6 +177,10 @@ class FakeElement extends FakeNode {
     return this.childNodes[0] ?? null;
   }
 
+  get isConnected(): boolean {
+    return this.parentNode !== null;
+  }
+
   get lastElementChild(): FakeElement | null {
     return this.children.at(-1) ?? null;
   }
@@ -244,6 +249,24 @@ class FakeElement extends FakeNode {
       || this.children.some((child) => child.contains(candidate));
   }
 
+  querySelectorAll<T extends Element>(_selector: string): T[] {
+    const matches = (candidate: FakeElement): boolean =>
+      candidate.hasAttribute("autofocus")
+      || (candidate.localName === "a" && candidate.hasAttribute("href"))
+      || ["button", "input", "select", "textarea"].includes(candidate.localName)
+      || (
+        candidate.hasAttribute("tabindex")
+        && candidate.getAttribute("tabindex") !== "-1"
+      );
+    const output: FakeElement[] = [];
+    const visit = (candidate: FakeElement): void => {
+      if (matches(candidate)) output.push(candidate);
+      for (const child of candidate.children) visit(child);
+    };
+    for (const child of this.children) visit(child);
+    return output as unknown as T[];
+  }
+
   addEventListener(type: string, listener: EventListener): void {
     let eventListeners = this.#listeners.get(type);
     if (!eventListeners) {
@@ -274,6 +297,13 @@ class FakeElement extends FakeNode {
 
   click(): void {
     this.emit("click");
+  }
+
+  focus(): void {
+    this.ownerDocument.activeElement = this;
+    this.ownerDocument.emitEvent("focusin", {
+      target: this,
+    } as unknown as FocusEvent);
   }
 }
 
@@ -309,6 +339,8 @@ class FakeIntersectionObserver {
 class FakeDocument {
   readonly defaultView: Window | undefined;
   readonly intersections: FakeIntersectionObserver[] = [];
+  activeElement: FakeElement | null = null;
+  readonly #listeners = new Map<string, Set<EventListener>>();
   readonly #animationFrames = new Map<number, FrameRequestCallback>();
   #nextAnimationFrame = 1;
 
@@ -351,6 +383,25 @@ class FakeDocument {
 
   createTextNode(value: string): FakeText {
     return new FakeText(this, value);
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    let listeners = this.#listeners.get(type);
+    if (!listeners) {
+      listeners = new Set();
+      this.#listeners.set(type, listeners);
+    }
+    listeners.add(listener);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+
+  emitEvent(type: string, event: Event): void {
+    for (const listener of this.#listeners.get(type) ?? []) {
+      listener.call(this as unknown as EventTarget, event);
+    }
   }
 
   flushAnimationFrames(): void {
@@ -808,6 +859,186 @@ describe("Uhura semantic primitive projection", () => {
     }]));
     expect(element.children[0]).toBe(surface);
     expect(surface.className).toBe("uhura-surface policy-sheet");
+  });
+
+  it("keeps machine surfaces in a dedicated host and inerts only the page", () => {
+    const { root, element, document } = fakeRoot();
+    const surfaceElement = document.createElement("div");
+    const host = document.createElement("div");
+    const hostControl = document.createElement("button");
+    host.append(element, surfaceElement, hostControl);
+    const dispatch = vi.fn<ProjectionRendererOptions["dispatch"]>();
+    const renderer = createProjectionRenderer({
+      root,
+      surfaceRoot: surfaceElement as unknown as HTMLElement,
+      dispatch,
+      mode: "play",
+    });
+    const nested = {
+      ...elementNode("nested-surface", "dialog", [], [
+        elementNode(
+          "nested-action",
+          "button",
+          [],
+          [{ kind: "text", key: "nested-label", text: "Nested" }],
+          [{ event: "press", binding: "nested-press" }],
+        ),
+        elementNode(
+          "nested-secondary",
+          "button",
+          [],
+          [{ kind: "text", key: "secondary-label", text: "Secondary" }],
+        ),
+      ]),
+      surface: true,
+    };
+    const surface = (children: readonly RenderNode[] = []) => ({
+      ...elementNode("surface", "dialog", [], [
+        { kind: "text" as const, key: "surface-label", text: "Policy" },
+        ...children,
+      ]),
+      surface: true,
+    });
+    const page = (children: readonly RenderNode[] = []): RenderDocument =>
+      renderNodes([
+        elementNode("page", "main", [], [
+          elementNode(
+            "opener",
+            "button",
+            [],
+            [{ kind: "text", key: "opener-label", text: "Open" }],
+          ),
+          ...children,
+        ]),
+      ]);
+
+    renderer.render(page());
+    const opener = element.children[0]!.children[0]!;
+    opener.focus();
+    renderer.render(page([surface()]));
+    expect(document.activeElement).toBe(surfaceElement.children[0]);
+
+    renderer.render(page([surface([nested])]));
+
+    expect(element.children.map((child) => child.localName)).toEqual(["main"]);
+    expect(surfaceElement.children.map((child) => child.localName))
+      .toEqual(["dialog", "dialog"]);
+    expect(surfaceElement.children[0]?.textContent).toBe("Policy");
+    expect(surfaceElement.children[0]?.hasAttribute("open")).toBe(true);
+    expect(surfaceElement.children[0]?.inert).toBe(true);
+    expect(surfaceElement.children[0]?.getAttribute("aria-hidden")).toBe("true");
+    expect(surfaceElement.children[1]?.inert).toBe(false);
+    expect(surfaceElement.children[1]?.getAttribute("aria-hidden")).toBeNull();
+    expect(surfaceElement.children[1]?.getAttribute("aria-modal")).toBeNull();
+    expect(surfaceElement.children[1]?.getAttribute("tabindex")).toBe("-1");
+    expect(element.inert).toBe(true);
+    const nestedDialog = surfaceElement.children[1]!;
+    const nestedAction = nestedDialog.children[0]!;
+    const nestedSecondary = nestedDialog.children[1]!;
+    expect(document.activeElement).toBe(nestedAction);
+    hostControl.focus();
+    expect(document.activeElement).toBe(hostControl);
+    renderer.render(page([surface([nested])]));
+    expect(document.activeElement).toBe(hostControl);
+    opener.focus();
+    expect(document.activeElement).toBe(nestedAction);
+    nestedSecondary.focus();
+    const tab = {
+      key: "Tab",
+      shiftKey: false,
+      preventDefault: vi.fn<() => void>(),
+      stopPropagation: vi.fn<() => void>(),
+    } as unknown as KeyboardEvent;
+    nestedDialog.emitEvent("keydown", tab);
+    expect(tab.preventDefault).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(nestedAction);
+    const reverseTab = {
+      key: "Tab",
+      shiftKey: true,
+      preventDefault: vi.fn<() => void>(),
+      stopPropagation: vi.fn<() => void>(),
+    } as unknown as KeyboardEvent;
+    nestedDialog.emitEvent("keydown", reverseTab);
+    expect(reverseTab.preventDefault).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(nestedSecondary);
+    renderer.render(page([surface([{
+      ...nested,
+      children: nested.children.slice(0, 1),
+    }])]));
+    expect(surfaceElement.children[1]).toBe(nestedDialog);
+    expect(document.activeElement).toBe(nestedAction);
+    const escape = {
+      key: "Escape",
+      preventDefault: vi.fn<() => void>(),
+      stopPropagation: vi.fn<() => void>(),
+    } as unknown as KeyboardEvent;
+    nestedDialog.emitEvent("keydown", escape);
+    expect(escape.preventDefault).toHaveBeenCalledOnce();
+    expect(escape.stopPropagation).toHaveBeenCalledOnce();
+    expect(dispatch).not.toHaveBeenCalled();
+    surfaceElement.click();
+    expect(dispatch).not.toHaveBeenCalled();
+    nestedAction.click();
+    expect(dispatch).toHaveBeenCalledWith(
+      "nested-press",
+      undefined,
+      { $: "record", fields: [] },
+    );
+
+    renderer.render(page([surface()]));
+    expect(document.activeElement).toBe(surfaceElement.children[0]);
+    renderer.render(page());
+    expect(surfaceElement.children).toHaveLength(0);
+    expect(element.inert).toBe(false);
+    expect(document.activeElement).toBe(opener);
+
+    renderer.render(page([surface()]));
+    const firstLifetime = surfaceElement.children[0]!;
+    hostControl.focus();
+    renderer.render(page([{
+      ...surface(),
+      key: "replacement-surface",
+    }]));
+    expect(surfaceElement.children[0]).not.toBe(firstLifetime);
+    expect(document.activeElement).toBe(hostControl);
+    renderer.render(page());
+    expect(surfaceElement.children).toHaveLength(0);
+    expect(element.inert).toBe(false);
+    expect(document.activeElement).toBe(hostControl);
+  });
+
+  it("maps checked Link hrefs and enforces disabled without an event handler", () => {
+    const { root, element } = fakeRoot();
+    const renderer = createProjectionRenderer({
+      root,
+      dispatch: vi.fn<ProjectionRendererOptions["dispatch"]>(),
+      mode: "play",
+      resolveLinkHref: (href) => href === "/" ? "/play" : href,
+    });
+    const link = (disabled: boolean): RenderDocument => renderNodes([
+      elementNode("home", "a", [
+        { name: "href", value: "/" },
+        { name: "disabled", value: disabled },
+      ], [{ kind: "text", key: "home-label", text: "Home" }]),
+    ]);
+
+    renderer.render(link(true));
+    const anchor = element.children[0]!;
+    expect(anchor.getAttribute("href")).toBe("/play");
+    expect(anchor.getAttribute("aria-disabled")).toBe("true");
+    expect(anchor.hasAttribute("disabled")).toBe(false);
+    const disabledClick = {
+      preventDefault: vi.fn<() => void>(),
+    } as unknown as Event;
+    anchor.emitEvent("click", disabledClick);
+    expect(disabledClick.preventDefault).toHaveBeenCalledOnce();
+
+    renderer.render(link(false));
+    const enabledClick = {
+      preventDefault: vi.fn<() => void>(),
+    } as unknown as Event;
+    anchor.emitEvent("click", enabledClick);
+    expect(enabledClick.preventDefault).not.toHaveBeenCalled();
   });
 
   it("owns list-item roles at a neutral view boundary", () => {

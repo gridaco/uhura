@@ -3265,13 +3265,9 @@ fn collect_statement_references(statements: &[Statement], references: &mut Seman
                 }
             }
             Statement::While {
-                condition,
-                decreases,
-                body,
-                ..
+                condition, body, ..
             } => {
                 collect_expression_references(condition, references);
-                collect_expression_references(decreases, references);
                 collect_statement_references(body, references);
             }
             Statement::Delegate { args, .. } => {
@@ -3680,7 +3676,6 @@ pub enum Statement {
     },
     While {
         condition: Expr,
-        decreases: Expr,
         body: Vec<Statement>,
         /// Compiler-private total `Option<T>` local selected by a lexical
         /// update return in this loop. Absent for ordinary loops.

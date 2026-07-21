@@ -14,7 +14,7 @@ import {
 } from "../machine-inspection.js";
 
 const machine = (overrides: Partial<EditorMachine> = {}): EditorMachine => ({
-  protocol: "uhura-machine-inspection/0",
+  protocol: "uhura-machine-inspection/1",
   identityProtocol: "uhura-machine-identity/0",
   deployment: {
     entry: "return-desk",
@@ -40,12 +40,11 @@ const machine = (overrides: Partial<EditorMachine> = {}): EditorMachine => ({
     reviewed: { protocol: "uhura-checkpoint/0" },
   },
   evidence: {
+    protocol: "uhura-evidence-summary/0",
     passed: false,
-    scenarios: [
-      { scenario: "ready", status: "passed" },
-      { scenario: "rejected", status: "failed" },
-    ],
-    failures: [{ code: "expectation-failed" }],
+    scenarios: { total: 2, passed: 1, failed: 1 },
+    artifacts: { pins: 2, examples: 2, checkpoints: 2 },
+    failureCount: 1,
   },
   ...overrides,
 });
@@ -67,16 +66,22 @@ test("summarizes deployment identity and bounded machine evidence counts", () =>
   ]);
 });
 
-test("keeps absent deployment and unstable evidence payloads honest", () => {
+test("keeps absent deployment and an empty evidence summary honest", () => {
   const summary = inspectMachine(machine({
     deployment: null,
     sources: [],
     checkpoints: {},
-    evidence: {},
+    evidence: {
+      protocol: "uhura-evidence-summary/0",
+      passed: true,
+      scenarios: { total: 0, passed: 0, failed: 0 },
+      artifacts: { pins: 0, examples: 0, checkpoints: 0 },
+      failureCount: 0,
+    },
   }));
 
   assert.deepEqual(summary.identity, []);
-  assert.equal(summary.status, "unknown");
+  assert.equal(summary.status, "passed");
   assert.equal(summary.passes, 0);
   assert.equal(summary.failures, 0);
   assert.equal(summary.checkpoints, 0);
@@ -169,9 +174,6 @@ test("exposes only the selected preview evidence identity", () => {
       registration: { path: "conformance.uhura" },
       pin: { path: "conformance.uhura" },
     },
-    observation: { result: "accepted" },
-    snapshot: { state: "complete" },
-    scenarioReceiptLog: { receipts: [{ sequence: "1" }] },
   };
 
   assert.deepEqual(previewEvidenceRows(evidence), [
@@ -213,9 +215,6 @@ test("renders semantic definition-list rows without serializing raw evidence", (
       pin: "loaded",
       sourceId: "evidence/ready/loaded",
       sources: { registration: {}, pin: {} },
-      observation: { private: "large observation" },
-      snapshot: { private: "large snapshot" },
-      scenarioReceiptLog: { private: "large receipt log" },
     }),
   );
 

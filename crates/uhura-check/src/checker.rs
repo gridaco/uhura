@@ -7033,7 +7033,7 @@ impl Checker<'_> {
                 }
                 let (condition, loop_scope) =
                     self.lower_condition(module, scope, condition, ExprMode::Reaction);
-                let (decreases, ty) = self.lower_expr(
+                let (_, ty) = self.lower_expr(
                     module,
                     &loop_scope,
                     decreases,
@@ -7048,7 +7048,7 @@ impl Checker<'_> {
                         codes::TERMINATION,
                         "uhura/loop-measure",
                         "`decreases` must be an exact non-negative integer expression",
-                        decreases_source_span(&decreases, statement.span),
+                        decreases.span,
                     ));
                 }
                 let body =
@@ -7063,7 +7063,6 @@ impl Checker<'_> {
                 );
                 let mut output = vec![Statement::While {
                     condition,
-                    decreases,
                     body,
                     break_local,
                     source: source(module, statement.span),
@@ -7922,10 +7921,6 @@ fn statements_terminal(statements: &[Statement]) -> bool {
         | Statement::Set { .. }
         | Statement::Emit { .. } => false,
     })
-}
-
-fn decreases_source_span(_expression: &IrExpr, fallback: ast::SourceSpan) -> ast::SourceSpan {
-    fallback
 }
 
 fn port_ty(ty: &TypeRef) -> uhura_port::TypeRef {
@@ -9195,6 +9190,12 @@ fn patterns_overlap(left: &IrPattern, right: &IrPattern) -> bool {
 }
 
 fn loop_decrease_proven(condition: &ast::Expr, decreases: &ast::Expr, body: &ast::Block) -> bool {
+    // `v04_updates::lower_project` runs before the checker-neutral bridge and
+    // transitively inlines every non-terminal update. Consequently this body
+    // contains the complete write effect of every update call that can reach a
+    // loop back edge: `assignments_to` sees a called update's writes exactly as
+    // it sees authored assignments. Outcome-valued transitions are terminal
+    // control and therefore do not contribute a back edge.
     if let Some(sequence) = sequence_size_measure(decreases) {
         let tails = uncons_tail_bindings(condition, &sequence);
         if tails.is_empty() {

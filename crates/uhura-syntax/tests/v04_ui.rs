@@ -102,6 +102,132 @@ fn canonical_ui_format_is_parseable_and_idempotent() {
 }
 
 #[test]
+fn literal_right_brace_in_element_text_survives_parse_and_format() {
+    let source = r#"use uhura::ui;
+
+ui AppWeb for App(view) {
+  <p>Use } to close a block.</p>
+}
+"#;
+    let parsed = parse_clean("literal-right-brace.uhura", source);
+    let DeclarationKind::Ui(ui) = &parsed.module.declarations[0].kind else {
+        panic!("expected UI declaration");
+    };
+    let UiNodeKind::Element(paragraph) = &ui.body.nodes[0].kind else {
+        panic!("expected paragraph");
+    };
+    assert!(matches!(
+        &paragraph.children[0].kind,
+        UiNodeKind::Text(text) if text.raw == "Use } to close a block."
+    ));
+
+    let formatted = format(&parsed.module).expect("literal text formats");
+    assert!(formatted.contains("<p>Use } to close a block.</p>"));
+    let reparsed = parse_clean("literal-right-brace.formatted.uhura", &formatted);
+    assert_eq!(
+        format(&reparsed.module).expect("formatted literal text remains formatable"),
+        formatted,
+    );
+}
+
+#[test]
+fn root_right_brace_requires_an_interpolation_escape() {
+    let ambiguous = r#"use uhura::ui;
+
+ui AppWeb for App(view) {
+  literal } text
+  <p>After the brace</p>
+}
+"#;
+    let rejected = parse(identity("root-right-brace.uhura"), ambiguous);
+    assert_eq!(rejected.source_from_tokens(), ambiguous);
+    assert!(
+        rejected.diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == ParseDiagnosticKind::InvalidUi
+                && diagnostic.message.contains("render a literal right brace")
+                && diagnostic.message.contains("as `{\"}\"}`")
+        }),
+        "{:#?}",
+        rejected.diagnostics,
+    );
+
+    let escaped = r#"use uhura::ui;
+
+ui AppWeb for App(view) {
+  literal {"}"} text
+  <p>After the brace</p>
+}
+"#;
+    let parsed = parse_clean("escaped-root-right-brace.uhura", escaped);
+    let formatted = format(&parsed.module).expect("escaped root text formats");
+    assert!(formatted.contains("{\"}\"}"));
+    let reparsed = parse_clean("escaped-root-right-brace.formatted.uhura", &formatted);
+    assert_eq!(
+        format(&reparsed.module).expect("escaped root text remains formatable"),
+        formatted,
+    );
+}
+
+#[test]
+fn event_comparisons_do_not_close_the_surrounding_ui_tag() {
+    let source = r#"use uhura::ui;
+
+ui AppWeb for App(view) {
+  <button on press -> Submit(view.count > 0) />
+}
+
+const AFTER: Text = "}";
+"#;
+    let parsed = parse_clean("event-comparison.uhura", source);
+    assert_eq!(parsed.module.declarations.len(), 2);
+    let DeclarationKind::Ui(ui) = &parsed.module.declarations[0].kind else {
+        panic!("expected UI declaration");
+    };
+    let UiNodeKind::Element(button) = &ui.body.nodes[0].kind else {
+        panic!("expected button");
+    };
+    assert!(matches!(
+        &button.attributes[0],
+        UiAttribute::Event { event, .. } if event.text == "press"
+    ));
+}
+
+#[test]
+fn declaration_typos_after_ui_keep_the_declaration_fix() {
+    let source = r#"use uhura::ui;
+
+ui AppWeb for App(view) {
+  <p>Hello</p>
+}
+
+machin Other<T> {};
+"#;
+    let parsed = parse(identity("declaration-typo-after-ui.uhura"), source);
+    let diagnostic = parsed
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.kind == ParseDiagnosticKind::InvalidDeclaration
+                && diagnostic
+                    .message
+                    .contains("unknown module declaration `machin`")
+        })
+        .expect("declaration typo remains the primary diagnostic");
+    assert_eq!(
+        diagnostic.fix.as_ref().map(|fix| fix.insert.as_str()),
+        Some("machine"),
+    );
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("literal right brace")),
+        "{:#?}",
+        parsed.diagnostics,
+    );
+}
+
+#[test]
 fn ui_and_for_remain_contextual_outside_the_declaration_shape() {
     let source = r#"fn ui(value: Bool) -> Bool {
   value

@@ -367,6 +367,176 @@ fn logical_module_and_physical_path_do_not_enter_public_or_program_identity() {
 }
 
 #[test]
+fn loop_decrease_proofs_are_erased_from_machine_program_identity() {
+    let source = |measure: &str| {
+        format!(
+            r#"pub machine Countdown {{
+  events {{
+    Run,
+  }}
+
+  outcomes {{
+    commit Done,
+  }}
+
+  state {{
+    first: Seq<Nat> = [2, 1],
+    second: Seq<Nat> = [2, 1],
+  }}
+
+  observe {{
+    first,
+    second,
+  }}
+
+  on Run {{
+    while first.uncons() is Some(Uncons {{ head: first_head, tail: first_tail }})
+      && second.uncons() is Some(Uncons {{ head: second_head, tail: second_tail }})
+    decreases({measure}.len()) {{
+      first = first_tail;
+      second = second_tail;
+    }}
+    Done
+  }}
+}}
+"#
+        )
+    };
+    let check = |measure| {
+        let source = source(measure);
+        let parsed = parse(
+            SourceIdentity::new(
+                21,
+                "example.proof-erasure@1",
+                "countdown",
+                "countdown.uhura",
+            ),
+            &source,
+        );
+        assert!(parsed.is_ok(), "{:#?}", parsed.diagnostics);
+        let output = check_v04_module(&parsed.module);
+        assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+        output.program.expect("proved countdown loop")
+    };
+
+    let first = check("first");
+    let second = check("second");
+    assert_eq!(
+        first.machine_program.program_hashes, second.machine_program.program_hashes,
+        "a compile-time termination witness must not enter executable identity",
+    );
+}
+
+#[test]
+fn loop_decrease_rejects_transitive_update_writes_to_the_measure() {
+    let source = r#"pub machine Countdown {
+  events {
+    Run,
+  }
+
+  outcomes {
+    commit Done,
+  }
+
+  state {
+    remaining: Seq<Nat> = [2, 1],
+  }
+
+  observe {
+    remaining,
+  }
+
+  update restore_one() {
+    remaining = [1];
+  }
+
+  update restore_transitively() {
+    restore_one();
+  }
+
+  on Run {
+    while remaining.uncons() is Some(Uncons { head: _, tail })
+    decreases(remaining.len()) {
+      remaining = tail;
+      restore_transitively();
+    }
+    Done
+  }
+}
+"#;
+    let parsed = parse(
+        SourceIdentity::new(22, "example.loop-effects@1", "countdown", "countdown.uhura"),
+        source,
+    );
+    assert!(parsed.is_ok(), "{:#?}", parsed.diagnostics);
+    let output = check_v04_module(&parsed.module);
+    assert!(output.program.is_none());
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.rule == "uhura/unproved-loop-decrease"),
+        "check diagnostics:\n{:#?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn loop_decrease_preserves_transitively_disjoint_update_calls() {
+    let source = r#"pub machine Countdown {
+  events {
+    Run,
+  }
+
+  outcomes {
+    commit Done,
+  }
+
+  state {
+    remaining: Seq<Nat> = [2, 1],
+    observed_step: Bool = false,
+  }
+
+  observe {
+    remaining,
+    observed_step,
+  }
+
+  update record_step() {
+    observed_step = true;
+  }
+
+  update record_step_transitively() {
+    record_step();
+  }
+
+  on Run {
+    while remaining.uncons() is Some(Uncons { head: _, tail })
+    decreases(remaining.len()) {
+      remaining = tail;
+      record_step_transitively();
+    }
+    Done
+  }
+}
+"#;
+    let parsed = parse(
+        SourceIdentity::new(23, "example.loop-effects@1", "countdown", "countdown.uhura"),
+        source,
+    );
+    assert!(parsed.is_ok(), "{:#?}", parsed.diagnostics);
+    let output = check_v04_module(&parsed.module);
+    assert!(
+        output.diagnostics.is_empty(),
+        "check diagnostics:\n{:#?}",
+        output.diagnostics
+    );
+    output
+        .program
+        .expect("proved loop with disjoint update effects");
+}
+
+#[test]
 fn whitespace_and_comment_motion_do_not_enter_l0_l2_program_identity() {
     let baseline = checked_programs();
     let moved_source = format!(
