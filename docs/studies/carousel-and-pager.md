@@ -60,19 +60,24 @@ On `feature/uhura-0.4-language-rewrite`:
 - The web renderer projects `pager` to `role="group"` plus an `aria-label`
   taken from `label`, builds a scroll-snap track
   (`scroll-snap-type: x mandatory`; each child `flex: 0 0 100%;
-  scroll-snap-align: center`), and derives the active dot purely inside the
+  scroll-snap-align: center`), and derives the active page purely inside the
   renderer as `round(track.scrollLeft / track.clientWidth)`
-  (`web/src/renderer/projection.ts`). Dots are non-interactive. The
-  projection test names this division of labor directly: it "owns pager
-  children through a stable track and synchronizes dot mechanics"
-  (`web/src/renderer/projection.test.ts`).
-- No code under `web/` dispatches `page-change`. The event has therefore been
-  declared but bound by zero renderers in both v0 and 0.4.
+  (`web/src/renderer/primitives/pager.ts` after the primitive-adapter
+  refactor). Dots are non-interactive and marked `aria-hidden`.
+- As of the current PR head (`7f69fc0`), the renderer **does** dispatch
+  `page-change`: the pager primitive fires it whenever its rounded active
+  index changes during scrolling. The catalog types the payload as `Unit`
+  (`crates/uhura-check/src/ui_catalog/elements.rs`), so the machine is told
+  *that* the page changed but not *which* page is current. Earlier states of
+  both v0 and 0.4 declared the event while binding it in zero renderers; no
+  example binds it yet on either branch.
 
-So today's pager is a purely renderer-owned scroller whose current page is
-invisible to the machine, while the checked vocabulary carries an event that
-promises the opposite. That contradiction is the concrete cost of leaving the
-contract unsettled.
+So the notification half of the contract has just been realized, but the
+position half remains renderer-owned: with a `Unit` payload there is still no
+way for a program to know or control which page is current, and dispatch
+tracks rounded-index crossings during the gesture rather than resting snap
+positions. Which page the machine may own, and in what vocabulary, is exactly
+the question this candidate leaves open.
 
 ### 2.3 ARIA APG carousel pattern
 
@@ -218,8 +223,9 @@ Checkable today, with no new machinery:
 - required `label` (already enforced in the 0.4 checker);
 - `page-change` bound ⇒ payload type matches the declared machine input;
 - **the reverse obligation**: an element must not declare an event in the
-  checked vocabulary that no conforming renderer realizes — the current
-  pager would fail this, which is the point.
+  checked vocabulary that no conforming renderer realizes — the v0 pager
+  fails this, and the 0.4 primitive-adapter refactor now satisfies it, which
+  demonstrates the obligation is realistic to enforce.
 
 Checkable once controlled current-page exists:
 
@@ -235,9 +241,10 @@ without extension.
 ## 7. Renderer and boundary effects
 
 - **Web realization** keeps exactly what it has: scroll-snap track, physics,
-  in-flight offset, dot synchronization. It gains one duty (dispatch
-  `PageChanged` on rest) and one option (drive position from a controlled
-  `current`).
+  in-flight offset, dot synchronization, and the newly wired unit
+  `page-change`. The candidate changes the dispatch to a position-bearing
+  payload emitted at rest, and adds the option of driving position from a
+  controlled `current`.
 - **Static preview pose.** The candidate landscape's framing lists "a
   scrolled viewport" as a pose problem. A key-based `current` doubles as the
   declarative pose: a static preview of a pager at slide `k` is well-defined
