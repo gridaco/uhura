@@ -12,12 +12,14 @@ export type StructureConnectorKind = "navigate" | "present";
 export interface StructureDefinition {
   kind: string;
   subject: string;
+  /** Exact preview selected when the graph models a logical route state. */
+  previewId?: string;
 }
 
 /** One deduplicated structural edge between two board frames. */
 export interface StructureConnector {
   kind: StructureConnectorKind;
-  /** The `page:<name>`/`surface:<name>` graph node behind each endpoint. */
+  /** Definition or `preview:<preview-id>` graph identity behind each endpoint. */
   sourceNode: string;
   targetNode: string;
   sourceId: string;
@@ -29,9 +31,9 @@ export interface StructureConnector {
 }
 
 /**
- * Maps `page:<name>`/`surface:<name>` graph nodes to the first board frame
- * that previews the same definition. Command and dynamic nodes, and
- * definitions without previews, have no frame and draw nothing.
+ * Maps definition nodes to their first board frame and preview-backed logical
+ * route nodes to their exact frame. Command and dynamic nodes, and graph
+ * identities without previews, have no frame and draw nothing.
  */
 const frameIdByGraphNode = (
   previews: readonly EditorPreview[],
@@ -42,9 +44,14 @@ const frameIdByGraphNode = (
     if (kind !== "page" && kind !== "surface") continue;
     const nodeId = `${kind}:${preview.identity.subject}`;
     if (!frames.has(nodeId)) frames.set(nodeId, preview.id);
+    frames.set(logicalRoutePreviewNode(preview.id), preview.id);
   }
   return frames;
 };
+
+/** Graph identity for one preview-backed logical route state. */
+export const logicalRoutePreviewNode = (previewId: string): string =>
+  `preview:${previewId}`;
 
 const compareStrings = (left: readonly string[], right: readonly string[]): number => {
   for (let index = 0; index < left.length; index += 1) {
@@ -107,19 +114,25 @@ export const buildStructureConnectors = (
 export const structureDefinitionNode = (definition: StructureDefinition): string =>
   `${definition.kind}:${definition.subject}`;
 
+const structureSelectionNodes = (definition: StructureDefinition): Set<string> =>
+  new Set([
+    structureDefinitionNode(definition),
+    ...(definition.previewId ? [logicalRoutePreviewNode(definition.previewId)] : []),
+  ]);
+
 /**
  * Figma-style selection scoping: with no selection nothing structural draws;
- * with a selected preview only the connectors entering or leaving that
- * preview's definition (kind + subject) remain.
+ * with a selected preview only the connectors entering or leaving either its
+ * definition (kind + subject) or its exact preview-backed route state remain.
  */
 export const visibleStructureConnectors = <T extends StructureConnector>(
   connectors: readonly T[],
   selected: StructureDefinition | null,
 ): T[] => {
   if (!selected) return [];
-  const node = structureDefinitionNode(selected);
+  const nodes = structureSelectionNodes(selected);
   return connectors.filter((connector) =>
-    connector.sourceNode === node || connector.targetNode === node);
+    nodes.has(connector.sourceNode) || nodes.has(connector.targetNode));
 };
 
 export type StructureConnectorDirection = "outgoing" | "incoming";
@@ -127,9 +140,11 @@ export type StructureConnectorDirection = "outgoing" | "incoming";
 /** The selected frame's edge a connector fans out on. */
 export type StructureEdgeSide = "right" | "left" | "bottom" | "top";
 
-/** The board frame the user actually clicked, plus its definition node. */
+/** The board frame the user actually clicked, plus its graph identities. */
 export interface StructureSelection {
   node: string;
+  /** Equivalent definition/logical-state nodes owned by this selection. */
+  aliases?: readonly string[];
   previewId: string;
 }
 
@@ -171,10 +186,11 @@ export const layoutStructureConnectors = <T extends StructureConnector>(
   connectors: readonly T[],
   selected: StructureSelection,
 ): PlacedStructureConnector<T>[] => {
+  const selectedNodes = new Set([selected.node, ...(selected.aliases ?? [])]);
   const classified = connectors
     .map((connector) => {
       const direction: StructureConnectorDirection =
-        connector.sourceNode === selected.node ? "outgoing" : "incoming";
+        selectedNodes.has(connector.sourceNode) ? "outgoing" : "incoming";
       const farId = direction === "outgoing" ? connector.targetId : connector.sourceId;
       const farNode = direction === "outgoing" ? connector.targetNode : connector.sourceNode;
       return {

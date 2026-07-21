@@ -1,0 +1,104 @@
+{
+  "id": "uhura-0.4-paper-acquisition/1",
+  "phase": "paper",
+  "candidate": "Uhura 0.4 Rust-shaped source",
+  "control": "Plain TypeScript pure reducer",
+  "commonPacketFiles": [
+    "common/semantic-overview.md"
+  ],
+  "taskFiles": [
+    "tasks/00-comprehension.md",
+    "tasks/01-l0-author.md",
+    "tasks/02-l1-transfer.md",
+    "tasks/03-l2-transfer.md",
+    "tasks/04-false-friends.md",
+    "tasks/05-a0-change-rehearsal.md"
+  ],
+  "responseFile": "common/response-format.md",
+  "arms": {
+    "rust": {
+      "label": "Rust-shaped Uhura 0.4",
+      "sourceExtension": ".uhura",
+      "teachingFiles": [
+        "arms/rust/reference.md",
+        "arms/rust/examples.uhura"
+      ],
+      "scaffoldFiles": [
+        "arms/rust/scaffolds/02-l1.uhura",
+        "arms/rust/scaffolds/03-l2.uhura",
+        "arms/rust/scaffolds/04-false-friends.md",
+        "arms/rust/scaffolds/05-a0.uhura"
+      ],
+      "requiredSubmissionFiles": [
+        "00-comprehension.json",
+        "01-l0.uhura",
+        "02-l1.uhura",
+        "03-l2.uhura",
+        "04-false-friends.json",
+        "05-a0.uhura"
+      ]
+    },
+    "typescript": {
+      "label": "Plain TypeScript control",
+      "sourceExtension": ".ts",
+      "teachingFiles": [
+        "arms/typescript/reference.md",
+        "arms/typescript/examples.ts"
+      ],
+      "scaffoldFiles": [
+        "arms/typescript/scaffolds/02-l1.ts",
+        "arms/typescript/scaffolds/03-l2.ts",
+        "arms/typescript/scaffolds/04-false-friends.md",
+        "arms/typescript/scaffolds/05-a0.ts"
+      ],
+      "requiredSubmissionFiles": [
+        "00-comprehension.json",
+        "01-l0.ts",
+        "02-l1.ts",
+        "03-l2.ts",
+        "04-false-friends.json",
+        "05-a0.ts"
+      ]
+    }
+  },
+  "budgets": {
+    "maxApproximateInputTokens": 24000,
+    "maxApproximateFirstOutputTokens": 9000,
+    "maxApproximateRepairOutputTokens": 9000,
+    "repairOpportunities": 1,
+    "externalTools": 0
+  },
+  "frozenSources": [
+    "../../../../../examples/programs/l0-counter/README.md",
+    "../../../../../examples/programs/l1-river-crossing/README.md",
+    "../../../../../examples/programs/l2-task-supervisor/README.md",
+    "../../../../../examples/applications/a0-return-desk/README.md"
+  ],
+  "typescriptBaseline": {
+    "source": "../../../../../examples/programs/baselines/typescript/baseline.ts",
+    "tests": "../../../../../examples/programs/baselines/typescript/baseline.test.ts",
+    "documentation": "../../../../../examples/programs/baselines/typescript/README.md"
+  },
+  "oracles": {
+    "comprehension": "oracles/comprehension.json",
+    "semanticRubric": "oracles/semantic-rubric.json",
+    "falseFriends": "oracles/false-friends.json"
+  },
+  "leakage": {
+    "scanCommonAndTeachingFiles": true,
+    "bannedCaseInsensitiveTerms": [
+      "boundedcounter",
+      "rivercrossing",
+      "tasksupervisor",
+      "return desk",
+      "wolf-with-goat",
+      "goat-with-cabbage"
+    ]
+  },
+  "submission": {
+    "metadataFile": "meta.json",
+    "firstDirectory": "first",
+    "repairDirectory": "repair",
+    "diagnosticsFile": "diagnostics.json"
+  }
+}

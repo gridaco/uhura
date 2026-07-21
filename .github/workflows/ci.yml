@@ -42,15 +42,17 @@ jobs:
         run: cargo test --locked --workspace --all-targets
       - name: CLI project gates
         run: |
-          cargo run --locked -p uhura-cli -- fmt --check examples/instagram/client
+          # Project-wide formatting remains gated on RFC 0003 comment
+          # attachment; the formatter refuses to erase the evidence catalogue's
+          # authored comments.
           cargo run --locked -p uhura-cli -- check examples/instagram/client --deny-warnings
-          cargo run --locked -p uhura-cli -- trace examples/instagram/client --script=demo > /dev/null
+          cargo run --locked -p uhura-cli -- trace examples/instagram/client --script=feed_like_refused_scenario --expanded > /dev/null
 
       - name: Check out Spock integration source
         uses: actions/checkout@v4
         with:
           repository: gridaco/spock
-          ref: 66edad443660361ec98414f212203868408dcdc5
+          ref: e99d1af1b045b7db744da77f1415b83b65064dc2
           path: .ci/spock
           submodules: false
           persist-credentials: false
@@ -200,7 +202,7 @@ jobs:
           import sys
 
           state = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          assert state["protocol"] == "uhura-editor-state/2"
+          assert state["protocol"] == "uhura-editor-state/5"
           assert isinstance(state["sourceRevision"], int)
           assert state["sourceRevision"] >= 1
           render = state["render"]
@@ -210,12 +212,18 @@ jobs:
           assert isinstance(render["authoring"]["targets"], list)
           assert render["authoring"]["targets"]
           assert isinstance(render["authoring"]["entries"], list)
-          assert render["authoring"]["entries"]
+          assert render["authoring"]["entries"] == []
           assert isinstance(render["groups"], list)
           assert render["groups"]
           assert all(isinstance(preview["documentation"], dict) for preview in render["previews"])
           assert all(isinstance(preview["provenance"]["occurrences"], list) for preview in render["previews"])
-          assert any(preview["documentation"]["declarationDocId"] for preview in render["previews"])
+          assert all(
+              preview["documentation"] == {
+                  "declarationDocId": None,
+                  "exampleDocId": None,
+              }
+              for preview in render["previews"]
+          )
           assert any(preview["provenance"]["occurrences"] for preview in render["previews"])
           PY
 

@@ -1,2 +1,0 @@
-error[UH5009 markup/a11y-alt]: `<img>`'s `decorative` alternative is a presence marker — write bare `decorative`
-  --> components/post-card.uhura:37:46

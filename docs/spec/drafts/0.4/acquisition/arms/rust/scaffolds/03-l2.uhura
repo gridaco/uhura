@@ -1,0 +1,45 @@
+key WorkId(Text);
+
+enum WorkPhase {
+  Queued,
+  Running {
+    attempt: Int,
+    progress: Ratio,
+  },
+  Succeeded,
+  Failed,
+  Cancelled,
+}
+
+struct Work {
+  started: Int,
+  phase: WorkPhase,
+}
+
+pub machine ProgressClassifier {
+  events {
+    Progress(work: WorkId, attempt: Int, value: BoundaryNumber),
+  }
+
+  outcomes {
+    commit Accepted,
+    abort Duplicate,
+    abort Stale,
+    abort Invalid,
+  }
+
+  state {
+    work: Map<WorkId, Work> = Map::empty(),
+  }
+
+  invariant work.values().all(|item| item.started >= 0);
+
+  observe {
+    work,
+  }
+
+  on Progress(id, attempt, value) {
+    // TRIAL-TODO: implement the complete declared precedence and update only
+    // accepted progress.
+  }
+}

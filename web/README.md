@@ -5,10 +5,12 @@ framework-free TypeScript application. Both render Uhura semantic nodes through
 the shared renderer in `src/renderer/`; policy keeps Editor previews inert and
 enables runtime delivery and browser effects only in Play.
 
-The native host remains authoritative for source observation, checking,
-evaluation, Editor-state publication, Play artifacts, providers, and runtime
-events. Browser code owns routing and presentation. It never parses Uhura
-source or reconstructs language semantics.
+The native host remains authoritative for coherent source observation,
+checking, evidence execution, Editor-state publication, deployment admission,
+and Play artifacts. In Play, the Wasm `Session` executes the same canonical
+Uhura engine used natively. Browser code owns routing mechanics, presentation,
+and the admitted adapter bridge; it never parses Uhura source or reconstructs
+language semantics.
 
 ## Install and check
 
@@ -24,10 +26,12 @@ production builds, and browser-unit tests.
 
 ## Development loop
 
-Build Wasm and start the native host from the Uhura repository root:
+Build Wasm and the browser application, then start the native host from the
+Uhura repository root:
 
 ```sh
 ./scripts/build-wasm.sh
+corepack pnpm@10.11.0 -C web build
 cargo run --locked -p uhura-cli -- editor examples/instagram/client --port 8787
 ```
 
@@ -63,7 +67,13 @@ The Wasm package remains external and is served below `/api/play/wasm/` rather
 than bundled by Vite.
 
 The native host serves the compiled application unchanged and provides SPA
-fallback for `/` and `/play`. Node and Vite are build-time dependencies only.
+fallback for `/` and `/play`. Play admits the complete browser-owned and
+application-owned adapter set against the exact port contract and instance
+hashes before any command leaves the machine. `web.history` is a built-in
+browser adapter; a configured provider module supplies typed application
+adapters through `createUhuraAdapters(config, host)`. Deliveries return through
+a deferred FIFO bridge and cannot synchronously re-enter a reaction. Node and
+Vite are build-time dependencies only.
 `../scripts/package.sh` builds the application, provider, Wasm, and release
 binary, then places the runtime web and Wasm assets beside the executable under
 `dist/uhura/` (or a supplied output directory).

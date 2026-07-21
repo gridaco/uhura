@@ -1,14 +1,16 @@
 # Uhura v0 widget draft
 
-- **Status:** Mixed implementation reference and design draft
-- **Scope:** v0 incubation only
+- **Status:** Historical mixed implementation reference and design draft
+- **Scope:** Retired v0 incubation only; not Uhura 0.4 behavior
 - **Lifetime:** Disposable with the v0 language draft
 - **Taxonomy:** [Stable widget taxonomy](../../README.md)
 - **Language model:** [v0 incubation language model](../../../spec/drafts/v0.md)
 
-This subtree records the exact capability names, current implementation, known
-defects, and proposed additions being explored for v0. It is deliberately not
-the permanent widget catalogue.
+This subtree records the exact capability names, implementation state, known
+defects, and proposed additions explored before the Uhura 0.4 replacement. It
+is deliberately neither the current 0.4 catalogue nor a permanent widget
+catalogue. Source links are historical provenance and may now point at
+replacement implementations.
 
 Entries may mix implemented and proposed material only when every claim is
 labelled. The entire subtree may be rewritten or deleted when v0 is replaced.
@@ -18,17 +20,17 @@ No later language generation inherits these names or contracts by default.
 
 | Entry | Facets | Availability | Decision | Implementation |
 |---|---|---|---|---|
-| [`<button>`](elements/button.md) | None | Built-in base catalogue during incubation | Control taxonomy and some state semantics unsettled | Checked action control and browser realization implemented; known composition and accessibility gaps documented |
-| [`<scroll>`](elements/scroll.md) | None | Built-in base catalogue during incubation | No accepted widget RFC | Element and Play behavior implemented; static preview pose proposed |
+| [`<button>`](elements/button.md) | None | Native element in the pre-0.4 checker | Control taxonomy and some state semantics unsettled | Historical checked action control and browser realization; known composition and accessibility gaps documented |
+| [`<scroll>`](elements/scroll.md) | None | Native element in the pre-0.4 checker | No accepted widget RFC | Historical element and Play behavior; static preview pose proposed |
 | [`<icon>`](elements/icon.md) | [Icon font](integrations/icon-font.md) | Built-in Lucide family and local families implemented | Font-only realization selected before v1; permanent resource model open | Checked token, strict WOFF2 pipeline, host resources, and browser realization implemented |
-| [`<img>`](elements/img.md) | None | Built-in base catalogue during incubation | Renamed from `<image>` in the v0 catalogue; no accepted widget RFC | Typed asset and accessibility contract plus browser Editor/Play realization implemented |
-| [`<view>`](elements/view.md) | None | Built-in base catalogue during incubation | Neutral container implemented; semantic role taxonomy unsettled | Checker/runtime/browser realization implemented; known ARIA defects documented |
+| [`<img>`](elements/img.md) | None | Native element in the pre-0.4 checker | Renamed from `<image>` during the v0 experiment; no accepted widget RFC | Historical typed asset, accessibility, Editor, and Play realization |
+| [`<view>`](elements/view.md) | None | Native element in the pre-0.4 checker | Neutral container implemented; semantic role taxonomy unsettled | Historical checker/runtime/browser realization; known ARIA defects documented |
 
 ## Integrations
 
 | Entry | Applies to | Decision | Implementation |
 |---|---|---|---|
-| [Icon font](integrations/icon-font.md) | [`<icon>`](elements/icon.md) | Sole icon-resource mechanism in the v0 incubation line | Built-in and local WOFF2 families implemented across checker, host, Editor, and Play |
+| [Icon font](integrations/icon-font.md) | [`<icon>`](elements/icon.md) | Sole icon-resource mechanism in the retired v0 incubation line | Historical built-in and local WOFF2 implementation across checker, host, Editor, and Play |
 
 Availability, decision status, implementation status, and version support are
 separate axes. A prototype may be implemented without being accepted, and an

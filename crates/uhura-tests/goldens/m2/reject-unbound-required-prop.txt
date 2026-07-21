@@ -1,2 +1,0 @@
-error[UH5004 markup/missing-required-prop]: `<notice-bar>` requires `text`
-  --> app/feed/page.uhura:195:5

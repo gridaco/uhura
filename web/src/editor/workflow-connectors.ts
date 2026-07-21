@@ -1,12 +1,12 @@
 import type { EditorPreview } from "./editor-state.js";
-import { directlyOpenedSurfaces, type MountedSurface } from "./surface-hierarchy.js";
+import { introducedSurfaces, type MountedSurface } from "./surface-hierarchy.js";
 
 export interface WorkflowConnector {
   groupId: string;
   sourceId: string;
   targetId: string;
   steps: string[];
-  openedSurfaces: MountedSurface[];
+  introducedSurfaces: MountedSurface[];
   lane: number;
   sourcePort: ConnectorPort;
   targetPort: ConnectorPort;
@@ -145,7 +145,7 @@ export const buildWorkflowConnectors = (
       sourceId,
       targetId: preview.id,
       steps: [...preview.replaySteps],
-      openedSurfaces: directlyOpenedSurfaces(preview),
+      introducedSurfaces: introducedSurfaces(preview, previews),
       lane: 0,
       sourcePort: { slot: 0, count: 1 },
       targetPort: { slot: 0, count: 1 },
@@ -210,26 +210,26 @@ export const routeWorkflowConnector = (
 
 export const workflowConnectorLabel = (
   steps: readonly string[],
-  openedSurfaces: readonly Pick<MountedSurface, "definition">[] = [],
+  surfaces: readonly Pick<MountedSurface, "definition">[] = [],
 ): string => {
   const replay = steps.length === 0
     ? "derived"
     : steps.length === 1
       ? steps[0]!
       : `${steps[0]} +${steps.length - 1}`;
-  if (openedSurfaces.length === 0) return replay;
-  return `${replay} · opens ${openedSurfaces.map((surface) => surface.definition).join(", ")}`;
+  if (surfaces.length === 0) return replay;
+  return `${replay} · introduces ${surfaces.map((surface) => surface.definition).join(", ")}`;
 };
 
 export const workflowConnectorDescription = (
-  connector: Pick<WorkflowConnector, "steps" | "openedSurfaces">,
+  connector: Pick<WorkflowConnector, "steps" | "introducedSurfaces">,
 ): string => {
   const replay = connector.steps.length === 0
     ? "derived example"
     : connector.steps.join(" → ");
-  if (connector.openedSurfaces.length === 0) return replay;
-  const children = connector.openedSurfaces
+  if (connector.introducedSurfaces.length === 0) return replay;
+  const children = connector.introducedSurfaces
     .map((surface) => `${surface.modality} ${surface.definition}`)
     .join(", ");
-  return `${replay}; opens child ${children}`;
+  return `${replay}; projection introduces ${children}`;
 };

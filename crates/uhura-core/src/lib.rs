@@ -1,17 +1,62 @@
-//! uhura-core: the checked IR ("uhura-ir/0", module `ir`), the semantic view
-//! protocol ("uhura-view/0", module `view`), and the machine — step-u and
-//! eval_view. Pure and I/O-free by construction: the dependency closure is
-//! exactly {uhura-base, uhura-port}, enforced by uhura-tests/tests/purity.rs
-//! (design §7, §8.1, §12.1). No clocks, randomness, floats, or HashMap.
+//! Uhura's machine-first semantic core.
+//!
+//! The core is pure and I/O-free. Checked source lowers to an aggregate
+//! [`ir::Program`] containing an owned [`ir::MachineProgram`], and
+//! [`runtime::Instance`] is the single reference execution model used by
+//! native and Wasm consumers.
 #![deny(clippy::float_arithmetic)]
 
-pub mod decode;
-pub mod eval;
-pub mod event;
-pub mod inspect;
+pub mod codec;
+pub mod evidence;
+pub mod graph;
 pub mod ir;
-pub mod state;
-pub mod step;
-pub mod template;
-pub mod trace;
-pub mod view;
+pub mod provenance;
+pub mod render;
+pub mod route;
+pub mod runtime;
+pub mod typed;
+pub mod value;
+
+pub use evidence::{
+    EVIDENCE_REPORT_PROTOCOL, EvidenceArtifacts, EvidenceCheckpointArtifact,
+    EvidenceExampleArtifact, EvidenceFailure, EvidenceFailureCode, EvidencePinArtifact,
+    EvidenceReport, EvidenceRunner, EvidenceSnapshot, FixtureSnapshot, ScenarioReport,
+    ScenarioStatus,
+};
+pub use graph::{
+    INTERACTION_GRAPH_PROTOCOL, INTERACTION_GRAPH_PROVENANCE_PROTOCOL, InteractionGraph,
+    InteractionGraphArtifacts, InteractionGraphEdge, InteractionGraphEdgeKind,
+    InteractionGraphEdgeProvenance, InteractionGraphNode, InteractionGraphNodeKind,
+    InteractionGraphNodeProvenance, InteractionGraphProvenance, build_interaction_graph,
+    build_interaction_graph_artifacts, interaction_node_id,
+};
+pub use ir::{
+    BinaryOp, CommandDef, ConstructorDef, DEPLOYMENT_ID_PROTOCOL, DeploymentContentIdentity,
+    DeploymentIdentityMaterial, DeploymentPortBinding, DeploymentPresentationIdentity,
+    EVIDENCE_ID_PROTOCOL, EvidenceExampleMetadata, EvidencePresentationKind, EvidenceRef,
+    EvidenceStep, EvidenceSuite, Expr, Function, Handler, IR_PROTOCOL, LANGUAGE,
+    MACHINE_PROGRAM_ID_PROTOCOL, MACHINE_UI_INTERFACE_ID_PROTOCOL, Machine, MachineProgram,
+    MatchArm, OutcomeDef, OutcomePolicy, PRESENTATION_ID_PROTOCOL, Pattern, Presentation, Program,
+    Scenario, ScenarioOrigin, SiteIdentityFrame, Statement, TypeDef, TypeRef, UiAttribute,
+    UiAttributeValue, UiCase, UiNode, UnaryOp, deployment_hash, deployment_identity_bytes,
+};
+pub use provenance::{
+    AUTHORED_INTERACTION_TOPOLOGY_PROTOCOL, AuthoredInteractionEdge, AuthoredInteractionNode,
+    AuthoredInteractionTopology, NODE_ID_PROTOCOL, PROVENANCE_PROTOCOL, Provenance,
+    ProvenanceOccurrence, ProvenanceSelector, ProvenanceSource, SOURCE_REVISION_ID_PROTOCOL,
+    merge_authored_interaction_topology, semantic_node_id, source_revision_id,
+};
+pub use render::{
+    EventBinding, PROJECTION_SOURCES_PROTOCOL, Projection, ProjectionSources, RenderAttribute,
+    RenderAttributeValue, RenderDocument, RenderError, RenderEvent, RenderNode, VIEW_PROTOCOL,
+};
+pub use route::RouteRuntimeError;
+pub use runtime::{
+    AdmissionError, CHECKPOINT_PROTOCOL, Checkpoint, GENESIS_RECEIPT_PROTOCOL, GenesisReceipt,
+    INGRESS_RECORD_PROTOCOL, INLINE_UPDATE_JOIN_LOCAL_PREFIX, INLINE_UPDATE_LOOP_EXIT_LOCAL_PREFIX,
+    IngressAttempt, IngressError, IngressRecord, IngressRejectionKind, Instance, InstanceLifecycle,
+    PURE_CONTINUATION_LOCAL_PREFIX, ProgramFault, REACTION_RECEIPT_PROTOCOL, ReactionReceipt,
+    ReactionResolution, RestoreError, RuntimeError, Step, SubmissionError,
+};
+pub use typed::{ValueTypeError, canonical_type_identity_bytes};
+pub use value::{BoundaryNumber, Decimal, DecimalError, IntegerKind, Value, ValueError};

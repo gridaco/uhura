@@ -68,12 +68,12 @@ problem, not a general escape-hatch design.
 
 ### 2.1 Typed service ports
 
-The Instagram client declares closed projection, command, refusal, and data
-contracts in files such as
-[`feed.port.toml`](../../examples/instagram/client/ports/feed.port.toml).
-Uhura source imports selected items with `use port`; Core emits commands and
-consumes declared provider updates and outcomes rather than performing network
-or database work.
+The Instagram machine imports closed, typed port contracts in
+[`machine.uhura`](../../examples/instagram/client/machine.uhura).
+[`host.toml`](../../examples/instagram/client/host.toml) then binds its
+`router`, `authority`, and `mutations` ports to named host capabilities.
+The machine emits typed commands and consumes later typed deliveries rather
+than performing network, database, or browser work.
 
 This demonstrates a contract-first external authority boundary. It does not
 demonstrate synchronous foreign computation, custom visual integration, or a
@@ -82,24 +82,35 @@ general host capability model.
 ### 2.2 An application-owned JavaScript provider
 
 The current
-[`uhura.toml`](../../examples/instagram/client/uhura.toml) selects an
+[`host.toml`](../../examples/instagram/client/host.toml) selects an
 application-owned JavaScript provider module for Play. Its checked-in
 [`spock.ts`](../../examples/instagram/client/providers/spock.ts) implementation
-uses browser and Spock APIs while speaking the provider envelope expected by
-Uhura.
+exports `createUhuraAdapters(config, host)` and returns adapters for the exact
+admitted `authority` and `mutations` port instances. It uses browser and Spock
+APIs without defining another machine or provider-event language.
 
-Uhura's envelope parsing and projection application validate portions of the
-wire shape and declared contract, but they do not prove the provider's
-JavaScript behavior, termination, authority use, or semantic fidelity. The
-module is therefore an existing unchecked adapter seam, not evidence that
-arbitrary JavaScript belongs inside `.uhura` source.
+Before any command leaves the machine, the browser matches the complete adapter
+set against the adapter identities, port names, contract hashes, and
+contract-instance hashes published by the checked deployment. Browser-owned
+and provider-owned sets are disjoint and must cover the configured ports
+exactly; there is no fallback or ownership substitution. This admission and
+the typed value codec do not prove the provider's JavaScript behavior,
+termination, authority use, or semantic fidelity. The module is therefore an
+existing unchecked adapter seam, not evidence that arbitrary JavaScript
+belongs inside `.uhura` source.
 
 ### 2.3 Narrow host capabilities
 
-The Play provider receives a host-owned file picker and cancellation signal.
-The browser `File` stays outside Core; declared identifiers and serializable
-metadata cross the port boundary. This is useful evidence that an opaque host
-value need not become an Uhura value.
+The browser supplies the standard `web.history` adapter only for a Router port
+explicitly assigned that identity. A Router assigned to `app.provider` remains
+provider-owned and receives no synthesized browser adapter. Route encoding and
+decoding stay inside the checked Wasm session; the built-in adapter only
+observes and applies browser history. The application provider receives an
+abort signal plus a host API exposing only its admitted `app.provider` ports,
+checked route codecs, navigation, and file selection, and it may return an
+asset resolver alongside its typed adapters. Opaque browser values can remain
+outside Core while declared identifiers and serializable values cross the
+boundary.
 
 It also exposes an important pressure: some browser capabilities require work
 to begin in the originating user-activation stack. A design that assumes every
@@ -108,22 +119,23 @@ test that assumption.
 
 ### 2.4 Platform intents and renderer implementations
 
-Core currently emits a small fixed set of typed platform intents. Browser
-rendering realizes the checked catalog, but element implementations are
-hard-coded rather than application-bound. A catalog element accepted by the
-checker but unknown to the browser renderer falls back to an unsupported
-realization; an element absent from the catalog is rejected during checking.
-There is no user-supplied JavaScript element binding today.
+The checker currently admits a fixed set of native elements plus explicitly
+imported checked UI declarations. Browser rendering realizes those elements
+through the shared projection renderer. There is no user-supplied JavaScript
+element binding today.
 
 Service effects and hosted visual controls therefore must not be treated as
 the same solved problem.
 
 ### 2.5 Fixtures, replay, and static examples
 
-Deterministic fixture scripts can satisfy the port contracts without loading
-the Play provider. Pinned examples bind frozen state and data; derived examples
-replay declared events into a frozen semantic result. Neither executes
-interactive foreign behavior.
+The source-authored
+[`evidence.uhura`](../../examples/instagram/client/evidence.uhura) binds sealed
+implementations of the same port contracts, starts or restores scenarios,
+delivers typed inputs, records expected commands, and publishes named pins,
+checkpoints, and examples. `uhura check`, `uhura trace`, and Editor all use
+that one evidence runner; there is no external fixture-script runtime. Static
+examples do not execute interactive foreign behavior.
 
 That is a valuable precedent for substitutes and recordings. It does not yet
 decide whether every foreign binding requires a fixture, fallback, snapshot,

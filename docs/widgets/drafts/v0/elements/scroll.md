@@ -1,24 +1,26 @@
 # `<scroll>`
 
-- **Status:** Implemented element; static preview pose proposed
+- **Status:** Historical snapshot of an implemented element; static preview pose was proposed
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Built-in base catalog; currently project-pinned during incubation
-- **Decision:** Current spike design; no accepted widget RFC
+- **Availability:** Native element in the retired v0 checker
+- **Decision:** Retired experimental contract; no accepted widget RFC
 - **Specification:** Pre-specification; physical position is renderer-owned
-- **Implementation:** Checker, semantic view, browser Editor, and Play implemented; preview pose unimplemented
+- **Implementation:** Historically implemented in the checker, semantic view, browser Editor, and Play; preview pose was not implemented
 - **Owners:** Checker, Core, Renderer
 - **Supported renderers:** Browser Editor and Play
 
-`<scroll>` declares a semantic viewport. It is a catalog element, not a
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
+
+`<scroll>` declares a semantic viewport. It is a native element, not a
 user-authored component, and source cannot invent its properties or events.
 
-The current base catalog is stored with the Instagram project while Uhura is
-incubating. Calling the element built-in describes its authoring and checking
-role; it does not yet mean that a globally packaged catalog exists.
+The retired v0 checker supplied this closed contract directly. Its Instagram
+example no longer carried an app-local element catalog.
 
 ## Why Uhura needs an explicit scroll element
 
@@ -243,7 +245,7 @@ Current and proposed conformance coverage should include:
 
 ## Decisions and open questions
 
-The current implementation and
+The pre-0.4 implementation and
 [Instagram spike design](../../../../studies/instagram-spike-design.md) establish
 useful evidence but do not replace an accepted widget RFC or versioned
 specification.
@@ -269,10 +271,9 @@ Known gaps:
   and restoration precedence are separate features, not implied by the static
   preview pose.
 
-Current implementation references:
+Pre-0.4 implementation references (paths may now contain replacement code):
 
-- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
-- [Catalog and markup checking](../../../../../crates/uhura-check/src/markup.rs)
-- [Browser scroll policy](../../../../../web/src/play/scroll.ts)
-- [Read-only Editor renderer](../../../../../web/src/renderer/editor.ts)
+- [Native element and event checking](../../../../../crates/uhura-check/src/checker.rs)
+- [Shared projection renderer and scroll policy](../../../../../web/src/renderer/projection.ts)
+- [Instagram scroll usage](../../../../../examples/instagram/client/ui.uhura)
 - [Specification router](../../../../spec/README.md)

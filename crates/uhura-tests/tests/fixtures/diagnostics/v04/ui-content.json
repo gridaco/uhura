@@ -1,0 +1,29 @@
+{
+  "diagnostics": [
+    {
+      "code": "R3006",
+      "file": "diagnostics/ui-content.uhura",
+      "message": "`<button>` requires visible text or one of `label`, `aria-label`",
+      "rule": "uhura/ui-accessible-name",
+      "severity": "error",
+      "span": {
+        "end": {
+          "col": 56,
+          "line": 11
+        },
+        "len": 53,
+        "offset": 154,
+        "start": {
+          "col": 3,
+          "line": 11
+        }
+      }
+    }
+  ],
+  "format": "uhura-diagnostics",
+  "summary": {
+    "errors": 1,
+    "warnings": 0
+  },
+  "version": 0
+}

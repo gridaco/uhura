@@ -1,0 +1,2652 @@
+use uhura::ui;
+use crate::instagram::{AppData, Authority, Comment, Connection, Instagram, Media, Page, Post, PostId, Profile, ProfileTab, Section, SearchStatus, FeedStatus, StoryDetail, StoryId, Tile, Upload, UserId, KENJI, LENA, LENA_GLAZE, LENA_PROFILE, LENA_STORY, MIRA, NILS, POST_LENA_GLAZE, USER_LENA, USER_MIRA, USER_NILS};
+use uhura::ui_surface::Surface;
+
+pub fn post_for(data: AppData, id: PostId) -> Post {
+  match data.posts.get(id) {
+    Some(post) => post,
+    None => LENA_GLAZE,
+  }
+}
+
+pub fn profile_for(data: AppData, user: UserId) -> Profile {
+  match data.profiles.get(user) {
+    Some(profile) => profile,
+    None => LENA_PROFILE,
+  }
+}
+
+pub fn comments_for(data: AppData, post: PostId) -> Seq<Comment> {
+  match data.comments.get(post) {
+    Some(comments) => comments,
+    None => [],
+  }
+}
+
+pub fn followers_for(data: AppData, user: UserId) -> Seq<Connection> {
+  match data.followers.get(user) {
+    Some(connections) => connections,
+    None => [],
+  }
+}
+
+pub fn following_for(data: AppData, user: UserId) -> Seq<Connection> {
+  match data.following.get(user) {
+    Some(connections) => connections,
+    None => [],
+  }
+}
+
+pub fn story_for(data: AppData, story: StoryId) -> StoryDetail {
+  match data.story_details.get(story) {
+    Some(detail) => detail,
+    None => LENA_STORY,
+  }
+}
+
+pub fn effective_post_flag(source: Bool, overlay: Map<PostId, Bool>, post: PostId) -> Bool {
+  match overlay.get(post) {
+    Some(value) => value,
+    None => source,
+  }
+}
+
+pub fn effective_follow(source: Bool, overlay: Map<UserId, Bool>, user: UserId) -> Bool {
+  match overlay.get(user) {
+    Some(value) => value,
+    None => source,
+  }
+}
+
+pub fn post_for_page(data: AppData, page: Page) -> Post {
+  match page {
+    Page::Post {
+      id,
+    } => post_for(data, id),
+    _ => LENA_GLAZE,
+  }
+}
+
+pub fn profile_for_page(data: AppData, page: Page) -> Profile {
+  match page {
+    Page::Profile {
+      user,
+    } => profile_for(data, user),
+    Page::Followers {
+      user,
+    } => profile_for(data, user),
+    Page::Following {
+      user,
+    } => profile_for(data, user),
+    _ => LENA_PROFILE,
+  }
+}
+
+pub fn story_for_page(data: AppData, page: Page) -> StoryDetail {
+  match page {
+    Page::Story {
+      id,
+    } => story_for(data, id),
+    _ => LENA_STORY,
+  }
+}
+
+pub fn tiles_for(profile: Profile, tab: ProfileTab) -> Seq<Tile> {
+  match tab {
+    ProfileTab::Posts => profile.posts,
+    ProfileTab::Reels => profile.reels,
+    ProfileTab::Tagged => profile.tagged,
+    ProfileTab::Saved => profile.saved,
+  }
+}
+
+pub fn show_navigation(page: Page) -> Bool {
+  match page {
+    Page::None => false,
+    Page::Story {
+      ..,
+    } => false,
+    _ => true,
+  }
+}
+
+pub fn feed_current(page: Page) -> Bool {
+  match page {
+    Page::Feed => true,
+    _ => false,
+  }
+}
+
+pub fn search_current(page: Page) -> Bool {
+  match page {
+    Page::Search => true,
+    _ => false,
+  }
+}
+
+pub fn create_current(page: Page) -> Bool {
+  match page {
+    Page::Create => true,
+    _ => false,
+  }
+}
+
+pub fn reels_current(page: Page) -> Bool {
+  match page {
+    Page::Reels => true,
+    _ => false,
+  }
+}
+
+pub fn profile_current(page: Page) -> Bool {
+  match page {
+    Page::Profile {
+      ..,
+    } | Page::Followers {
+      ..,
+    } | Page::Following {
+      ..,
+    } => true,
+    _ => false,
+  }
+}
+
+pub fn like_label(liked: Bool) -> Text {
+  if liked {
+    "Unlike"
+  } else {
+    "Like"
+  }
+}
+
+pub fn save_label(saved: Bool) -> Text {
+  if saved {
+    "Remove from saved"
+  } else {
+    "Save post"
+  }
+}
+
+pub fn follow_label(following: Bool) -> Text {
+  if following {
+    "Unfollow"
+  } else {
+    "Follow"
+  }
+}
+
+pub fn profile_tabs_label(tab: ProfileTab) -> Text {
+  match tab {
+    ProfileTab::Posts => "Posts",
+    ProfileTab::Reels => "Reels",
+    ProfileTab::Tagged => "Tagged",
+    ProfileTab::Saved => "Saved",
+  }
+}
+
+pub fn profile_empty_label(tab: ProfileTab) -> Text {
+  match tab {
+    ProfileTab::Posts => "No posts yet.",
+    ProfileTab::Reels => "No reels yet.",
+    ProfileTab::Tagged => "No tagged posts yet.",
+    ProfileTab::Saved => "Posts you save will appear here.",
+  }
+}
+
+pub ui FeedPage for Instagram(view) {
+  <view class="screen instagram-app">
+    {#if view.page is Page::None}
+      <view class="fill-center">
+        <text class="muted">Opening Instagram…</text>
+      </view>
+    {:else}
+      {#if view.page is Page::Feed}
+        <view class="screen feed-page">
+          <view class="feed-head">
+            <text class="wordmark">Instagram</text>
+            <view class="feed-head-actions">
+              <button
+                label="Create post"
+                on press -> SelectTab(Section::Create)
+              >
+                <icon name="square-plus"/>
+              </button>
+              {#if view.authority is Authority::Ready {
+                data: data,
+              }}
+                <region
+                  label="View your profile"
+                  on activate -> OpenProfile(data.viewer.id)
+                >
+                  <img
+                    class="viewer-avatar"
+                    src={data.viewer.avatar.src}
+                    alt={data.viewer.avatar.alt}
+                  />
+                </region>
+              {:else}
+                <view/>
+              {/if}
+            </view>
+          </view>
+          {#if view.notice is Some(message)}
+            <view class="notice">
+              <text>{message}</text>
+              <button
+                label="Dismiss notice"
+                on press -> notice_controls.DismissNotice
+              >
+                <icon name="x"/>
+              </button>
+            </view>
+          {:else}
+            {#if view.notice is None}
+              <view/>
+            {/if}
+          {/if}
+          {#if view.authority is Authority::Loading}
+            <view class="fill-center">
+              <text class="muted">Loading your feed…</text>
+            </view>
+          {:else}
+            {#if view.authority is Authority::Failed {
+              ..,
+            }}
+              <view class="fill-center stack-sm">
+                <text>Your feed didn't load.</text>
+                <button
+                  label="Retry"
+                  on press -> RetryFeed
+                >
+                  <text>Retry</text>
+                </button>
+              </view>
+            {:else}
+              {#if view.authority is Authority::Ready {
+                data: data,
+              }}
+                <scroll
+                  class="feed-scroll"
+                  on near-end -> FeedNearEnd
+                >
+                  <scroll
+                    class="stories-tray"
+                    direction="horizontal"
+                  >
+                    <view
+                      role="list"
+                      class="ring-row"
+                    >
+                      {#each data.stories as story (story.id)}
+                        <view>
+                          <region
+                            label={story.user.username}
+                            on activate -> OpenStory(story.id)
+                          >
+                            <view class="ring-item">
+                              <img
+                                class={if story.unseen {
+                                  "ring unseen"
+                                } else {
+                                  "ring seen"
+                                }}
+                                src={story.user.avatar.src}
+                                alt={story.user.avatar.alt}
+                              />
+                              <text class="ring-name">{story.user.username}</text>
+                            </view>
+                          </region>
+                        </view>
+                      {/each}
+                    </view>
+                  </scroll>
+                  {#if data.feed_posts.size == 0}
+                    <view class="feed-empty fill-center stack-sm">
+                      <text class="title">Nothing new yet</text>
+                      <text class="muted">Posts from people you follow will appear here.</text>
+                    </view>
+                  {/if}
+                  <view
+                    role="list"
+                    class="post-list"
+                  >
+                    {#each data.feed_posts as post (post.id)}
+                      <view class="post-card">
+                        <region
+                          label="View profile"
+                          on activate -> OpenProfile(post.author.id)
+                        >
+                          <view class="author-row">
+                            <img
+                              class="avatar"
+                              src={post.author.avatar.src}
+                              alt={post.author.avatar.alt}
+                            />
+                            <text class="username">{post.author.username}</text>
+                          </view>
+                        </region>
+                        {#if post.media is Media::Image {
+                          image: media,
+                        }}
+                          <region
+                            label="Like this post"
+                            supplementary={true}
+                            on activate-double -> ToggleLike(post.id, true)
+                          >
+                            <img
+                              class="media"
+                              src={media.src}
+                              alt={media.alt}
+                            />
+                          </region>
+                        {:else}
+                          {#if post.media is Media::Carousel {
+                            images: slides,
+                          }}
+                            <pager
+                              class="media"
+                              indicator="dots"
+                              label="Photo carousel"
+                            >
+                              {#each slides as slide (slide.src)}
+                                <img
+                                  class="slide"
+                                  src={slide.src}
+                                  alt={slide.alt}
+                                />
+                              {/each}
+                            </pager>
+                          {:else}
+                            {#if post.media is Media::Video {
+                              src: src,
+                              poster: poster,
+                            }}
+                              <video
+                                class="media"
+                                src={src}
+                                poster={poster.src}
+                                label={poster.alt}
+                                controls={true}
+                                playsinline={true}
+                              />
+                            {/if}
+                          {/if}
+                        {/if}
+                        <view class="action-row">
+                          <view class="action-primary">
+                            <button
+                              class="icon-action"
+                              label={like_label(effective_post_flag(post.viewer_liked, view.like_overlay, post.id))}
+                              pressed={effective_post_flag(post.viewer_liked, view.like_overlay, post.id)}
+                              busy={view.like_pending.contains(post.id)}
+                              on press -> ToggleLike(post.id, !effective_post_flag(post.viewer_liked, view.like_overlay, post.id))
+                            >
+                              <icon name="heart"/>
+                            </button>
+                            <button
+                              class="icon-action"
+                              label="Comments"
+                              on press -> OpenComments(post.id)
+                            >
+                              <icon name="message-circle"/>
+                            </button>
+                          </view>
+                          <button
+                            class="icon-action save-action"
+                            label={save_label(effective_post_flag(post.viewer_saved, view.save_overlay, post.id))}
+                            pressed={effective_post_flag(post.viewer_saved, view.save_overlay, post.id)}
+                            busy={view.save_pending.contains(post.id)}
+                            on press -> ToggleSave(post.id, !effective_post_flag(post.viewer_saved, view.save_overlay, post.id))
+                          >
+                            <icon name="bookmark"/>
+                          </button>
+                        </view>
+                        <text class="likes">{post.like_count} likes</text>
+                        <view class="caption-row">
+                          <text class="caption-author">{post.author.username}</text>
+                          <text class="caption">{post.caption}</text>
+                        </view>
+                        <region
+                          class="comments-link"
+                          label="View comments"
+                          on activate -> OpenComments(post.id)
+                        >
+                          <text class="comment-link">{post.comment_count} comments</text>
+                        </region>
+                        <region
+                          class="post-meta-link"
+                          label="View post"
+                          on activate -> OpenPost(post.id)
+                        >
+                          <text class="posted-label">{post.posted_label}</text>
+                        </region>
+                      </view>
+                    {/each}
+                  </view>
+                  {#if view.feed_status is FeedStatus::Loading}
+                    <text class="muted row-center">Loading more…</text>
+                  {:else}
+                    {#if view.feed_status is FeedStatus::Failed}
+                      <view class="row-center gap-sm">
+                        <text class="muted">Couldn't load more.</text>
+                        <button
+                          label="Retry"
+                          on press -> RetryFeed
+                        >
+                          <text>Retry</text>
+                        </button>
+                      </view>
+                    {:else}
+                      <view/>
+                    {/if}
+                  {/if}
+                  {#if !data.feed_has_more}
+                    <text class="muted row-center">You're all caught up.</text>
+                  {/if}
+                </scroll>
+              {/if}
+            {/if}
+          {/if}
+        </view>
+      {:else}
+        {#if view.page is Page::Search}
+          <view class="screen search-page">
+            <view class="search-head">
+              <text class="search-title">Explore</text>
+              <view class="search-controls">
+                <textfield
+                  value={view.search_query}
+                  label="Search people"
+                  placeholder="Search"
+                  on change -> SearchChanged(event.text)
+                />
+                <button
+                  label="Search"
+                  disabled={view.search_query == ""}
+                  on press -> SubmitSearch
+                >
+                  <icon name="search"/>
+                </button>
+              </view>
+            </view>
+            {#if view.authority is Authority::Loading}
+              <view class="fill-center">
+                <text class="muted">Loading Explore…</text>
+              </view>
+            {:else}
+              {#if view.authority is Authority::Failed {
+                ..,
+              }}
+                <view class="fill-center">
+                  <text class="muted">Search isn't available.</text>
+                </view>
+              {:else}
+                {#if view.authority is Authority::Ready {
+                  data: data,
+                }}
+                  <scroll class="search-scroll">
+                    {#if view.search_status is SearchStatus::Explore}
+                      <view class="explore-grid">
+                        {#each data.explore_tiles as tile (tile.post)}
+                          <region
+                            label={tile.image.alt}
+                            on activate -> OpenPost(tile.post)
+                          >
+                            <img
+                              class="grid-tile"
+                              src={tile.image.src}
+                              alt={tile.image.alt}
+                            />
+                          </region>
+                        {/each}
+                      </view>
+                    {:else}
+                      {#if view.search_status is SearchStatus::Searching}
+                        <view class="fill-center">
+                          <text class="muted">Searching…</text>
+                        </view>
+                      {:else}
+                        {#if view.search_status is SearchStatus::Results}
+                          <view
+                            role="list"
+                            class="connection-list"
+                          >
+                            {#each data.search_people as person (person.user.id)}
+                              <view>
+                                <region
+                                  label={person.user.username}
+                                  on activate -> OpenProfile(person.user.id)
+                                >
+                                  <view class="connection-row">
+                                    <img
+                                      class="avatar"
+                                      src={person.user.avatar.src}
+                                      alt={person.user.avatar.alt}
+                                    />
+                                    <view class="connection-copy">
+                                      <text class="username">{person.user.username}</text>
+                                      <text class="muted">{person.user.display_name}</text>
+                                    </view>
+                                  </view>
+                                </region>
+                              </view>
+                            {/each}
+                          </view>
+                        {:else}
+                          {#if view.search_status is SearchStatus::NoResults}
+                            <view class="fill-center stack-sm">
+                              <text class="title">No results</text>
+                              <text class="muted">Try another username.</text>
+                            </view>
+                          {/if}
+                        {/if}
+                      {/if}
+                    {/if}
+                  </scroll>
+                {/if}
+              {/if}
+            {/if}
+          </view>
+        {:else}
+          {#if view.page is Page::Create}
+            <view class="screen create-page">
+              <view class="create-head">
+                <button
+                  label="Cancel"
+                  on press -> GoBack
+                >
+                  <icon name="chevron-left"/>
+                </button>
+                <text class="title">New post</text>
+              </view>
+              {#if view.upload is Upload::Empty}
+                <view class="fill-center stack-sm pad-lg">
+                  <view class="upload-mark">
+                    <icon name="square-plus"/>
+                  </view>
+                  <text class="create-empty-title">Share a photo</text>
+                  <text class="muted">Choose a JPEG, PNG, or WebP image from this device.</text>
+                  <button
+                    class="primary-button"
+                    label="Choose photo"
+                    on press -> ChooseImage
+                  >
+                    <text>Choose photo</text>
+                  </button>
+                </view>
+              {:else}
+                {#if view.upload is Upload::Choosing}
+                  <view class="fill-center">
+                    <text class="muted">Choosing a photo…</text>
+                  </view>
+                {:else}
+                  {#if view.upload is Upload::Uploaded {
+                    object: object,
+                    preview: preview,
+                    name: name,
+                  }}
+                    <scroll class="create-form">
+                      <img
+                        class="create-preview"
+                        src={preview}
+                        alt={name}
+                      />
+                      <textfield
+                        value={view.caption}
+                        label="Caption"
+                        placeholder="Write a caption…"
+                        on change -> CaptionChanged(event.text)
+                      />
+                      <textfield
+                        value={view.alt}
+                        label="Alternative text"
+                        placeholder="Describe this image…"
+                        on change -> AltChanged(event.text)
+                      />
+                      <button
+                        class="primary-button"
+                        label="Share post"
+                        on press -> PublishImage
+                      >
+                        <text>Share</text>
+                      </button>
+                      <text class="technical-id">{object}</text>
+                    </scroll>
+                  {:else}
+                    {#if view.upload is Upload::Publishing {
+                      preview: preview,
+                      name: name,
+                      ..,
+                    }}
+                      <view class="create-form">
+                        <img
+                          class="create-preview"
+                          src={preview}
+                          alt={name}
+                        />
+                        <text class="muted">Publishing…</text>
+                      </view>
+                    {/if}
+                  {/if}
+                {/if}
+              {/if}
+            </view>
+          {:else}
+            {#if view.page is Page::Reels}
+              <view class="screen reels-page">
+                <view class="reels-head">
+                  <text class="title">Reels</text>
+                </view>
+                {#if view.authority is Authority::Loading}
+                  <view class="fill-center">
+                    <text class="muted">Loading Reels…</text>
+                  </view>
+                {:else}
+                  {#if view.authority is Authority::Failed {
+                    ..,
+                  }}
+                    <view class="fill-center">
+                      <text class="muted">Reels aren't available.</text>
+                    </view>
+                  {:else}
+                    {#if view.authority is Authority::Ready {
+                      data: data,
+                    }}
+                      <scroll class="reels-scroll">
+                        {#each data.reels as post (post.id)}
+                          <view class="reel-card">
+                            {#if post.media is Media::Video {
+                              src: src,
+                              poster: poster,
+                            }}
+                              <video
+                                class="reel-media"
+                                src={src}
+                                poster={poster.src}
+                                label={poster.alt}
+                                muted={true}
+                                loop={true}
+                                controls={true}
+                                playsinline={true}
+                              />
+                            {:else}
+                              {#if post.media is Media::Image {
+                                image: media,
+                              }}
+                                <img
+                                  class="reel-media"
+                                  src={media.src}
+                                  alt={media.alt}
+                                />
+                              {:else}
+                                {#if post.media is Media::Carousel {
+                                  images: slides,
+                                }}
+                                  <pager
+                                    class="reel-media"
+                                    indicator="dots"
+                                    label="Reel carousel"
+                                  >
+                                    {#each slides as slide (slide.src)}
+                                      <img
+                                        src={slide.src}
+                                        alt={slide.alt}
+                                      />
+                                    {/each}
+                                  </pager>
+                                {/if}
+                              {/if}
+                            {/if}
+                            <view class="reel-overlay">
+                              <view class="reel-copy">
+                                <text class="username">{post.author.username}</text>
+                                <text>{post.caption}</text>
+                              </view>
+                              <view class="reel-actions">
+                                <button
+                                  class="reel-action"
+                                  label={like_label(effective_post_flag(post.viewer_liked, view.like_overlay, post.id))}
+                                  pressed={effective_post_flag(post.viewer_liked, view.like_overlay, post.id)}
+                                  busy={view.like_pending.contains(post.id)}
+                                  on press -> ToggleLike(post.id, !effective_post_flag(post.viewer_liked, view.like_overlay, post.id))
+                                >
+                                  <icon name="heart"/>
+                                  <text>{post.like_count}</text>
+                                </button>
+                                <button
+                                  label="Comments"
+                                  on press -> OpenComments(post.id)
+                                >
+                                  <icon name="message-circle"/>
+                                </button>
+                                <button
+                                  class="reel-action reel-save-action"
+                                  label={save_label(effective_post_flag(post.viewer_saved, view.save_overlay, post.id))}
+                                  pressed={effective_post_flag(post.viewer_saved, view.save_overlay, post.id)}
+                                  busy={view.save_pending.contains(post.id)}
+                                  on press -> ToggleSave(post.id, !effective_post_flag(post.viewer_saved, view.save_overlay, post.id))
+                                >
+                                  <icon name="bookmark"/>
+                                </button>
+                              </view>
+                            </view>
+                          </view>
+                        {/each}
+                      </scroll>
+                    {/if}
+                  {/if}
+                {/if}
+              </view>
+            {:else}
+              {#if view.page is Page::Post {
+                id: id,
+              }}
+                <view class="screen post-page">
+                  <view class="detail-bar">
+                    <button
+                      label="Back"
+                      on press -> GoBack
+                    >
+                      <icon name="chevron-left"/>
+                    </button>
+                    <text class="title">Post</text>
+                  </view>
+                  {#if view.authority is Authority::Loading}
+                    <view class="fill-center">
+                      <text class="muted">Loading post…</text>
+                    </view>
+                  {:else}
+                    {#if view.authority is Authority::Failed {
+                      ..,
+                    }}
+                      <view class="fill-center">
+                        <text class="muted">This post isn't available.</text>
+                      </view>
+                    {:else}
+                      {#if view.authority is Authority::Ready {
+                        data: data,
+                      }}
+                        <scroll class="post-scroll">
+                          <view class="post-card">
+                            <view class="author-row">
+                              <img
+                                class="avatar"
+                                src={post_for(data, id).author.avatar.src}
+                                alt={post_for(data, id).author.avatar.alt}
+                              />
+                              <text class="username">{post_for(data, id).author.username}</text>
+                            </view>
+                            {#if post_for(data, id).media is Media::Image {
+                              image: media,
+                            }}
+                              <img
+                                class="media"
+                                src={media.src}
+                                alt={media.alt}
+                              />
+                            {:else}
+                              {#if post_for(data, id).media is Media::Carousel {
+                                images: slides,
+                              }}
+                                <pager
+                                  class="media"
+                                  indicator="dots"
+                                  label="Photo carousel"
+                                >
+                                  {#each slides as slide (slide.src)}
+                                    <img
+                                      src={slide.src}
+                                      alt={slide.alt}
+                                    />
+                                  {/each}
+                                </pager>
+                              {:else}
+                                {#if post_for(data, id).media is Media::Video {
+                                  src: src,
+                                  poster: poster,
+                                }}
+                                  <video
+                                    class="media"
+                                    src={src}
+                                    poster={poster.src}
+                                    label={poster.alt}
+                                    controls={true}
+                                    playsinline={true}
+                                  />
+                                {/if}
+                              {/if}
+                            {/if}
+                            <view class="action-row">
+                              <view class="action-primary">
+                                <button
+                                  class="icon-action"
+                                  label={like_label(effective_post_flag(post_for(data, id).viewer_liked, view.like_overlay, id))}
+                                  pressed={effective_post_flag(post_for(data, id).viewer_liked, view.like_overlay, id)}
+                                  busy={view.like_pending.contains(id)}
+                                  on press -> ToggleLike(id, !effective_post_flag(post_for(data, id).viewer_liked, view.like_overlay, id))
+                                >
+                                  <icon name="heart"/>
+                                </button>
+                                <button
+                                  class="icon-action"
+                                  label="Comments"
+                                  on press -> OpenComments(id)
+                                >
+                                  <icon name="message-circle"/>
+                                </button>
+                              </view>
+                              <button
+                                class="icon-action save-action"
+                                label={save_label(effective_post_flag(post_for(data, id).viewer_saved, view.save_overlay, id))}
+                                pressed={effective_post_flag(post_for(data, id).viewer_saved, view.save_overlay, id)}
+                                busy={view.save_pending.contains(id)}
+                                on press -> ToggleSave(id, !effective_post_flag(post_for(data, id).viewer_saved, view.save_overlay, id))
+                              >
+                                <icon name="bookmark"/>
+                              </button>
+                            </view>
+                            <text class="likes">{post_for(data, id).like_count} likes</text>
+                            <view class="caption-row">
+                              <text class="caption-author">{post_for(data, id).author.username}</text>
+                              <text class="caption">{post_for(data, id).caption}</text>
+                            </view>
+                          </view>
+                        </scroll>
+                      {/if}
+                    {/if}
+                  {/if}
+                </view>
+              {:else}
+                {#if view.page is Page::Profile {
+                  user: user,
+                }}
+                  <view class="screen profile-page">
+                    <view class="top-bar">
+                      {#if user != USER_MIRA}
+                        <button
+                          label="Back"
+                          on press -> GoBack
+                        >
+                          <icon name="chevron-left"/>
+                        </button>
+                      {/if}
+                      {#if view.authority is Authority::Ready {
+                        data: data,
+                      }}
+                        <text class="title">{profile_for(data, user).user.username}</text>
+                      {:else}
+                        <text class="title">Profile</text>
+                      {/if}
+                    </view>
+                    {#if view.authority is Authority::Loading}
+                      <view class="fill-center">
+                        <text class="muted">Loading profile…</text>
+                      </view>
+                    {:else}
+                      {#if view.authority is Authority::Failed {
+                        ..,
+                      }}
+                        <view class="fill-center">
+                          <text class="muted">This profile isn't available.</text>
+                        </view>
+                      {:else}
+                        {#if view.authority is Authority::Ready {
+                          data: data,
+                        }}
+                          <scroll class="profile-scroll">
+                            <view class="profile-header">
+                              <view class="head-row">
+                                <img
+                                  class="profile-avatar"
+                                  src={profile_for(data, user).user.avatar.src}
+                                  alt={profile_for(data, user).user.avatar.alt}
+                                />
+                                <view class="stats">
+                                  <view class="stat">
+                                    <text class="stat-num">{profile_for(data, user).post_count}</text>
+                                    <text class="stat-name">Posts</text>
+                                  </view>
+                                  <button
+                                    class="stat"
+                                    label="Followers"
+                                    on press -> OpenFollowers(user)
+                                  >
+                                    <text class="stat-num">{profile_for(data, user).follower_count}</text>
+                                    <text class="stat-name">Followers</text>
+                                  </button>
+                                  <button
+                                    class="stat"
+                                    label="Following"
+                                    on press -> OpenFollowing(user)
+                                  >
+                                    <text class="stat-num">{profile_for(data, user).following_count}</text>
+                                    <text class="stat-name">Following</text>
+                                  </button>
+                                </view>
+                              </view>
+                              <text class="display-name">{profile_for(data, user).user.display_name}</text>
+                              <text class="profile-handle">{profile_for(data, user).user.username}</text>
+                              <text class="bio">{profile_for(data, user).bio}</text>
+                              <view class="profile-actions">
+                                {#if user != data.viewer.id}
+                                  <button
+                                    class="primary-button profile-action"
+                                    label={follow_label(effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))}
+                                    busy={view.follow_pending.contains(user)}
+                                    on press -> ToggleFollow(user, !effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))
+                                  >
+                                    <text>{follow_label(effective_follow(profile_for(data, user).viewer_follows, view.follow_overlay, user))}</text>
+                                  </button>
+                                {/if}
+                                {#if user == data.viewer.id}
+                                  <button
+                                    class="secondary-button profile-action"
+                                    label="Create a new post"
+                                    on press -> SelectTab(Section::Create)
+                                  >
+                                    <text>New post</text>
+                                  </button>
+                                {/if}
+                              </view>
+                            </view>
+                            <view class="profile-tabs">
+                              <button
+                                label="Posts"
+                                pressed={view.profile_tab == ProfileTab::Posts}
+                                on press -> SelectProfileTab(ProfileTab::Posts)
+                              >
+                                <icon name="grid-3x3"/>
+                              </button>
+                              <button
+                                label="Reels"
+                                pressed={view.profile_tab == ProfileTab::Reels}
+                                on press -> SelectProfileTab(ProfileTab::Reels)
+                              >
+                                <icon name="clapperboard"/>
+                              </button>
+                              <button
+                                label="Tagged"
+                                pressed={view.profile_tab == ProfileTab::Tagged}
+                                on press -> SelectProfileTab(ProfileTab::Tagged)
+                              >
+                                <icon name="tag"/>
+                              </button>
+                              {#if user == data.viewer.id}
+                                <button
+                                  label="Saved"
+                                  pressed={view.profile_tab == ProfileTab::Saved}
+                                  on press -> SelectProfileTab(ProfileTab::Saved)
+                                >
+                                  <icon name="bookmark"/>
+                                </button>
+                              {/if}
+                            </view>
+                            {#if tiles_for(profile_for(data, user), view.profile_tab).size == 0}
+                              <view class="profile-empty fill-center pad-lg">
+                                <text class="muted">{profile_empty_label(view.profile_tab)}</text>
+                              </view>
+                            {/if}
+                            <view class="profile-grid">
+                              {#each tiles_for(profile_for(data, user), view.profile_tab) as tile (tile.post)}
+                                <region
+                                  label={tile.image.alt}
+                                  on activate -> OpenPost(tile.post)
+                                >
+                                  <img
+                                    class="grid-tile"
+                                    src={tile.image.src}
+                                    alt={tile.image.alt}
+                                  />
+                                </region>
+                              {/each}
+                            </view>
+                          </scroll>
+                        {/if}
+                      {/if}
+                    {/if}
+                  </view>
+                {:else}
+                  {#if view.page is Page::Followers {
+                    user: user,
+                  }}
+                    <view class="screen connections-page">
+                      <view class="detail-bar">
+                        <button
+                          label="Back"
+                          on press -> GoBack
+                        >
+                          <icon name="chevron-left"/>
+                        </button>
+                        <text class="title">Followers</text>
+                      </view>
+                      {#if view.authority is Authority::Ready {
+                        data: data,
+                      }}
+                        <scroll class="connection-list">
+                          {#each followers_for(data, user) as person (person.user.id)}
+                            <view class="connection-row">
+                              <region
+                                label={person.user.username}
+                                on activate -> OpenProfile(person.user.id)
+                              >
+                                <view class="connection-person">
+                                  <img
+                                    class="avatar"
+                                    src={person.user.avatar.src}
+                                    alt={person.user.avatar.alt}
+                                  />
+                                  <view>
+                                    <text class="username">{person.user.username}</text>
+                                    <text class="muted">{person.user.display_name}</text>
+                                  </view>
+                                </view>
+                              </region>
+                              {#if person.user.id != data.viewer.id}
+                                <button
+                                  label={follow_label(effective_follow(person.viewer_follows, view.follow_overlay, person.user.id))}
+                                  busy={view.follow_pending.contains(person.user.id)}
+                                  on press -> ToggleFollow(person.user.id, !effective_follow(person.viewer_follows, view.follow_overlay, person.user.id))
+                                >
+                                  <text>{follow_label(effective_follow(person.viewer_follows, view.follow_overlay, person.user.id))}</text>
+                                </button>
+                              {/if}
+                            </view>
+                          {/each}
+                        </scroll>
+                      {:else}
+                        <view class="fill-center">
+                          <text class="muted">Loading followers…</text>
+                        </view>
+                      {/if}
+                    </view>
+                  {:else}
+                    {#if view.page is Page::Following {
+                      user: user,
+                    }}
+                      <view class="screen connections-page">
+                        <view class="detail-bar">
+                          <button
+                            label="Back"
+                            on press -> GoBack
+                          >
+                            <icon name="chevron-left"/>
+                          </button>
+                          <text class="title">Following</text>
+                        </view>
+                        {#if view.authority is Authority::Ready {
+                          data: data,
+                        }}
+                          <scroll class="connection-list">
+                            {#each following_for(data, user) as person (person.user.id)}
+                              <view class="connection-row">
+                                <img
+                                  class="avatar"
+                                  src={person.user.avatar.src}
+                                  alt={person.user.avatar.alt}
+                                />
+                                <view class="connection-copy">
+                                  <text class="username">{person.user.username}</text>
+                                  <text class="muted">{person.user.display_name}</text>
+                                </view>
+                                {#if person.user.id != data.viewer.id}
+                                  <button
+                                    label={follow_label(effective_follow(person.viewer_follows, view.follow_overlay, person.user.id))}
+                                    busy={view.follow_pending.contains(person.user.id)}
+                                    on press -> ToggleFollow(person.user.id, !effective_follow(person.viewer_follows, view.follow_overlay, person.user.id))
+                                  >
+                                    <text>{follow_label(effective_follow(person.viewer_follows, view.follow_overlay, person.user.id))}</text>
+                                  </button>
+                                {/if}
+                              </view>
+                            {/each}
+                          </scroll>
+                        {:else}
+                          <view class="fill-center">
+                            <text class="muted">Loading following…</text>
+                          </view>
+                        {/if}
+                      </view>
+                    {:else}
+                      {#if view.page is Page::Story {
+                        id: id,
+                      }}
+                        <view class="screen story-page">
+                          {#if view.authority is Authority::Ready {
+                            data: data,
+                          }}
+                            <view class="story-stage">
+                              <img
+                                class="story-image"
+                                src={story_for(data, id).image.src}
+                                alt={story_for(data, id).image.alt}
+                              />
+                              <view class="story-progress">
+                                {#each story_for(data, id).progress as segment (segment.id)}
+                                  <view class={if segment.viewed {
+                                    "story-segment viewed"
+                                  } else {
+                                    "story-segment"
+                                  }}/>
+                                {/each}
+                              </view>
+                              <view class="story-head">
+                                <img
+                                  class="avatar"
+                                  src={story_for(data, id).author.avatar.src}
+                                  alt={story_for(data, id).author.avatar.alt}
+                                />
+                                <text class="username">{story_for(data, id).author.username}</text>
+                                <text>{story_for(data, id).posted_label}</text>
+                                <button
+                                  label="Close story"
+                                  on press -> GoBack
+                                >
+                                  <icon name="x"/>
+                                </button>
+                              </view>
+                              <text class="story-caption">{story_for(data, id).caption}</text>
+                              <view class="story-hit-zones">
+                                {#if story_for(data, id).previous is Some(previous)}
+                                  <button
+                                    label="Previous story"
+                                    on press -> OpenStory(previous)
+                                  >
+                                    <text>Previous</text>
+                                  </button>
+                                {:else}
+                                  {#if story_for(data, id).previous is None}
+                                    <view/>
+                                  {/if}
+                                {/if}
+                                {#if story_for(data, id).next is Some(next)}
+                                  <button
+                                    label="Next story"
+                                    on press -> OpenStory(next)
+                                  >
+                                    <text>Next</text>
+                                  </button>
+                                {:else}
+                                  {#if story_for(data, id).next is None}
+                                    <button
+                                      label="Close story"
+                                      on press -> GoBack
+                                    >
+                                      <text>Close</text>
+                                    </button>
+                                  {/if}
+                                {/if}
+                              </view>
+                            </view>
+                          {:else}
+                            <view class="fill-center">
+                              <text class="muted">Loading story…</text>
+                            </view>
+                          {/if}
+                        </view>
+                      {/if}
+                    {/if}
+                  {/if}
+                {/if}
+              {/if}
+            {/if}
+          {/if}
+        {/if}
+      {/if}
+    {/if}
+    {#if show_navigation(view.page)}
+      <view
+        role="navigation"
+        class="bottom-nav"
+      >
+        <text class="nav-brand">Instagram</text>
+        <view class="nav-items">
+          <button
+            label="Feed"
+            current={feed_current(view.page)}
+            on press -> SelectTab(Section::Feed)
+          >
+            <icon name="house"/>
+            <text class="nav-label">Home</text>
+          </button>
+          <button
+            label="Search"
+            current={search_current(view.page)}
+            on press -> SelectTab(Section::Search)
+          >
+            <icon name="search"/>
+            <text class="nav-label">Search</text>
+          </button>
+          <button
+            label="Create"
+            current={create_current(view.page)}
+            on press -> SelectTab(Section::Create)
+          >
+            <icon name="square-plus"/>
+            <text class="nav-label">Create</text>
+          </button>
+          <button
+            label="Reels"
+            current={reels_current(view.page)}
+            on press -> SelectTab(Section::Reels)
+          >
+            <icon name="clapperboard"/>
+            <text class="nav-label">Reels</text>
+          </button>
+          <button
+            label="Profile"
+            current={profile_current(view.page)}
+            on press -> SelectTab(Section::Profile)
+          >
+            <icon name="user-round"/>
+            <text class="nav-label">Profile</text>
+          </button>
+        </view>
+      </view>
+    {/if}
+    {#if view.comments_post is Some(post)}
+      <Surface key={post}>
+        <view class="comments-sheet">
+          <view class="sheet-head">
+            <text class="title">Comments</text>
+            <button
+              label="Close comments"
+              on press -> DismissComments
+            >
+              <icon name="x"/>
+            </button>
+          </view>
+          {#if view.authority is Authority::Ready {
+            data: data,
+          }}
+            <scroll class="comment-list">
+              {#each comments_for(data, post) as comment (comment.id)}
+                <view class="comment-row">
+                  <img
+                    class="avatar"
+                    src={comment.author.avatar.src}
+                    alt={comment.author.avatar.alt}
+                  />
+                  <view class="comment-copy">
+                    <text class="username">{comment.author.username}</text>
+                    <text>{comment.body}</text>
+                    <text class="muted">{comment.posted_label}</text>
+                  </view>
+                </view>
+              {/each}
+              {#if view.pending_comment is Some((_, body))}
+                <view class="comment-row pending">
+                  <img
+                    class="avatar"
+                    src={data.viewer.avatar.src}
+                    alt={data.viewer.avatar.alt}
+                  />
+                  <view>
+                    <text class="username">{data.viewer.username}</text>
+                    <text>{body}</text>
+                    <text class="muted">Posting…</text>
+                  </view>
+                </view>
+              {:else}
+                {#if view.pending_comment is None}
+                  <view/>
+                {/if}
+              {/if}
+            </scroll>
+            <view class="composer">
+              <img
+                class="avatar"
+                src={data.viewer.avatar.src}
+                alt={data.viewer.avatar.alt}
+              />
+              <textfield
+                value={view.comment_draft}
+                label="Add a comment"
+                placeholder="Add a comment…"
+                disabled={view.pending_comment is Some(_)}
+                on change -> CommentChanged(event.text)
+              />
+              <button
+                label="Post"
+                disabled={view.comment_draft == "" || view.pending_comment is Some(_)}
+                on press -> SubmitComment
+              >
+                <text>Post</text>
+              </button>
+            </view>
+          {:else}
+            <view class="fill-center">
+              <text class="muted">Loading comments…</text>
+            </view>
+          {/if}
+        </view>
+      </Surface>
+    {:else}
+      {#if view.comments_post is None}
+        <view/>
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui CreatePage for Instagram(view) {
+  <view class="screen create-page">
+    <view class="create-head">
+      <button
+        label="Cancel"
+        on press -> GoBack
+      >
+        <icon name="chevron-left"/>
+      </button>
+      <text class="title">New post</text>
+    </view>
+    {#if view.authority is Authority::Loading}
+      <view class="fill-center">
+        <text class="muted">Preparing the uploader…</text>
+      </view>
+    {:else}
+      {#if view.authority is Authority::Failed {
+        ..,
+      }}
+        <view class="fill-center">
+          <text class="muted">This uploader isn't available.</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Ready {
+          ..,
+        }}
+          {#if view.upload is Upload::Empty}
+            <view class="fill-center stack-sm pad-lg">
+              <view class="upload-mark">
+                <icon name="square-plus"/>
+              </view>
+              <text class="create-empty-title">Share a photo</text>
+              <text class="muted">Choose a JPEG, PNG, or WebP image from this device.</text>
+              <button
+                class="primary-button"
+                label="Choose photo"
+                on press -> ChooseImage
+              >
+                <text>Choose photo</text>
+              </button>
+            </view>
+          {:else}
+            {#if view.upload is Upload::Choosing}
+              <view class="fill-center">
+                <text class="muted">Choosing a photo…</text>
+              </view>
+            {:else}
+              {#if view.upload is Upload::Uploaded {
+                object: object,
+                preview: preview,
+                name: name,
+              }}
+                <scroll class="create-form">
+                  <img
+                    class="create-preview"
+                    src={preview}
+                    alt={name}
+                  />
+                  <text class="muted">{name}</text>
+                  <textfield
+                    value={view.caption}
+                    label="Caption"
+                    placeholder="Write a caption…"
+                    on change -> CaptionChanged(event.text)
+                  />
+                  <textfield
+                    value={view.alt}
+                    label="Alternative text"
+                    placeholder="Describe this image…"
+                    on change -> AltChanged(event.text)
+                  />
+                  <view class="create-actions">
+                    <button
+                      class="secondary-button"
+                      label="Choose another photo"
+                      on press -> ChooseImage
+                    >
+                      <text>Choose another</text>
+                    </button>
+                    <button
+                      class="primary-button"
+                      label="Share post"
+                      on press -> PublishImage
+                    >
+                      <text>Share</text>
+                    </button>
+                  </view>
+                  <text class="technical-id">{object}</text>
+                </scroll>
+              {:else}
+                {#if view.upload is Upload::Publishing {
+                  preview: preview,
+                  name: name,
+                  ..,
+                }}
+                  <view class="create-form">
+                    <img
+                      class="create-preview"
+                      src={preview}
+                      alt={name}
+                    />
+                    <text class="muted">Publishing…</text>
+                  </view>
+                {/if}
+              {/if}
+            {/if}
+          {/if}
+        {/if}
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui PostPage for Instagram(view) {
+  <view class="screen post-page">
+    <view class="detail-bar">
+      <button
+        label="Back"
+        on press -> GoBack
+      >
+        <icon name="chevron-left"/>
+      </button>
+      <text class="title">Post</text>
+    </view>
+    {#if view.authority is Authority::Loading}
+      <view class="fill-center">
+        <text class="muted">Loading post…</text>
+      </view>
+    {:else}
+      {#if view.authority is Authority::Failed {
+        ..,
+      }}
+        <view class="fill-center">
+          <text class="muted">This post isn't available.</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Ready {
+          data: data,
+        }}
+          <scroll class="post-scroll">
+            <view class="post-card">
+              <view class="author-row">
+                <img
+                  class="avatar"
+                  src={post_for_page(data, view.page).author.avatar.src}
+                  alt={post_for_page(data, view.page).author.avatar.alt}
+                />
+                <text class="username">{post_for_page(data, view.page).author.username}</text>
+              </view>
+              {#if post_for_page(data, view.page).media is Media::Image {
+                image: media,
+              }}
+                <img
+                  class="media"
+                  src={media.src}
+                  alt={media.alt}
+                />
+              {:else}
+                {#if post_for_page(data, view.page).media is Media::Carousel {
+                  images: slides,
+                }}
+                  <pager
+                    class="media"
+                    indicator="dots"
+                    label="Photo carousel"
+                  >
+                    {#each slides as slide (slide.src)}
+                      <img
+                        src={slide.src}
+                        alt={slide.alt}
+                      />
+                    {/each}
+                  </pager>
+                {:else}
+                  {#if post_for_page(data, view.page).media is Media::Video {
+                    src: src,
+                    poster: poster,
+                  }}
+                    <video
+                      class="media"
+                      src={src}
+                      poster={poster.src}
+                      label={poster.alt}
+                      controls={true}
+                      playsinline={true}
+                    />
+                  {/if}
+                {/if}
+              {/if}
+              <view class="action-row">
+                <view class="action-primary">
+                  <button
+                    class="icon-action"
+                    label={like_label(effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))}
+                    pressed={effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id)}
+                    busy={view.like_pending.contains(post_for_page(data, view.page).id)}
+                    on press -> ToggleLike(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))
+                  >
+                    <icon name="heart"/>
+                  </button>
+                  <button
+                    class="icon-action"
+                    label="Comments"
+                    on press -> OpenComments(post_for_page(data, view.page).id)
+                  >
+                    <icon name="message-circle"/>
+                  </button>
+                </view>
+                <button
+                  class="icon-action save-action"
+                  label={save_label(effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))}
+                  pressed={effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id)}
+                  busy={view.save_pending.contains(post_for_page(data, view.page).id)}
+                  on press -> ToggleSave(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))
+                >
+                  <icon name="bookmark"/>
+                </button>
+              </view>
+              <text class="likes">{post_for_page(data, view.page).like_count} likes</text>
+              <view class="caption-row">
+                <text class="caption-author">{post_for_page(data, view.page).author.username}</text>
+                <text class="caption">{post_for_page(data, view.page).caption}</text>
+              </view>
+            </view>
+          </scroll>
+        {/if}
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui ProfilePage for Instagram(view) {
+  <view class="screen profile-page">
+    <view class="top-bar">
+      {#if view.page is Page::Profile {
+        user: user,
+      }}
+        {#if user != USER_MIRA}
+          <button
+            label="Back"
+            on press -> GoBack
+          >
+            <icon name="chevron-left"/>
+          </button>
+        {/if}
+      {/if}
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        <text class="title">{profile_for_page(data, view.page).user.username}</text>
+      {:else}
+        <text class="title">Profile</text>
+      {/if}
+    </view>
+    {#if view.authority is Authority::Loading}
+      <view class="fill-center">
+        <text class="muted">Loading profile…</text>
+      </view>
+    {:else}
+      {#if view.authority is Authority::Failed {
+        ..,
+      }}
+        <view class="fill-center">
+          <text class="muted">This profile isn't available.</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Ready {
+          data: data,
+        }}
+          <scroll class="profile-scroll">
+            <view class="profile-header">
+              <view class="head-row">
+                <img
+                  class="profile-avatar"
+                  src={profile_for_page(data, view.page).user.avatar.src}
+                  alt={profile_for_page(data, view.page).user.avatar.alt}
+                />
+                <view class="stats">
+                  <view class="stat">
+                    <text class="stat-num">{profile_for_page(data, view.page).post_count}</text>
+                    <text class="stat-name">Posts</text>
+                  </view>
+                  <view class="stat">
+                    <text class="stat-num">{profile_for_page(data, view.page).follower_count}</text>
+                    <text class="stat-name">Followers</text>
+                  </view>
+                  <view class="stat">
+                    <text class="stat-num">{profile_for_page(data, view.page).following_count}</text>
+                    <text class="stat-name">Following</text>
+                  </view>
+                </view>
+              </view>
+              <text class="display-name">{profile_for_page(data, view.page).user.display_name}</text>
+              <text class="profile-handle">{profile_for_page(data, view.page).user.username}</text>
+              <text class="bio">{profile_for_page(data, view.page).bio}</text>
+            </view>
+            <view class="profile-tabs">
+              <button
+                label="Posts"
+                pressed={view.profile_tab == ProfileTab::Posts}
+                on press -> SelectProfileTab(ProfileTab::Posts)
+              >
+                <icon name="grid-3x3"/>
+              </button>
+              <button
+                label="Reels"
+                pressed={view.profile_tab == ProfileTab::Reels}
+                on press -> SelectProfileTab(ProfileTab::Reels)
+              >
+                <icon name="clapperboard"/>
+              </button>
+              <button
+                label="Tagged"
+                pressed={view.profile_tab == ProfileTab::Tagged}
+                on press -> SelectProfileTab(ProfileTab::Tagged)
+              >
+                <icon name="tag"/>
+              </button>
+              <button
+                label="Saved"
+                pressed={view.profile_tab == ProfileTab::Saved}
+                on press -> SelectProfileTab(ProfileTab::Saved)
+              >
+                <icon name="bookmark"/>
+              </button>
+            </view>
+            {#if tiles_for(profile_for_page(data, view.page), view.profile_tab).size == 0}
+              <view class="profile-empty fill-center pad-lg">
+                <text class="muted">{profile_empty_label(view.profile_tab)}</text>
+              </view>
+            {/if}
+            <view class="profile-grid">
+              {#each tiles_for(profile_for_page(data, view.page), view.profile_tab) as tile (tile.post)}
+                <region
+                  label={tile.image.alt}
+                  on activate -> OpenPost(tile.post)
+                >
+                  <img
+                    class="grid-tile"
+                    src={tile.image.src}
+                    alt={tile.image.alt}
+                  />
+                </region>
+              {/each}
+            </view>
+          </scroll>
+        {/if}
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui FollowersPage for Instagram(view) {
+  <view class="screen connections-page">
+    <view class="detail-bar">
+      <button
+        label="Back"
+        on press -> GoBack
+      >
+        <icon name="chevron-left"/>
+      </button>
+      <text class="title">Followers</text>
+    </view>
+    {#if view.authority is Authority::Ready {
+      data: data,
+    }}
+      {#if view.page is Page::Followers {
+        user: user,
+      }}
+        <scroll class="connection-list">
+          {#each followers_for(data, user) as person (person.user.id)}
+            <view class="connection-row">
+              <img
+                class="avatar"
+                src={person.user.avatar.src}
+                alt={person.user.avatar.alt}
+              />
+              <view class="connection-copy">
+                <text class="username">{person.user.username}</text>
+                <text class="muted">{person.user.display_name}</text>
+              </view>
+              <button
+                label={follow_label(person.viewer_follows)}
+                busy={view.follow_pending.contains(person.user.id)}
+                on press -> ToggleFollow(person.user.id, !person.viewer_follows)
+              >
+                <text>{follow_label(person.viewer_follows)}</text>
+              </button>
+            </view>
+          {/each}
+        </scroll>
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading followers…</text>
+        </view>
+      {/if}
+    {:else}
+      <view class="fill-center">
+        <text class="muted">Loading followers…</text>
+      </view>
+    {/if}
+  </view>
+}
+
+pub ui FollowingPage for Instagram(view) {
+  <view class="screen connections-page">
+    <view class="detail-bar">
+      <button
+        label="Back"
+        on press -> GoBack
+      >
+        <icon name="chevron-left"/>
+      </button>
+      <text class="title">Following</text>
+    </view>
+    {#if view.authority is Authority::Ready {
+      data: data,
+    }}
+      {#if view.page is Page::Following {
+        user: user,
+      }}
+        <scroll class="connection-list">
+          {#each following_for(data, user) as person (person.user.id)}
+            <view class="connection-row">
+              <img
+                class="avatar"
+                src={person.user.avatar.src}
+                alt={person.user.avatar.alt}
+              />
+              <view class="connection-copy">
+                <text class="username">{person.user.username}</text>
+                <text class="muted">{person.user.display_name}</text>
+              </view>
+              <button
+                label={follow_label(person.viewer_follows)}
+                busy={view.follow_pending.contains(person.user.id)}
+                on press -> ToggleFollow(person.user.id, !person.viewer_follows)
+              >
+                <text>{follow_label(person.viewer_follows)}</text>
+              </button>
+            </view>
+          {/each}
+        </scroll>
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading following…</text>
+        </view>
+      {/if}
+    {:else}
+      <view class="fill-center">
+        <text class="muted">Loading following…</text>
+      </view>
+    {/if}
+  </view>
+}
+
+pub ui ReelsPage for Instagram(view) {
+  <view class="screen reels-page">
+    <view class="reels-head">
+      <text class="title">Reels</text>
+    </view>
+    {#if view.authority is Authority::Loading}
+      <view class="fill-center">
+        <text class="muted">Loading Reels…</text>
+      </view>
+    {:else}
+      {#if view.authority is Authority::Failed {
+        ..,
+      }}
+        <view class="fill-center">
+          <text class="muted">Reels aren't available.</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Ready {
+          data: data,
+        }}
+          <scroll class="reels-scroll">
+            {#each data.reels as post (post.id)}
+              <view class="reel-card">
+                {#if post.media is Media::Video {
+                  src: src,
+                  poster: poster,
+                }}
+                  <video
+                    class="reel-media"
+                    src={src}
+                    poster={poster.src}
+                    label={poster.alt}
+                    muted={true}
+                    loop={true}
+                    controls={true}
+                    playsinline={true}
+                  />
+                {:else}
+                  {#if post.media is Media::Image {
+                    image: media,
+                  }}
+                    <img
+                      class="reel-media"
+                      src={media.src}
+                      alt={media.alt}
+                    />
+                  {:else}
+                    {#if post.media is Media::Carousel {
+                      images: slides,
+                    }}
+                      <pager
+                        class="reel-media"
+                        indicator="dots"
+                        label="Reel carousel"
+                      >
+                        {#each slides as slide (slide.src)}
+                          <img
+                            src={slide.src}
+                            alt={slide.alt}
+                          />
+                        {/each}
+                      </pager>
+                    {/if}
+                  {/if}
+                {/if}
+                <view class="reel-overlay">
+                  <view class="reel-copy">
+                    <view class="reel-author">
+                      <img
+                        class="avatar"
+                        src={post.author.avatar.src}
+                        alt={post.author.avatar.alt}
+                      />
+                      <text class="username">{post.author.username}</text>
+                    </view>
+                    <text>{post.caption}</text>
+                  </view>
+                  <view class="reel-actions">
+                    <button
+                      class="reel-action"
+                      label={like_label(effective_post_flag(post.viewer_liked, view.like_overlay, post.id))}
+                      pressed={effective_post_flag(post.viewer_liked, view.like_overlay, post.id)}
+                      busy={view.like_pending.contains(post.id)}
+                      on press -> ToggleLike(post.id, !effective_post_flag(post.viewer_liked, view.like_overlay, post.id))
+                    >
+                      <icon name="heart"/>
+                      <text>{post.like_count}</text>
+                    </button>
+                    <button
+                      label="Comments"
+                      on press -> OpenComments(post.id)
+                    >
+                      <icon name="message-circle"/>
+                      <text>{post.comment_count}</text>
+                    </button>
+                    <button
+                      class="reel-action reel-save-action"
+                      label={save_label(effective_post_flag(post.viewer_saved, view.save_overlay, post.id))}
+                      pressed={effective_post_flag(post.viewer_saved, view.save_overlay, post.id)}
+                      busy={view.save_pending.contains(post.id)}
+                      on press -> ToggleSave(post.id, !effective_post_flag(post.viewer_saved, view.save_overlay, post.id))
+                    >
+                      <icon name="bookmark"/>
+                    </button>
+                  </view>
+                </view>
+              </view>
+            {/each}
+          </scroll>
+        {/if}
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui SearchPage for Instagram(view) {
+  <view class="screen search-page">
+    <view class="search-head">
+      <text class="search-title">Explore</text>
+      <view class="search-controls">
+        <textfield
+          value={view.search_query}
+          label="Search people"
+          placeholder="Search"
+          on change -> SearchChanged(event.text)
+        />
+        <button
+          label="Search"
+          disabled={view.search_query == ""}
+          on press -> SubmitSearch
+        >
+          <icon name="search"/>
+        </button>
+      </view>
+    </view>
+    {#if view.authority is Authority::Loading}
+      <view class="fill-center">
+        <text class="muted">Loading Explore…</text>
+      </view>
+    {:else}
+      {#if view.authority is Authority::Failed {
+        ..,
+      }}
+        <view class="fill-center">
+          <text class="muted">Search isn't available.</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Ready {
+          data: data,
+        }}
+          <scroll class="search-scroll">
+            {#if view.search_status is SearchStatus::Explore}
+              {#if data.explore_tiles.size == 0}
+                <view class="fill-center">
+                  <text class="muted">Explore is empty.</text>
+                </view>
+              {/if}
+              <view class="explore-grid">
+                {#each data.explore_tiles as tile (tile.post)}
+                  <region
+                    label={tile.image.alt}
+                    on activate -> OpenPost(tile.post)
+                  >
+                    <img
+                      class="grid-tile"
+                      src={tile.image.src}
+                      alt={tile.image.alt}
+                    />
+                  </region>
+                {/each}
+              </view>
+            {:else}
+              {#if view.search_status is SearchStatus::Searching}
+                <view class="fill-center">
+                  <text class="muted">Searching…</text>
+                </view>
+              {:else}
+                {#if view.search_status is SearchStatus::Results}
+                  <view
+                    role="list"
+                    class="connection-list"
+                  >
+                    {#each data.search_people as person (person.user.id)}
+                      <view>
+                        <region
+                          label={person.user.username}
+                          on activate -> OpenProfile(person.user.id)
+                        >
+                          <view class="connection-row">
+                            <img
+                              class="avatar"
+                              src={person.user.avatar.src}
+                              alt={person.user.avatar.alt}
+                            />
+                            <view class="connection-copy">
+                              <text class="username">{person.user.username}</text>
+                              <text class="muted">{person.user.display_name}</text>
+                            </view>
+                          </view>
+                        </region>
+                      </view>
+                    {/each}
+                  </view>
+                {:else}
+                  {#if view.search_status is SearchStatus::NoResults}
+                    <view class="fill-center stack-sm">
+                      <text class="title">No results</text>
+                      <text class="muted">Try another username.</text>
+                    </view>
+                  {/if}
+                {/if}
+              {/if}
+            {/if}
+          </scroll>
+        {/if}
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui StoryPage for Instagram(view) {
+  <view class="screen story-page">
+    {#if view.authority is Authority::Loading}
+      <view class="fill-center">
+        <text class="muted">Loading story…</text>
+      </view>
+    {:else}
+      {#if view.authority is Authority::Failed {
+        ..,
+      }}
+        <view class="fill-center">
+          <text class="muted">This story isn't available.</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Ready {
+          data: data,
+        }}
+          <view class="story-stage">
+            <img
+              class="story-image"
+              src={story_for_page(data, view.page).image.src}
+              alt={story_for_page(data, view.page).image.alt}
+            />
+            <view class="story-progress">
+              {#each story_for_page(data, view.page).progress as segment (segment.id)}
+                <view class={if segment.current {
+                  "story-segment current"
+                } else if segment.viewed {
+                  "story-segment viewed"
+                } else {
+                  "story-segment"
+                }}/>
+              {/each}
+            </view>
+            <view class="story-head">
+              <img
+                class="avatar"
+                src={story_for_page(data, view.page).author.avatar.src}
+                alt={story_for_page(data, view.page).author.avatar.alt}
+              />
+              <text class="username">{story_for_page(data, view.page).author.username}</text>
+              <text>{story_for_page(data, view.page).posted_label}</text>
+              <button
+                label="Close story"
+                on press -> GoBack
+              >
+                <icon name="x"/>
+              </button>
+            </view>
+            <text class="story-caption">{story_for_page(data, view.page).caption}</text>
+            <view class="story-hit-zones">
+              {#if story_for_page(data, view.page).previous is Some(previous)}
+                <button
+                  label="Previous story"
+                  on press -> OpenStory(previous)
+                >
+                  <text>Previous</text>
+                </button>
+              {:else}
+                {#if story_for_page(data, view.page).previous is None}
+                  <view/>
+                {/if}
+              {/if}
+              {#if story_for_page(data, view.page).next is Some(next)}
+                <button
+                  label="Next story"
+                  on press -> OpenStory(next)
+                >
+                  <text>Next</text>
+                </button>
+              {:else}
+                {#if story_for_page(data, view.page).next is None}
+                  <button
+                    label="Close story"
+                    on press -> GoBack
+                  >
+                    <text>Close</text>
+                  </button>
+                {/if}
+              {/if}
+            </view>
+          </view>
+        {/if}
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui BottomNav for Instagram(view) {
+  <view
+    role="navigation"
+    class="bottom-nav"
+  >
+    <text class="nav-brand">Instagram</text>
+    <view class="nav-items">
+      <button
+        label="Feed"
+        current={feed_current(view.page)}
+        on press -> SelectTab(Section::Feed)
+      >
+        <icon name="house"/>
+        <text class="nav-label">Home</text>
+      </button>
+      <button
+        label="Search"
+        current={search_current(view.page)}
+        on press -> SelectTab(Section::Search)
+      >
+        <icon name="search"/>
+        <text class="nav-label">Search</text>
+      </button>
+      <button
+        label="Create"
+        current={create_current(view.page)}
+        on press -> SelectTab(Section::Create)
+      >
+        <icon name="square-plus"/>
+        <text class="nav-label">Create</text>
+      </button>
+      <button
+        label="Reels"
+        current={reels_current(view.page)}
+        on press -> SelectTab(Section::Reels)
+      >
+        <icon name="clapperboard"/>
+        <text class="nav-label">Reels</text>
+      </button>
+      <button
+        label="Profile"
+        current={profile_current(view.page)}
+        on press -> SelectTab(Section::Profile)
+      >
+        <icon name="user-round"/>
+        <text class="nav-label">Profile</text>
+      </button>
+    </view>
+  </view>
+}
+
+pub ui CommentRow for Instagram(view) {
+  <view class="comment-row">
+    {#if view.pending_comment is Some((_, body))}
+      <img
+        class="avatar"
+        src={MIRA.avatar.src}
+        alt={MIRA.avatar.alt}
+      />
+      <view class="comment-copy pending">
+        <text class="username">{MIRA.username}</text>
+        <text>{body}</text>
+        <text class="muted">Posting…</text>
+      </view>
+    {:else}
+      {#if view.pending_comment is None}
+        <img
+          class="avatar"
+          src={KENJI.avatar.src}
+          alt={KENJI.avatar.alt}
+        />
+        <view class="comment-copy">
+          <text class="username">{KENJI.username}</text>
+          <text>That copper red is unreal. What cone are you firing to?</text>
+          <text class="muted">1h</text>
+        </view>
+      {/if}
+    {/if}
+  </view>
+}
+
+pub ui ConnectionRow for Instagram(view) {
+  <view class="connection-row">
+    {#if view.page is Page::Followers {
+      user: user,
+    }}
+      {#if user == USER_MIRA}
+        <img
+          class="avatar"
+          src={NILS.avatar.src}
+          alt={NILS.avatar.alt}
+        />
+        <view class="connection-copy">
+          <text class="username">{NILS.username}</text>
+          <text class="muted">{NILS.display_name}</text>
+        </view>
+        <button
+          label={follow_label(effective_follow(false, view.follow_overlay, USER_NILS))}
+          busy={view.follow_pending.contains(USER_NILS)}
+          on press -> ToggleFollow(USER_NILS, !effective_follow(false, view.follow_overlay, USER_NILS))
+        >
+          <text>{follow_label(effective_follow(false, view.follow_overlay, USER_NILS))}</text>
+        </button>
+      {/if}
+      {#if user != USER_MIRA}
+        <img
+          class="avatar"
+          src={LENA.avatar.src}
+          alt={LENA.avatar.alt}
+        />
+        <view class="connection-copy">
+          <text class="username">{LENA.username}</text>
+          <text class="muted">{LENA.display_name}</text>
+        </view>
+        <button
+          label="Unfollow"
+          on press -> ToggleFollow(USER_LENA, false)
+        >
+          <text>Following</text>
+        </button>
+      {/if}
+    {:else}
+      <img
+        class="avatar"
+        src={LENA.avatar.src}
+        alt={LENA.avatar.alt}
+      />
+      <view class="connection-copy">
+        <text class="username">{LENA.username}</text>
+        <text class="muted">{LENA.display_name}</text>
+      </view>
+      <button
+        label="Unfollow"
+        on press -> ToggleFollow(USER_LENA, false)
+      >
+        <text>Following</text>
+      </button>
+    {/if}
+  </view>
+}
+
+pub ui NoticeBar for Instagram(view) {
+  <view class="notice">
+    {#if view.notice is Some(message)}
+      <text>{message}</text>
+    {:else}
+      {#if view.notice is None}
+        <text>Couldn't like this post. Try again.</text>
+      {/if}
+    {/if}
+    <button
+      label="Dismiss notice"
+      on press -> notice_controls.DismissNotice
+    >
+      <icon name="x"/>
+    </button>
+  </view>
+}
+
+pub ui PostCard for Instagram(view) {
+  {#if view.authority is Authority::Ready {
+    data: data,
+  }}
+    <view class="post-card">
+      <view class="author-row">
+        <img
+          class="avatar"
+          src={post_for_page(data, view.page).author.avatar.src}
+          alt={post_for_page(data, view.page).author.avatar.alt}
+        />
+        <text class="username">{post_for_page(data, view.page).author.username}</text>
+      </view>
+      {#if post_for_page(data, view.page).media is Media::Image {
+        image: media,
+      }}
+        <region
+          label="Like this post"
+          supplementary={true}
+          on activate-double -> ToggleLike(post_for_page(data, view.page).id, true)
+        >
+          <img
+            class="media"
+            src={media.src}
+            alt={media.alt}
+          />
+        </region>
+      {:else}
+        {#if post_for_page(data, view.page).media is Media::Carousel {
+          images: slides,
+        }}
+          <pager
+            class="media"
+            indicator="dots"
+            label="Photo carousel"
+          >
+            {#each slides as slide (slide.src)}
+              <img
+                class="slide"
+                src={slide.src}
+                alt={slide.alt}
+              />
+            {/each}
+          </pager>
+        {:else}
+          {#if post_for_page(data, view.page).media is Media::Video {
+            src: src,
+            poster: poster,
+          }}
+            <video
+              class="media"
+              src={src}
+              poster={poster.src}
+              label={poster.alt}
+              controls={true}
+              playsinline={true}
+            />
+          {/if}
+        {/if}
+      {/if}
+      <view class="action-row">
+        <view class="action-primary">
+          <button
+            class="icon-action"
+            label={like_label(effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))}
+            pressed={effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id)}
+            busy={view.like_pending.contains(post_for_page(data, view.page).id)}
+            on press -> ToggleLike(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))
+          >
+            <icon name="heart"/>
+          </button>
+          <button
+            class="icon-action"
+            label="Comments"
+            on press -> OpenComments(post_for_page(data, view.page).id)
+          >
+            <icon name="message-circle"/>
+          </button>
+        </view>
+        <button
+          class="icon-action save-action"
+          label={save_label(effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))}
+          pressed={effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id)}
+          busy={view.save_pending.contains(post_for_page(data, view.page).id)}
+          on press -> ToggleSave(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))
+        >
+          <icon name="bookmark"/>
+        </button>
+      </view>
+      <text class="likes">{post_for_page(data, view.page).like_count} likes</text>
+      <view class="caption-row">
+        <text class="caption-author">{post_for_page(data, view.page).author.username}</text>
+        <text class="caption">{post_for_page(data, view.page).caption}</text>
+      </view>
+      <text class="posted-label">{post_for_page(data, view.page).posted_label}</text>
+    </view>
+  {:else}
+    <view class="post-card fill-center">
+      <text class="muted">Loading post…</text>
+    </view>
+  {/if}
+}
+
+pub ui ProfileHeader for Instagram(view) {
+  {#if view.authority is Authority::Ready {
+    data: data,
+  }}
+    <view class="profile-header">
+      <view class="head-row">
+        <img
+          class="profile-avatar"
+          src={profile_for_page(data, view.page).user.avatar.src}
+          alt={profile_for_page(data, view.page).user.avatar.alt}
+        />
+        <view class="stats">
+          <view class="stat">
+            <text class="stat-num">{profile_for_page(data, view.page).post_count}</text>
+            <text class="stat-name">Posts</text>
+          </view>
+          <view class="stat">
+            <text class="stat-num">{profile_for_page(data, view.page).follower_count}</text>
+            <text class="stat-name">Followers</text>
+          </view>
+          <view class="stat">
+            <text class="stat-num">{profile_for_page(data, view.page).following_count}</text>
+            <text class="stat-name">Following</text>
+          </view>
+        </view>
+      </view>
+      <text class="display-name">{profile_for_page(data, view.page).user.display_name}</text>
+      <text class="profile-handle">{profile_for_page(data, view.page).user.username}</text>
+      <text class="bio">{profile_for_page(data, view.page).bio}</text>
+      <view class="profile-actions">
+        {#if profile_for_page(data, view.page).user.id == data.viewer.id}
+          <button
+            class="secondary-button profile-action"
+            label="Create a new post"
+            on press -> SelectTab(Section::Create)
+          >
+            <text>New post</text>
+          </button>
+        {/if}
+        {#if profile_for_page(data, view.page).user.id != data.viewer.id}
+          <button
+            class="primary-button profile-action"
+            label={follow_label(effective_follow(profile_for_page(data, view.page).viewer_follows, view.follow_overlay, profile_for_page(data, view.page).user.id))}
+            busy={view.follow_pending.contains(profile_for_page(data, view.page).user.id)}
+            on press -> ToggleFollow(profile_for_page(data, view.page).user.id, !effective_follow(profile_for_page(data, view.page).viewer_follows, view.follow_overlay, profile_for_page(data, view.page).user.id))
+          >
+            <text>{follow_label(effective_follow(profile_for_page(data, view.page).viewer_follows, view.follow_overlay, profile_for_page(data, view.page).user.id))}</text>
+          </button>
+        {/if}
+      </view>
+    </view>
+  {:else}
+    <view class="profile-header fill-center">
+      <text class="muted">Loading profile…</text>
+    </view>
+  {/if}
+}
+
+pub ui ReelCard for Instagram(view) {
+  {#if view.authority is Authority::Ready {
+    data: data,
+  }}
+    <view class="reel-card">
+      {#if post_for_page(data, view.page).media is Media::Video {
+        src: src,
+        poster: poster,
+      }}
+        <video
+          class="reel-media"
+          src={src}
+          poster={poster.src}
+          label={poster.alt}
+          muted={true}
+          loop={true}
+          controls={true}
+          playsinline={true}
+        />
+      {:else}
+        {#if post_for_page(data, view.page).media is Media::Image {
+          image: media,
+        }}
+          <img
+            class="reel-media"
+            src={media.src}
+            alt={media.alt}
+          />
+        {:else}
+          {#if post_for_page(data, view.page).media is Media::Carousel {
+            images: slides,
+          }}
+            <pager
+              class="reel-media"
+              indicator="dots"
+              label="Reel carousel"
+            >
+              {#each slides as slide (slide.src)}
+                <img
+                  src={slide.src}
+                  alt={slide.alt}
+                />
+              {/each}
+            </pager>
+          {/if}
+        {/if}
+      {/if}
+      <view class="reel-overlay">
+        <view class="reel-copy">
+          <view class="reel-author">
+            <img
+              class="avatar"
+              src={post_for_page(data, view.page).author.avatar.src}
+              alt={post_for_page(data, view.page).author.avatar.alt}
+            />
+            <text class="username">{post_for_page(data, view.page).author.username}</text>
+          </view>
+          <text>{post_for_page(data, view.page).caption}</text>
+        </view>
+        <view class="reel-actions">
+          <button
+            class="reel-action"
+            label={like_label(effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))}
+            pressed={effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id)}
+            busy={view.like_pending.contains(post_for_page(data, view.page).id)}
+            on press -> ToggleLike(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id))
+          >
+            <icon name="heart"/>
+            <text>{post_for_page(data, view.page).like_count}</text>
+          </button>
+          <button
+            label="Comments"
+            on press -> OpenComments(post_for_page(data, view.page).id)
+          >
+            <icon name="message-circle"/>
+          </button>
+          <button
+            class="reel-action reel-save-action"
+            label={save_label(effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))}
+            pressed={effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id)}
+            busy={view.save_pending.contains(post_for_page(data, view.page).id)}
+            on press -> ToggleSave(post_for_page(data, view.page).id, !effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id))
+          >
+            <icon name="bookmark"/>
+          </button>
+        </view>
+      </view>
+    </view>
+  {:else}
+    <view class="reel-card fill-center">
+      <text class="muted">Loading reel…</text>
+    </view>
+  {/if}
+}
+
+pub ui StoriesTray for Instagram(view) {
+  {#if view.authority is Authority::Ready {
+    data: data,
+  }}
+    <scroll
+      class="stories-tray"
+      direction="horizontal"
+    >
+      <view
+        role="list"
+        class="ring-row"
+      >
+        {#each data.stories as story (story.id)}
+          <view>
+            <region
+              label={story.user.username}
+              on activate -> OpenStory(story.id)
+            >
+              <view class="ring-item">
+                <img
+                  class={if story.unseen {
+                    "ring unseen"
+                  } else {
+                    "ring seen"
+                  }}
+                  src={story.user.avatar.src}
+                  alt={story.user.avatar.alt}
+                />
+                <text class="ring-name">{story.user.username}</text>
+              </view>
+            </region>
+          </view>
+        {/each}
+      </view>
+    </scroll>
+  {:else}
+    <view class="stories-tray fill-center">
+      <text class="muted">Loading stories…</text>
+    </view>
+  {/if}
+}
+
+pub ui CommentsSheet for Instagram(view) {
+  <Surface key={POST_LENA_GLAZE}>
+    <view class="comments-sheet">
+      <view class="sheet-head">
+        <text class="sheet-title">Comments</text>
+        <button
+          label="Close comments"
+          on press -> DismissComments
+        >
+          <icon name="x"/>
+        </button>
+      </view>
+      {#if view.notice is Some(message)}
+        <view class="notice">
+          <text>{message}</text>
+        </view>
+      {:else}
+        {#if view.notice is None}
+          <view/>
+        {/if}
+      {/if}
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        {#if view.comments_post is Some(post)}
+          <scroll class="comment-list">
+            {#if comments_for(data, post).size == 0 && view.pending_comment == None}
+              <view class="fill-center stack-sm">
+                <text class="empty-title">No comments yet</text>
+                <text class="muted">Start the conversation.</text>
+              </view>
+            {/if}
+            {#each comments_for(data, post) as comment (comment.id)}
+              <view class="comment-row">
+                <img
+                  class="avatar"
+                  src={comment.author.avatar.src}
+                  alt={comment.author.avatar.alt}
+                />
+                <view class="comment-copy">
+                  <text class="username">{comment.author.username}</text>
+                  <text>{comment.body}</text>
+                  <text class="muted">{comment.posted_label}</text>
+                </view>
+              </view>
+            {/each}
+            {#if view.pending_comment is Some((_, body))}
+              <view class="comment-row pending">
+                <img
+                  class="avatar"
+                  src={data.viewer.avatar.src}
+                  alt={data.viewer.avatar.alt}
+                />
+                <view class="comment-copy">
+                  <text class="username">{data.viewer.username}</text>
+                  <text>{body}</text>
+                  <text class="muted">Posting…</text>
+                </view>
+              </view>
+            {:else}
+              {#if view.pending_comment is None}
+                <view/>
+              {/if}
+            {/if}
+          </scroll>
+          <view class="composer">
+            <img
+              class="avatar"
+              src={data.viewer.avatar.src}
+              alt={data.viewer.avatar.alt}
+            />
+            <textfield
+              value={view.comment_draft}
+              label="Add a comment"
+              placeholder="Add a comment…"
+              disabled={view.pending_comment is Some(_)}
+              on change -> CommentChanged(event.text)
+            />
+            <button
+              label="Post"
+              disabled={view.comment_draft == "" || view.pending_comment is Some(_)}
+              on press -> SubmitComment
+            >
+              <text>Post</text>
+            </button>
+          </view>
+        {:else}
+          {#if view.comments_post is None}
+            <view class="fill-center">
+              <text class="muted">Comments are closed.</text>
+            </view>
+          {/if}
+        {/if}
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading comments…</text>
+        </view>
+      {/if}
+    </view>
+  </Surface>
+}

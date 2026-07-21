@@ -46,6 +46,7 @@ import {
 import {
   incomingLeftLabelShift,
   layoutStructureConnectors,
+  logicalRoutePreviewNode,
   routeStructureConnector,
   structureDefinitionNode,
   visibleStructureConnectors,
@@ -67,6 +68,18 @@ import {
   loadIconFontRegistry,
   type IconFontRegistry,
 } from "../renderer/icons.js";
+import { projectionUsesPrimitiveCapability } from "../renderer/primitives/registry.js";
+import type { RenderNode } from "../renderer/projection.js";
+import {
+  inspectMachine,
+  machineMetricRows,
+  previewEvidenceRows,
+  renderInspectionRows,
+} from "./machine-inspection.js";
+import {
+  editorIdentifierLabel,
+  editorPreviewLabels,
+} from "./display-labels.js";
 
 const EDITOR_STATE_PATH = "/api/editor/state";
 const EDITOR_ICON_FONTS_PATH = "/api/editor/icon-fonts.json";
@@ -96,6 +109,10 @@ interface Rect extends Point {
   width: number;
   height: number;
 }
+
+export const projectionNeedsIconFonts = (
+  nodes: readonly RenderNode[],
+): boolean => projectionUsesPrimitiveCapability(nodes, "icon-fonts");
 
 interface PanState {
   pointerId: number;
@@ -149,6 +166,13 @@ interface EditorShell {
   overviewApplication: HTMLElement;
   overviewFreshness: HTMLElement;
   overviewStats: HTMLElement;
+  overviewMachineBlock: HTMLElement;
+  overviewMachineIdentity: HTMLElement;
+  overviewMachineStatus: HTMLElement;
+  overviewMachineMetrics: HTMLElement;
+  overviewMachineOwnership: HTMLElement;
+  overviewMachineOutcomes: HTMLElement;
+  overviewMachineDependencies: HTMLElement;
   overviewCallout: HTMLElement;
   clearSelectionButton: HTMLButtonElement;
   selectionKind: HTMLElement;
@@ -168,6 +192,8 @@ interface EditorShell {
   selectionWorkflowBlock: HTMLElement;
   selectionWorkflow: HTMLOListElement;
   selectionStatus: HTMLElement;
+  selectionEvidenceBlock: HTMLElement;
+  selectionEvidence: HTMLElement;
   selectionData: HTMLElement;
   selectionNoData: HTMLElement;
   selectionNoteBlock: HTMLElement;
@@ -234,6 +260,17 @@ const SHELL_HTML = `
     <section class="inspector-section inspector-overview">
       <div class="inspector-hero"><span class="inspector-hero-icon" aria-hidden="true">U</span><div><strong data-overview-application>Uhura</strong><span data-overview-freshness>Loading preview model</span></div></div>
       <dl class="inspector-grid" data-overview-stats></dl>
+      <section class="inspector-block overview-machine-block" aria-labelledby="overview-machine-title" hidden>
+        <div class="machine-block-heading"><h3 id="overview-machine-title">Machine</h3><span class="machine-evidence-status"></span></div>
+        <dl class="machine-property-list overview-machine-identity"></dl>
+        <dl class="machine-metric-grid overview-machine-metrics" aria-label="Machine evidence summary"></dl>
+        <h4 class="machine-topology-heading">Ownership</h4>
+        <dl class="machine-property-list overview-machine-ownership" aria-label="Authored machine ownership"></dl>
+        <h4 class="machine-topology-heading">Outcomes</h4>
+        <dl class="machine-property-list overview-machine-outcomes" aria-label="Machine outcome policies"></dl>
+        <h4 class="machine-topology-heading">Dependencies</h4>
+        <dl class="machine-property-list overview-machine-dependencies" aria-label="Authored machine dependencies"></dl>
+      </section>
       <div class="inspector-callout" data-overview-callout><strong>Read-only projection</strong><p>Save a <code>.uhura</code> file to rebuild these previews automatically.</p></div>
     </section>
     <section class="inspector-section inspector-selection" hidden>
@@ -248,6 +285,11 @@ const SHELL_HTML = `
         <div class="selection-replay-row" hidden><dt>Replay</dt><dd class="selection-replay"></dd></div>
         <div><dt>Status</dt><dd class="selection-status"></dd></div>
       </dl>
+      <section class="inspector-block selection-evidence-block" aria-labelledby="selection-evidence-title" hidden>
+        <h3 id="selection-evidence-title">Evidence pin</h3>
+        <p class="inspector-block-intro">Deterministic source identity for this static preview.</p>
+        <dl class="machine-property-list selection-evidence"></dl>
+      </section>
       <section class="inspector-block selection-hierarchy-block" aria-labelledby="selection-hierarchy-title" hidden>
         <h3 id="selection-hierarchy-title">Surface hierarchy</h3>
         <p class="inspector-block-intro">Mounted children in back-to-front stack order.</p>
@@ -266,7 +308,7 @@ const SHELL_HTML = `
       </section>
       <div class="inspector-block selection-note-block" hidden><h3>Note</h3><p class="selection-note"></p></div>
       <section class="inspector-block selection-documentation" hidden><h3>Documentation & annotations</h3><div class="selection-documentation-content"></div></section>
-      <div class="inspector-block"><h3>Declared interactions</h3><ul class="interaction-list selection-interactions"></ul><p class="inspector-muted selection-no-interactions">No interactions declared in this snapshot.</p></div>
+      <div class="inspector-block"><h3>Declared interactions</h3><ul class="interaction-list selection-interactions"></ul><p class="inspector-muted selection-no-interactions">No interactions declared in this projection.</p></div>
       <p class="visually-hidden selection-announcement" aria-live="polite"></p>
     </section>
   </aside>
@@ -325,6 +367,13 @@ const buildShell = (root: HTMLElement): EditorShell => {
     overviewApplication: required(shell, "[data-overview-application]"),
     overviewFreshness: required(shell, "[data-overview-freshness]"),
     overviewStats: required(shell, "[data-overview-stats]"),
+    overviewMachineBlock: required(shell, ".overview-machine-block"),
+    overviewMachineIdentity: required(shell, ".overview-machine-identity"),
+    overviewMachineStatus: required(shell, ".machine-evidence-status"),
+    overviewMachineMetrics: required(shell, ".overview-machine-metrics"),
+    overviewMachineOwnership: required(shell, ".overview-machine-ownership"),
+    overviewMachineOutcomes: required(shell, ".overview-machine-outcomes"),
+    overviewMachineDependencies: required(shell, ".overview-machine-dependencies"),
     overviewCallout: required(shell, "[data-overview-callout]"),
     clearSelectionButton: required(shell, ".clear-selection"),
     selectionKind: required(shell, ".selection-kind"),
@@ -344,6 +393,8 @@ const buildShell = (root: HTMLElement): EditorShell => {
     selectionWorkflowBlock: required(shell, ".selection-workflow-block"),
     selectionWorkflow: required(shell, ".selection-workflow"),
     selectionStatus: required(shell, ".selection-status"),
+    selectionEvidenceBlock: required(shell, ".selection-evidence-block"),
+    selectionEvidence: required(shell, ".selection-evidence"),
     selectionData: required(shell, ".selection-data"),
     selectionNoData: required(shell, ".selection-no-data"),
     selectionNoteBlock: required(shell, ".selection-note-block"),
@@ -970,9 +1021,13 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       observeFocusedFrame(null);
       return;
     }
+    const labels = editorPreviewLabels(
+      focusedPreview.identity,
+      model.render?.previews.map((preview) => preview.identity),
+    );
     shell.focusBreadcrumbKind.textContent = focusedPreview.identity.kind;
-    shell.focusBreadcrumbSubject.textContent = focusedPreview.identity.subject;
-    shell.focusBreadcrumbExample.textContent = focusedPreview.identity.example;
+    shell.focusBreadcrumbSubject.textContent = labels.subject;
+    shell.focusBreadcrumbExample.textContent = labels.example;
     frame.classList.add("is-focus-target");
     frame.closest<HTMLElement>(".preview-row")?.classList.add("is-focus-row");
     const navigatorButton = Array.from(
@@ -1186,12 +1241,13 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       child.dataset.surfaceKey = node.surface.key;
       if (node.opener !== null) child.dataset.opener = node.opener;
       const label = document.createElement("strong");
-      label.textContent = `${node.surface.modality} ${node.surface.definition}`;
+      label.textContent =
+        `${node.surface.modality} ${editorIdentifierLabel(node.surface.definition)}`;
       const relation = document.createElement("span");
       relation.textContent = {
-        direct: "opened by this replay",
-        inherited: "inherited from replay ancestry",
-        mounted: "mounted in this snapshot",
+        introduced: "introduced since its evidence parent",
+        retained: "retained from its evidence parent",
+        present: "present in this projection",
       }[node.surface.relation];
       child.append(label, relation);
       if (node.children.length > 0) {
@@ -1203,7 +1259,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     };
     const root = document.createElement("li");
     root.className = "surface-hierarchy-root";
-    root.textContent = `page ${hierarchy.page}`;
+    root.textContent = `presentation ${editorIdentifierLabel(hierarchy.presentation)}`;
     const children = document.createElement("ul");
     children.append(...hierarchy.roots.map(renderNode));
     root.append(children);
@@ -1213,6 +1269,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
 
   const renderInspector = (preview: EditorPreview): void => {
     const focused = focusedPreviewId() === preview.id;
+    const peerIdentities = model.render?.previews.map((candidate) => candidate.identity);
+    const labels = editorPreviewLabels(preview.identity, peerIdentities);
     shell.inspectorOverview.hidden = true;
     shell.inspectorSelection.hidden = false;
     shell.focusSelectionButton.disabled = false;
@@ -1220,9 +1278,9 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionKind.textContent = focused
       ? `Focused ${preview.identity.kind}`
       : preview.identity.kind;
-    shell.selectionName.textContent = `${preview.identity.subject} / ${preview.identity.example}`;
-    shell.selectionSubject.textContent = preview.identity.subject;
-    shell.selectionExample.textContent = preview.identity.example;
+    shell.selectionName.textContent = labels.combined;
+    shell.selectionSubject.textContent = labels.subject;
+    shell.selectionExample.textContent = labels.example;
     shell.selectionSize.textContent = shellSize(preview);
     shell.selectionOrigin.textContent = origin(preview);
     shell.selectionSourceRow.hidden = preview.identity.kind !== "page";
@@ -1234,7 +1292,12 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       ? "Copy is disabled while the preview is stale"
       : "Copy page source path";
     shell.selectionFromRow.hidden = preview.from === null || preview.from === "";
-    shell.selectionFrom.textContent = preview.from ?? "";
+    shell.selectionFrom.textContent = preview.from
+      ? editorPreviewLabels(
+        { ...preview.identity, example: preview.from },
+        peerIdentities,
+      ).example
+      : "";
     shell.selectionReplayRow.hidden = preview.replaySteps.length === 0;
     shell.selectionReplay.textContent = preview.replaySteps.join(" → ");
     renderSurfaceHierarchy(preview);
@@ -1242,6 +1305,17 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     const status = preview.default ? ["Default"] : [];
     status.push(preview.inFlight > 0 ? `${preview.inFlight} in flight` : "Settled");
     shell.selectionStatus.textContent = status.join(" · ");
+    if (preview.evidence) {
+      renderInspectionRows(
+        document,
+        shell.selectionEvidence,
+        previewEvidenceRows(preview.evidence),
+      );
+      shell.selectionEvidenceBlock.hidden = false;
+    } else {
+      shell.selectionEvidence.replaceChildren();
+      shell.selectionEvidenceBlock.hidden = true;
+    }
     renderData(preview);
     shell.selectionNoteBlock.hidden = !preview.note;
     shell.selectionNote.textContent = preview.note ?? "";
@@ -1266,8 +1340,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     }));
     shell.selectionNoInteractions.hidden = preview.interactions.length > 0;
     shell.selectionAnnouncement.textContent = focused
-      ? `${preview.identity.subject} / ${preview.identity.example} focused; details updated.`
-      : `${preview.identity.subject} / ${preview.identity.example} selected; details updated.`;
+      ? `${labels.combined} focused; details updated.`
+      : `${labels.combined} selected; details updated.`;
   };
 
   const clearSelection = (): void => {
@@ -1295,6 +1369,8 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     shell.selectionHierarchyBlock.hidden = true;
     shell.selectionWorkflow.replaceChildren();
     shell.selectionWorkflowBlock.hidden = true;
+    shell.selectionEvidence.replaceChildren();
+    shell.selectionEvidenceBlock.hidden = true;
     shell.selectionAnnouncement.textContent = "";
   };
 
@@ -1323,8 +1399,15 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     // right edge, incoming arrives muted at the left edge, and presents
     // leave the bottom edge (or arrive at a selected surface's top edge).
     activeStructureConnectors = layoutStructureConnectors(
-      visibleStructureConnectors(model.structureConnectors, preview.identity),
-      { node: structureDefinitionNode(preview.identity), previewId },
+      visibleStructureConnectors(model.structureConnectors, {
+        ...preview.identity,
+        previewId,
+      }),
+      {
+        node: logicalRoutePreviewNode(previewId),
+        aliases: [structureDefinitionNode(preview.identity)],
+        previewId,
+      },
     );
     // Active structural arrows lift the whole connector layer above the
     // preview rows so edge label pills and arrowheads never clip behind a
@@ -1452,6 +1535,59 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
       stat(document, "Flows", previews.filter((preview) => preview.from !== null).length),
       stat(document, "Assets", Object.keys(render?.assets ?? {}).length),
     );
+    if (render?.machine) {
+      const inspection = inspectMachine(render.machine);
+      renderInspectionRows(document, shell.overviewMachineIdentity, inspection.identity);
+      shell.overviewMachineIdentity.hidden = inspection.identity.length === 0;
+      renderInspectionRows(
+        document,
+        shell.overviewMachineMetrics,
+        machineMetricRows(inspection),
+      );
+      renderInspectionRows(
+        document,
+        shell.overviewMachineOwnership,
+        inspection.ownership,
+      );
+      shell.overviewMachineOwnership.hidden = inspection.ownership.length === 0;
+      const ownershipHeading = shell.overviewMachineOwnership
+        .previousElementSibling as HTMLElement | null;
+      if (ownershipHeading) ownershipHeading.hidden = inspection.ownership.length === 0;
+      renderInspectionRows(
+        document,
+        shell.overviewMachineOutcomes,
+        inspection.outcomes,
+      );
+      shell.overviewMachineOutcomes.hidden = inspection.outcomes.length === 0;
+      const outcomeHeading = shell.overviewMachineOutcomes
+        .previousElementSibling as HTMLElement | null;
+      if (outcomeHeading) outcomeHeading.hidden = inspection.outcomes.length === 0;
+      renderInspectionRows(
+        document,
+        shell.overviewMachineDependencies,
+        inspection.dependencies,
+      );
+      shell.overviewMachineDependencies.hidden = inspection.dependencies.length === 0;
+      const dependencyHeading = shell.overviewMachineDependencies
+        .previousElementSibling as HTMLElement | null;
+      if (dependencyHeading) dependencyHeading.hidden = inspection.dependencies.length === 0;
+      shell.overviewMachineStatus.dataset.tone = inspection.status;
+      shell.overviewMachineStatus.textContent = {
+        passed: "Evidence passed",
+        failed: "Evidence failed",
+        unknown: "Evidence unavailable",
+      }[inspection.status];
+      shell.overviewMachineBlock.hidden = false;
+    } else {
+      shell.overviewMachineIdentity.replaceChildren();
+      shell.overviewMachineMetrics.replaceChildren();
+      shell.overviewMachineOwnership.replaceChildren();
+      shell.overviewMachineOutcomes.replaceChildren();
+      shell.overviewMachineDependencies.replaceChildren();
+      shell.overviewMachineStatus.textContent = "";
+      delete shell.overviewMachineStatus.dataset.tone;
+      shell.overviewMachineBlock.hidden = true;
+    }
     const callout = shell.overviewCallout.querySelector("p");
     if (callout) {
       callout.textContent = render?.freshness === "stale"
@@ -1626,7 +1762,10 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         return;
       }
       let icons: IconFontRegistry | undefined;
-      if (decision.state.render) {
+      const needsIcons = decision.state.render?.previews.some((preview) =>
+        projectionNeedsIconFonts(preview.content.value.document.nodes)
+      ) ?? false;
+      if (decision.state.render && needsIcons) {
         const iconResponse = await window.fetch(EDITOR_ICON_FONTS_PATH, {
           headers: { Accept: "application/json" },
           cache: "no-store",

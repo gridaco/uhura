@@ -8,6 +8,7 @@ import {
   buildStructureConnectors,
   incomingLeftLabelShift,
   layoutStructureConnectors,
+  logicalRoutePreviewNode,
   routeStructureConnector,
   structureConnectorDescription,
   structureConnectorLabel,
@@ -15,6 +16,7 @@ import {
   type StructureConnectorPlacement,
   type StructureRect,
 } from "../structure-connectors.js";
+import { projectionContent } from "./fixtures/projection.js";
 
 const preview = (
   kind: PreviewKind,
@@ -36,17 +38,8 @@ const preview = (
   interactions: [],
   documentation: { declarationDocId: null, exampleDocId: null },
   provenance: { occurrences: [] },
-  content: kind === "page"
-    ? {
-      protocol: "uhura-view/0",
-      revision: 0,
-      page: {
-        route: subject,
-        root: { key: "root", element: "view", props: {} },
-      },
-      surfaces: [],
-    }
-    : { key: "root", element: "view", props: {} },
+  evidence: null,
+  content: projectionContent(),
 });
 
 const graph = (edges: InteractionGraphEdge[]): InteractionGraph => ({
@@ -225,6 +218,54 @@ test("selection scoping matches kind and subject, never subject alone", () => {
     visibleStructureConnectors(all, { kind: "component", subject: "feed" }),
     [],
   );
+});
+
+test("preview-backed route nodes map and select the exact application state", () => {
+  const feedBase = "page/feed/base";
+  const feedExtra = "page/feed/extra";
+  const profile = "page/profile/default";
+  const connectors = buildStructureConnectors(graph([
+    {
+      kind: "navigate",
+      from: logicalRoutePreviewNode(feedBase),
+      to: logicalRoutePreviewNode(profile),
+      event: "base-profile",
+    },
+    {
+      kind: "navigate",
+      from: logicalRoutePreviewNode(feedExtra),
+      to: logicalRoutePreviewNode(profile),
+      event: "extra-profile",
+    },
+  ]), boardPreviews);
+
+  assert.deepEqual(
+    connectors.map(({ sourceId, targetId, event }) => [sourceId, targetId, event]),
+    [
+      [feedBase, profile, "base-profile"],
+      [feedExtra, profile, "extra-profile"],
+    ],
+  );
+
+  const visible = visibleStructureConnectors(connectors, {
+    kind: "page",
+    subject: "feed",
+    previewId: feedExtra,
+  });
+  assert.deepEqual(
+    visible.map(({ sourceId, event }) => [sourceId, event]),
+    [[feedExtra, "extra-profile"]],
+    "selecting one logical state must not adopt a sibling preview's route",
+  );
+
+  const laid = layoutStructureConnectors(visible, {
+    node: logicalRoutePreviewNode(feedExtra),
+    aliases: ["page:feed"],
+    previewId: feedExtra,
+  });
+  assert.equal(laid[0]?.placement.direction, "outgoing");
+  assert.equal(laid[0]?.placement.selectedId, feedExtra);
+  assert.equal(laid[0]?.placement.farId, profile);
 });
 
 test("empty or unrelated selection hides every structural connector", () => {

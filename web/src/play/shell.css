@@ -1,3 +1,5 @@
+@import "../renderer/primitives/base.css";
+
 /* Shell chrome + semantic element bases (§8.4). The uh-* rules provide the
    shared renderer's browser vocabulary; layout/aesthetics stay authored (§10),
    and the compiled app stylesheet loads after this file and wins. */
@@ -595,18 +597,8 @@ body.uh-play-shell {
   border-color: #7aa7ff;
   box-shadow: 0 0 0 2px rgba(122, 167, 255, 0.16), 0 5px 16px rgba(0, 0, 0, 0.3);
 }
-#uh-debug-panel button.uh-debug-node.is-consulted-unsatisfied {
-  border-color: #b98343;
-  border-style: dashed;
-}
-#uh-debug-panel button.uh-debug-node.is-consulted-not-ready,
-#uh-debug-panel button.uh-debug-node.has-failure {
-  border-color: #bd6262;
-  border-style: dashed;
-}
 #uh-debug-panel button.uh-debug-node.is-written,
-#uh-debug-panel button.uh-debug-node.is-sent,
-#uh-debug-panel button.uh-debug-node.is-structural {
+#uh-debug-panel button.uh-debug-node.is-sent {
   background: #1d2a27;
   border-color: #4f8877;
 }
@@ -730,32 +722,42 @@ body.uh-play-shell {
 }
 #uh-page, .uh-page-root { block-size: 100%; min-block-size: 0; }
 .uh-page-root > * { block-size: 100%; }
+.uh-projection-error {
+  block-size: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: #e4e4e7;
+  background: #111113;
+  text-align: center;
+}
+.uh-projection-error strong { font-size: 15px; }
+.uh-projection-error p { max-inline-size: 54ch; color: #f0a6a6; }
+.uh-projection-error code { color: #a1a1aa; font: 12px/1.5 ui-monospace, monospace; }
 
-/* semantic element bases used by the shared browser renderer */
-.uh-view { display: block; min-inline-size: 0; }
-.uh-scroll { overflow-y: auto; overflow-x: hidden; min-block-size: 0; }
-.uh-scroll[data-direction="horizontal"] { overflow-x: auto; overflow-y: hidden; }
-.uh-text { margin: 0; overflow-wrap: anywhere; }
-.uh-img { display: block; background-color: #d9d9de; }
-.uh-video { display: block; inline-size: 100%; background: #111 center / cover no-repeat; object-fit: cover; }
-.uh-icon { display: inline-flex; align-items: center; justify-content: center; inline-size: 1em; block-size: 1em; font-size: 24px; }
-button.uh-button { appearance: none; background: none; border: 0; padding: 6px; font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; cursor: pointer; }
-button.uh-button[disabled] { opacity: 0.35; cursor: default; }
-button.uh-button[aria-busy="true"] { opacity: 0.6; }
-.uh-textfield input { font: inherit; inline-size: 100%; border: 1px solid #d5d5da; border-radius: 999px; padding: 8px 14px; background: #fff; color: #222; }
-.uh-region { display: block; cursor: pointer; }
-.uh-pager .uh-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
-.uh-pager .uh-track > * { flex: 0 0 100%; scroll-snap-align: center; }
-.uh-pager { position: relative; }
-.uh-dots { position: absolute; inset-block-end: 10px; inset-inline: 0; display: flex; justify-content: center; gap: 5px; }
-.uh-dot { inline-size: 6px; block-size: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.55); }
-.uh-dot.on { background: #fff; }
+/* Play-only affordances layered over the shared primitive bases. */
+button.uh-button { cursor: pointer; }
+button.uh-button[disabled] { cursor: default; }
+.uh-region { cursor: pointer; }
+.uh-pager .uh-track { scrollbar-width: none; }
 
-/* interactive Play surface stack */
-.uh-surface-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; z-index: 10; }
-.uh-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.4); }
-.uh-surface { position: relative; background: #fff; border-radius: 16px 16px 0 0; max-block-size: 72%; block-size: 72%; box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35); outline: none; }
-.uh-surface > * { block-size: 100%; }
+/* Machine-owned surfaces stay inside the selected prototype frame. */
+#uh-surfaces {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+#uh-surfaces:empty { display: none; }
+#uh-surfaces::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 40%);
+  pointer-events: auto;
+}
+#uh-surfaces > .uhura-surface { pointer-events: auto; }
 
 /* keyboard affordance for non-native interactives */
 .uh-region:focus-visible, button.uh-button:focus-visible { outline: 2px solid #4a90e2; outline-offset: 2px; }

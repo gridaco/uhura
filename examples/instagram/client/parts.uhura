@@ -1,0 +1,43 @@
+pub part Notice {
+  state {
+    message: Option<Text> = None,
+  }
+
+  pub computed current: Option<Text> = message;
+
+  observe {}
+
+  pub update show(next: Text) {
+    message = Some(next);
+  }
+
+  pub update dismiss() {
+    message = None;
+  }
+}
+
+pub part NoticeControls(
+  notice: Notice::Reads,
+  notice_updates: Notice::Updates,
+) {
+  requires outcomes {
+    commit Accepted,
+    abort Duplicate,
+  }
+
+  events {
+    DismissNotice,
+  }
+
+  state {}
+
+  observe {}
+
+  on DismissNotice {
+    if notice.current == None {
+      return Duplicate;
+    }
+    notice_updates.dismiss();
+    Accepted
+  }
+}

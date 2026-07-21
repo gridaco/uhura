@@ -1,0 +1,411 @@
+(*
+  Uhura 0.4 core grammar
+
+  This is the normative syntactic appendix of source.md. It fixes tokenization,
+  precedence, and the accepted core phrase structure. source.md remains the
+  semantic authority: name resolution, typing, effects, cardinality, and
+  lowering are checks over this grammar.
+
+  Activated profiles may add contextual declarations after an explicit use.
+  In particular, the ui profile owns `ui` declarations and markup. It may not
+  change the tokenization or meaning of a core form.
+
+  Notation:
+    { x }       zero or more x
+    [ x ]       zero or one x
+    x | y       alternative
+    "x"         exact source spelling
+    x - y       characters in x except y
+*)
+
+(* ------------------------------------------------------------------------- *)
+(* Source characters, trivia, and tokens                                     *)
+(* ------------------------------------------------------------------------- *)
+
+source              = { use-declaration }, { module-declaration }, EOF ;
+
+(* Source is valid UTF-8 without a BOM or U+0000. Outside Text and comments,
+   only the following ASCII whitespace is accepted. CRLF and CR are treated
+   as one logical LF for line/column accounting and formatting. *)
+horizontal-space    = U+0020 | U+0009 ;
+line-ending         = U+000A | U+000D U+000A | U+000D ;
+whitespace          = horizontal-space | line-ending ;
+
+(* Whitespace may separate every token. Comments are retained rather than
+   discarded and are admitted only at the item/list boundaries fixed by
+   RFC 0003. There are no block comments in core source. *)
+ordinary-comment    = "//", ordinary-comment-body ;
+outer-doc           = "///", outer-doc-body ;       (* next byte is not "/" *)
+inner-doc           = "//!", inner-doc-body ;
+ordinary-comment-body
+                    = { source-character - line-ending } ;
+outer-doc-body      = { source-character - line-ending } ;
+inner-doc-body      = { source-character - line-ending } ;
+
+(* Symbolic names are ASCII in 0.4. Exact Unicode belongs in Text values.
+   `_` is a wildcard token and is never a declared or bound name. *)
+lower-name          = lower, { lower | digit | "_" } ;
+upper-name          = upper, { upper | lower | digit } ;
+constant-name       = upper, { upper | digit | "_" } ;
+path-segment        = lower-name ;
+field-name          = lower-name ;
+member-label        = lower-name | hard-keyword ;
+local-name          = lower-name ;
+type-name           = upper-name ;
+variant-name        = upper-name ;
+declaration-name    = lower-name | upper-name | constant-name ;
+
+lower               = "a" … "z" ;
+upper               = "A" … "Z" ;
+digit               = "0" … "9" ;
+nonzero-digit       = "1" … "9" ;
+hex-digit           = digit | "a" … "f" | "A" … "F" ;
+
+(* Longest token wins. Negative numbers are unary `-` plus an unsigned
+   literal, not one lexical token. Leading zeroes, digit separators, bases,
+   exponents, `.5`, and `1.` are not core spellings. *)
+integer-literal     = "0" | nonzero-digit, { digit } ;
+decimal-literal     = integer-literal, ".", digit, { digit } ;
+
+(* This is JSON string spelling. A high UTF-16 surrogate escape must be
+   immediately followed by an escaped low surrogate; an isolated surrogate is
+   rejected. Unescaped source characters must be Unicode scalar values other
+   than U+0000 through U+001F, `"` and `\`. *)
+text-literal        = '"', { text-character | escape }, '"' ;
+text-character      = unicode-scalar
+                    - U+0000 … U+001F
+                    - '"'
+                    - "\" ;
+escape              = '\"' | "\\" | "\/" | "\b" | "\f" | "\n" | "\r" | "\t"
+                    | unicode-escape ;
+unicode-escape      = "\u", hex-digit, hex-digit, hex-digit, hex-digit ;
+
+(* All words below are hard keywords and cannot be names. `ui` and
+   profile-owned words are contextual and remain lower-name tokens until the
+   corresponding direct use activates that profile in the module. Prelude
+   types and constructors such as Bool, Option, None, and Some are names. *)
+hard-keyword        = "abort" | "as" | "before" | "commands" | "commit"
+                    | "computed" | "config" | "const" | "crate"
+                    | "decreases" | "else" | "emit" | "enum" | "events"
+                    | "false" | "fn" | "if" | "invariant" | "is" | "key"
+                    | "let" | "machine" | "match" | "observe" | "on"
+                    | "outcomes" | "part" | "port" | "pub" | "require"
+                    | "requires" | "return" | "state" | "struct" | "true"
+                    | "unreachable" | "update" | "use" | "while" ;
+
+(* Fixed punctuation and operators:
+   ::  ->  =>  &&  ||  ==  !=  <=  >=  .. are indivisible longest tokens. *)
+
+(* ------------------------------------------------------------------------- *)
+(* Modules, imports, and declarations                                        *)
+(* ------------------------------------------------------------------------- *)
+
+use-declaration     = "use", import-tree, ";"
+                    | "pub", "use", public-import-path, ";" ;
+
+import-tree         = import-path, [ "as", declaration-name ]
+                    | import-prefix, "::", "{", import-item-list, "}" ;
+import-item-list    = import-item, { ",", import-item }, [ "," ] ;
+import-item         = declaration-name, [ "as", declaration-name ] ;
+
+(* A public re-export is deliberately singular and unaliased. *)
+public-import-path  = import-path ;
+import-path         = import-root, "::", declaration-name,
+                      { "::", declaration-name } ;
+import-prefix       = import-root, { "::", path-segment } ;
+import-root         = "crate" | path-segment ;
+
+module-declaration  = [ "pub" ], (
+                        machine-declaration
+                      | part-declaration
+                      | struct-declaration
+                      | enum-declaration
+                      | key-declaration
+                      | const-declaration
+                      | function-declaration
+                    ) ;
+
+struct-declaration  = "struct", type-name, "{", [ struct-field-list ], "}" ;
+struct-field-list   = struct-field, { ",", struct-field }, [ "," ] ;
+struct-field        = field-name, ":", type ;
+
+enum-declaration    = "enum", type-name, "{", enum-variant-list, "}" ;
+enum-variant-list   = enum-variant, { ",", enum-variant }, [ "," ] ;
+enum-variant        = variant-name,
+                      [ "{", [ struct-field-list ], "}" ] ;
+
+key-declaration     = "key", type-name, "(", type, ")", ";" ;
+const-declaration   = "const", constant-name, ":", type, "=", expression, ";" ;
+
+function-declaration
+                    = "fn", local-name, parameter-list, "->", type, block ;
+parameter-list      = "(", [ parameter, { ",", parameter }, [ "," ] ], ")" ;
+parameter           = local-name, ":", type ;
+
+(* Nominal types and generated associated part interfaces share this path
+   shape. Resolution rejects value declarations in a type position. A tuple
+   type has at least two elements; Unit is `()`, never `(T)`. *)
+type                = type-path
+                    | "(", ")"
+                    | "(", type, ",", type, { ",", type }, [ "," ], ")" ;
+type-path           = type-name, [ type-arguments ],
+                      { "::", type-name, [ type-arguments ] } ;
+type-arguments      = "<", type, { ",", type }, [ "," ], ">" ;
+
+(* ------------------------------------------------------------------------- *)
+(* Machines, reusable parts, and their closed members                        *)
+(* ------------------------------------------------------------------------- *)
+
+machine-declaration = "machine", type-name, "{", { machine-member }, "}" ;
+part-declaration    = "part", type-name, [ parameter-list ],
+                      "{", { part-member }, "}" ;
+
+(* Member order is non-semantic. source.md fixes cardinality and the precise
+   declaration/visibility matrix. A machine can compose a part; a part cannot
+   contain a part-instance, outcomes section, config section, or before-commit
+   block. *)
+machine-member      = config-section
+                    | require-declaration
+                    | const-declaration
+                    | function-declaration
+                    | part-instance
+                    | events-section
+                    | commands-section
+                    | port-declaration
+                    | outcomes-section
+                    | state-section
+                    | computed-declaration
+                    | invariant-declaration
+                    | observe-section
+                    | handler-declaration
+                    | update-declaration
+                    | before-commit-declaration ;
+
+part-member         = require-declaration
+                    | requires-outcomes-section
+                    | const-declaration
+                    | function-declaration
+                    | events-section
+                    | commands-section
+                    | port-declaration
+                    | state-section
+                    | [ "pub" ], computed-declaration
+                    | invariant-declaration
+                    | observe-section
+                    | handler-declaration
+                    | [ "pub" ], update-declaration ;
+
+config-section      = "config", "{", [ typed-field-list ], "}" ;
+typed-field-list    = typed-field, { ",", typed-field }, [ "," ] ;
+typed-field         = field-name, ":", type ;
+require-declaration = "require", expression, ";" ;
+
+part-instance       = "part", local-name, "=", type-path,
+                      "(", [ argument-list ], ")", ";" ;
+
+events-section      = "events", "{", [ protocol-variant-list ], "}" ;
+commands-section    = "commands", "{", [ protocol-variant-list ], "}" ;
+protocol-variant-list
+                    = protocol-variant, { ",", protocol-variant }, [ "," ] ;
+protocol-variant    = variant-name, [ protocol-parameter-list ] ;
+protocol-parameter-list
+                    = "(", [ parameter, { ",", parameter }, [ "," ] ], ")" ;
+
+port-declaration    = "port", local-name, "=", type-path,
+                      "{", [ field-initializer-list ], "}", ";" ;
+
+outcomes-section    = "outcomes", "{", outcome-entry-list, "}" ;
+requires-outcomes-section
+                    = "requires", "outcomes", "{", outcome-entry-list, "}" ;
+outcome-entry-list  = outcome-entry, { ",", outcome-entry }, [ "," ] ;
+outcome-entry       = outcome-policy, protocol-variant ;
+outcome-policy      = "commit" | "abort" ;
+
+state-section       = "state", "{", [ state-field-list ], "}" ;
+state-field-list    = state-field, { ",", state-field }, [ "," ] ;
+state-field         = field-name, ":", type, "=", expression ;
+
+computed-declaration
+                    = "computed", local-name, [ ":", type ],
+                      "=", expression, ";" ;
+
+invariant-declaration
+                    = "invariant", expression, ";"
+                    | "invariant", "{", invariant-entry-list, "}" ;
+invariant-entry-list
+                    = expression, { ",", expression }, [ "," ] ;
+
+observe-section     = "observe", "{", [ observe-field-list ], "}" ;
+observe-field-list  = observe-field, { ",", observe-field }, [ "," ] ;
+observe-field       = field-name, [ ":", expression ] ;
+
+handler-declaration = "on", input-pattern, block ;
+input-pattern       = protocol-selector,
+                      [ "(", [ pattern-list ], ")" ] ;
+
+update-declaration  = "update", local-name, parameter-list,
+                      [ "->", type ], block ;
+
+before-commit-declaration
+                    = "before", "commit", block ;
+
+protocol-selector   = variant-name
+                    | local-name, ".", variant-name ;
+
+(* ------------------------------------------------------------------------- *)
+(* Blocks and statements                                                     *)
+(* ------------------------------------------------------------------------- *)
+
+(* Parsing a block retains every semicolon and separates statements from its
+   optional tail expression. An unterminated if/match before another statement
+   is a block-shaped expression statement; when it is the final item it is the
+   tail. Such a non-tail expression must check as Unit or Never. *)
+block               = "{", { statement }, [ expression ], "}" ;
+
+statement           = let-statement
+                    | assignment-statement
+                    | emit-statement
+                    | while-statement
+                    | unreachable-statement
+                    | expression, ";"
+                    | nonfinal-block-expression ;
+
+let-statement       = "let", local-name, [ ":", type ],
+                      "=", expression, ";" ;
+
+(* The checker admits exactly one bare state field owned by the current
+   machine or part as the target. This is not a general lvalue grammar. *)
+assignment-statement
+                    = local-name, "=", expression, ";" ;
+
+emit-statement      = "emit", output-constructor, ";" ;
+output-constructor  = protocol-selector,
+                      [ "(", [ argument-list ], ")" ] ;
+
+while-statement     = "while", expression,
+                      "decreases", "(", expression, ")", block ;
+unreachable-statement
+                    = "unreachable", ";" ;
+nonfinal-block-expression
+                    = if-expression | match-expression ;
+
+(* ------------------------------------------------------------------------- *)
+(* Expressions and precedence                                                *)
+(* ------------------------------------------------------------------------- *)
+
+(* Precedence, high to low:
+     postfix
+     unary ! and -
+     multiplication *
+     addition + and -
+     one comparison: == != < <= > >= or `is pattern`
+     &&
+     ||
+     return
+
+   Comparisons are non-associative: `a < b < c` is invalid. `if` and `match`
+   are primary block expressions. `return` has the lowest precedence and
+   yields Never; a value-less return is admitted only with expected Unit.
+*)
+
+expression          = return-expression | logical-or-expression ;
+return-expression   = "return", [ expression ] ;
+
+logical-or-expression
+                    = logical-and-expression,
+                      { "||", logical-and-expression } ;
+logical-and-expression
+                    = comparison-expression,
+                      { "&&", comparison-expression } ;
+
+comparison-expression
+                    = additive-expression,
+                      [ comparison-operator, additive-expression
+                      | "is", pattern ] ;
+comparison-operator = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
+
+additive-expression = multiplicative-expression,
+                      { ("+" | "-"), multiplicative-expression } ;
+multiplicative-expression
+                    = unary-expression, { "*", unary-expression } ;
+unary-expression    = ("!" | "-"), unary-expression
+                    | postfix-expression ;
+
+postfix-expression  = primary-expression, { postfix-operation } ;
+postfix-operation   = "(", [ call-argument-list ], ")"
+                    | ".", member-label
+                    | "[", expression, "]" ;
+
+call-argument-list  = call-argument, { ",", call-argument }, [ "," ] ;
+call-argument       = expression | binder-expression ;
+argument-list       = expression, { ",", expression }, [ "," ] ;
+binder-expression   = "|", local-name, "|", expression ;
+
+primary-expression  = scalar-literal
+                    | unit-expression
+                    | sequence-expression
+                    | tuple-or-group-expression
+                    | record-expression
+                    | block
+                    | qualified-name
+                    | if-expression
+                    | match-expression ;
+
+scalar-literal      = "true" | "false" | integer-literal
+                    | decimal-literal | text-literal ;
+unit-expression     = "(", ")" ;
+sequence-expression = "[", [ expression, { ",", expression }, [ "," ] ], "]" ;
+tuple-or-group-expression
+                    = "(", expression, ")"
+                    | "(", expression, ",", expression,
+                      { ",", expression }, [ "," ], ")" ;
+
+qualified-name      = declaration-name,
+                      { "::", declaration-name } ;
+
+record-expression   = qualified-name, "{", [ record-entry-list ], "}" ;
+record-entry-list   = field-initializer, { ",", field-initializer }, [ "," ]
+                    | field-initializer, { ",", field-initializer },
+                      ",", record-base, [ "," ]
+                    | record-base, [ "," ] ;
+field-initializer-list
+                    = field-initializer, { ",", field-initializer }, [ "," ] ;
+field-initializer   = field-name, [ ":", expression ]
+                    | hard-keyword, ":", expression ;
+record-base         = "..", expression ;
+
+if-expression       = "if", expression, block,
+                      [ "else", (block | if-expression) ] ;
+match-expression    = "match", expression, "{", match-arm-list, "}" ;
+match-arm-list      = match-arm, ",", { match-arm, "," } ;
+match-arm           = pattern, "=>", expression ;
+
+(* ------------------------------------------------------------------------- *)
+(* Patterns                                                                  *)
+(* ------------------------------------------------------------------------- *)
+
+pattern-list        = pattern, { ",", pattern }, [ "," ] ;
+pattern             = atomic-pattern, { "|", atomic-pattern } ;
+atomic-pattern      = "_"
+                    | local-name
+                    | literal-pattern
+                    | "(", pattern, ")"
+                    | "(", pattern, ",", pattern,
+                      { ",", pattern }, [ "," ], ")"
+                    | "None"
+                    | "Some", "(", pattern, ")"
+                    | qualified-name
+                    | qualified-name, "{", [ record-pattern-list ], "}" ;
+
+literal-pattern     = "true" | "false" | [ "-" ], integer-literal
+                    | [ "-" ], decimal-literal | text-literal | "(", ")" ;
+
+record-pattern-list = field-pattern, { ",", field-pattern }, [ "," ]
+                    | field-pattern, { ",", field-pattern },
+                      ",", pattern-rest, [ "," ]
+                    | pattern-rest, [ "," ] ;
+field-pattern       = field-name, [ ":", pattern ]
+                    | hard-keyword, ":", pattern ;
+pattern-rest        = ".." ;
+
+EOF                 = end-of-file ;

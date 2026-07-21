@@ -14,7 +14,7 @@ workspace = true
 name = "uhura"
 path = "src/main.rs"
 
-# Validates materialized fixture assets and renders legacy seeded motifs.
+# Validates materialized demo assets and renders deterministic seeded motifs.
 [[bin]]
 name = "gen-assets"
 path = "src/bin/gen_assets.rs"
@@ -23,11 +23,9 @@ path = "src/bin/gen_assets.rs"
 uhura-base = { workspace = true }
 uhura-syntax = { workspace = true }
 uhura-check = { workspace = true }
-uhura-port = { workspace = true, features = ["toml"] }
 uhura-core = { workspace = true }
-uhura-fixture = { workspace = true }
 uhura-host = { workspace = true }
-uhura-editor-model = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tiny_http = { workspace = true }
 toml = { workspace = true }

@@ -42,8 +42,16 @@ in, opt-in, experimental, accepted, or implemented.
 
 ## Version-scoped catalogues
 
-- [v0 widget draft](drafts/v0/README.md) — current implemented and proposed
-  capability notes; disposable with the v0 incubation model.
+- [Uhura 0.4 checked UI catalogue](drafts/0.4/) — exact executable element,
+  attribute, constraint, and event contract for the active disposable
+  incubation candidate; not a supported or stable widget API.
+- [v0 widget draft](drafts/v0/README.md) — historical implemented and proposed
+  capability notes from the retired v0 language model.
+
+The 0.4 catalogue records the candidate checker's finite source contract. The
+0.4 specification and conformance suite remain the version authorities; the
+historical v0 subtree defines no current behavior. Later capability studies
+may reuse taxonomy without silently inheriting v0 contracts.
 
 Exact names, properties, events, accessibility requirements, availability,
 renderer mappings, and implementation gaps belong under a named version or

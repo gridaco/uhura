@@ -10,6 +10,7 @@ import {
   workflowConnectorDescription,
   workflowConnectorLabel,
 } from "../workflow-connectors.js";
+import { elementNode, projectionContent } from "./fixtures/projection.js";
 
 const preview = (
   example: string,
@@ -31,15 +32,8 @@ const preview = (
   interactions: [],
   documentation: { declarationDocId: null, exampleDocId: null },
   provenance: { occurrences: [] },
-  content: {
-    protocol: "uhura-view/0",
-    revision: 0,
-    page: {
-      route: "feed",
-      root: { key: "root", element: "view", props: {} },
-    },
-    surfaces: [],
-  },
+  evidence: null,
+  content: projectionContent(),
 });
 
 test("builds direct checked provenance without repeating ancestor steps", () => {
@@ -54,7 +48,7 @@ test("builds direct checked provenance without repeating ancestor steps", () => 
     sourceId: "page/feed/base",
     targetId: "page/feed/pending",
     steps: ["like-toggled"],
-    openedSurfaces: [],
+    introducedSurfaces: [],
     lane: 0,
     sourcePort: { slot: 0, count: 1 },
     targetPort: { slot: 0, count: 1 },
@@ -63,7 +57,7 @@ test("builds direct checked provenance without repeating ancestor steps", () => 
     sourceId: "page/feed/pending",
     targetId: "page/feed/refused",
     steps: ["like-post.err"],
-    openedSurfaces: [],
+    introducedSurfaces: [],
     lane: 1,
     sourcePort: { slot: 0, count: 1 },
     targetPort: { slot: 0, count: 1 },
@@ -138,13 +132,13 @@ test("skips unresolved parents and summarizes labels without hiding full order",
   assert.equal(
     workflowConnectorDescription({
       steps: ["near-end", "projection feed.page", "load.ok"],
-      openedSurfaces: [],
+      introducedSurfaces: [],
     }),
     "near-end → projection feed.page → load.ok",
   );
 });
 
-test("classifies a checked edge that opens a mounted child surface", () => {
+test("classifies a checked edge whose projection introduces a surface", () => {
   const child = preview("comments-open", "base", ["comments-requested"]);
   child.replay = [{
     label: "comments-requested",
@@ -156,27 +150,26 @@ test("classifies a checked edge that opens a mounted child surface", () => {
       structural: [{ op: "open-surface", surface: "comments-sheet:1" }],
     },
   }];
-  if (!("protocol" in child.content)) throw new Error("page fixture");
-  child.content.surfaces = [{
-    key: "comments-sheet:1",
-    definition: "comments-sheet",
-    modality: "sheet",
-    dismiss: {
-      kind: "input", event: "dismiss", emit: "dismiss", scope: "surface:1", payload: {},
-    },
-    root: { key: "surface", element: "view", props: {} },
-  }];
+  child.content = projectionContent([
+    elementNode("root", [
+      elementNode("comments-sheet:1", [], {
+        element: "dialog",
+        surface: true,
+        attributes: [{ name: "aria-label", value: "comments-sheet" }],
+      }),
+    ]),
+  ]);
 
   const connector = buildWorkflowConnectors("page/feed", [preview("base"), child])[0]!;
-  assert.deepEqual(connector.openedSurfaces.map(({ definition, modality }) => ({
+  assert.deepEqual(connector.introducedSurfaces.map(({ definition, modality }) => ({
     definition, modality,
-  })), [{ definition: "comments-sheet", modality: "sheet" }]);
+  })), [{ definition: "comments-sheet", modality: "dialog" }]);
   assert.equal(
-    workflowConnectorLabel(connector.steps, connector.openedSurfaces),
-    "comments-requested · opens comments-sheet",
+    workflowConnectorLabel(connector.steps, connector.introducedSurfaces),
+    "comments-requested · introduces comments-sheet",
   );
   assert.equal(
     workflowConnectorDescription(connector),
-    "comments-requested; opens child sheet comments-sheet",
+    "comments-requested; projection introduces dialog comments-sheet",
   );
 });

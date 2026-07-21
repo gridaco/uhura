@@ -1,4 +1,4 @@
-// Typing for the wasm-bindgen bundle `uhura dev` serves at
+// Typing for the wasm-bindgen bundle `uhura play` serves at
 // /wasm/uhura_wasm.js (built by scripts/build-wasm.sh, --target web).
 // The host tsconfig maps the runtime specifier here so a clean checkout can
 // typecheck before Wasm is built. wasm-bindgen also emits declarations with
@@ -7,34 +7,40 @@
 /** Loads and instantiates the wasm binary (fetches uhura_wasm_bg.wasm). */
 export default function init(module_or_path?: unknown): Promise<unknown>;
 
-/** Protocol capability set, including `uhura-inspect/0`. */
+/** Canonical machine/browser protocol capability set. */
 export function protocols(): string;
 
+/** One admitted Uhura machine instance and its optional UI presentation. */
 export class Session {
-  /** `ir_json`: the canonical `uhura-ir/0` artifact. Throws a string. */
-  constructor(ir_json: string);
-  /** Applies `{"updates": [...]}` boot deliveries before `Init` (§9.2). */
-  boot(boot_json: string): void;
-  /** One step; returns the step-result envelope as canonical JSON. */
-  dispatch(event_json: string): string;
-  /** Current `uhura-view/0` snapshot, canonical JSON. */
+  constructor(
+    ir_json: string,
+    machine: string,
+    configuration_json: string,
+    instance: string,
+    presentation: string | undefined,
+    expected_identity_json: string,
+  );
+  protocols(): string;
+  genesis(): string;
+  semantic_genesis(): string;
   view(): string;
-  /** Complete read-only `uhura-inspect/0` snapshot, canonical JSON. */
+  projection_revision(): string;
+  presentation(): string;
   inspect(): string;
-  /** `U.rev` — `+1` every step. */
-  revision(): number;
-  /** `"uhura-ir/0"` */
-  ir_version(): string;
-  free(): void;
-}
-
-export class FixtureDriver {
-  constructor(fixture_json: string, script_json: string);
-  /** Accepts one command envelope (wire form). Throws a string. */
-  deliver(cmd_json: string): void;
-  /** Advances one tick; returns the provider messages due. */
-  tick(): string[];
-  /** True when nothing is scheduled or in flight. */
-  idle(): boolean;
+  next_sequence(): string;
+  port_requirements(): string;
+  submit(input_json: string): string;
+  submit_value(value_json: string): string;
+  dispatch_ui(
+    binding_id: string,
+    projection_revision: string,
+    event_json: string,
+  ): string;
+  decode_route(port: string, url: string): string;
+  encode_route(port: string, location_json: string): string;
+  checkpoint(): string;
+  semantic_checkpoint(): string;
+  restore(checkpoint_json: string): void;
+  semantic_receipt(): string;
   free(): void;
 }

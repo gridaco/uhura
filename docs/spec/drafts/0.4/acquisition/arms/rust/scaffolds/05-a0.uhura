@@ -1,0 +1,53 @@
+enum Reason {
+  Damaged,
+  NotNeeded,
+  // TRIAL-TODO: add the controlled-change variant.
+}
+
+pub machine ReasonDraft {
+  events {
+    ChooseReason(reason: Reason),
+    Submit,
+  }
+
+  commands {
+    Send(reason: Reason),
+  }
+
+  outcomes {
+    commit Applied,
+    commit Submitted,
+    abort Blocked,
+  }
+
+  state {
+    reason: Option<Reason> = None,
+  }
+
+  // TRIAL-TODO: after adding Other, exact empty text is incomplete.
+  computed reason_complete: Bool = reason is Some(_);
+
+  observe {
+    reason,
+    reason_complete,
+  }
+
+  on ChooseReason(next) {
+    reason = Some(next);
+    Applied
+  }
+
+  on Submit {
+    let selected = match reason {
+      None => return Blocked,
+      Some(value) => value,
+    };
+
+    if !reason_complete {
+      return Blocked;
+    }
+
+    emit Send(selected);
+    Submitted
+  }
+}

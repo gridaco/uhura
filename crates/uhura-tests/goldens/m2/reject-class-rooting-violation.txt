@@ -1,3 +1,0 @@
-error[UH6001 style/class-rooting]: `article` is not class-rooted — scoped CSS is deferred, so rooting is the isolation contract (§4.5)
-  --> components/post-card.uhura:88:1
-  note: root it under the subject's class: `.post-card …`

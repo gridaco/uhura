@@ -1,20 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 
 import { test } from "vitest";
 
 import {
   decodeEditorRevisionEvent,
   decodeEditorState,
+  EDITOR_STATE_PROTOCOL,
   EditorContractError,
   type EditorState,
 } from "../editor-state.js";
-
-const node = {
-  key: "root",
-  element: "text",
-  props: { content: { t: "plain", v: "Hello" } },
-};
 
 const span = (offset: number, len: number, line: number, col: number) => ({
   offset,
@@ -35,8 +29,13 @@ const diagnostics = (message: string): Record<string, unknown> => ({
   }],
 });
 
-const stateFixture = (): unknown => ({
-  protocol: "uhura-editor-state/2",
+const stateFixture = (): {
+  protocol: string;
+  sourceRevision: number;
+  diagnostics: unknown;
+  render: Record<string, any> | null;
+} => ({
+  protocol: "uhura-editor-state/5",
   sourceRevision: 3,
   diagnostics: null,
   render: {
@@ -47,37 +46,37 @@ const stateFixture = (): unknown => ({
       targets: [{
         id: "target:feed",
         class: "page-declaration",
-        file: "pages/feed.uhura",
+        file: "web.uhura",
         span: span(20, 9, 2, 1),
-        label: "page feed",
-        owner: { kind: "page", name: "feed" },
+        label: "Feed",
+        owner: { kind: "page", name: "example@1::Feed" },
       }, {
         id: "target:primary-action",
-        class: "catalog-element",
-        file: "pages/feed.uhura",
+        class: "ui-element",
+        file: "web.uhura",
         span: span(80, 10, 6, 1),
         label: "button",
-        owner: { kind: "page", name: "feed" },
+        owner: { kind: "page", name: "example@1::Feed" },
       }, {
         id: "target:feed-example",
         class: "example-declaration",
-        file: "pages/feed.examples.uhura",
+        file: "evidence.uhura",
         span: span(20, 15, 2, 1),
         label: "default",
-        owner: { kind: "examples", name: "pages/feed.examples.uhura" },
+        owner: { kind: "examples", name: "evidence.uhura" },
       }],
       entries: [{
         id: "doc:feed",
         class: "doc",
         kind: "doc",
-        text: "The feed page.",
+        text: "The feed presentation.",
         span: span(0, 18, 1, 1),
         targetId: "target:feed",
         order: 0,
       }, {
         id: "annotation:primary-action:0",
         class: "annotation",
-        kind: "doc",
+        kind: "review-note",
         text: "The primary action.",
         span: span(50, 28, 5, 1),
         targetId: "target:primary-action",
@@ -86,7 +85,7 @@ const stateFixture = (): unknown => ({
         id: "doc:feed-example",
         class: "doc",
         kind: "doc",
-        text: "The default feed example.",
+        text: "The default evidence pin.",
         span: span(0, 18, 1, 1),
         targetId: "target:feed-example",
         order: 0,
@@ -95,15 +94,15 @@ const stateFixture = (): unknown => ({
     groups: [{
       id: "page-feed",
       kind: "page",
-      subject: "feed",
+      subject: "example@1::Feed",
       previews: ["page-feed-default"],
     }],
     previews: [{
       id: "page-feed-default",
-      identity: { kind: "page", subject: "feed", example: "default" },
-      sourceFile: "app/feed/page.uhura",
+      identity: { kind: "page", subject: "example@1::Feed", example: "default" },
+      sourceFile: "web.uhura",
       default: true,
-      pinned: false,
+      pinned: true,
       derived: false,
       inFlight: 0,
       from: null,
@@ -113,8 +112,8 @@ const stateFixture = (): unknown => ({
         kind: "semantic",
         payload: { id: "post-1" },
         dispatch: {
-          scope: "page:1",
-          definition: "feed",
+          scope: "entry/example",
+          definition: "example@1::App",
           on: "opened",
           guards: [
             { handler: 0, result: "unsatisfied" },
@@ -139,11 +138,9 @@ const stateFixture = (): unknown => ({
         status: "ready",
         value: "Feed",
         source: {
-          kind: "fixture",
-          declaredIn: "pages/feed.uhura",
+          kind: "inline",
+          declaredIn: "web.uhura",
           timeline: false,
-          fixture: "feed-default",
-          path: ["viewer", "feed"],
         },
       }],
       interactions: [{
@@ -152,7 +149,7 @@ const stateFixture = (): unknown => ({
         kind: "input",
         event: "press",
         emit: "opened",
-        scope: "page:1",
+        scope: "entry/example",
         payload: { id: "post-1" },
         carries: { query: "text" },
       }],
@@ -164,14 +161,46 @@ const stateFixture = (): unknown => ({
         occurrences: [{
           id: "occurrence:primary-action:0",
           targetId: "target:primary-action",
-          anchors: [{ root: { kind: "page" }, path: [] }],
+          anchors: ["root"],
         }],
       },
+      evidence: {
+        scenario: "ready",
+        pin: "default",
+        sourceId: "evidence/default",
+        sources: {
+          registration: { path: "evidence.uhura", start: 0, end: 8 },
+          pin: { path: "evidence.uhura", start: 9, end: 12 },
+        },
+      },
       content: {
-        protocol: "uhura-view/0",
-        revision: 0,
-        page: { route: "feed", root: node },
-        surfaces: [],
+        kind: "projection",
+        value: {
+          document: {
+            protocol: "uhura-view/1",
+            presentation: "example@1::Feed",
+            machine: "example@1::App",
+            instance: "entry/example",
+            sequence: "0",
+            nodes: [{
+              kind: "element",
+              key: "root",
+              element: "main",
+              attributes: [],
+              events: [],
+              children: [{ kind: "text", key: "label", text: "Ready" }],
+              surface: false,
+            }],
+          },
+          sources: {
+            protocol: "uhura-projection-sources/0",
+            presentation: "example@1::Feed",
+            nodes: {
+              root: { id: "ui/root", path: "web.uhura", start: 0, end: 4 },
+              label: { id: "ui/label", path: "web.uhura", start: 5, end: 10 },
+            },
+          },
+        },
       },
     }],
     stylesheet: ":root { --accent: blue; }",
@@ -184,386 +213,180 @@ const stateFixture = (): unknown => ({
       entry: "page:feed",
       nodes: [
         { id: "page:feed", kind: "page", label: "feed" },
-        { id: "surface:comments-sheet", kind: "surface", label: "comments-sheet", modality: "sheet" },
+        { id: "surface:comments", kind: "surface", label: "comments", modality: "dialog" },
       ],
       edges: [{
-        id: "pages.feed/handler/0/stmt/0",
+        id: "edge/0",
         kind: "present",
         from: "page:feed",
-        to: "surface:comments-sheet",
+        to: "surface:comments",
         event: "comments-requested",
-        guard: { t: "bool", v: true },
       }],
+    },
+    machine: {
+      protocol: "uhura-machine-inspection/1",
+      identityProtocol: "uhura-machine-program/0",
+      deployment: { machine: "example@1::App" },
+      sources: [],
+      provenance: {
+        protocol: "uhura-provenance/0",
+        sources: [],
+        occurrences: [],
+        topology: {
+          protocol: "uhura-authored-interaction-topology/0",
+          nodes: [],
+          edges: [],
+        },
+      },
+      interactionGraph: {
+        protocol: "uhura-interaction-graph/0",
+        identity_protocol: "uhura-machine-program/0",
+        machine_program_hashes: {},
+        presentation_hashes: {},
+        outcome_policies: {},
+        nodes: [],
+        edges: [],
+      },
+      graphSources: {
+        protocol: "uhura-interaction-graph-provenance/0",
+        nodes: [],
+        edges: [],
+      },
+      checkpoints: {},
+      evidence: {
+        protocol: "uhura-evidence-summary/0",
+        passed: true,
+        scenarios: { total: 1, passed: 1, failed: 0 },
+        artifacts: { pins: 1, examples: 1, checkpoints: 0 },
+        failureCount: 0,
+      },
     },
   },
 });
 
-test("decodes the complete fixed EditorState contract", () => {
+test("decodes the canonical projection-only EditorState/5 contract", () => {
   const state = decodeEditorState(stateFixture());
-
-  assert.equal(state.protocol, "uhura-editor-state/2");
-  assert.equal(state.sourceRevision, 3);
-  assert.equal(state.render?.previews[0]?.data[0]?.source?.kind, "fixture");
-  assert.equal(state.render?.previews[0]?.sourceFile, "app/feed/page.uhura");
-  assert.deepEqual(state.render?.previews[0]?.interactions[0]?.payload, { id: "post-1" });
-  assert.equal(state.render?.previews[0]?.replay[0]?.dispatch?.selected, 1);
-  assert.deepEqual(state.render?.previews[0]?.replay[0]?.effects.writes[0], {
-    field: "selected",
-    value: "post-1",
-  });
-  assert.equal(state.render?.authoring.entries[1]?.class, "annotation");
-  assert.deepEqual(state.render?.previews[0]?.provenance.occurrences[0]?.anchors[0], {
-    root: { kind: "page" },
-    path: [],
-  });
   const preview = state.render?.previews[0];
-  const declarationDoc = state.render?.authoring.entries.find((entry) =>
-    entry.id === preview?.documentation.declarationDocId);
-  const declarationTarget = state.render?.authoring.targets.find((target) =>
-    target.id === declarationDoc?.targetId);
-  assert.equal(declarationDoc?.class, "doc");
-  assert.equal(declarationTarget?.class, "page-declaration");
-  assert.equal(declarationTarget?.owner.name, preview?.identity.subject);
 
-  const exampleDoc = state.render?.authoring.entries.find((entry) =>
-    entry.id === preview?.documentation.exampleDocId);
-  const exampleTarget = state.render?.authoring.targets.find((target) =>
-    target.id === exampleDoc?.targetId);
-  assert.equal(exampleDoc?.class, "doc");
-  assert.equal(exampleTarget?.class, "example-declaration");
-  assert.equal(exampleTarget?.label, preview?.identity.example);
-
-  assert.equal(state.render?.interactionGraph.protocol, "uhura-interaction-graph/0");
-  assert.equal(state.render?.interactionGraph.nodes[1]?.kind, "surface");
+  assert.equal(state.protocol, EDITOR_STATE_PROTOCOL);
+  assert.equal(preview?.content.kind, "projection");
+  assert.equal(preview?.content.value.document.protocol, "uhura-view/1");
+  assert.deepEqual(preview?.provenance.occurrences[0]?.anchors, ["root"]);
+  assert.equal(preview?.evidence?.scenario, "ready");
+  assert.equal(state.render?.machine?.identityProtocol, "uhura-machine-program/0");
+  assert.equal(state.render?.machine?.evidence.scenarios.passed, 1);
   assert.deepEqual(state.render?.interactionGraph.edges[0], {
     kind: "present",
     from: "page:feed",
-    to: "surface:comments-sheet",
+    to: "surface:comments",
     event: "comments-requested",
-  }, "the decoder keeps only the drawn fields of a graph edge");
+  });
 });
 
-test("decodes the native model's canonical contract fixture", () => {
-  const fixture = JSON.parse(readFileSync(new URL(
-    "../../../../crates/uhura-editor-model/tests/fixtures/editor-state.json",
-    import.meta.url,
-  ), "utf8")) as unknown;
-
-  const state = decodeEditorState(fixture);
-  const render = state.render;
-  assert.ok(render);
-  assert.equal(render.previews.length, 3);
-  assert.equal(render.previews[1]?.identity.kind, "surface");
-  assert.equal(render.authoring.targets.length, 3);
-  assert.equal(render.authoring.entries.length, 3);
-  assert.equal(render.interactionGraph.protocol, "uhura-interaction-graph/0");
-  assert.equal(render.interactionGraph.nodes.length, 4);
-  assert.equal(render.interactionGraph.edges.length, 0);
-
-  const page = render.previews.find((preview) => preview.id === "page/home/default");
-  assert.ok(page);
-  const declarationDoc = render.authoring.entries.find((entry) =>
-    entry.id === page.documentation.declarationDocId);
-  const exampleDoc = render.authoring.entries.find((entry) =>
-    entry.id === page.documentation.exampleDocId);
-  assert.equal(declarationDoc?.class, "doc");
-  assert.equal(exampleDoc?.class, "doc");
-  assert.equal(
-    render.authoring.targets.find((target) => target.id === declarationDoc?.targetId)?.class,
-    "page-declaration",
-  );
-  assert.equal(
-    render.authoring.targets.find((target) => target.id === exampleDoc?.targetId)?.class,
-    "example-declaration",
-  );
-
-  const annotation = render.authoring.entries.find((entry) => entry.class === "annotation");
-  const occurrence = page.provenance.occurrences[0];
-  assert.ok(annotation);
-  assert.ok(occurrence);
-  assert.equal(occurrence.targetId, annotation.targetId);
-  assert.deepEqual(occurrence.anchors, [{ root: { kind: "page" }, path: [] }]);
-});
-
-test("accepts explicit cold-invalid and stale render states", () => {
-  const cold = stateFixture() as Record<string, unknown>;
-  cold["sourceRevision"] = 4;
-  cold["diagnostics"] = diagnostics("broken source");
-  cold["render"] = null;
-  assert.equal(decodeEditorState(cold).render, null);
-
-  const stale = stateFixture() as {
-    sourceRevision: number;
-    render: { revision: number; freshness: string };
-  };
-  stale.sourceRevision = 4;
-  stale.render.revision = 3;
-  stale.render.freshness = "stale";
-  const decodedStale = decodeEditorState(stale);
-  assert.equal(decodedStale.render?.freshness, "stale");
-  assert.equal(decodedStale.render?.authoring.entries.length, 3);
-  assert.equal(
-    decodedStale.render?.previews[0]?.provenance.occurrences.length,
-    1,
-    "stale metadata and provenance stay owned by the retained render",
-  );
-});
-
-test("rejects malformed or internally inconsistent diagnostics envelopes", () => {
-  const missingVersion = stateFixture() as Record<string, unknown>;
-  missingVersion["diagnostics"] = { diagnostics: [] };
-  assert.throws(() => decodeEditorState(missingVersion), /no unknown property|format/);
-
-  const wrongCounts = stateFixture() as Record<string, unknown>;
-  wrongCounts["diagnostics"] = diagnostics("broken source");
-  (wrongCounts["diagnostics"] as { summary: { errors: number } }).summary.errors = 0;
-  assert.throws(() => decodeEditorState(wrongCounts), /counts matching diagnostics/);
-});
-
-test("enforces current and stale revision invariants", () => {
-  const current = stateFixture() as {
-    sourceRevision: number;
-    render: { revision: number; freshness: string };
-  };
-  current.sourceRevision = 4;
-  assert.throws(() => decodeEditorState(current), EditorContractError);
-
-  const stale = stateFixture() as {
-    sourceRevision: number;
-    render: { revision: number; freshness: string };
-  };
-  stale.render.freshness = "stale";
-  assert.throws(() => decodeEditorState(stale), /less than sourceRevision/);
-});
-
-test("rejects unknown properties, malformed data variants, and content-kind drift", () => {
-  const unknown = stateFixture() as { render: { previews: Array<Record<string, unknown>> } };
-  unknown.render.previews[0]!["html"] = "<p>not semantic</p>";
-  assert.throws(() => decodeEditorState(unknown), /no unknown property/);
-
-  const legacyIcons = stateFixture() as { render: Record<string, unknown> };
-  legacyIcons.render["icons"] = { heart: { viewBox: [0, 0, 24, 24], commands: [] } };
+test("strictly decodes the same machine graph artifact consumed by Play", () => {
+  const invalid = stateFixture();
+  invalid.render!.machine.interactionGraph = {};
   assert.throws(
-    () => decodeEditorState(legacyIcons),
-    /no unknown property/,
-    "EditorState/2 rejects engine-delivered glyph geometry",
+    () => decodeEditorState(invalid),
+    /interaction graph has the wrong fields/u,
+  );
+});
+
+test("rejects every retired Editor view and structural anchor encoding", () => {
+  const oldProtocol = stateFixture();
+  oldProtocol.protocol = "uhura-editor-state/4";
+  assert.throws(() => decodeEditorState(oldProtocol), /uhura-editor-state\/5/);
+
+  for (const kind of ["snapshot", "fragment"]) {
+    const oldContent = stateFixture();
+    oldContent.render!.previews[0].content = { kind, value: {} };
+    assert.throws(() => decodeEditorState(oldContent), /"projection"/);
+  }
+
+  const pathAnchor = stateFixture();
+  pathAnchor.render!.previews[0].provenance.occurrences[0].anchors = [{
+    kind: "path",
+    root: { kind: "page" },
+    path: [],
+  }];
+  assert.throws(() => decodeEditorState(pathAnchor), /non-empty string/);
+});
+
+test("rejects unbounded machine and preview evidence from the retired transport", () => {
+  const rawMachineEvidence = stateFixture();
+  rawMachineEvidence.render!.machine.evidence = {
+    passed: true,
+    scenarios: [],
+    failures: [],
+  };
+  assert.throws(
+    () => decodeEditorState(rawMachineEvidence),
+    /evidence has the wrong fields/u,
   );
 
-  const waitingWithValue = stateFixture() as {
-    render: { previews: Array<{ data: Array<Record<string, unknown>> }> };
-  };
-  waitingWithValue.render.previews[0]!.data[0]!["status"] = "waiting";
-  assert.throws(() => decodeEditorState(waitingWithValue), /no value unless status is ready/);
-
-  const fragmentPage = stateFixture() as {
-    render: { previews: Array<Record<string, unknown>> };
-  };
-  fragmentPage.render.previews[0]!["content"] = node;
-  assert.throws(() => decodeEditorState(fragmentPage), /uhura-view\/0 snapshot/);
-
-  const invalidGuard = stateFixture() as {
-    render: { previews: Array<{ replay: Array<{ dispatch: { guards: Array<{ result: string }> } }> }> };
-  };
-  invalidGuard.render.previews[0]!.replay[0]!.dispatch.guards[0]!.result = "maybe";
-  assert.throws(() => decodeEditorState(invalidGuard), /"satisfied" or "unsatisfied" or "not-ready"/);
-
-  const mismatchedReplay = stateFixture() as {
-    render: { previews: Array<{ replaySteps: string[] }> };
-  };
-  mismatchedReplay.render.previews[0]!.replaySteps[0] = "other-event";
-  assert.throws(() => decodeEditorState(mismatchedReplay), /details matching replaySteps in order/);
-});
-
-test("enforces group references, identity matching, and unique IDs", () => {
-  const missing = stateFixture() as {
-    render: { groups: Array<{ previews: string[] }> };
-  };
-  missing.render.groups[0]!.previews = ["unknown"];
-  assert.throws(() => decodeEditorState(missing), /existing preview id/);
-
-  const duplicate = stateFixture() as {
-    render: { previews: unknown[]; groups: Array<{ previews: string[] }> };
-  };
-  duplicate.render.previews.push(structuredClone(duplicate.render.previews[0]));
-  duplicate.render.groups[0]!.previews.push("page-feed-default");
-  assert.throws(() => decodeEditorState(duplicate), /unique values/);
-
-  const missingParent = stateFixture() as {
-    render: { previews: Array<{ from: string | null }> };
-  };
-  missingParent.render.previews[0]!.from = "missing";
-  assert.throws(() => decodeEditorState(missingParent), /existing example in the same subject/);
-});
-
-test("strictly validates authoring classes, ranges, kinds, and references", () => {
-  const malformedKind = stateFixture() as {
-    render: { authoring: { entries: Array<Record<string, unknown>> } };
-  };
-  malformedKind.render.authoring.entries[1]!["kind"] = "Review_Note";
-  assert.throws(() => decodeEditorState(malformedKind), /annotation metadata/);
-
-  const missingTarget = stateFixture() as {
-    render: { authoring: { entries: Array<Record<string, unknown>> } };
-  };
-  missingTarget.render.authoring.entries[0]!["targetId"] = "missing";
-  assert.throws(() => decodeEditorState(missingTarget), /existing source target id/);
-
-  const invalidRange = stateFixture() as {
-    render: { authoring: { targets: Array<{ span: { start: { line: number } } }> } };
-  };
-  invalidRange.render.authoring.targets[0]!.span.start.line = 0;
-  assert.throws(() => decodeEditorState(invalidRange), /positive integer/);
-
-  const annotationOnDocTarget = stateFixture() as {
-    render: { authoring: { entries: Array<Record<string, unknown>> } };
-  };
-  annotationOnDocTarget.render.authoring.entries[1]!["targetId"] = "target:feed";
-  assert.throws(() => decodeEditorState(annotationOnDocTarget), /annotation metadata/);
-
-  const unusedTarget = stateFixture() as {
-    render: { authoring: { targets: Array<Record<string, unknown>> } };
-  };
-  const extra = structuredClone(unusedTarget.render.authoring.targets[0]!);
-  extra["id"] = "target:unused";
-  unusedTarget.render.authoring.targets.push(extra);
-  assert.throws(() => decodeEditorState(unusedTarget), /only metadata-referenced targets/);
-});
-
-test("annotation kinds use the full ASCII lower-kebab grammar", () => {
-  for (const kind of ["a", "a0", "a-0", "review-note", "a".repeat(64)]) {
-    const fixture = stateFixture() as {
-      render: { authoring: { entries: Array<{ kind: string }> } };
-    };
-    fixture.render.authoring.entries[1]!.kind = kind;
-    assert.equal(decodeEditorState(fixture).render?.authoring.entries[1]?.kind, kind);
-  }
-  for (const kind of [
-    "",
-    "0note",
-    "Review",
-    "review_note",
-    "-note",
-    "note-",
-    "note--later",
-    "nöté",
-    "a".repeat(65),
-  ]) {
-    const fixture = stateFixture() as {
-      render: { authoring: { entries: Array<{ kind: string }> } };
-    };
-    fixture.render.authoring.entries[1]!.kind = kind;
+  for (const field of ["observation", "snapshot", "scenarioReceiptLog"]) {
+    const rawPreviewEvidence = stateFixture();
+    rawPreviewEvidence.render!.previews[0].evidence[field] = {};
     assert.throws(
-      () => decodeEditorState(fixture),
-      /annotation metadata|non-empty string/,
-      kind,
+      () => decodeEditorState(rawPreviewEvidence),
+      /no unknown property/u,
     );
   }
 });
 
-test("validates documentation and semantic provenance while allowing zero anchors", () => {
-  const wrongSourceFile = stateFixture() as {
-    render: { previews: Array<{ sourceFile: string }> };
-  };
-  wrongSourceFile.render.previews[0]!.sourceFile = "../feed.uhura";
-  assert.throws(() => decodeEditorState(wrongSourceFile), /canonical project-relative source path/);
+test("validates projection source coverage and semantic anchor keys", () => {
+  const missingSource = stateFixture();
+  delete missingSource.render!.previews[0].content.value.sources.nodes.label;
+  assert.throws(() => decodeEditorState(missingSource), /must address every rendered key exactly/);
 
-  const zeroAnchors = stateFixture() as {
-    render: { previews: Array<{ provenance: { occurrences: Array<{ anchors: unknown[] }> } }> };
-  };
-  zeroAnchors.render.previews[0]!.provenance.occurrences[0]!.anchors = [];
-  assert.equal(
-    decodeEditorState(zeroAnchors).render?.previews[0]?.provenance.occurrences[0]?.anchors.length,
-    0,
-  );
+  const unknownAnchor = stateFixture();
+  unknownAnchor.render!.previews[0].provenance.occurrences[0].anchors = ["missing"];
+  assert.throws(() => decodeEditorState(unknownAnchor), /semantic node key/);
 
-  const wrongDoc = stateFixture() as {
-    render: { previews: Array<{ documentation: { declarationDocId: string } }> };
-  };
-  wrongDoc.render.previews[0]!.documentation.declarationDocId = "annotation:primary-action:0";
-  assert.throws(() => decodeEditorState(wrongDoc), /doc entry for page-declaration/);
-
-  const wrongDeclarationOwner = stateFixture() as {
-    render: { authoring: { targets: Array<{ owner: { name: string } }> } };
-  };
-  wrongDeclarationOwner.render.authoring.targets[0]!.owner.name = "another-page";
-  assert.throws(() => decodeEditorState(wrongDeclarationOwner), /doc entry for page-declaration/);
-
-  const wrongExample = stateFixture() as {
-    render: { authoring: { targets: Array<{ label: string }> } };
-  };
-  wrongExample.render.authoring.targets[2]!.label = "another-example";
-  assert.throws(() => decodeEditorState(wrongExample), /doc entry for example-declaration/);
-
-  const wrongRoot = stateFixture() as {
-    render: { previews: Array<{ provenance: { occurrences: Array<{ anchors: unknown[] }> } }> };
-  };
-  wrongRoot.render.previews[0]!.provenance.occurrences[0]!.anchors = [{
-    root: { kind: "fragment" },
-    path: [],
-  }];
-  assert.throws(() => decodeEditorState(wrongRoot), /semantic node path/);
-
-  const wrongPath = stateFixture() as {
-    render: { previews: Array<{ provenance: { occurrences: Array<{ anchors: unknown[] }> } }> };
-  };
-  wrongPath.render.previews[0]!.provenance.occurrences[0]!.anchors = [{
-    root: { kind: "page" },
-    path: [9],
-  }];
-  assert.throws(() => decodeEditorState(wrongPath), /semantic node path/);
+  const duplicateAnchor = stateFixture();
+  duplicateAnchor.render!.previews[0].provenance.occurrences[0].anchors = ["root", "root"];
+  assert.throws(() => decodeEditorState(duplicateAnchor), /unique values/);
 });
 
-test("resolves surface roots by semantic key and rejects malformed root variants", () => {
-  const withSurface = stateFixture() as {
-    render: {
-      previews: Array<{
-        content: { surfaces: unknown[] };
-        provenance: { occurrences: Array<{ anchors: unknown[] }> };
-      }>;
-    };
-  };
-  withSurface.render.previews[0]!.content.surfaces.push({
-    key: "sheet:1",
-    definition: "sheet",
-    modality: "sheet",
-    dismiss: {
-      kind: "input",
-      event: "dismiss",
-      emit: "dismissed",
-      scope: "surface:1",
-      payload: {},
-    },
-    root: { key: "surface-root", element: "view", props: {} },
-  });
-  withSurface.render.previews[0]!.provenance.occurrences[0]!.anchors = [{
-    root: { kind: "surface", key: "sheet:1" },
-    path: [],
-  }];
-  assert.equal(
-    decodeEditorState(withSurface).render?.previews[0]
-      ?.provenance.occurrences[0]?.anchors[0]?.root.kind,
-    "surface",
-  );
+test("accepts cold-invalid and stale render states with strict revisions", () => {
+  const cold = stateFixture();
+  cold.sourceRevision = 4;
+  cold.diagnostics = diagnostics("broken source");
+  cold.render = null;
+  assert.equal(decodeEditorState(cold).render, null);
 
-  const missingSurface = structuredClone(withSurface);
-  missingSurface.render.previews[0]!.provenance.occurrences[0]!.anchors = [{
-    root: { kind: "surface", key: "missing" },
-    path: [],
-  }];
-  assert.throws(() => decodeEditorState(missingSurface), /semantic node path/);
+  const stale = stateFixture();
+  stale.sourceRevision = 4;
+  stale.render!.revision = 3;
+  stale.render!.freshness = "stale";
+  assert.equal(decodeEditorState(stale).render?.freshness, "stale");
 
-  const duplicateSurface = structuredClone(withSurface);
-  duplicateSurface.render.previews[0]!.content.surfaces.push(structuredClone(
-    duplicateSurface.render.previews[0]!.content.surfaces[0],
-  ));
-  assert.throws(() => decodeEditorState(duplicateSurface), /semantic node path/);
+  const invalidCurrent = stateFixture();
+  invalidCurrent.sourceRevision = 4;
+  assert.throws(() => decodeEditorState(invalidCurrent), /sourceRevision 4/);
 
-  const pageWithKey = structuredClone(withSurface);
-  pageWithKey.render.previews[0]!.provenance.occurrences[0]!.anchors = [{
-    root: { kind: "page", key: "illegal" },
-    path: [],
-  }];
-  assert.throws(() => decodeEditorState(pageWithKey), /no unknown property/);
+  const invalidStale = stateFixture();
+  invalidStale.render!.freshness = "stale";
+  assert.throws(() => decodeEditorState(invalidStale), /less than sourceRevision/);
+});
+
+test("strictly validates diagnostics, authoring, replay, and group references", () => {
+  const wrongCounts = stateFixture();
+  wrongCounts.diagnostics = diagnostics("broken source");
+  (wrongCounts.diagnostics as { summary: { errors: number } }).summary.errors = 0;
+  assert.throws(() => decodeEditorState(wrongCounts), /counts matching diagnostics/);
+
+  const unknownTarget = stateFixture();
+  unknownTarget.render!.previews[0].provenance.occurrences[0].targetId = "missing";
+  assert.throws(() => decodeEditorState(unknownTarget), /annotatable source target/);
+
+  const mismatchedReplay = stateFixture();
+  mismatchedReplay.render!.previews[0].replaySteps[0] = "other";
+  assert.throws(() => decodeEditorState(mismatchedReplay), /matching replaySteps/);
+
+  const missingPreview = stateFixture();
+  missingPreview.render!.groups[0].previews = ["missing"];
+  assert.throws(() => decodeEditorState(missingPreview), /existing preview id/);
 });
 
 test("decodes only the versioned revision event", () => {

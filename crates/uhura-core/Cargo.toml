@@ -9,6 +9,10 @@ workspace = true
 
 [dependencies]
 uhura-base = { workspace = true }
-uhura-port = { workspace = true }   # envelopes only — toml feature OFF
+uhura-port = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+num-bigint = { workspace = true }
+num-integer = { workspace = true }
+num-traits = { workspace = true }

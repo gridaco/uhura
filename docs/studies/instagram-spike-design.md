@@ -191,8 +191,8 @@ A `.uhura` file has up to four parts, in order: **header** (kind + `use` +
 state + handlers — "the model + controller"), **markup** (the view), and an
 optional **`<style>`** block of real CSS. Kebab-case names and UTF-8 apply;
 comments, declaration docs, and markup annotations follow accepted
-[RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md) and the
-[v0 incubation language model](../spec/drafts/v0.md#13-source-comments-documentation-and-markup-annotations).
+[RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md). The retired
+[v0 pointer](../spec/drafts/v0.md) no longer duplicates that decision.
 One canonical formatter, zero options. Bounds: file ≤ 256 KiB, nesting ≤ 32,
 ≤ 512 nodes/view, ≤ 128 handlers/page.
 
@@ -877,7 +877,7 @@ viewport (`scroll`), windowing (renderer license), pagination observation
 
 The native side captures one coherent saved-file revision, checks it, resolves
 examples, evaluates semantic page snapshots/component fragments, and asks
-`uhura-editor-model` to serialize one immutable `uhura-editor-state/2`
+`uhura-editor-model` to serialize one immutable `uhura-editor-state/4`
 document. The document contains source and render revisions, current
 diagnostics, application metadata, stable preview groups and identities,
 semantic content, example values and provenance, interaction summaries, the
@@ -1267,6 +1267,12 @@ the list-concern split in both directions.
 
 ## 12. Toolchain and workspace
 
+> **Current-workspace note:** The crate list below records the retired v0
+> spike. The maintained workspace no longer contains `uhura-fixture`; sealed
+> evidence executes through the ordinary core runtime. The rebuilt
+> [`uhura-tests`](../../crates/uhura-tests/) crate now checks the single current
+> engine against the canonical Instagram program without retaining v0 goldens.
+
 ### 12.1 Crates
 
 Cargo workspace under `uhura/`; pinned Rust toolchain; `edition = "2024"`,
@@ -1428,7 +1434,7 @@ historical; the v3 topology describes the maintained end state.)
 5. Navigation: feed → profile → back retains feed page state; history
    intents are emitted and traced (and executed as no-ops).
 6. `uhura-editor-model` deterministically publishes every resolved example in
-   one valid `uhura-editor-state/2` render without HTML or I/O and without
+   one valid `uhura-editor-state/4` render without HTML or I/O and without
    executing extra transitions (derivation remains a checked build step over
    pure `step-u`). The browser's Editor policy cannot dispatch runtime events.
    A broken current revision carries its own diagnostics and an explicitly

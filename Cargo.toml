@@ -1,6 +1,6 @@
-# The Uhura spike workspace. Cargo language commands are independently
-# buildable; browser assets are separate build/package products (RFC 0002).
-# Design: docs/working-group/instagram-spike-design.md.
+# The Uhura workspace. Cargo language commands are independently buildable;
+# browser assets are separate build/package products (RFC 0002).
+# Active incubation design: docs/spec/drafts/0.4/README.md.
 [workspace]
 resolver = "3"
 members = ["crates/*"]
@@ -26,6 +26,10 @@ same-file = "1"
 ttf-parser = "0.25"
 brotli = "7"
 wuff = { version = "0.2.8", default-features = false }
+num-bigint = { version = "0.4", features = ["serde"] }
+num-integer = "0.1"
+num-traits = "0.2"
+unicode-ident = "1"
 
 # Internal
 uhura-base = { path = "crates/uhura-base" }
@@ -33,7 +37,6 @@ uhura-syntax = { path = "crates/uhura-syntax" }
 uhura-port = { path = "crates/uhura-port" }
 uhura-check = { path = "crates/uhura-check" }
 uhura-core = { path = "crates/uhura-core" }
-uhura-fixture = { path = "crates/uhura-fixture" }
 uhura-editor-model = { path = "crates/uhura-editor-model" }
 uhura-host = { path = "crates/uhura-host" }
 uhura-cli = { path = "crates/uhura-cli" }

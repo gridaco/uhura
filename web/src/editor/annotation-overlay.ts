@@ -193,8 +193,8 @@ const sourceTargetAction = (
   const button = element(document, "button", "source-target-select", "Show");
   button.type = "button";
   button.setAttribute("data-source-target-id", target.id);
-  button.setAttribute("aria-label", `Show ${target.label} annotation on canvas`);
-  button.title = "Show annotation on canvas";
+  button.setAttribute("aria-label", `Show ${target.label} on canvas`);
+  button.title = "Show rendered source on canvas";
   button.disabled = !selectTarget
     || !occurrences.some((item) => item.occurrence.anchors.length > 0);
   button.addEventListener("click", () => selectTarget?.(target.id));
@@ -277,7 +277,7 @@ export const renderSourcePanel = (
       const heading = element(document, "div", "source-entry-heading");
       const actions = element(document, "div", "source-entry-actions");
       const annotations = entries.filter((entry) => entry.class === "annotation");
-      if (annotations.length > 0 && selectTarget) {
+      if (occurrences.length > 0 && selectTarget) {
         actions.append(sourceTargetAction(document, target, occurrences, selectTarget));
       }
       actions.append(sourceAction(document, target, stale));
@@ -302,7 +302,12 @@ export const renderSourcePanel = (
     sections.push(groupSection);
   }
   if (sections.length === 0) {
-    sections.push(element(document, "p", "inspector-muted", "No authored documentation or annotations."));
+    sections.push(element(
+      document,
+      "p",
+      "inspector-muted",
+      "No authored documentation, annotations, or rendered source targets.",
+    ));
   }
   container.replaceChildren(...sections);
   container.classList.toggle("is-stale", stale);
@@ -498,7 +503,29 @@ export class AnnotationOverlay {
   /** Selects a Source target and reveals its selected-preview or first realization. */
   selectSourceTarget(targetId: string): boolean {
     const record = this.#records.find((candidate) => candidate.annotation.target.id === targetId);
-    if (!record || record.markers.length === 0) return false;
+    if (!record || record.markers.length === 0) {
+      const occurrences = this.#install.authoring.occurrencesByTarget.get(targetId) ?? [];
+      const rendered = occurrences.filter((occurrence) =>
+        occurrence.occurrence.anchors.length > 0
+      );
+      const occurrence = rendered.find((candidate) =>
+        candidate.previewId === this.#activePreviewId
+      ) ?? rendered[0];
+      if (!occurrence) return false;
+      this.#activeMarkerId = null;
+      this.#revealedTargetId = null;
+      this.#pendingFocusTargetId = null;
+      for (const candidate of this.#records) {
+        candidate.card.hidden = true;
+        candidate.card.classList.toggle("is-revealed", false);
+        for (const marker of candidate.markers) marker.line.style.display = "none";
+      }
+      this.#syncStateClasses();
+      this.#focusSourceTarget?.(targetId);
+      this.#focusPreviewOccurrence(occurrence);
+      this.invalidate();
+      return true;
+    }
     this.setCanvasVisible(true);
     const selected = record.markers.filter((marker) =>
       marker.occurrence.previewId === this.#activePreviewId
@@ -803,12 +830,16 @@ export class AnnotationOverlay {
   }
 
   #focusOccurrence(record: OverlayMarkerRecord): void {
-    const resources = this.#install.resourcesByPreviewId.get(record.occurrence.previewId);
-    const anchors = record.occurrence.occurrence.anchors.flatMap((anchor) => {
+    this.#focusPreviewOccurrence(record.occurrence);
+  }
+
+  #focusPreviewOccurrence(occurrence: PreviewOccurrence): void {
+    const resources = this.#install.resourcesByPreviewId.get(occurrence.previewId);
+    const anchors = occurrence.occurrence.anchors.flatMap((anchor) => {
       const realized = resources?.resolve(anchor);
       return realized ? [realized] : [];
     });
-    this.#focusPreview(record.occurrence.previewId, anchors);
+    this.#focusPreview(occurrence.previewId, anchors);
   }
 
   #pinToViewport(): void {

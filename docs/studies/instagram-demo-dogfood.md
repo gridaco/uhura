@@ -1,10 +1,21 @@
 # Instagram demo dogfood — July 2026
 
-- **Status:** Implementation feedback from the Spock-backed Uhura Play demo
+- **Status:** Historical implementation feedback from the retired v0
+  Spock-backed Uhura Play demo
 - **Lifetime:** Disposable study
 
 This is feedback about the language/runtime boundary, not a proposal to move
 Instagram product truth into Uhura.
+
+> **Historical interpretation:** The catalog, provider envelope, fixture
+> driver, projection topology, and navigation forms below describe the retired
+> v0 spike. The maintained Instagram client is now one canonical Uhura program
+> with [`machine.uhura`](../../examples/instagram/client/machine.uhura),
+> [`ui.uhura`](../../examples/instagram/client/ui.uhura),
+> [`evidence.uhura`](../../examples/instagram/client/evidence.uhura), and an
+> explicit [`host.toml`](../../examples/instagram/client/host.toml). The
+> product findings remain useful evidence; the old implementation vocabulary
+> is not current behavior.
 
 ## Outcome and boundary
 

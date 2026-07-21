@@ -186,8 +186,6 @@ function harness() {
     frameLabel,
     frameButtons: [],
     runtimeStatus: element(),
-    providerControl: element(),
-    providerSelect: element(),
     actorSelect: element(),
     debugToggle: element(),
     debugPanel: element(),

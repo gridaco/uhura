@@ -1,199 +1,291 @@
-//! The checker's structural type model (design §4.3) and its conversion
-//! from port contracts.
-//!
-//! Cross-port compatibility is **structural** (micro-decision): a record/
-//! union/enum type is its canonical shape, so `comments`' `image-ref`
-//! equals `feed`'s. Identity types stay nominal: the builtin `id` is one
-//! type; a declared `kind = "id"`/`"opaque"` type is `(port, name)`.
-
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 
-use uhura_base::Ident;
-use uhura_port::{PortContract, TypeDecl, TypeExpr};
+use uhura_core::{ConstructorDef, TypeRef};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Ty {
-    Bool,
-    Int,
-    Text,
-    /// The builtin `id`.
-    Id,
-    /// Core-minted command tag.
-    Tag,
-    /// An asset reference.
-    Asset,
-    /// A closed token set (catalog enums, port enums) — structural by
-    /// value set.
-    Enum(BTreeSet<Ident>),
-    /// A declared nominal identity/cursor type.
-    Nominal {
-        port: Ident,
-        name: Ident,
-    },
-    Record(BTreeMap<Ident, Ty>),
-    Union(BTreeMap<Ident, BTreeMap<Ident, Ty>>),
-    List(Box<Ty>),
-    /// `map[K]V`, K ∈ {id, tag} (§4.3).
-    Map(MapKey, Box<Ty>),
-    Option(Box<Ty>),
-    /// The type of a bare `none` literal — compatible with any option.
-    NoneLit,
-    /// Poison: an error was already reported; suppress cascades.
-    Error,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MapKey {
-    Id,
-    Tag,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Ty {
+    Value(TypeRef),
+    Function(Vec<Ty>, Box<Ty>),
+    Unknown,
+    Never,
 }
 
 impl Ty {
-    pub fn is_error(&self) -> bool {
-        matches!(self, Ty::Error)
+    pub fn value(value: TypeRef) -> Self {
+        Self::Value(value)
     }
 
-    /// Human name for diagnostics.
-    pub fn describe(&self) -> String {
-        format!("{self}")
-    }
-}
-
-impl fmt::Display for Ty {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn as_value(&self) -> Option<&TypeRef> {
         match self {
-            Ty::Bool => write!(f, "bool"),
-            Ty::Int => write!(f, "int"),
-            Ty::Text => write!(f, "text"),
-            Ty::Id => write!(f, "id"),
-            Ty::Tag => write!(f, "tag"),
-            Ty::Asset => write!(f, "asset"),
-            Ty::Enum(values) => {
-                let names: Vec<&str> = values.iter().map(Ident::as_str).collect();
-                write!(f, "one of {}", names.join(" | "))
-            }
-            Ty::Nominal { name, .. } => write!(f, "{name}"),
-            Ty::Record(fields) => {
-                let names: Vec<&str> = fields.keys().map(Ident::as_str).collect();
-                write!(f, "{{ {} }}", names.join(", "))
-            }
-            Ty::Union(variants) => {
-                let names: Vec<&str> = variants.keys().map(Ident::as_str).collect();
-                write!(f, "union {}", names.join(" | "))
-            }
-            Ty::List(t) => write!(f, "list[{t}]"),
-            Ty::Map(k, v) => {
-                let k = match k {
-                    MapKey::Id => "id",
-                    MapKey::Tag => "tag",
-                };
-                write!(f, "map[{k}]{v}")
-            }
-            Ty::Option(t) => write!(f, "{t}?"),
-            Ty::NoneLit => write!(f, "none"),
-            Ty::Error => write!(f, "<error>"),
-        }
-    }
-}
-
-/// `expected` accepts `actual`: structural equality plus the option rules
-/// (`T` flows into `T?`; a bare `none` flows into any option) and error
-/// poisoning.
-pub fn compatible(expected: &Ty, actual: &Ty) -> bool {
-    if expected.is_error() || actual.is_error() {
-        return true;
-    }
-    if expected == actual {
-        return true;
-    }
-    match (expected, actual) {
-        (Ty::Option(_), Ty::NoneLit) => true,
-        (Ty::Option(inner), _) => compatible(inner, actual),
-        _ => false,
-    }
-}
-
-/// Both directions — for `==`/`!=` operands.
-pub fn comparable(a: &Ty, b: &Ty) -> bool {
-    compatible(a, b) || compatible(b, a)
-}
-
-/// The structural expansions of one port's declared types (contracts are
-/// acyclic — validated — so expansion terminates).
-pub struct PortTypes {
-    pub port: Ident,
-    expanded: BTreeMap<Ident, Ty>,
-}
-
-impl PortTypes {
-    pub fn build(contract: &PortContract) -> PortTypes {
-        let mut this = PortTypes {
-            port: contract.name.clone(),
-            expanded: BTreeMap::new(),
-        };
-        for name in contract.types.keys() {
-            let ty = this.expand_named(contract, name);
-            this.expanded.insert(name.clone(), ty);
-        }
-        this
-    }
-
-    /// The structural type of a declared name (`None` if undeclared).
-    pub fn named(&self, name: &Ident) -> Option<&Ty> {
-        self.expanded.get(name)
-    }
-
-    /// Converts a contract type expression to a structural type.
-    pub fn from_expr(&self, contract: &PortContract, expr: &TypeExpr) -> Ty {
-        match expr {
-            TypeExpr::Bool => Ty::Bool,
-            TypeExpr::Int => Ty::Int,
-            TypeExpr::Text => Ty::Text,
-            TypeExpr::Id => Ty::Id,
-            TypeExpr::Asset => Ty::Asset,
-            TypeExpr::Option(t) => Ty::Option(Box::new(self.from_expr(contract, t))),
-            TypeExpr::List(t) => Ty::List(Box::new(self.from_expr(contract, t))),
-            TypeExpr::Named(name) => match self.expanded.get(name) {
-                Some(ty) => ty.clone(),
-                None => self.expand_named(contract, name),
-            },
+            Self::Value(value) => Some(value),
+            _ => None,
         }
     }
 
-    fn expand_named(&self, contract: &PortContract, name: &Ident) -> Ty {
-        if let Some(ty) = self.expanded.get(name) {
-            return ty.clone();
+    pub fn into_value(self) -> Option<TypeRef> {
+        match self {
+            Self::Value(value) => Some(value),
+            _ => None,
         }
-        match contract.types.get(name) {
-            None => Ty::Error,
-            Some(TypeDecl::Id) | Some(TypeDecl::Opaque) => Ty::Nominal {
-                port: contract.name.clone(),
-                name: name.clone(),
-            },
-            Some(TypeDecl::Asset) => Ty::Asset,
-            Some(TypeDecl::Enum { values }) => Ty::Enum(values.clone()),
-            Some(TypeDecl::Record { fields }) => Ty::Record(
-                fields
+    }
+
+    pub fn display(&self) -> String {
+        match self {
+            Self::Value(value) => display_type_ref(value),
+            Self::Function(params, result) => format!(
+                "({})->{}",
+                params
                     .iter()
-                    .map(|(f, ty)| (f.clone(), self.from_expr(contract, ty)))
-                    .collect(),
+                    .map(Self::display)
+                    .collect::<Vec<_>>()
+                    .join(","),
+                result.display()
             ),
-            Some(TypeDecl::Union { variants }) => Ty::Union(
-                variants
+            Self::Unknown => "_".into(),
+            Self::Never => "Never".into(),
+        }
+    }
+}
+
+fn display_type_ref(value: &TypeRef) -> String {
+    match value {
+        TypeRef::Named { id } => authored_named_type(id),
+        TypeRef::Option { value } => format!("Option<{}>", display_type_ref(value)),
+        TypeRef::Seq { value } => format!("Seq<{}>", display_type_ref(value)),
+        TypeRef::NonEmpty { value } => format!("NonEmpty<{}>", display_type_ref(value)),
+        TypeRef::Set { value } => format!("Set<{}>", display_type_ref(value)),
+        TypeRef::Map { key, value } => {
+            format!("Map<{},{}>", display_type_ref(key), display_type_ref(value))
+        }
+        TypeRef::Table { key, value } => {
+            format!(
+                "Table<{},{}>",
+                display_type_ref(key),
+                display_type_ref(value)
+            )
+        }
+        TypeRef::FiniteView { value } => format!("FiniteView<{}>", display_type_ref(value)),
+        TypeRef::Tuple { values } => format!(
+            "({})",
+            values
+                .iter()
+                .map(display_type_ref)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        TypeRef::Record { fields } => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|(name, ty)| format!("{name}:{}", display_type_ref(ty)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        _ => value.canonical_name(),
+    }
+}
+
+fn authored_named_type(id: &str) -> String {
+    let segment = id.rsplit_once("::").map_or(id, |(_, segment)| segment);
+    for prefix in [
+        "__uhura_private_structural_",
+        "__uhura_private_",
+        "__uhura_part_private_",
+        "__uhura_external_",
+    ] {
+        if let Some(encoded) = segment.strip_prefix(prefix)
+            && let Some((fingerprint, authored)) = encoded.split_once('_')
+            && fingerprint.len() == 24
+            && fingerprint.bytes().all(|value| value.is_ascii_hexdigit())
+            && !authored.is_empty()
+        {
+            return authored.to_string();
+        }
+    }
+    id.to_string()
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum TypeShape {
+    Alias(TypeRef),
+    Key(TypeRef),
+    Record(Vec<(String, TypeRef)>),
+    Sum(Vec<ConstructorDef>),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TypeInfo {
+    pub id: String,
+    pub shape: TypeShape,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ConstructorInfo {
+    pub type_id: String,
+    pub name: String,
+    pub fields: Vec<(Option<String>, TypeRef)>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TypeRegistry {
+    pub types: BTreeMap<String, TypeInfo>,
+    pub constructors: BTreeMap<String, Vec<ConstructorInfo>>,
+}
+
+impl TypeRegistry {
+    pub fn insert(&mut self, info: TypeInfo) {
+        if let TypeShape::Sum(constructors) = &info.shape {
+            for constructor in constructors {
+                self.constructors
+                    .entry(constructor.name.clone())
+                    .or_default()
+                    .push(ConstructorInfo {
+                        type_id: info.id.clone(),
+                        name: constructor.name.clone(),
+                        fields: constructor.fields.clone(),
+                    });
+            }
+        }
+        self.types.insert(info.id.clone(), info);
+    }
+
+    pub fn shape(&self, ty: &TypeRef) -> Option<&TypeShape> {
+        match ty {
+            TypeRef::Named { id } => self.types.get(id).map(|info| &info.shape),
+            _ => None,
+        }
+    }
+
+    pub fn fields(&self, ty: &TypeRef) -> Option<Vec<(String, TypeRef)>> {
+        match ty {
+            TypeRef::Record { fields } => Some(fields.clone()),
+            TypeRef::Named { id } => match &self.types.get(id)?.shape {
+                TypeShape::Record(fields) => Some(fields.clone()),
+                TypeShape::Alias(alias) => self.fields(alias),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn constructors_for(&self, ty: &TypeRef) -> Vec<ConstructorInfo> {
+        match ty {
+            TypeRef::Option { value } => vec![
+                ConstructorInfo {
+                    type_id: ty.canonical_name(),
+                    name: "none".into(),
+                    fields: Vec::new(),
+                },
+                ConstructorInfo {
+                    type_id: ty.canonical_name(),
+                    name: "some".into(),
+                    fields: vec![(Some("value".into()), value.as_ref().clone())],
+                },
+            ],
+            TypeRef::Named { id } if id.starts_with("Token<") => {
+                let inner = id
+                    .strip_prefix("Token<")
+                    .and_then(|value| value.strip_suffix('>'))
+                    .map(|id| TypeRef::Named { id: id.into() })
+                    .unwrap_or(TypeRef::Text);
+                vec![
+                    ConstructorInfo {
+                        type_id: id.clone(),
+                        name: "known".into(),
+                        fields: vec![(Some("value".into()), inner)],
+                    },
+                    ConstructorInfo {
+                        type_id: id.clone(),
+                        name: "unknown".into(),
+                        fields: vec![(Some("value".into()), TypeRef::Text)],
+                    },
+                ]
+            }
+            TypeRef::Named { id } => match self.types.get(id).map(|info| &info.shape) {
+                Some(TypeShape::Sum(constructors)) => constructors
                     .iter()
-                    .map(|(v, fields)| {
-                        (
-                            v.clone(),
-                            fields
-                                .iter()
-                                .map(|(f, ty)| (f.clone(), self.from_expr(contract, ty)))
-                                .collect(),
-                        )
+                    .map(|constructor| ConstructorInfo {
+                        type_id: id.clone(),
+                        name: constructor.name.clone(),
+                        fields: constructor.fields.clone(),
                     })
                     .collect(),
-            ),
+                Some(TypeShape::Alias(alias)) => self.constructors_for(alias),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
         }
+    }
+
+    pub fn constructor(
+        &self,
+        name: &str,
+        expected: Option<&TypeRef>,
+    ) -> Result<ConstructorInfo, Vec<ConstructorInfo>> {
+        let candidates = if let Some(expected) = expected {
+            self.constructors_for(expected)
+                .into_iter()
+                .filter(|constructor| constructor.name == name)
+                .collect::<Vec<_>>()
+        } else {
+            self.constructors.get(name).cloned().unwrap_or_default()
+        };
+        if candidates.len() == 1 {
+            Ok(candidates[0].clone())
+        } else {
+            Err(candidates)
+        }
+    }
+
+    pub fn finite_constructors(&self, ty: &TypeRef) -> Option<BTreeSet<String>> {
+        let values = self.constructors_for(ty);
+        (!values.is_empty()).then(|| values.into_iter().map(|item| item.name).collect())
+    }
+}
+
+pub(crate) fn compatible(actual: &Ty, expected: &Ty) -> bool {
+    match (actual, expected) {
+        (Ty::Unknown, _) | (_, Ty::Unknown) | (Ty::Never, _) => true,
+        (Ty::Value(actual), Ty::Value(expected)) => value_compatible(actual, expected),
+        (Ty::Function(ap, ar), Ty::Function(ep, er)) => {
+            ap.len() == ep.len()
+                && ap
+                    .iter()
+                    .zip(ep)
+                    .all(|(actual, expected)| compatible(actual, expected))
+                && compatible(ar, er)
+        }
+        _ => actual == expected,
+    }
+}
+
+pub(crate) fn value_compatible(actual: &TypeRef, expected: &TypeRef) -> bool {
+    if actual == expected {
+        return true;
+    }
+    if matches!(actual, TypeRef::Named { id } if id == &expected.canonical_name())
+        || matches!(expected, TypeRef::Named { id } if id == &actual.canonical_name())
+    {
+        return true;
+    }
+    matches!(
+        (actual, expected),
+        (TypeRef::PositiveInt, TypeRef::Nat | TypeRef::Int)
+            | (TypeRef::Nat, TypeRef::Int)
+            | (TypeRef::Int, TypeRef::Nat | TypeRef::PositiveInt)
+            | (TypeRef::Nat, TypeRef::PositiveInt)
+    )
+}
+
+pub(crate) fn join(left: &Ty, right: &Ty) -> Ty {
+    if compatible(left, right) {
+        if matches!(left, Ty::Never | Ty::Unknown) {
+            right.clone()
+        } else {
+            left.clone()
+        }
+    } else {
+        Ty::Unknown
     }
 }
 
@@ -202,29 +294,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cross_port_records_compare_structurally() {
-        let a = Ty::Record(
-            [(ident("src"), Ty::Asset), (ident("alt"), Ty::Text)]
-                .into_iter()
-                .collect(),
-        );
-        let b = Ty::Record(
-            [(ident("alt"), Ty::Text), (ident("src"), Ty::Asset)]
-                .into_iter()
-                .collect(),
-        );
-        assert!(compatible(&a, &b));
+    fn diagnostic_type_display_hides_compiler_private_identifiers_recursively() {
+        let value = Ty::value(TypeRef::Option {
+            value: Box::new(TypeRef::Named {
+                id: "example@1::__uhura_private_0123456789abcdef01234567_User".into(),
+            }),
+        });
+        assert_eq!(value.display(), "Option<User>");
+
+        let part = Ty::value(TypeRef::Named {
+            id: "example@1::__uhura_part_private_abcdef0123456789abcdef01_Notice".into(),
+        });
+        assert_eq!(part.display(), "Notice");
     }
 
     #[test]
-    fn option_rules() {
-        assert!(compatible(&Ty::Option(Box::new(Ty::Text)), &Ty::Text));
-        assert!(compatible(&Ty::Option(Box::new(Ty::Text)), &Ty::NoneLit));
-        assert!(!compatible(&Ty::Text, &Ty::NoneLit));
-        assert!(!compatible(&Ty::Text, &Ty::Option(Box::new(Ty::Text))));
-    }
-
-    fn ident(s: &str) -> Ident {
-        Ident::new(s).unwrap()
+    fn diagnostic_type_display_preserves_non_generated_semantic_names() {
+        let value = Ty::value(TypeRef::Named {
+            id: "example@1::PublicType".into(),
+        });
+        assert_eq!(value.display(), "example@1::PublicType");
     }
 }

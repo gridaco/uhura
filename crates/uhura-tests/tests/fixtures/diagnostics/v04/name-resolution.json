@@ -1,0 +1,29 @@
+{
+  "diagnostics": [
+    {
+      "code": "R1003",
+      "file": "diagnostics/name-resolution.uhura",
+      "message": "unknown value or nullary constructor `missing` in `diagnostics.fixture@1`",
+      "rule": "uhura/unknown-name",
+      "severity": "error",
+      "span": {
+        "end": {
+          "col": 31,
+          "line": 1
+        },
+        "len": 7,
+        "offset": 23,
+        "start": {
+          "col": 24,
+          "line": 1
+        }
+      }
+    }
+  ],
+  "format": "uhura-diagnostics",
+  "summary": {
+    "errors": 1,
+    "warnings": 0
+  },
+  "version": 0
+}

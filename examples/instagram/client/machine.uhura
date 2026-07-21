@@ -1,0 +1,1834 @@
+use uhura::observation::Observation;
+use uhura::ports::RequestPort;
+use uhura::web_router::{Router, Routes};
+use crate::parts::{Notice, NoticeControls};
+
+pub key UserId(Text);
+
+pub key PostId(Text);
+
+pub key StoryId(Text);
+
+pub key RequestId(PositiveInt);
+
+pub const USER_MIRA: UserId = UserId("user-mira");
+
+pub const USER_LENA: UserId = UserId("user-lena");
+
+pub const USER_MARCO: UserId = UserId("user-marco");
+
+pub const USER_NILS: UserId = UserId("user-nils");
+
+pub const USER_PRIYA: UserId = UserId("user-priya");
+
+pub const USER_AYLA: UserId = UserId("user-ayla");
+
+pub const USER_JUNE: UserId = UserId("user-june");
+
+pub const USER_THEO: UserId = UserId("user-theo");
+
+pub const USER_KENJI: UserId = UserId("user-kenji");
+
+pub const POST_LENA_GLAZE: PostId = PostId("post-lena-glaze");
+
+pub const POST_LENA_BOWLS: PostId = PostId("post-lena-bowls");
+
+pub const POST_MARCO_BAJA: PostId = PostId("post-marco-baja");
+
+pub const POST_NILS_AURORA: PostId = PostId("post-nils-aurora");
+
+pub const POST_PRIYA_STARTER: PostId = PostId("post-priya-starter");
+
+pub const POST_AYLA_FERRY: PostId = PostId("post-ayla-ferry");
+
+pub const POST_JUNE_LOOKBOOK: PostId = PostId("post-june-lookbook");
+
+pub const POST_THEO_COURT: PostId = PostId("post-theo-court");
+
+pub const POST_KENJI_COPPER: PostId = PostId("post-kenji-copper");
+
+pub const POST_MIRA_FERRY: PostId = PostId("post-mira-ferry");
+
+pub const STORY_MIRA: StoryId = StoryId("ring-mira");
+
+pub const STORY_MIRA_TRAM: StoryId = StoryId("ring-mira-tram");
+
+pub const STORY_LENA: StoryId = StoryId("ring-lena");
+
+pub const STORY_LENA_GLAZES: StoryId = StoryId("ring-lena-glazes");
+
+pub const STORY_LENA_STUDIO: StoryId = StoryId("ring-lena-studio");
+
+pub const STORY_PRIYA: StoryId = StoryId("ring-priya");
+
+pub enum Section {
+  Feed,
+  Search,
+  Create,
+  Reels,
+  Profile,
+}
+
+pub enum ProfileTab {
+  Posts,
+  Reels,
+  Tagged,
+  Saved,
+}
+
+pub enum FeedStatus {
+  Idle,
+  Loading,
+  Failed,
+  Exhausted,
+}
+
+pub enum SearchStatus {
+  Explore,
+  Searching,
+  Results,
+  NoResults,
+}
+
+pub enum Location {
+  Feed,
+  Search,
+  Create,
+  Reels,
+  Post {
+    id: PostId,
+  },
+  Profile {
+    user: UserId,
+  },
+  Followers {
+    user: UserId,
+  },
+  Following {
+    user: UserId,
+  },
+  Story {
+    id: StoryId,
+  },
+}
+
+pub const INSTAGRAM_ROUTES: Routes<Location> = Routes::from([("Feed", "/"), ("Search", "/search"), ("Create", "/create"), ("Reels", "/reels"), ("Post", "/p/{id}"), ("Profile", "/profile/{user}"), ("Followers", "/profile/{user}/followers"), ("Following", "/profile/{user}/following"), ("Story", "/stories/{id}")]);
+
+pub enum Page {
+  None,
+  Feed,
+  Search,
+  Create,
+  Reels,
+  Post {
+    id: PostId,
+  },
+  Profile {
+    user: UserId,
+  },
+  Followers {
+    user: UserId,
+  },
+  Following {
+    user: UserId,
+  },
+  Story {
+    id: StoryId,
+  },
+}
+
+pub struct ImageRef {
+  src: Text,
+  alt: Text,
+}
+
+pub struct User {
+  id: UserId,
+  username: Text,
+  display_name: Text,
+  avatar: ImageRef,
+}
+
+pub enum Media {
+  Image {
+    image: ImageRef,
+  },
+  Carousel {
+    images: Seq<ImageRef>,
+  },
+  Video {
+    src: Text,
+    poster: ImageRef,
+  },
+}
+
+pub struct Post {
+  id: PostId,
+  author: User,
+  caption: Text,
+  media: Media,
+  like_count: Nat,
+  comment_count: Nat,
+  viewer_liked: Bool,
+  viewer_saved: Bool,
+  posted_label: Text,
+}
+
+pub struct StoryRing {
+  id: StoryId,
+  user: User,
+  unseen: Bool,
+  is_self: Bool,
+}
+
+pub struct StorySegment {
+  id: StoryId,
+  current: Bool,
+  viewed: Bool,
+}
+
+pub struct StoryDetail {
+  id: StoryId,
+  author: User,
+  image: ImageRef,
+  caption: Text,
+  posted_label: Text,
+  viewed: Bool,
+  previous: Option<StoryId>,
+  next: Option<StoryId>,
+  progress: Seq<StorySegment>,
+}
+
+pub struct Tile {
+  post: PostId,
+  image: ImageRef,
+}
+
+pub struct Profile {
+  user: User,
+  bio: Text,
+  post_count: Nat,
+  follower_count: Nat,
+  following_count: Nat,
+  viewer_follows: Bool,
+  posts: Seq<Tile>,
+  reels: Seq<Tile>,
+  tagged: Seq<Tile>,
+  saved: Seq<Tile>,
+}
+
+pub struct Connection {
+  user: User,
+  follows_viewer: Bool,
+  viewer_follows: Bool,
+}
+
+pub struct Comment {
+  id: Text,
+  author: User,
+  body: Text,
+  posted_label: Text,
+}
+
+pub struct AppData {
+  viewer: User,
+  posts: Map<PostId, Post>,
+  feed_posts: Seq<Post>,
+  feed_has_more: Bool,
+  reels: Seq<Post>,
+  stories: Seq<StoryRing>,
+  story_details: Map<StoryId, StoryDetail>,
+  profiles: Map<UserId, Profile>,
+  followers: Map<UserId, Seq<Connection>>,
+  following: Map<UserId, Seq<Connection>>,
+  comments: Map<PostId, Seq<Comment>>,
+  search_people: Seq<Connection>,
+  explore_tiles: Seq<Tile>,
+}
+
+pub enum Authority {
+  Loading,
+  Failed {
+    reason: Text,
+  },
+  Ready {
+    data: AppData,
+  },
+}
+
+pub enum Upload {
+  Empty,
+  Choosing,
+  Uploaded {
+    object: Text,
+    preview: Text,
+    name: Text,
+  },
+  Publishing {
+    object: Text,
+    preview: Text,
+    name: Text,
+  },
+}
+
+pub enum Mutation {
+  SetLike {
+    post: PostId,
+    liked: Bool,
+  },
+  SetSave {
+    post: PostId,
+    saved: Bool,
+  },
+  LoadMore,
+  ReloadFeed,
+  SetFollow {
+    user: UserId,
+    following: Bool,
+  },
+  AddComment {
+    post: PostId,
+    body: Text,
+  },
+  SearchPeople {
+    query: Text,
+  },
+  ChooseImage,
+  PublishImage {
+    object: Text,
+    caption: Text,
+    alt: Text,
+  },
+  MarkStory {
+    story: StoryId,
+  },
+}
+
+pub enum Settlement {
+  Accepted,
+  Refused {
+    reason: Text,
+  },
+  ImageReady {
+    object: Text,
+    preview: Text,
+    name: Text,
+  },
+}
+
+pub const MIRA: User = User {
+  id: USER_MIRA,
+  username: "mira.santos",
+  display_name: "Mira Santos",
+  avatar: ImageRef {
+    src: "avatar-mira",
+    alt: "Mira Santos",
+  },
+};
+
+pub const LENA: User = User {
+  id: USER_LENA,
+  username: "lena.holt",
+  display_name: "Lena Holt",
+  avatar: ImageRef {
+    src: "avatar-lena",
+    alt: "Lena Holt",
+  },
+};
+
+pub const MARCO: User = User {
+  id: USER_MARCO,
+  username: "marco.reyes",
+  display_name: "Marco Reyes",
+  avatar: ImageRef {
+    src: "avatar-marco",
+    alt: "Marco Reyes",
+  },
+};
+
+pub const NILS: User = User {
+  id: USER_NILS,
+  username: "nils.bergman",
+  display_name: "Nils Bergman",
+  avatar: ImageRef {
+    src: "avatar-nils",
+    alt: "Nils Bergman",
+  },
+};
+
+pub const PRIYA: User = User {
+  id: USER_PRIYA,
+  username: "priya.raman",
+  display_name: "Priya Raman",
+  avatar: ImageRef {
+    src: "avatar-priya",
+    alt: "Priya Raman",
+  },
+};
+
+pub const AYLA: User = User {
+  id: USER_AYLA,
+  username: "ayla.demir",
+  display_name: "Ayla Demir",
+  avatar: ImageRef {
+    src: "avatar-ayla",
+    alt: "Ayla Demir",
+  },
+};
+
+pub const JUNE: User = User {
+  id: USER_JUNE,
+  username: "june.park",
+  display_name: "June Park",
+  avatar: ImageRef {
+    src: "avatar-june",
+    alt: "June Park",
+  },
+};
+
+pub const THEO: User = User {
+  id: USER_THEO,
+  username: "theo.okafor",
+  display_name: "Theo Okafor",
+  avatar: ImageRef {
+    src: "avatar-theo",
+    alt: "Theo Okafor",
+  },
+};
+
+pub const KENJI: User = User {
+  id: USER_KENJI,
+  username: "kenji.rides",
+  display_name: "Kenji Tanaka",
+  avatar: ImageRef {
+    src: "avatar-kenji",
+    alt: "Kenji Tanaka",
+  },
+};
+
+pub const LENA_GLAZE: Post = Post {
+  id: POST_LENA_GLAZE,
+  author: LENA,
+  caption: "New copper-red test tiles out of the kiln. Cone 10, heavy reduction — the speckle finally behaved.",
+  media: Media::Image {
+    image: ImageRef {
+      src: "media-lena-glaze",
+      alt: "Decorative ceramic tile panels leaning in an artisan studio",
+    },
+  },
+  like_count: 7,
+  comment_count: 4,
+  viewer_liked: false,
+  viewer_saved: false,
+  posted_label: "2h",
+};
+
+pub const LENA_BOWLS: Post = Post {
+  id: POST_LENA_BOWLS,
+  author: LENA,
+  caption: "Copper glaze in close-up, before the wax cooled.",
+  media: Media::Image {
+    image: ImageRef {
+      src: "thumb-lena-2",
+      alt: "Celadon ceramic vessel with a sculpted wave rim",
+    },
+  },
+  like_count: 5,
+  comment_count: 1,
+  viewer_liked: false,
+  viewer_saved: false,
+  posted_label: "1d",
+};
+
+pub const MARCO_BAJA: Post = Post {
+  id: POST_MARCO_BAJA,
+  author: MARCO,
+  caption: "Three days down the Baja coast. Swell arrived on the last morning, as it always does.",
+  media: Media::Carousel {
+    images: [ImageRef {
+      src: "media-marco-baja-1",
+      alt: "Ocean wave exploding into white spray against deep blue water",
+    }, ImageRef {
+      src: "media-marco-baja-2",
+      alt: "Glowing campfire beside a tent under a desert night sky",
+    }, ImageRef {
+      src: "media-marco-baja-3",
+      alt: "Palm-lined ocean glowing orange and violet at sunset",
+    }],
+  },
+  like_count: 12,
+  comment_count: 2,
+  viewer_liked: true,
+  viewer_saved: true,
+  posted_label: "4h",
+};
+
+pub const NILS_AURORA: Post = Post {
+  id: POST_NILS_AURORA,
+  author: NILS,
+  caption: "Aurora over the fjord last night — the whole sky was breathing.",
+  media: Media::Video {
+    src: "video-nils-aurora",
+    poster: ImageRef {
+      src: "media-nils-aurora-poster",
+      alt: "Soft bands of blue, violet, and green light across a dark sky",
+    },
+  },
+  like_count: 21,
+  comment_count: 3,
+  viewer_liked: false,
+  viewer_saved: true,
+  posted_label: "6h",
+};
+
+pub const PRIYA_STARTER: Post = Post {
+  id: POST_PRIYA_STARTER,
+  author: PRIYA,
+  caption: "Day 400 of the starter. She's earned a name: Clint Yeastwood.",
+  media: Media::Image {
+    image: ImageRef {
+      src: "media-priya-starter",
+      alt: "Black-and-white cross-section of a rustic bread loaf",
+    },
+  },
+  like_count: 18,
+  comment_count: 2,
+  viewer_liked: false,
+  viewer_saved: false,
+  posted_label: "8h",
+};
+
+pub const AYLA_FERRY: Post = Post {
+  id: POST_AYLA_FERRY,
+  author: AYLA,
+  caption: "Morning ferry across the Bosphorus. Tea, gulls, and nowhere to be until noon.",
+  media: Media::Image {
+    image: ImageRef {
+      src: "media-ayla-ferry",
+      alt: "Small boat crossing blue water toward the Jaffa skyline",
+    },
+  },
+  like_count: 9,
+  comment_count: 0,
+  viewer_liked: false,
+  viewer_saved: false,
+  posted_label: "10h",
+};
+
+pub const JUNE_LOOKBOOK: Post = Post {
+  id: POST_JUNE_LOOKBOOK,
+  author: JUNE,
+  caption: "Studio lookbook, page one. Linen in every weight we could mill.",
+  media: Media::Image {
+    image: ImageRef {
+      src: "media-june-lookbook",
+      alt: "Navy mosaic printed across natural linen fabric",
+    },
+  },
+  like_count: 14,
+  comment_count: 1,
+  viewer_liked: false,
+  viewer_saved: false,
+  posted_label: "12h",
+};
+
+pub const THEO_COURT: Post = Post {
+  id: POST_THEO_COURT,
+  author: THEO,
+  caption: "Finished the mural at the 9th street court. Paint holds up better than my jumper.",
+  media: Media::Video {
+    src: "video-theo-court",
+    poster: ImageRef {
+      src: "media-theo-court",
+      alt: "Colorful patterned staircase framed by saturated yellow walls",
+    },
+  },
+  like_count: 32,
+  comment_count: 5,
+  viewer_liked: false,
+  viewer_saved: false,
+  posted_label: "14h",
+};
+
+pub const KENJI_COPPER: Post = Post {
+  id: POST_KENJI_COPPER,
+  author: KENJI,
+  caption: "120km of switchbacks and one very smug goat. Copper Pass, you were worth it.",
+  media: Media::Image {
+    image: ImageRef {
+      src: "media-kenji-copper",
+      alt: "Cyclists riding through a crowded market square",
+    },
+  },
+  like_count: 11,
+  comment_count: 4,
+  viewer_liked: false,
+  viewer_saved: false,
+  posted_label: "1d",
+};
+
+pub const MIRA_FERRY: Post = Post {
+  id: POST_MIRA_FERRY,
+  author: MIRA,
+  caption: "The last ferry left a gold line all the way home.",
+  media: Media::Video {
+    src: "video-mira-ferry",
+    poster: ImageRef {
+      src: "thumb-mira-6",
+      alt: "Ocean spray breaking over rocks in golden light",
+    },
+  },
+  like_count: 24,
+  comment_count: 6,
+  viewer_liked: true,
+  viewer_saved: false,
+  posted_label: "2d",
+};
+
+pub const ALL_POSTS: Map<PostId, Post> = Map::from([(POST_LENA_GLAZE, LENA_GLAZE), (POST_LENA_BOWLS, LENA_BOWLS), (POST_MARCO_BAJA, MARCO_BAJA), (POST_NILS_AURORA, NILS_AURORA), (POST_PRIYA_STARTER, PRIYA_STARTER), (POST_AYLA_FERRY, AYLA_FERRY), (POST_JUNE_LOOKBOOK, JUNE_LOOKBOOK), (POST_THEO_COURT, THEO_COURT), (POST_KENJI_COPPER, KENJI_COPPER), (POST_MIRA_FERRY, MIRA_FERRY)]);
+
+pub const FEED_PAGE_ONE: Seq<Post> = [LENA_GLAZE, MARCO_BAJA, NILS_AURORA];
+
+pub const FEED_ALL: Seq<Post> = [LENA_GLAZE, MARCO_BAJA, NILS_AURORA, PRIYA_STARTER, AYLA_FERRY, JUNE_LOOKBOOK];
+
+pub const ALL_REELS: Seq<Post> = [NILS_AURORA, THEO_COURT, MIRA_FERRY];
+
+pub const ALL_STORIES: Seq<StoryRing> = [StoryRing {
+  id: STORY_MIRA,
+  user: MIRA,
+  unseen: false,
+  is_self: true,
+}, StoryRing {
+  id: STORY_LENA,
+  user: LENA,
+  unseen: true,
+  is_self: false,
+}, StoryRing {
+  id: StoryId("ring-marco"),
+  user: MARCO,
+  unseen: true,
+  is_self: false,
+}, StoryRing {
+  id: STORY_PRIYA,
+  user: PRIYA,
+  unseen: false,
+  is_self: false,
+}, StoryRing {
+  id: StoryId("ring-june"),
+  user: JUNE,
+  unseen: true,
+  is_self: false,
+}, StoryRing {
+  id: StoryId("ring-kenji"),
+  user: KENJI,
+  unseen: false,
+  is_self: false,
+}];
+
+pub const LENA_STORY: StoryDetail = StoryDetail {
+  id: STORY_LENA,
+  author: LENA,
+  image: ImageRef {
+    src: "thumb-lena-7",
+    alt: "Lena throwing a tall clay cylinder",
+  },
+  caption: "One pull, no edits",
+  posted_label: "35m",
+  viewed: false,
+  previous: None,
+  next: Some(STORY_LENA_GLAZES),
+  progress: [StorySegment {
+    id: STORY_LENA,
+    current: true,
+    viewed: false,
+  }, StorySegment {
+    id: STORY_LENA_GLAZES,
+    current: false,
+    viewed: false,
+  }, StorySegment {
+    id: STORY_LENA_STUDIO,
+    current: false,
+    viewed: false,
+  }],
+};
+
+pub const LENA_GLAZES_STORY: StoryDetail = StoryDetail {
+  id: STORY_LENA_GLAZES,
+  author: LENA,
+  image: ImageRef {
+    src: "thumb-lena-8",
+    alt: "Rows of glaze buckets labelled by firing cone",
+  },
+  caption: "The unglamorous half of studio day",
+  posted_label: "22m",
+  viewed: false,
+  previous: Some(STORY_LENA),
+  next: Some(STORY_LENA_STUDIO),
+  progress: [StorySegment {
+    id: STORY_LENA,
+    current: false,
+    viewed: false,
+  }, StorySegment {
+    id: STORY_LENA_GLAZES,
+    current: true,
+    viewed: false,
+  }, StorySegment {
+    id: STORY_LENA_STUDIO,
+    current: false,
+    viewed: false,
+  }],
+};
+
+pub const LENA_STUDIO_STORY: StoryDetail = StoryDetail {
+  id: STORY_LENA_STUDIO,
+  author: LENA,
+  image: ImageRef {
+    src: "thumb-lena-9",
+    alt: "Morning light crossing a clean ceramics workbench",
+  },
+  caption: "Reset for tomorrow",
+  posted_label: "6m",
+  viewed: false,
+  previous: Some(STORY_LENA_GLAZES),
+  next: None,
+  progress: [StorySegment {
+    id: STORY_LENA,
+    current: false,
+    viewed: false,
+  }, StorySegment {
+    id: STORY_LENA_GLAZES,
+    current: false,
+    viewed: false,
+  }, StorySegment {
+    id: STORY_LENA_STUDIO,
+    current: true,
+    viewed: false,
+  }],
+};
+
+pub const MIRA_TRAM_STORY: StoryDetail = StoryDetail {
+  id: STORY_MIRA_TRAM,
+  author: MIRA,
+  image: ImageRef {
+    src: "thumb-mira-2",
+    alt: "Tram rails catching the first light in Lisbon",
+  },
+  caption: "Then the city wakes",
+  posted_label: "8m",
+  viewed: true,
+  previous: Some(STORY_MIRA),
+  next: Some(StoryId("ring-mira-market")),
+  progress: [StorySegment {
+    id: STORY_MIRA,
+    current: false,
+    viewed: true,
+  }, StorySegment {
+    id: STORY_MIRA_TRAM,
+    current: true,
+    viewed: true,
+  }, StorySegment {
+    id: StoryId("ring-mira-market"),
+    current: false,
+    viewed: true,
+  }],
+};
+
+pub const PRIYA_STORY: StoryDetail = StoryDetail {
+  id: STORY_PRIYA,
+  author: PRIYA,
+  image: ImageRef {
+    src: "media-priya-starter",
+    alt: "Freshly sliced sourdough loaf",
+  },
+  caption: "Still warm",
+  posted_label: "45m",
+  viewed: true,
+  previous: None,
+  next: None,
+  progress: [StorySegment {
+    id: STORY_PRIYA,
+    current: true,
+    viewed: true,
+  }],
+};
+
+pub const STORY_DETAILS: Map<StoryId, StoryDetail> = Map::from([(STORY_LENA, LENA_STORY), (STORY_LENA_GLAZES, LENA_GLAZES_STORY), (STORY_LENA_STUDIO, LENA_STUDIO_STORY), (STORY_MIRA_TRAM, MIRA_TRAM_STORY), (STORY_PRIYA, PRIYA_STORY)]);
+
+pub const LENA_PROFILE: Profile = Profile {
+  user: LENA,
+  bio: "Ceramics and slow mornings. Small-batch studio work from Portland.",
+  post_count: 10,
+  follower_count: 8,
+  following_count: 5,
+  viewer_follows: true,
+  posts: [Tile {
+    post: POST_LENA_GLAZE,
+    image: ImageRef {
+      src: "thumb-lena-1",
+      alt: "Decorative ceramic tile panels in warm glaze colors",
+    },
+  }, Tile {
+    post: POST_LENA_BOWLS,
+    image: ImageRef {
+      src: "thumb-lena-2",
+      alt: "Celadon ceramic vessel with a sculpted wave rim",
+    },
+  }, Tile {
+    post: PostId("post-lena-greenware"),
+    image: ImageRef {
+      src: "thumb-lena-3",
+      alt: "Editorial catalog of handmade stoneware ceramics",
+    },
+  }, Tile {
+    post: PostId("post-lena-kiln"),
+    image: ImageRef {
+      src: "thumb-lena-4",
+      alt: "White ceramic vessel with a flowing sculptural form",
+    },
+  }, Tile {
+    post: PostId("post-lena-clay"),
+    image: ImageRef {
+      src: "thumb-lena-5",
+      alt: "Miniature artist studio with shelves and a workbench",
+    },
+  }, Tile {
+    post: PostId("post-lena-plates"),
+    image: ImageRef {
+      src: "thumb-lena-6",
+      alt: "Blush ceramic sculpture with a looping organic form",
+    },
+  }],
+  reels: [],
+  tagged: [Tile {
+    post: POST_PRIYA_STARTER,
+    image: ImageRef {
+      src: "media-priya-starter",
+      alt: "Fresh sourdough loaf",
+    },
+  }],
+  saved: [],
+};
+
+pub const MIRA_PROFILE: Profile = Profile {
+  user: MIRA,
+  bio: "Food and travel photographer in Lisbon. Usually awake before the trams.",
+  post_count: 6,
+  follower_count: 4,
+  following_count: 6,
+  viewer_follows: false,
+  posts: [Tile {
+    post: PostId("post-mira-pasteis"),
+    image: ImageRef {
+      src: "thumb-mira-1",
+      alt: "Translucent citrus and radish slices on white",
+    },
+  }, Tile {
+    post: PostId("post-mira-tram"),
+    image: ImageRef {
+      src: "thumb-mira-2",
+      alt: "Colorful geometric Mediterranean hillside village",
+    },
+  }, Tile {
+    post: PostId("post-mira-citrus"),
+    image: ImageRef {
+      src: "thumb-mira-3",
+      alt: "Grid of cross-sectioned fruits and vegetables",
+    },
+  }, Tile {
+    post: PostId("post-mira-tiles"),
+    image: ImageRef {
+      src: "thumb-mira-4",
+      alt: "Colorful patterned staircase framed by yellow walls",
+    },
+  }, Tile {
+    post: PostId("post-mira-sardines"),
+    image: ImageRef {
+      src: "thumb-mira-5",
+      alt: "Bold illustrated food flavors in a four-panel grid",
+    },
+  }, Tile {
+    post: POST_MIRA_FERRY,
+    image: ImageRef {
+      src: "thumb-mira-6",
+      alt: "Ocean spray breaking over rocks in golden light",
+    },
+  }],
+  reels: [Tile {
+    post: POST_MIRA_FERRY,
+    image: ImageRef {
+      src: "thumb-mira-6",
+      alt: "Ocean spray breaking over rocks in golden light",
+    },
+  }],
+  tagged: [Tile {
+    post: POST_MARCO_BAJA,
+    image: ImageRef {
+      src: "media-marco-baja-1",
+      alt: "Long left-hand wave peeling along a desert point",
+    },
+  }],
+  saved: [Tile {
+    post: POST_MARCO_BAJA,
+    image: ImageRef {
+      src: "media-marco-baja-1",
+      alt: "Long left-hand wave peeling along a desert point",
+    },
+  }, Tile {
+    post: POST_NILS_AURORA,
+    image: ImageRef {
+      src: "media-nils-aurora-poster",
+      alt: "Green aurora over a fjord",
+    },
+  }],
+};
+
+pub const NILS_PROFILE: Profile = Profile {
+  user: NILS,
+  bio: "Night skies and northern water, filmed around Tromsø.",
+  post_count: 1,
+  follower_count: 2,
+  following_count: 3,
+  viewer_follows: false,
+  posts: [Tile {
+    post: POST_NILS_AURORA,
+    image: ImageRef {
+      src: "media-nils-aurora-poster",
+      alt: "Green aurora over a fjord",
+    },
+  }],
+  reels: [Tile {
+    post: POST_NILS_AURORA,
+    image: ImageRef {
+      src: "media-nils-aurora-poster",
+      alt: "Green aurora over a fjord",
+    },
+  }],
+  tagged: [],
+  saved: [],
+};
+
+pub const PROFILES: Map<UserId, Profile> = Map::from([(USER_LENA, LENA_PROFILE), (USER_MIRA, MIRA_PROFILE), (USER_NILS, NILS_PROFILE)]);
+
+pub const LENA_CONNECTIONS: Seq<Connection> = [Connection {
+  user: MIRA,
+  follows_viewer: true,
+  viewer_follows: true,
+}, Connection {
+  user: NILS,
+  follows_viewer: false,
+  viewer_follows: false,
+}, Connection {
+  user: PRIYA,
+  follows_viewer: true,
+  viewer_follows: true,
+}];
+
+pub const MIRA_FOLLOWERS: Seq<Connection> = [Connection {
+  user: LENA,
+  follows_viewer: true,
+  viewer_follows: true,
+}, Connection {
+  user: NILS,
+  follows_viewer: true,
+  viewer_follows: false,
+}];
+
+pub const MIRA_FOLLOWING: Seq<Connection> = [Connection {
+  user: LENA,
+  follows_viewer: true,
+  viewer_follows: true,
+}, Connection {
+  user: MARCO,
+  follows_viewer: false,
+  viewer_follows: true,
+}, Connection {
+  user: PRIYA,
+  follows_viewer: true,
+  viewer_follows: true,
+}];
+
+pub const FOLLOWER_LISTS: Map<UserId, Seq<Connection>> = Map::from([(USER_LENA, LENA_CONNECTIONS), (USER_MIRA, MIRA_FOLLOWERS), (USER_NILS, [])]);
+
+pub const FOLLOWING_LISTS: Map<UserId, Seq<Connection>> = Map::from([(USER_LENA, LENA_CONNECTIONS), (USER_MIRA, MIRA_FOLLOWING), (USER_NILS, [])]);
+
+pub const LENA_COMMENTS: Seq<Comment> = [Comment {
+  id: "comment-1",
+  author: KENJI,
+  body: "That copper red is unreal. What cone are you firing to?",
+  posted_label: "1h",
+}, Comment {
+  id: "comment-2",
+  author: PRIYA,
+  body: "The speckle is perfect.",
+  posted_label: "48m",
+}, Comment {
+  id: "comment-3",
+  author: MARCO,
+  body: "Saving this palette.",
+  posted_label: "22m",
+}];
+
+pub const COMMENT_LISTS: Map<PostId, Seq<Comment>> = Map::from([(POST_LENA_GLAZE, LENA_COMMENTS), (POST_AYLA_FERRY, [])]);
+
+pub const SEARCH_CONNECTIONS: Seq<Connection> = [Connection {
+  user: LENA,
+  follows_viewer: true,
+  viewer_follows: true,
+}, Connection {
+  user: MARCO,
+  follows_viewer: false,
+  viewer_follows: true,
+}, Connection {
+  user: NILS,
+  follows_viewer: false,
+  viewer_follows: false,
+}, Connection {
+  user: PRIYA,
+  follows_viewer: true,
+  viewer_follows: true,
+}];
+
+pub const EXPLORE_TILES: Seq<Tile> = [Tile {
+  post: POST_LENA_GLAZE,
+  image: ImageRef {
+    src: "media-lena-glaze",
+    alt: "Grid of copper-red glaze test tiles on a maple bench",
+  },
+}, Tile {
+  post: POST_MARCO_BAJA,
+  image: ImageRef {
+    src: "media-marco-baja-1",
+    alt: "Long left-hand wave peeling along a desert point",
+  },
+}, Tile {
+  post: POST_NILS_AURORA,
+  image: ImageRef {
+    src: "media-nils-aurora-poster",
+    alt: "Green aurora curtains over a dark fjord",
+  },
+}, Tile {
+  post: POST_PRIYA_STARTER,
+  image: ImageRef {
+    src: "media-priya-starter",
+    alt: "Open crumb of a sourdough loaf",
+  },
+}, Tile {
+  post: POST_AYLA_FERRY,
+  image: ImageRef {
+    src: "media-ayla-ferry",
+    alt: "Ferry deck railing over blue water",
+  },
+}, Tile {
+  post: POST_JUNE_LOOKBOOK,
+  image: ImageRef {
+    src: "media-june-lookbook",
+    alt: "Folded linen garments stacked by shade",
+  },
+}];
+
+pub const DEMO_STANDARD: AppData = AppData {
+  viewer: MIRA,
+  posts: ALL_POSTS,
+  feed_posts: FEED_PAGE_ONE,
+  feed_has_more: true,
+  reels: ALL_REELS,
+  stories: ALL_STORIES,
+  story_details: STORY_DETAILS,
+  profiles: PROFILES,
+  followers: FOLLOWER_LISTS,
+  following: FOLLOWING_LISTS,
+  comments: COMMENT_LISTS,
+  search_people: SEARCH_CONNECTIONS,
+  explore_tiles: EXPLORE_TILES,
+};
+
+pub const DEMO_APPENDED: AppData = AppData {
+  viewer: MIRA,
+  posts: ALL_POSTS,
+  feed_posts: FEED_ALL,
+  feed_has_more: false,
+  reels: ALL_REELS,
+  stories: ALL_STORIES,
+  story_details: STORY_DETAILS,
+  profiles: PROFILES,
+  followers: FOLLOWER_LISTS,
+  following: FOLLOWING_LISTS,
+  comments: COMMENT_LISTS,
+  search_people: SEARCH_CONNECTIONS,
+  explore_tiles: EXPLORE_TILES,
+};
+
+pub const DEMO_EXHAUSTED: AppData = AppData {
+  viewer: MIRA,
+  posts: ALL_POSTS,
+  feed_posts: FEED_PAGE_ONE,
+  feed_has_more: false,
+  reels: ALL_REELS,
+  stories: ALL_STORIES,
+  story_details: STORY_DETAILS,
+  profiles: PROFILES,
+  followers: FOLLOWER_LISTS,
+  following: FOLLOWING_LISTS,
+  comments: COMMENT_LISTS,
+  search_people: SEARCH_CONNECTIONS,
+  explore_tiles: EXPLORE_TILES,
+};
+
+pub const DEMO_EMPTY: AppData = AppData {
+  viewer: MIRA,
+  posts: ALL_POSTS,
+  feed_posts: [],
+  feed_has_more: false,
+  reels: ALL_REELS,
+  stories: ALL_STORIES,
+  story_details: STORY_DETAILS,
+  profiles: PROFILES,
+  followers: FOLLOWER_LISTS,
+  following: FOLLOWING_LISTS,
+  comments: COMMENT_LISTS,
+  search_people: SEARCH_CONNECTIONS,
+  explore_tiles: EXPLORE_TILES,
+};
+
+pub const DEMO_EMPTY_EXPLORE: AppData = AppData {
+  viewer: MIRA,
+  posts: ALL_POSTS,
+  feed_posts: FEED_PAGE_ONE,
+  feed_has_more: true,
+  reels: ALL_REELS,
+  stories: ALL_STORIES,
+  story_details: STORY_DETAILS,
+  profiles: PROFILES,
+  followers: FOLLOWER_LISTS,
+  following: FOLLOWING_LISTS,
+  comments: COMMENT_LISTS,
+  search_people: [],
+  explore_tiles: [],
+};
+
+pub machine Instagram {
+  port router = Router<Location> {
+    routes: INSTAGRAM_ROUTES,
+  };
+
+  port authority = Observation<Authority> {};
+
+  port mutations = RequestPort<RequestId, Mutation, Settlement> {};
+
+  events {
+    SelectTab(section: Section),
+    OpenPost(id: PostId),
+    OpenProfile(user: UserId),
+    OpenFollowers(user: UserId),
+    OpenFollowing(user: UserId),
+    OpenStory(id: StoryId),
+    MarkStorySeen(id: StoryId),
+    GoBack,
+    ToggleLike(post: PostId, liked: Bool),
+    ToggleSave(post: PostId, saved: Bool),
+    FeedNearEnd,
+    RetryFeed,
+    OpenComments(post: PostId),
+    DismissComments,
+    CommentChanged(value: Text),
+    SubmitComment,
+    ToggleFollow(user: UserId, following: Bool),
+    SelectProfileTab(tab: ProfileTab),
+    SearchChanged(value: Text),
+    SubmitSearch,
+    ChooseImage,
+    CaptionChanged(value: Text),
+    AltChanged(value: Text),
+    PublishImage,
+  }
+
+  outcomes {
+    commit Accepted,
+    abort Blocked(reason: Text),
+    abort Duplicate,
+    abort Stale,
+    abort Invalid(reason: Text),
+  }
+
+  state {
+    location: Option<Location> = None,
+    authority_state: Authority = Authority::Loading,
+    profile_tab: ProfileTab = ProfileTab::Posts,
+    feed_status: FeedStatus = FeedStatus::Idle,
+    search_query: Text = "",
+    search_status: SearchStatus = SearchStatus::Explore,
+    comments_post: Option<PostId> = None,
+    comment_draft: Text = "",
+    pending_comment: Option<(RequestId, Text)> = None,
+    upload: Upload = Upload::Empty,
+    caption: Text = "",
+    alt: Text = "",
+    like_overlay: Map<PostId, Bool> = Map::empty(),
+    save_overlay: Map<PostId, Bool> = Map::empty(),
+    follow_overlay: Map<UserId, Bool> = Map::empty(),
+    like_pending: Set<PostId> = Set::empty(),
+    save_pending: Set<PostId> = Set::empty(),
+    follow_pending: Set<UserId> = Set::empty(),
+    story_pending: Set<StoryId> = Set::empty(),
+    pending: Map<RequestId, Mutation> = Map::empty(),
+    settled: Set<RequestId> = Set::empty(),
+    next_request: Nat = 0,
+  }
+
+  fn page_of(value: Option<Location>) -> Page {
+    match value {
+      None => Page::None,
+      Some(Location::Feed) => Page::Feed,
+      Some(Location::Search) => Page::Search,
+      Some(Location::Create) => Page::Create,
+      Some(Location::Reels) => Page::Reels,
+      Some(Location::Post {
+        id,
+      }) => Page::Post {
+        id,
+      },
+      Some(Location::Profile {
+        user,
+      }) => Page::Profile {
+        user,
+      },
+      Some(Location::Followers {
+        user,
+      }) => Page::Followers {
+        user,
+      },
+      Some(Location::Following {
+        user,
+      }) => Page::Following {
+        user,
+      },
+      Some(Location::Story {
+        id,
+      }) => Page::Story {
+        id,
+      },
+    }
+  }
+
+  fn section_location(section: Section) -> Location {
+    match section {
+      Section::Feed => Location::Feed,
+      Section::Search => Location::Search,
+      Section::Create => Location::Create,
+      Section::Reels => Location::Reels,
+      Section::Profile => Location::Profile {
+        user: USER_MIRA,
+      },
+    }
+  }
+
+  fn can_load(value: Authority) -> Bool {
+    match value {
+      Authority::Loading => false,
+      Authority::Failed {
+        ..,
+      } => false,
+      Authority::Ready {
+        data,
+      } => data.feed_has_more,
+    }
+  }
+
+  computed page: Page = page_of(location);
+
+  invariant {
+    next_request >= pending.len(),
+    settled.len() <= next_request,
+  }
+
+  part notice = Notice();
+
+  part notice_controls = NoticeControls(notice.reads, notice.updates);
+
+  observe {
+    page,
+    location,
+    authority: authority_state,
+    profile_tab,
+    feed_status,
+    search_query,
+    search_status,
+    comments_post,
+    comment_draft,
+    pending_comment,
+    upload,
+    caption,
+    alt,
+    notice: notice.reads.current,
+    like_overlay,
+    save_overlay,
+    follow_overlay,
+    like_pending,
+    save_pending,
+    follow_pending,
+    story_pending,
+  }
+
+  on router.Changed(next) {
+    location = Some(next);
+    Accepted
+  }
+
+  on authority.Observed(next) {
+    authority_state = next;
+    Accepted
+  }
+
+  on SelectTab(section) {
+    let target = section_location(section);
+    match location {
+      Some(current) => {
+        if current == target {
+          if section == Section::Feed {
+            let serial: PositiveInt = next_request + 1;
+            let request = RequestId(serial);
+            next_request = serial;
+            feed_status = FeedStatus::Loading;
+            pending = pending.put(request, Mutation::ReloadFeed);
+            emit mutations.Request(request, Mutation::ReloadFeed);
+            return Accepted;
+          }
+          return Duplicate;
+        }
+      },
+      None => {},
+    }
+    emit router.Replace(target);
+    Accepted
+  }
+
+  on OpenPost(id) {
+    emit router.Push(Location::Post {
+      id,
+    });
+    Accepted
+  }
+
+  on OpenProfile(user) {
+    emit router.Push(Location::Profile {
+      user,
+    });
+    Accepted
+  }
+
+  on OpenFollowers(user) {
+    emit router.Push(Location::Followers {
+      user,
+    });
+    Accepted
+  }
+
+  on OpenFollowing(user) {
+    emit router.Push(Location::Following {
+      user,
+    });
+    Accepted
+  }
+
+  on OpenStory(id) {
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    story_pending = story_pending.add(id);
+    pending = pending.put(request, Mutation::MarkStory {
+      story: id,
+    });
+    emit mutations.Request(request, Mutation::MarkStory {
+      story: id,
+    });
+    emit router.Push(Location::Story {
+      id,
+    });
+    Accepted
+  }
+
+  on MarkStorySeen(id) {
+    if story_pending.contains(id) {
+      return Duplicate;
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    story_pending = story_pending.add(id);
+    pending = pending.put(request, Mutation::MarkStory {
+      story: id,
+    });
+    emit mutations.Request(request, Mutation::MarkStory {
+      story: id,
+    });
+    Accepted
+  }
+
+  on GoBack {
+    emit router.Replace(Location::Feed);
+    Accepted
+  }
+
+  on ToggleLike(post, liked) {
+    if like_pending.contains(post) {
+      return Duplicate;
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    like_overlay = like_overlay.put(post, liked);
+    like_pending = like_pending.add(post);
+    pending = pending.put(request, Mutation::SetLike {
+      post,
+      liked,
+    });
+    emit mutations.Request(request, Mutation::SetLike {
+      post,
+      liked,
+    });
+    Accepted
+  }
+
+  on ToggleSave(post, saved) {
+    if save_pending.contains(post) {
+      return Duplicate;
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    save_overlay = save_overlay.put(post, saved);
+    save_pending = save_pending.add(post);
+    pending = pending.put(request, Mutation::SetSave {
+      post,
+      saved,
+    });
+    emit mutations.Request(request, Mutation::SetSave {
+      post,
+      saved,
+    });
+    Accepted
+  }
+
+  on FeedNearEnd {
+    if feed_status == FeedStatus::Loading {
+      return Duplicate;
+    }
+    if !can_load(authority_state) {
+      return Blocked("feed is exhausted");
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    feed_status = FeedStatus::Loading;
+    pending = pending.put(request, Mutation::LoadMore);
+    emit mutations.Request(request, Mutation::LoadMore);
+    Accepted
+  }
+
+  on RetryFeed {
+    if feed_status == FeedStatus::Loading {
+      return Duplicate;
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    feed_status = FeedStatus::Loading;
+    pending = pending.put(request, Mutation::ReloadFeed);
+    emit mutations.Request(request, Mutation::ReloadFeed);
+    Accepted
+  }
+
+  on OpenComments(post) {
+    if comments_post == Some(post) {
+      return Duplicate;
+    }
+    comments_post = Some(post);
+    comment_draft = "";
+    pending_comment = None;
+    Accepted
+  }
+
+  on DismissComments {
+    if comments_post == None {
+      return Duplicate;
+    }
+    comments_post = None;
+    comment_draft = "";
+    pending_comment = None;
+    Accepted
+  }
+
+  on CommentChanged(value) {
+    if comment_draft == value {
+      return Duplicate;
+    }
+    comment_draft = value;
+    Accepted
+  }
+
+  on SubmitComment {
+    if comment_draft == "" {
+      return Invalid("comment body is empty");
+    }
+    if pending_comment is Some(_) {
+      return Duplicate;
+    }
+    let post = match comments_post {
+      None => return Blocked("comments are closed"),
+      Some(post) => post,
+    };
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    let body = comment_draft;
+    next_request = serial;
+    pending_comment = Some((request, body));
+    comment_draft = "";
+    pending = pending.put(request, Mutation::AddComment {
+      post,
+      body,
+    });
+    emit mutations.Request(request, Mutation::AddComment {
+      post,
+      body,
+    });
+    Accepted
+  }
+
+  on ToggleFollow(user, following) {
+    if user == USER_MIRA {
+      return Invalid("the viewer cannot follow itself");
+    }
+    if follow_pending.contains(user) {
+      return Duplicate;
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    follow_overlay = follow_overlay.put(user, following);
+    follow_pending = follow_pending.add(user);
+    pending = pending.put(request, Mutation::SetFollow {
+      user,
+      following,
+    });
+    emit mutations.Request(request, Mutation::SetFollow {
+      user,
+      following,
+    });
+    Accepted
+  }
+
+  on SelectProfileTab(tab) {
+    if profile_tab == tab {
+      return Duplicate;
+    }
+    profile_tab = tab;
+    Accepted
+  }
+
+  on SearchChanged(value) {
+    if search_query == value {
+      return Duplicate;
+    }
+    search_query = value;
+    if value == "" {
+      search_status = SearchStatus::Explore;
+    }
+    Accepted
+  }
+
+  on SubmitSearch {
+    if search_query == "" {
+      return Invalid("search query is empty");
+    }
+    if search_status == SearchStatus::Searching {
+      return Duplicate;
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    search_status = SearchStatus::Searching;
+    pending = pending.put(request, Mutation::SearchPeople {
+      query: search_query,
+    });
+    emit mutations.Request(request, Mutation::SearchPeople {
+      query: search_query,
+    });
+    Accepted
+  }
+
+  on ChooseImage {
+    match upload {
+      Upload::Choosing => return Duplicate,
+      Upload::Publishing {
+        ..,
+      } => return Blocked("publish is in flight"),
+      _ => {},
+    }
+    let serial: PositiveInt = next_request + 1;
+    let request = RequestId(serial);
+    next_request = serial;
+    upload = Upload::Choosing;
+    pending = pending.put(request, Mutation::ChooseImage);
+    emit mutations.Request(request, Mutation::ChooseImage);
+    Accepted
+  }
+
+  on CaptionChanged(value) {
+    if caption == value {
+      return Duplicate;
+    }
+    caption = value;
+    Accepted
+  }
+
+  on AltChanged(value) {
+    if alt == value {
+      return Duplicate;
+    }
+    alt = value;
+    Accepted
+  }
+
+  on PublishImage {
+    match upload {
+      Upload::Uploaded {
+        object,
+        preview,
+        name,
+      } => {
+        let serial: PositiveInt = next_request + 1;
+        let request = RequestId(serial);
+        next_request = serial;
+        upload = Upload::Publishing {
+          object,
+          preview,
+          name,
+        };
+        pending = pending.put(request, Mutation::PublishImage {
+          object,
+          caption,
+          alt,
+        });
+        emit mutations.Request(request, Mutation::PublishImage {
+          object,
+          caption,
+          alt,
+        });
+        return Accepted;
+      },
+      Upload::Publishing {
+        ..,
+      } => return Duplicate,
+      _ => return Blocked("no uploaded image"),
+    }
+  }
+
+  on mutations.Settled(request, result) {
+    if settled.contains(request) {
+      return Stale;
+    }
+    let mutation = match pending.get(request) {
+      None => return Stale,
+      Some(mutation) => mutation,
+    };
+    pending = pending.remove(request);
+    settled = settled.add(request);
+    match mutation {
+      Mutation::SetLike {
+        post,
+        liked: _,
+      } => {
+        like_pending = like_pending.remove(post);
+        match result {
+          Settlement::Accepted => {},
+          Settlement::Refused {
+            ..,
+          } => {
+            like_overlay = like_overlay.remove(post);
+            notice.updates.show("Couldn't update this like. Try again.");
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::SetSave {
+        post,
+        saved: _,
+      } => {
+        save_pending = save_pending.remove(post);
+        match result {
+          Settlement::Accepted => {},
+          Settlement::Refused {
+            ..,
+          } => {
+            save_overlay = save_overlay.remove(post);
+            notice.updates.show("Couldn't update this saved post.");
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::LoadMore => {
+        match result {
+          Settlement::Accepted => {
+            feed_status = FeedStatus::Idle;
+          },
+          Settlement::Refused {
+            ..,
+          } => {
+            feed_status = FeedStatus::Failed;
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::ReloadFeed => {
+        match result {
+          Settlement::Accepted => {
+            feed_status = FeedStatus::Idle;
+          },
+          Settlement::Refused {
+            ..,
+          } => {
+            feed_status = FeedStatus::Failed;
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::SetFollow {
+        user,
+        following: _,
+      } => {
+        follow_pending = follow_pending.remove(user);
+        match result {
+          Settlement::Accepted => {},
+          Settlement::Refused {
+            ..,
+          } => {
+            follow_overlay = follow_overlay.remove(user);
+            notice.updates.show("Couldn't update this relationship.");
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::AddComment {
+        post: _,
+        body,
+      } => {
+        pending_comment = None;
+        match result {
+          Settlement::Accepted => {},
+          Settlement::Refused {
+            ..,
+          } => {
+            comment_draft = body;
+            notice.updates.show("Couldn't post your comment. Try again.");
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::SearchPeople {
+        query,
+      } => {
+        match result {
+          Settlement::Accepted => {
+            if query == "nils" {
+              search_status = SearchStatus::Results;
+            } else {
+              search_status = SearchStatus::NoResults;
+            }
+          },
+          Settlement::Refused {
+            ..,
+          } => {
+            search_status = SearchStatus::NoResults;
+            notice.updates.show("Search isn't available.");
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::ChooseImage => {
+        match result {
+          Settlement::ImageReady {
+            object,
+            preview,
+            name,
+          } => {
+            upload = Upload::Uploaded {
+              object,
+              preview,
+              name,
+            };
+          },
+          Settlement::Refused {
+            ..,
+          } => {
+            upload = Upload::Empty;
+            notice.updates.show("Choose a JPEG, PNG, or WebP image.");
+          },
+          Settlement::Accepted => return Invalid("image selection omitted its object"),
+        }
+      },
+      Mutation::PublishImage {
+        ..,
+      } => {
+        match result {
+          Settlement::Accepted => {
+            upload = Upload::Empty;
+            caption = "";
+            alt = "";
+            emit router.Replace(Location::Feed);
+          },
+          Settlement::Refused {
+            ..,
+          } => {
+            match upload {
+              Upload::Publishing {
+                object,
+                preview,
+                name,
+              } => {
+                upload = Upload::Uploaded {
+                  object,
+                  preview,
+                  name,
+                };
+              },
+              _ => {},
+            }
+            notice.updates.show("Couldn't publish this post. Try again.");
+          },
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+      Mutation::MarkStory {
+        story,
+      } => {
+        story_pending = story_pending.remove(story);
+        match result {
+          Settlement::Accepted => {},
+          Settlement::Refused {
+            ..,
+          } => {},
+          Settlement::ImageReady {
+            ..,
+          } => return Invalid("unexpected image settlement"),
+        }
+      },
+    }
+    Accepted
+  }
+}

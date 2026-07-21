@@ -6,5 +6,5 @@ use std::process::ExitCode;
 use crate::CommonArgs;
 
 pub fn run(common: &CommonArgs, port: u16) -> ExitCode {
-    super::dev::run_with_editor(common, port)
+    super::play::run_with_editor(common, port)
 }

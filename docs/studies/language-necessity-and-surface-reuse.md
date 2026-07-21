@@ -52,8 +52,9 @@ The first comparison authority is therefore not the current Uhura grammar,
 store, IR, runtime, or renderer. It is the language-neutral
 [program harness](../../examples/programs/README.md): independent Markdown
 problem specifications whose transitions, outputs, invariants, and adversarial
-traces must not bend around any candidate. The corpus currently contains no
-Uhura solutions, executable fixtures, or competing implementations.
+traces must not bend around any candidate. The corpus now has executable Uhura
+0.3 and plain TypeScript answers. Their presence supplies evidence; neither
+becomes the problem authority.
 
 No shared-kernel or shared-surface experiment is assumed first. Each candidate
 may initially answer the programs with its own appropriate model. Controlled
@@ -470,8 +471,8 @@ decision rules must be fixed:
 
 Program conformance is pass/fail. Readability, compactness, diagnostics,
 ecosystem reuse, and lifetime cost are comparative evidence. This study sets no
-numerical winner threshold because no candidate implementation or funded
-experiment exists yet.
+numerical winner threshold. Executable baselines now exist, but the controlled
+human and agent comparison remains unfunded and unrun.
 
 Independent syntax is not justified merely because it can express the
 programs. It must create meaningful value beyond a smaller conforming
@@ -511,8 +512,8 @@ Supported now:
   has been implemented or validated by this study.
 - The current Uhura repository is evidence about one attempted design. It is
   not the authority for the replacement language.
-- The program corpus is currently Markdown-only and contains no candidate
-  Uhura, Svelte, library, statechart, or other answer sheets.
+- The program problems remain Markdown-only authorities. Executable Uhura 0.3
+  and plain TypeScript answer sheets now exist as subordinate evidence.
 - Current evidence does not prove an absolute need for an independent Uhura
   language, syntax, parser, toolchain, semantic view, or novel machine
   semantics.

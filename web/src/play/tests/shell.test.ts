@@ -8,8 +8,6 @@ test("the route-built Play shell owns every runtime host and Editor navigation",
   const requiredIds = [
     "uh-shell-toolbar",
     "uh-runtime-status",
-    "uh-provider-control",
-    "uh-provider-select",
     "uh-actor-select",
     "uh-debug-toggle",
     "uh-debug-panel",
@@ -93,9 +91,6 @@ test("Play fetches one namespaced coherent artifact set including app CSS", () =
   assert.deepEqual(PLAY_ARTIFACT_URLS, [
     "/api/play/ir.json",
     "/api/play/inspect.json",
-    "/api/play/boot.json",
-    "/api/play/fixture.json",
-    "/api/play/script.json",
     "/api/play/config.json",
     "/api/play/icon-fonts.json",
     "/api/play/stylesheet.css",

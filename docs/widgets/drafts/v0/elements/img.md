@@ -1,20 +1,23 @@
 # `<img>`
 
-- **Status:** Implemented asset-backed image; loading, failure, and responsive-source semantics unsettled
+- **Status:** Historical snapshot of an implemented asset-backed image
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Built-in base catalog; currently project-pinned during incubation
-- **Decision:** Renamed from `<image>` in base catalog 0.2.0; no accepted widget RFC
+- **Availability:** Native element in the retired v0 checker
+- **Decision:** Renamed from `<image>` during the v0 experiment; no accepted widget RFC
 - **Specification:** Pre-specification; single-source asset-backed image implemented
-- **Implementation:** Checker, Core semantic view, host asset boundary, browser Editor, and Play implemented
+- **Implementation:** Historically implemented across the checker, Core semantic view, host asset boundary, browser Editor, and Play
 - **Owners:** Checker, Core, Renderer, Host
 - **Supported renderers:** Browser Editor and Play
 
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
+
 `<img>` declares one non-interactive image resource. It is a system-defined
-catalog element, not raw HTML passthrough, an SVG graphics primitive, a CSS
+native element, not raw HTML passthrough, an SVG graphics primitive, a CSS
 background, or a Flutter-style provider and lifecycle widget.
 
 The spelling is deliberate. The current semantic concept and browser
@@ -105,11 +108,19 @@ and intentionally remains unchanged by the element rename.
 Core never fetches the asset. Materialization happens at the renderer and host
 boundary:
 
-- Editor reads a captured local asset table and applies its data URI;
+- the host validates each declared local asset and optional SHA-256 pin against
+  the captured project revision before publishing either surface;
+- Editor reads that checked asset table and applies its data URI;
 - Editor synthesizes a deterministic SVG stand-in from an unknown asset ID;
-- fixture Play resolves an encoded asset route for the ID; and
+- local Play serves the same captured bytes through an encoded asset route; and
 - provider-backed Play may exchange the stable ID for a remote or short-lived
   signed URL.
+
+Missing files, unsafe paths, and hash drift in a declared local asset registry
+are build errors for both Editor and Play. The deterministic Editor stand-in is
+only a rendering fallback for an otherwise-valid program that references an
+asset identity absent from the local registry; it does not hide a broken
+declaration.
 
 Resolved URLs are platform materialization details. They never become visible
 to Uhura expressions, stores, events, snapshots, or application logic.
@@ -244,7 +255,7 @@ decoration. Those decisions do not belong to the current narrow primitive.
 
 Existing executable coverage proves:
 
-- the base catalog exposes `img` as a childless, eventless content element;
+- the native vocabulary exposes `img` as a childless, eventless content element;
 - `src` is required and asset-typed;
 - exactly one of `alt` or bare `decorative` is required;
 - binding both branches, neither branch, or non-bare `decorative` is rejected;
@@ -254,7 +265,7 @@ Existing executable coverage proves:
 - informative and decorative branches map to native `alt` semantics without
   ARIA overrides;
 - Editor uses local data URIs and deterministic missing-asset stand-ins; and
-- fixture and provider Play apply native `src`, clear changed sources, and
+- local and provider-backed Play apply native `src`, clear changed sources, and
   ignore stale async resolutions.
 
 A durable support claim additionally requires conformance coverage for:
@@ -299,17 +310,16 @@ No current CSS convention, asset manifest field, or browser-native lifecycle
 settles these questions. The narrow `<img>` contract should remain useful
 without silently growing into a cross-platform media framework.
 
-Current implementation and research references:
+Historical implementation and research references:
 
-- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
-- [Markup and accessibility checking](../../../../../crates/uhura-check/src/markup.rs)
-- [Core property evaluation](../../../../../crates/uhura-core/src/eval.rs)
-- [Semantic asset wire value](../../../../../crates/uhura-core/src/view.rs)
-- [Browser property mapping](../../../../../web/src/renderer/appliers.ts)
+- [Native element and accessibility checking](../../../../../crates/uhura-check/src/checker.rs)
+- [Supplemental resource manifest](../../../../../crates/uhura-check/src/resource_manifest.rs)
+- [Checked local asset registry](../../../../../crates/uhura-check/src/assets.rs)
+- [Semantic view projection](../../../../../crates/uhura-core/src/render.rs)
+- [Canonical shared projection renderer](../../../../../web/src/renderer/projection.ts)
 - [Browser asset materialization](../../../../../web/src/renderer/assets.ts)
-- [Shared browser reconciliation](../../../../../web/src/renderer/reconciler.ts)
 - [Editor snapshot asset table](../../../../../web/src/editor/editor-state.ts)
 - [Play provider asset resolution](../../../../../examples/instagram/client/providers/spock.ts)
-- [Renderer policy tests](../../../../../web/src/renderer/tests/policies.test.ts)
+- [Projection renderer tests](../../../../../web/src/renderer/projection.test.ts)
 - [Asset resolution tests](../../../../../web/src/play/tests/assets.test.ts)
-- [Current Instagram image composition](../../../../../examples/instagram/client/components/post-card.uhura)
+- [Current Instagram image composition](../../../../../examples/instagram/client/ui.uhura)

@@ -1,19 +1,22 @@
 # `<button>`
 
-- **Status:** Implemented generic action element; control taxonomy and state semantics unsettled
+- **Status:** Historical snapshot of an implemented generic action element
 - **Version scope:** v0 incubation draft
 - **Lifetime:** Disposable with the v0 widget draft
 - **Document type:** Capability
 - **Primary form:** Element
 - **Facets:** None
-- **Availability:** Built-in base catalog; currently project-pinned during incubation
-- **Decision:** Current spike design; no accepted widget RFC
+- **Availability:** Native element in the retired v0 checker
+- **Decision:** Retired experimental contract; no accepted widget RFC
 - **Specification:** Pre-specification
-- **Implementation:** Checker, semantic view, browser Editor, and Play implemented
+- **Implementation:** Historically implemented in the checker, semantic view, browser Editor, and Play
 - **Owners:** Checker, Core, Renderer
 - **Supported renderers:** Browser Editor and Play
 
-`<button>` declares one user-invoked action. It is a system-defined catalog
+> Historical scope: present-tense implementation language below describes the
+> retired v0 snapshot captured by this document, not Uhura 0.4.
+
+`<button>` declares one user-invoked action. It is a system-defined native
 element, not a user-authored component, an implicit form submit/reset control,
 or a visual variant such as primary, destructive, or icon-only.
 
@@ -87,8 +90,8 @@ An icon-only action uses the same explicit accessible label:
 </button>
 ```
 
-These examples show accepted current syntax. They do not settle the final
-child-composition or pending-state design.
+These examples show the accepted v0 syntax at the time of this snapshot. They
+do not settle the final child-composition or pending-state design.
 
 | Contract | Current behavior |
 |---|---|
@@ -186,7 +189,7 @@ That explicit name is essential for icon-only buttons, but it creates an author
 obligation. When a button contains visible text, its accessible name should
 contain that visible wording. The W3C's
 [Label in Name guidance](https://www.w3.org/WAI/WCAG22/Understanding/label-in-name)
-explains why this matters for speech input. The current checker verifies only
+explains why this matters for speech input. The retired v0 checker verified only
 that `label` is present and has type `text`; it does not reject an empty label,
 guarantee that an empty value supplies an accessible name, or compare the label
 with visible child text.
@@ -354,12 +357,10 @@ No current usage or browser mapping settles these questions. An accepted
 button/widget RFC must preserve the narrow action semantics while separating
 specialized control patterns from visual similarity.
 
-Current implementation and research references:
+Historical implementation and research references:
 
-- [Base catalog declaration](../../../../../examples/instagram/client/catalog/base.toml)
-- [Catalog markup checking](../../../../../crates/uhura-check/src/markup.rs)
-- [Shared browser property mapping](../../../../../web/src/renderer/appliers.ts)
-- [Shared browser activation and reconciliation](../../../../../web/src/renderer/reconciler.ts)
-- [Instagram button usage](../../../../../examples/instagram/client/components/post-card.uhura)
+- [Native element, attribute, and event checking](../../../../../crates/uhura-check/src/checker.rs)
+- [Canonical shared projection renderer](../../../../../web/src/renderer/projection.ts)
+- [Instagram button usage](../../../../../examples/instagram/client/ui.uhura)
 - [Instagram spike element catalog](../../../../studies/instagram-spike-design.md)
 - [Instagram dogfood gaps](../../../../studies/instagram-demo-dogfood.md)

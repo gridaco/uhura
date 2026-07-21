@@ -3,7 +3,8 @@
 - **Status:** Stable router and working taxonomy
 - **Lifetime:** Stable navigation; classification is revisable
 - **Authority:** Working classification only
-- **Current draft:** [v0 integrations](../drafts/v0/README.md#integrations)
+- **Active candidate:** [Uhura 0.4 checked UI catalogue](../drafts/0.4/)
+- **Historical study:** [v0 integrations](../drafts/v0/README.md#integrations)
 
 Integration is a cross-cutting facet for capabilities backed by a renderer,
 host, external platform, or service. A concrete capability remains filed under

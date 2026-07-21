@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { createPlayAssets } from "../../renderer/play.js";
+import { createPlayAssets } from "../../renderer/assets.js";
 
 class FakeElement {
   readonly attributes = new Map<string, string>();
@@ -38,7 +38,7 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
-test("fixture assets select an encoded JPEG or MP4 rendition by semantic slot", () => {
+test("local assets select an encoded JPEG or MP4 rendition by semantic slot", () => {
   const assets = createPlayAssets();
   const image = new FakeElement();
   const video = new FakeElement();

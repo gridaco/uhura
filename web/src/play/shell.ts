@@ -27,10 +27,6 @@ export const PLAY_SHELL_MARKUP = `
       <output id="uh-runtime-status" class="uh-runtime-status" aria-live="polite">
         <span aria-hidden="true"></span>Starting
       </output>
-      <label id="uh-provider-control" class="uh-system-select" for="uh-provider-select" hidden>
-        <span>Provider</span>
-        <select id="uh-provider-select" disabled><option>Starting…</option></select>
-      </label>
       <label class="uh-system-select uh-actor-select" for="uh-actor-select">
         <span>Actor</span>
         <select id="uh-actor-select" disabled><option>Starting…</option></select>
@@ -107,7 +103,7 @@ export const PLAY_SHELL_MARKUP = `
 
     <div class="uh-debug-controls">
       <label for="uh-debug-definition">
-        <span>Definition</span>
+        <span>Machine</span>
         <select id="uh-debug-definition" disabled>
           <option value="">Waiting for program…</option>
         </select>
@@ -185,8 +181,6 @@ export interface PlayShell {
   frameLabel: HTMLElement;
   frameButtons: HTMLButtonElement[];
   runtimeStatus: HTMLElement;
-  providerControl: HTMLElement;
-  providerSelect: HTMLSelectElement;
   actorSelect: HTMLSelectElement;
   debugToggle: HTMLButtonElement;
   debugPanel: HTMLElement;
@@ -233,8 +227,6 @@ export function createPlayShell(document: Document): PlayShell {
     frameLabel: required(container, "#uh-frame-label"),
     frameButtons: [...container.querySelectorAll<HTMLButtonElement>("[data-uh-frame]")],
     runtimeStatus: required(container, "#uh-runtime-status"),
-    providerControl: required(container, "#uh-provider-control"),
-    providerSelect: required(container, "#uh-provider-select"),
     actorSelect: required(container, "#uh-actor-select"),
     debugToggle: required(container, "#uh-debug-toggle"),
     debugPanel: required(container, "#uh-debug-panel"),

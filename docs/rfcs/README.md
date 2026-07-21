@@ -19,6 +19,7 @@ decision changes, preserve the earlier RFC and add explicit `Supersedes` and
 | [0001](0001-project-foundation.md) | Project foundation: UI language and headless experience runtime | Draft |
 | [0002](0002-model-driven-editor-live-updates.md) | Model-driven Editor and saved-source live updates | Accepted |
 | [0003](0003-source-comments-docs-and-annotations.md) | Source comments, declaration docs, and markup annotations | Accepted |
+| [0004](0004-standalone-machine-core-and-source-composition.md) | Standalone machine core and source composition | Accepted |
 
 RFC numbers are local to the Uhura project, zero-padded, and never reused after
 a proposal has been shared. The status inside an RFC is authoritative.

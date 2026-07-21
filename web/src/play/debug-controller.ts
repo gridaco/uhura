@@ -3,14 +3,14 @@
 // owns the inspection subscription and coalesces its publications to frames.
 
 import type {
-  InspectionHandle,
-  InspectionState,
+  RuntimeInspectionHandle,
+  RuntimeInspectionState,
 } from "../protocol/types.js";
 
 export type DebugControllerUpdate =
   | {
       readonly kind: "inspection";
-      readonly state: InspectionState;
+      readonly publication: RuntimeInspectionState;
     }
   | {
       readonly kind: "unavailable";
@@ -18,7 +18,7 @@ export type DebugControllerUpdate =
 
 export interface DebugControllerOptions {
   /** Resolved on each closed -> open transition, never while closed. */
-  resolveInspection(): InspectionHandle | null | undefined;
+  resolveInspection(): RuntimeInspectionHandle | null | undefined;
   requestFrame(callback: () => void): number;
   cancelFrame(handle: number): void;
   render(update: DebugControllerUpdate): void;
@@ -37,7 +37,7 @@ export interface DebugController {
 
 interface SubscriptionSlot {
   readonly generation: number;
-  handle: InspectionHandle | null;
+  handle: RuntimeInspectionHandle | null;
   stop: (() => void) | null;
   terminal: boolean;
 }
@@ -141,7 +141,7 @@ export function createDebugController(
     open = true;
     const owner = ++generation;
 
-    let handle: InspectionHandle | null | undefined;
+    let handle: RuntimeInspectionHandle | null | undefined;
     try {
       handle = options.resolveInspection();
     } catch {
@@ -163,7 +163,7 @@ export function createDebugController(
 
     let stop: () => void;
     try {
-      stop = handle.subscribe((state) => {
+      stop = handle.subscribe((publication) => {
         if (
           disposed
           || !open
@@ -172,8 +172,11 @@ export function createDebugController(
         ) {
           return;
         }
-        queue(Object.freeze({ kind: "inspection", state }), slot.generation);
-        if (state.disposed) {
+        queue(
+          Object.freeze({ kind: "inspection", publication }),
+          slot.generation,
+        );
+        if (publication.disposed) {
           slot.terminal = true;
           if (slot.stop !== null) release(slot);
         }
@@ -185,7 +188,7 @@ export function createDebugController(
     }
 
     slot.stop = stop;
-    // InspectionHandle.subscribe replays synchronously. The replay, or a
+    // RuntimeInspectionHandle.subscribe replays synchronously. The replay, or a
     // custom handle around it, may close/dispose this controller before the
     // unsubscribe function is returned. Never retain that late function.
     if (

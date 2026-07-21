@@ -2,7 +2,8 @@
 
 - **Status:** Non-normative language-design corpus
 - **Current form:** Language-neutral Markdown application specifications
-- **Implementation status:** No accepted Uhura solutions or runtime fixtures
+- **Implementation status:** Executable Uhura 0.4 answer plus an independent
+  oracle; no accepted stable language solution
 - **Scope:** Practical composition of the machine language, `ui`, and explicit
   application features
 
@@ -31,6 +32,21 @@ concerns belong to a more advanced machine kernel.
 | Harness | Application | Primary pressure |
 | --- | --- | --- |
 | A0 | [Return Desk](a0-return-desk/) | One session-owned transaction draft across URL-owned steps, logical route scopes, revisioned external truth, a temporary surface, and a correlated settlement |
+
+## Uhura answer
+
+| Harness | Language | Answer | Evidence |
+| --- | --- | --- | --- |
+| A0 | Uhura 0.4 | [Machine, UI, evidence, and host sources](a0-return-desk/answers/uhura-0.4/) | Complete 12-preview host admission plus the same independent oracle |
+
+The answer executes in the canonical Uhura engine. The historical
+[Relay B3 pointer](../../docs/spec/drafts/relay-b3/) explains the experiment
+that preceded it; it is not a second runtime. The oracle still
+checks an independent A0 model and does not, by itself, prove that Uhura source
+and lowering are correct. The active [0.4 candidate](../../docs/spec/drafts/0.4/)
+is an executable answer because its complete source, evidence, Editor, and
+Play admission run here; equivalence to every oracle transition remains a
+separate differential gate rather than an inferred claim.
 
 The A-series identifiers organize application-transfer problems. They do not
 describe user skill, language maturity, product importance, or a required

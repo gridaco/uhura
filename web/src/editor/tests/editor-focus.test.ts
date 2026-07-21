@@ -14,6 +14,7 @@ import type {
   EditorState,
   PreviewIdentity,
 } from "../editor-state.js";
+import { projectionContent } from "./fixtures/projection.js";
 
 const identity = (
   subject: string,
@@ -36,7 +37,8 @@ const preview = (id: string, previewIdentity: PreviewIdentity): EditorPreview =>
   interactions: [],
   documentation: { declarationDocId: null, exampleDocId: null },
   provenance: { occurrences: [] },
-  content: { key: "root", element: "view", props: {} },
+  evidence: null,
+  content: projectionContent(),
 });
 
 const render = (previews: EditorPreview[]): EditorRender => ({
@@ -49,10 +51,11 @@ const render = (previews: EditorPreview[]): EditorRender => ({
   stylesheet: "",
   assets: {},
   interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
+  machine: null,
 });
 
 const state = (value: EditorRender | null): EditorState => ({
-  protocol: "uhura-editor-state/2",
+  protocol: "uhura-editor-state/5",
   sourceRevision: 1,
   diagnostics: null,
   render: value,

@@ -9,3 +9,5 @@ workspace = true
 
 [dependencies]
 uhura-base = { workspace = true }
+serde = { workspace = true }
+unicode-ident = { workspace = true }

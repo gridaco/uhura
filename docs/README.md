@@ -4,6 +4,7 @@
 - **Doctrine:** [Uhura doctrine](doctrine/README.md)
 - **Specification router:** [Uhura specifications](spec/README.md)
 - **Widget taxonomy:** [Uhura widget taxonomy](widgets/README.md)
+- **Implementation map:** [Current implementation and change boundaries](implementation/README.md)
 - **Decision history:** [Uhura RFCs](rfcs/README.md)
 - **Research:** [Uhura studies](studies/README.md)
 
@@ -20,6 +21,7 @@ language shape merely because many pages describe it.
 | Incubation drafts | [`spec/drafts/`](spec/drafts/) | Disposable | Proposed exact language models; may be replaced or deleted wholesale |
 | Widget taxonomy | [`widgets/README.md`](widgets/README.md) | Stable router; live taxonomy | Provides revisable capability vocabulary, not builtin names or contracts |
 | Widget drafts | [`widgets/drafts/`](widgets/drafts/) | Disposable | Version-scoped capability names, contracts, implementation notes, and proposals |
+| Implementation map | [`implementation/README.md`](implementation/README.md) | Live and replaceable | Records current code ownership and contributor routes; defines no language behavior |
 | RFCs | [`rfcs/`](rfcs/) | Durable historical record; supersedable | Record decisions and rationale; do not define current behavior by themselves |
 | Study router | [`studies/README.md`](studies/README.md) | Stable | Classifies current research; contains no language semantics |
 | Study leaves | Other documents under [`studies/`](studies/) | Disposable | Preserve evidence, experiments, and unresolved ideas; no language authority |
@@ -29,16 +31,40 @@ There is intentionally no unversioned living specification.
 
 ## Current incubation snapshot
 
-Uhura has no complete accepted language specification or compatibility
-version.
+Uhura has one active, implemented incubation candidate and no supported
+compatibility version.
 
-- [v0 incubation language model](spec/drafts/v0.md) describes the current
-  exact target and open questions. It is disposable.
-- [v0 widget draft](widgets/drafts/v0/README.md) records current capability
-  names, implementation gaps, and proposals. It is disposable.
+- [Uhura 0.4](spec/drafts/0.4/) is the only active exact design. Its five
+  documents separate the source-neutral kernel, concrete source and lowering,
+  application profile, and conformance plan.
+- Uhura 0.4 is the implemented incubation candidate exercised by the checked-in
+  [program](../examples/programs/answers/uhura-0.4/) and
+  [application](../examples/applications/a0-return-desk/answers/uhura-0.4/)
+  answers, plus the canonical [Instagram project](../examples/instagram/client/).
+  Implementation evidence does not establish a supported compatibility
+  version.
+- The [Uhura 0.4 checked UI catalogue](widgets/drafts/0.4/) records the active
+  candidate's finite element, attribute, constraint, and event vocabulary. It
+  is executable incubation material, not a supported or stable widget API.
+- The executable [diagnostic registry](../crates/uhura-base/src/codes.rs)
+  documents the retained `R1xxx`/`R3xxx` machine families, original
+  `UHnxxx` toolchain families, and 0.4 parser rules. Consumers identify a
+  diagnostic by its `(code, rule)` pair; a shared compatibility code is not
+  the complete identity.
+- Retired Uhura source is not executable or accepted by the current toolchain.
+  Git history is the archive for earlier experiments.
+- [Relay B3](spec/drafts/relay-b3/) and
+  [v0](spec/drafts/v0.md) are short historical pointers. Their former detailed
+  drafts remain in Git history rather than normal documentation navigation.
+- [v0 widget draft](widgets/drafts/v0/README.md) preserves the historical
+  capability study that preceded the 0.4 replacement. It is not current 0.4
+  behavior and remains disposable.
 - [RFC 0002](rfcs/0002-model-driven-editor-live-updates.md) and
   [RFC 0003](rfcs/0003-source-comments-docs-and-annotations.md) are accepted
   historical decisions with independent implementation status.
+- [RFC 0004](rfcs/0004-standalone-machine-core-and-source-composition.md)
+  fixes the standalone-core, explicit-`ui`, and modular-source/global-IR
+  boundary incorporated by the active candidate.
 - [RFC 0001](rfcs/0001-project-foundation.md) remains a draft proposal; it is
   not a foundational authority merely because other work was inspired by it.
 

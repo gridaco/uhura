@@ -3,7 +3,6 @@ import { test } from "vitest";
 
 import {
   SYSTEM_ACTOR_STORAGE_KEY,
-  SYSTEM_PROVIDER_STORAGE_KEY,
   SYSTEM_STATE_EVENT,
   createSystemControls,
   type SystemControls,
@@ -53,10 +52,12 @@ const ACTORS: SystemActor[] = [
   { id: "user-mira", username: "mira.santos", label: "Mira Santos" },
 ];
 
-function readyRemote(controls: SystemControls, actor = "user-mira"): void {
+function readyApplication(
+  controls: SystemControls,
+  actor = "user-mira",
+): void {
   controls.starting({
-    provider: "remote",
-    providers: ["remote", "fixture"],
+    hasProvider: true,
     actor,
     actors: ACTORS,
   });
@@ -65,10 +66,9 @@ function readyRemote(controls: SystemControls, actor = "user-mira"): void {
 
 test("publishes defensive state snapshots", () => {
   const { controls, events } = harness();
-  readyRemote(controls);
+  readyApplication(controls);
 
-  const snapshot = controls.state;
-  const snapshotActor = snapshot.actors[0];
+  const snapshotActor = controls.state.actors[0];
   assert.ok(snapshotActor);
   snapshotActor.label = "mutated getter";
   const event = events.at(-1);
@@ -81,22 +81,35 @@ test("publishes defensive state snapshots", () => {
   assert.equal(event.type, SYSTEM_STATE_EVENT);
   assert.deepEqual(controls.state, {
     status: "ready",
-    provider: "remote",
-    providers: ["remote", "fixture"],
+    hasProvider: true,
     actor: "user-mira",
     actors: ACTORS,
     canSwitchActor: true,
   });
 });
 
+test("represents a local session without inventing a selectable provider", () => {
+  const { controls } = harness();
+  controls.starting({ hasProvider: false });
+  controls.ready();
+
+  assert.deepEqual(controls.state, {
+    status: "ready",
+    hasProvider: false,
+    actor: null,
+    actors: [],
+    canSwitchActor: false,
+  });
+});
+
 test("stores a validated actor tab-locally and reloads without rewriting the URL", () => {
   const { controls, stored, reloads } = harness();
-  readyRemote(controls);
+  readyApplication(controls);
 
   controls.setActor("lena.holt");
 
   assert.equal(stored.get(SYSTEM_ACTOR_STORAGE_KEY), "user-lena");
-  assert.equal(stored.has(SYSTEM_PROVIDER_STORAGE_KEY), false);
+  assert.equal(stored.size, 1);
   assert.equal(reloads(), 1);
   assert.equal(controls.state.status, "starting");
   assert.equal(controls.state.actor, "user-lena");
@@ -104,9 +117,12 @@ test("stores a validated actor tab-locally and reloads without rewriting the URL
 
 test("rejects an unknown actor without storing, reloading, or losing the active actor", () => {
   const { controls, stored, reloads } = harness();
-  readyRemote(controls);
+  readyApplication(controls);
 
-  assert.throws(() => controls.setActor("not-seeded"), /unknown auth actor/);
+  assert.throws(
+    () => controls.setActor("not-seeded"),
+    /unknown application actor/,
+  );
 
   assert.equal(stored.size, 0);
   assert.equal(reloads(), 0);
@@ -119,8 +135,7 @@ test("rejects an unknown actor without storing, reloading, or losing the active 
 test("a failed initial actor can recover from provider-owned metadata", () => {
   const { controls, stored, reloads } = harness();
   controls.starting({
-    provider: "remote",
-    providers: ["remote", "fixture"],
+    hasProvider: true,
     actor: "typo",
   });
   controls.failed(new Error("actor `typo` is not a seeded user"), {
@@ -134,22 +149,17 @@ test("a failed initial actor can recover from provider-owned metadata", () => {
   assert.equal(reloads(), 1);
 });
 
-test("switches provider and restarts through clean reload boundaries", () => {
-  const switched = harness();
-  readyRemote(switched.controls);
-  switched.controls.setProvider("fixture");
-  assert.equal(switched.stored.get(SYSTEM_PROVIDER_STORAGE_KEY), "fixture");
-  assert.equal(switched.stored.has(SYSTEM_ACTOR_STORAGE_KEY), false);
-  assert.equal(switched.reloads(), 1);
+test("restart uses the Session's clean reload boundary", () => {
+  const { controls, reloads } = harness();
+  readyApplication(controls);
 
-  const restarted = harness();
-  readyRemote(restarted.controls);
-  restarted.controls.restart();
-  assert.equal(restarted.reloads(), 1);
-  assert.equal(restarted.controls.state.status, "starting");
+  controls.restart();
+
+  assert.equal(reloads(), 1);
+  assert.equal(controls.state.status, "starting");
 });
 
-test("restores the prior state if tab storage refuses a selection", () => {
+test("restores the prior state if tab storage refuses an actor selection", () => {
   const events: RecordedEvent[] = [];
   let reloads = 0;
   const controls = createSystemControls({
@@ -169,7 +179,7 @@ test("restores the prior state if tab storage refuses a selection", () => {
     },
     eventFactory: recordedEvent,
   });
-  readyRemote(controls);
+  readyApplication(controls);
 
   assert.throws(() => controls.setActor("user-lena"), /storage unavailable/);
   assert.equal(reloads, 0);

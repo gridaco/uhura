@@ -11,20 +11,30 @@ an explicitly disposable draft.
 
 ## Current state
 
-Uhura has no complete accepted specification or supported compatibility
+Uhura has one implemented active candidate and no supported compatibility
 version.
 
-- [v0 incubation language model](drafts/v0.md) — disposable
-  pre-specification draft; it mixes target semantics, open questions, and
-  independently accepted RFC material.
+- [Uhura 0.4 incubation candidate](drafts/0.4/) — the single active exact
+  design and implemented frontend. It uses a Rust-shaped machine surface plus
+  Svelte-shaped `ui`, and defines modular source composition that lowers to one
+  global semantic machine IR.
+- Retired source frontends have no admission path in the current toolchain.
+  Earlier experiments remain available through Git history.
+- [Relay B3 historical record](drafts/relay-b3/) — a short provenance pointer
+  for the experiment that produced the current transaction model. Git history
+  retains its former detailed candidate documents.
+- [v0 historical pointer](drafts/v0.md) — the retired UI-first experiment.
 - [RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md) — accepted
-  decision for source comments, declaration documentation, and markup
-  annotations. Its implementation remains tracked separately.
+  source-metadata decision reconciled with the 0.4 grammar; its checked
+  attachment and authoring projection remain a separate pending
+  implementation.
+- [RFC 0004](../rfcs/0004-standalone-machine-core-and-source-composition.md) —
+  accepted core-first and source-composition boundary incorporated by the 0.4
+  candidate.
 
-The v0 draft is not a base document that v1 must edit in place. It may be
-replaced wholesale. Durable conclusions must be restated in an RFC; observable
-behavior must be restated in the specification and conformance suite of the
-version that adopts it.
+The active candidate may be replaced wholesale. Durable decisions belong in
+RFCs; observable supported behavior must be restated in the specification and
+conformance suite of the version that adopts it.
 
 ## Path policy
 

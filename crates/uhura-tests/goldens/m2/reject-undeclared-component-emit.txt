@@ -1,4 +1,0 @@
-error[UH5003 markup/undeclared-emit]: `<notice-bar>` declares no emit `closed`
-  --> app/feed/page.uhura:195:37
-warning[UH5013 markup/unhandled-event]: `<notice-bar>` emits `dismissed` but this call site leaves it unbound — the control will be dead (§4.4)
-  --> app/feed/page.uhura:195:5

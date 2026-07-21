@@ -17,11 +17,11 @@ import {
 import type {
   EditorRender,
   PreviewFreshness,
-  RenderNodeRef,
   SourceMetadataEntry,
   SourceTarget,
 } from "../editor-state.js";
 import type { IconFontRegistry } from "../../renderer/icons.js";
+import { elementNode, projectionContent, textNode } from "./fixtures/projection.js";
 
 const TEST_ICONS: IconFontRegistry = {
   defaultFamily: "lucide",
@@ -170,6 +170,16 @@ class FakeContainer extends FakeNode {
   }
 }
 
+class FakeText extends FakeNode {
+  data: string;
+  __uhuraKey?: string;
+
+  constructor(ownerDocument: FakeDocument, data: string) {
+    super(ownerDocument, 3);
+    this.data = data;
+  }
+}
+
 class FakeShadowRoot extends FakeContainer {
   adoptedStyleSheets: FakeStyleSheet[] = [];
   readonly host: FakeElement;
@@ -190,6 +200,7 @@ class FakeElement extends FakeContainer {
   readonly dataset: Record<string, string> = {};
   readonly style = new FakeStyle();
   readonly tagName: string;
+  readonly localName: string;
   readonly #listeners = new Map<string, EventListenerOrEventListenerObject[]>();
   shadowRoot: FakeShadowRoot | null = null;
   className = "";
@@ -207,6 +218,7 @@ class FakeElement extends FakeContainer {
   constructor(ownerDocument: FakeDocument, tagName: string) {
     super(ownerDocument, 1);
     this.tagName = tagName.toUpperCase();
+    this.localName = tagName.toLowerCase();
     this.classList = new FakeClassList(this);
   }
 
@@ -290,6 +302,10 @@ class FakeDocument {
     return this.createElement(tagName);
   }
 
+  createTextNode(data: string): FakeText {
+    return new FakeText(this, data);
+  }
+
   createDocumentFragment(): FakeDocumentFragment {
     return new FakeDocumentFragment(this);
   }
@@ -298,7 +314,7 @@ class FakeDocument {
 const asDocument = (document: FakeDocument): Document => document as unknown as Document;
 const asElement = (element: FakeElement): HTMLElement => element as unknown as HTMLElement;
 
-const anchor: RenderNodeRef = { root: { kind: "fragment" }, path: [] };
+const anchor = "root";
 
 const span = {
   offset: 24,
@@ -309,7 +325,7 @@ const span = {
 
 const target: SourceTarget = {
   id: "target:button",
-  class: "catalog-element",
+  class: "ui-element",
   file: "components/card.uhura",
   span,
   label: "button",
@@ -363,15 +379,15 @@ const render = (
         anchors: [anchor],
       }],
     },
-    content: {
-      key: "root",
-      element: "text",
-      props: { content: { t: "plain", v: "Stable semantic content" } },
-    },
+    evidence: null,
+    content: projectionContent([
+      elementNode("root", [textNode("content", "Stable semantic content")]),
+    ]),
   }],
   stylesheet: ":root { --accent: blue; } body { color: black; }",
   assets: {},
   interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
+  machine: null,
 });
 
 const annotationText = (model: PreparedEditorModel): string | undefined =>
@@ -565,6 +581,64 @@ test("caption chrome can replace while its semantic ShadowRoot stays exact", () 
 
   overlay.dispose();
   disposePreparedEditorModel(captionUpdate);
+});
+
+test("0.4 public identities keep semantic joins but render friendly board labels", () => {
+  const document = new FakeDocument();
+  const qualified = render(1, "current", "Friendly labels");
+  const group = qualified.groups[0]!;
+  const preview = qualified.previews[0]!;
+  group.id = "page:app.instagram@1::FeedPage";
+  group.kind = "page";
+  group.subject = "app.instagram@1::FeedPage";
+  group.previews = ["feed/first-page"];
+  preview.id = "feed/first-page";
+  preview.identity = {
+    kind: "page",
+    subject: "app.instagram@1::FeedPage",
+    example: "app.instagram.evidence@1::feed_first_page",
+  };
+  preview.sourceFile = "ui.uhura";
+
+  const model = prepareEditorModel(asDocument(document), qualified, null, TEST_ICONS);
+  const board = model.board as unknown as FakeElement;
+  const navigator = model.navigator as unknown as FakeDocumentFragment;
+
+  assert.deepEqual(
+    classElements(board, "row-title").map((node) => node.textContent),
+    ["page feed"],
+  );
+  assert.deepEqual(
+    classElements(board, "caption-title").map((node) => node.textContent),
+    ["feed / first-page"],
+  );
+  assert.deepEqual(
+    navigator.descendants()
+      .filter((node) => node.classList.contains("navigator-row-title"))
+      .map((node) => node.textContent),
+    ["feed"],
+  );
+  assert.deepEqual(
+    navigator.descendants()
+      .filter((node) => node.classList.contains("navigator-frame-title"))
+      .map((node) => node.textContent),
+    ["first-page"],
+  );
+  const search = navigator.descendants()
+    .find((node) => node.classList.contains("navigator-frame"))
+    ?.dataset.search ?? "";
+  assert.match(search, /app\.instagram@1::feedpage/);
+  assert.match(search, /app\.instagram\.evidence@1::feed_first_page/);
+  assert.equal(
+    model.previewIdByIdentity.get(JSON.stringify([
+      "page",
+      "app.instagram@1::FeedPage",
+      "app.instagram.evidence@1::feed_first_page",
+    ])),
+    "feed/first-page",
+  );
+
+  disposePreparedEditorModel(model);
 });
 
 test("all rendered occurrences keep one badge while preview selection only decorates them", () => {

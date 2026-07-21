@@ -1,0 +1,19 @@
+[entry.instagram]
+machine = "crate::Instagram"
+presentation = "crate::FeedPage"
+lifetime = "application-session"
+stylesheet = "styles/theme.css"
+
+[entry.instagram.ports]
+router = "web.history"
+authority = "app.provider"
+mutations = "app.provider"
+
+[entry.instagram.provider]
+module = "providers/dist/spock.js"
+
+[entry.instagram.provider.config]
+graphql_url = "http://127.0.0.1:4000/graphql/v1"
+rpc_url = "http://127.0.0.1:4000/rest/v1/rpc"
+storage_url = "http://127.0.0.1:4000/storage/v1"
+actor = "10000000-0000-4000-8000-000000000001"

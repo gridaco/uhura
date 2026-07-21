@@ -1,0 +1,15 @@
+[entry.return-desk]
+machine = "crate::ReturnDesk"
+presentation = "crate::ReturnDeskWeb"
+lifetime = "application-session"
+
+[entry.return-desk.ports]
+router = "web.history"
+orders = "app.provider"
+returns = "app.provider"
+
+[entry.return-desk.provider]
+module = "provider.mjs"
+
+[entry.return-desk.provider.config]
+return_id = "return-900"

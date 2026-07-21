@@ -12,7 +12,10 @@ mod envelope;
 mod span;
 mod value;
 
-pub use canonical::{hash_json, sha256_hex, to_canonical_json};
+pub use canonical::{
+    CanonicalJsonError, hash_json, sha256_hex, to_canonical_json, try_hash_json,
+    try_to_canonical_json,
+};
 pub use diagnostic::{Diagnostic, Edit, Fix, Label, Severity, has_errors};
 pub use envelope::{render_text, to_envelope};
 pub use span::{FileId, LineCol, SourceMap, Span};

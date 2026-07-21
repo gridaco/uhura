@@ -1,3 +1,0 @@
-error[UH5001 markup/unknown-element]: `<image>` is neither a catalog element nor an imported component
-  --> components/post-card.uhura:29:7
-  note: `<image>` was renamed to `<img>`; the old spelling is not a compatibility alias

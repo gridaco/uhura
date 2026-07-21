@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import type {
-  InspectionHandle,
-  InspectionListener,
-  InspectionState,
+  RuntimeInspectionHandle,
+  RuntimeInspectionListener,
+  RuntimeInspectionState,
 } from "../../protocol/types.js";
 import {
   createDebugController,
@@ -15,8 +15,9 @@ import {
 function inspectionState(
   marker: number,
   disposed = false,
-): InspectionState {
+): RuntimeInspectionState {
   return Object.freeze({
+    protocol: "uhura-runtime-inspection-state/1",
     disposed,
     historyLimit: 128,
     artifacts: null,
@@ -27,18 +28,18 @@ function inspectionState(
 }
 
 class FakeInspection {
-  state: InspectionState;
-  readonly listeners = new Set<InspectionListener>();
+  state: RuntimeInspectionState;
+  readonly listeners = new Set<RuntimeInspectionListener>();
   subscribeCalls = 0;
   unsubscribeCalls = 0;
   afterReplay: (() => void) | null = null;
 
-  constructor(state: InspectionState) {
+  constructor(state: RuntimeInspectionState) {
     this.state = state;
   }
 
-  readonly handle: InspectionHandle = {
-    get state(): InspectionState {
+  readonly handle: RuntimeInspectionHandle = {
+    get state(): RuntimeInspectionState {
       throw new Error("the controller must rely on subscribe's atomic replay");
     },
     subscribe: (listener) => {
@@ -56,9 +57,11 @@ class FakeInspection {
     },
   };
 
-  publish(state: InspectionState): void {
+  publish(state: RuntimeInspectionState): void {
     this.state = state;
-    for (const listener of [...this.listeners]) listener(state);
+    for (const listener of [...this.listeners]) {
+      listener(state);
+    }
   }
 }
 
@@ -120,7 +123,10 @@ test("subscribes lazily, coalesces to the latest state, and replays on reopen", 
   inspection.publish(second);
   assert.equal(frames.size, 1, "a burst retains only one scheduled frame");
   frames.flush();
-  assert.deepEqual(rendered, [{ kind: "inspection", state: second }]);
+  assert.deepEqual(rendered, [{
+    kind: "inspection",
+    publication: second,
+  }]);
 
   assert.equal(controller.close(), true);
   assert.equal(controller.close(), false);
@@ -135,7 +141,10 @@ test("subscribes lazily, coalesces to the latest state, and replays on reopen", 
   assert.equal(resolutions, 2);
   assert.equal(inspection.subscribeCalls, 2);
   frames.flush();
-  assert.deepEqual(rendered.at(-1), { kind: "inspection", state: third });
+  assert.deepEqual(rendered.at(-1), {
+    kind: "inspection",
+    publication: third,
+  });
 });
 
 test("cancels pending work, unsubscribes, and permanently retires on dispose", () => {
@@ -219,7 +228,10 @@ test("delivers unavailable and terminal disposed states without retaining a list
   assert.equal(inspection.listeners.size, 0);
   assert.equal(inspection.unsubscribeCalls, 1);
   terminalFrames.flush();
-  assert.deepEqual(rendered, [{ kind: "inspection", state: terminal }]);
+  assert.deepEqual(rendered, [{
+    kind: "inspection",
+    publication: terminal,
+  }]);
   assert.equal(controller.close(), true);
 });
 
@@ -275,5 +287,8 @@ test("a canceled callback cannot consume a reopened controller's update", () => 
   callbacks[0]?.();
   assert.deepEqual(rendered, []);
   callbacks[1]?.();
-  assert.deepEqual(rendered, [{ kind: "inspection", state: second }]);
+  assert.deepEqual(rendered, [{
+    kind: "inspection",
+    publication: second,
+  }]);
 });

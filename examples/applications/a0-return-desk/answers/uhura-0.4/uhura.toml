@@ -1,0 +1,12 @@
+[project]
+name = "app.returndesk"
+version = 1
+language = "0.4"
+
+[modules]
+return_desk = "machine.uhura"
+ui = "ui.uhura"
+evidence_support = "evidence-support.uhura"
+
+[evidence.modules]
+conformance = "evidence/conformance.uhura"

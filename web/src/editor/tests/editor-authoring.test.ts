@@ -18,6 +18,7 @@ import {
   renderedOccurrences,
   sourceActionsEnabled,
 } from "../editor-authoring.js";
+import { projectionContent } from "./fixtures/projection.js";
 
 const span = (offset: number): EditorSourceSpan => ({
   offset,
@@ -75,15 +76,16 @@ const preview = (entries: { id: string; targetId: string; anchored: boolean }[])
     occurrences: entries.map((item) => ({
       id: item.id,
       targetId: item.targetId,
-      anchors: item.anchored ? [{ root: { kind: "fragment" }, path: [] }] : [],
+      anchors: item.anchored ? ["root"] : [],
     })),
   },
-  content: { key: "root", element: "view", props: {} },
+  evidence: null,
+  content: projectionContent(),
 });
 
 const render = (): EditorRender => {
   const targets = [
-    target("annotation", "z.uhura", 5, "catalog-element"),
+    target("annotation", "z.uhura", 5, "ui-element"),
     target(
       "declaration",
       "a.uhura",
@@ -113,6 +115,7 @@ const render = (): EditorRender => {
     stylesheet: "",
     assets: {},
     interactionGraph: { protocol: "uhura-interaction-graph/0", nodes: [], edges: [] },
+    machine: null,
   };
 };
 

@@ -1,0 +1,77 @@
+use crate::return_desk::{LineId, Location, OrderLineWire, OrderWire, ReturnId, LAMP, MUG, ORDER_100};
+
+pub const ORDER_7: OrderWire = OrderWire {
+  id: ORDER_100,
+  revision: 7,
+  lines: [OrderLineWire {
+    id: LAMP,
+    title: "Desk lamp",
+    purchased_quantity: 2,
+    returnable_quantity: 2,
+    policy_summary: "Return the lamp in protective packaging.",
+  }, OrderLineWire {
+    id: MUG,
+    title: "Stoneware mug",
+    purchased_quantity: 1,
+    returnable_quantity: 1,
+    policy_summary: "Wrap the mug to prevent breakage in transit.",
+  }],
+  allowed_methods: ["drop-off", "pickup"],
+};
+
+pub const ORDER_8: OrderWire = OrderWire {
+  id: ORDER_100,
+  revision: 8,
+  lines: [OrderLineWire {
+    id: LAMP,
+    title: "Desk lamp",
+    purchased_quantity: 2,
+    returnable_quantity: 0,
+    policy_summary: "Return the lamp in protective packaging.",
+  }, OrderLineWire {
+    id: MUG,
+    title: "Stoneware mug",
+    purchased_quantity: 1,
+    returnable_quantity: 1,
+    policy_summary: "Wrap the mug to prevent breakage in transit.",
+  }],
+  allowed_methods: ["drop-off", "pickup"],
+};
+
+pub const ORDER_9_WITHOUT_LAMP: OrderWire = OrderWire {
+  id: ORDER_100,
+  revision: 9,
+  lines: [OrderLineWire {
+    id: MUG,
+    title: "Stoneware mug",
+    purchased_quantity: 1,
+    returnable_quantity: 1,
+    policy_summary: "Wrap the mug to prevent breakage in transit.",
+  }],
+  allowed_methods: ["drop-off", "pickup"],
+};
+
+pub const ITEMS_LOCATION: Location = Location::Flow {
+  order: ORDER_100,
+  step: Some("items"),
+};
+
+pub const METHOD_LOCATION: Location = Location::Flow {
+  order: ORDER_100,
+  step: Some("method"),
+};
+
+pub const REVIEW_LOCATION: Location = Location::Flow {
+  order: ORDER_100,
+  step: Some("review"),
+};
+
+pub const ORDER_LOCATION: Location = Location::Order {
+  order: ORDER_100,
+};
+
+pub const RETURN_900: ReturnId = ReturnId("return-900");
+
+pub const RECEIPT_LOCATION: Location = Location::Receipt {
+  return_id: RETURN_900,
+};

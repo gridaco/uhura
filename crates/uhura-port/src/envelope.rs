@@ -1,294 +1,300 @@
-//! The `uhura-provider/0` wire messages (design §9.3) — hand-written stable
-//! JSON shapes (plan micro-decision #14), never serde-tagged enums.
-//!
-//! Payload/value fields cross the boundary as raw canonical JSON: the typed
-//! side (core building a command, the harness applying an update) converts
-//! at its edge via `Value::to_json` / `PortContract::decode_value`.
+//! Qualified receive/send values at a resolved Uhura port edge.
 
-use uhura_base::Ident;
+use std::collections::BTreeSet;
+use std::fmt;
 
-/// Asserted at shell boot (§12.3); messages themselves carry no protocol
-/// field.
-pub const PROVIDER_PROTOCOL: &str = "uhura-provider/0";
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ProviderMsg {
-    Command(CommandEnvelope),
-    Projection(ProjectionUpdate),
-    ProjectionFailed {
-        port: Ident,
-        projection: Ident,
-        key: Option<serde_json::Value>,
-        reason: String,
-    },
-    Outcome(OutcomeEnvelope),
+use super::canonical::CanonicalJson;
+use super::contract::{ConstructorDecl, PortDeclaration, SumDecl};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct QualifiedReceiveEnvelope {
+    pub port: String,
+    pub constructor: String,
+    pub payload: CanonicalJson,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CommandEnvelope {
-    pub port: Ident,
-    pub command: Ident,
-    /// Core-minted, opaque, echoed verbatim (`"c-<n>"`).
-    pub correlation: String,
-    pub payload: serde_json::Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProjectionUpdate {
-    pub port: Ident,
-    pub projection: Ident,
-    pub key: Option<serde_json::Value>,
-    /// Strictly increasing per (projection, key); stale deliveries are
-    /// dropped with a diagnostic (§9.3).
-    pub revision: u64,
-    pub value: serde_json::Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutcomeEnvelope {
-    pub correlation: String,
-    pub outcome: OutcomeResult,
-    /// Settlement updates, applied atomically before the outcome
-    /// dispatches (§9.4).
-    pub updates: Vec<ProjectionUpdate>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OutcomeResult {
-    Ok,
-    Refused {
-        refusal: Ident,
-    },
-    /// The implicit extension of every outcome union; routes to `.err`.
-    Unavailable {
-        reason: String,
-    },
-}
-
-impl ProjectionUpdate {
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "port": self.port.to_string(),
-            "projection": self.projection.to_string(),
-            "key": self.key,
-            "revision": self.revision,
-            "value": self.value,
-        })
+impl QualifiedReceiveEnvelope {
+    pub fn new(
+        port: impl Into<String>,
+        constructor: impl Into<String>,
+        payload: CanonicalJson,
+    ) -> Self {
+        Self {
+            port: port.into(),
+            constructor: constructor.into(),
+            payload,
+        }
     }
 
-    pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
-        Ok(ProjectionUpdate {
-            port: ident_field(json, "port")?,
-            projection: ident_field(json, "projection")?,
-            key: key_field(json)?,
-            revision: json
-                .get("revision")
-                .and_then(serde_json::Value::as_u64)
-                .ok_or("`revision` must be a non-negative integer")?,
-            value: json.get("value").cloned().ok_or("missing `value`")?,
-        })
+    pub fn validate(&self, declaration: &PortDeclaration) -> Result<(), EnvelopeIssue> {
+        validate_qualified(
+            "receive",
+            &self.port,
+            &self.constructor,
+            &self.payload,
+            declaration,
+            &declaration.contract.receive,
+        )
     }
 }
 
-impl OutcomeResult {
-    pub fn to_json(&self) -> serde_json::Value {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct QualifiedSendEnvelope {
+    pub port: String,
+    pub constructor: String,
+    pub payload: CanonicalJson,
+}
+
+impl QualifiedSendEnvelope {
+    pub fn new(
+        port: impl Into<String>,
+        constructor: impl Into<String>,
+        payload: CanonicalJson,
+    ) -> Self {
+        Self {
+            port: port.into(),
+            constructor: constructor.into(),
+            payload,
+        }
+    }
+
+    pub fn validate(&self, declaration: &PortDeclaration) -> Result<(), EnvelopeIssue> {
+        validate_qualified(
+            "send",
+            &self.port,
+            &self.constructor,
+            &self.payload,
+            declaration,
+            &declaration.contract.send,
+        )
+    }
+}
+
+/// A direction-tagged stable wire envelope.
+///
+/// Qualification is carried as ordinary data, so `router.changed` can never
+/// collide with another port's `changed` constructor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "direction", rename_all = "kebab-case")]
+pub enum QualifiedPortEnvelope {
+    Receive(QualifiedReceiveEnvelope),
+    Send(QualifiedSendEnvelope),
+}
+
+impl QualifiedPortEnvelope {
+    pub fn validate(&self, declaration: &PortDeclaration) -> Result<(), EnvelopeIssue> {
         match self {
-            OutcomeResult::Ok => serde_json::json!({ "ok": {} }),
-            OutcomeResult::Refused { refusal } => serde_json::json!({
-                "refused": { "refusal": refusal.to_string() }
-            }),
-            OutcomeResult::Unavailable { reason } => serde_json::json!({
-                "unavailable": { "reason": reason }
-            }),
-        }
-    }
-
-    pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
-        let obj = json
-            .as_object()
-            .filter(|o| o.len() == 1)
-            .ok_or("`outcome` must be a single-variant object")?;
-        let (variant, body) = obj.iter().next().expect("len checked");
-        match variant.as_str() {
-            "ok" => Ok(OutcomeResult::Ok),
-            "refused" => {
-                let refusal = body
-                    .get("refusal")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or("`refused` needs a `refusal` name")?;
-                Ok(OutcomeResult::Refused {
-                    refusal: Ident::new(refusal).map_err(|e| e.to_string())?,
-                })
-            }
-            "unavailable" => {
-                let reason = body
-                    .get("reason")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or("`unavailable` needs a `reason` text")?;
-                Ok(OutcomeResult::Unavailable {
-                    reason: reason.to_string(),
-                })
-            }
-            other => Err(format!("`{other}` is not an outcome variant")),
+            Self::Receive(envelope) => envelope.validate(declaration),
+            Self::Send(envelope) => envelope.validate(declaration),
         }
     }
 }
 
-impl ProviderMsg {
-    pub fn to_json(&self) -> serde_json::Value {
-        match self {
-            ProviderMsg::Command(c) => serde_json::json!({
-                "kind": "command",
-                "port": c.port.to_string(),
-                "command": c.command.to_string(),
-                "correlation": c.correlation,
-                "payload": c.payload,
-            }),
-            ProviderMsg::Projection(u) => {
-                let mut json = u.to_json();
-                json["kind"] = serde_json::Value::String("projection".into());
-                json
-            }
-            ProviderMsg::ProjectionFailed {
-                port,
-                projection,
-                key,
-                reason,
-            } => serde_json::json!({
-                "kind": "projection-failed",
-                "port": port.to_string(),
-                "projection": projection.to_string(),
-                "key": key,
-                "reason": reason,
-            }),
-            ProviderMsg::Outcome(o) => serde_json::json!({
-                "kind": "outcome",
-                "correlation": o.correlation,
-                "outcome": o.outcome.to_json(),
-                "updates": o.updates.iter().map(ProjectionUpdate::to_json).collect::<Vec<_>>(),
-            }),
+fn validate_qualified(
+    direction: &'static str,
+    port: &str,
+    constructor: &str,
+    payload: &CanonicalJson,
+    declaration: &PortDeclaration,
+    family: &SumDecl,
+) -> Result<(), EnvelopeIssue> {
+    if port != declaration.name {
+        return Err(EnvelopeIssue::new(
+            direction,
+            port,
+            constructor,
+            format!(
+                "qualified port `{port}` does not match declaration `{}`",
+                declaration.name
+            ),
+        ));
+    }
+    let constructor_decl = family.constructor(constructor).ok_or_else(|| {
+        EnvelopeIssue::new(
+            direction,
+            port,
+            constructor,
+            format!("`{constructor}` is not a declared {direction} constructor on port `{port}`"),
+        )
+    })?;
+    validate_payload(direction, port, constructor_decl, payload)
+}
+
+fn validate_payload(
+    direction: &'static str,
+    port: &str,
+    constructor: &ConstructorDecl,
+    payload: &CanonicalJson,
+) -> Result<(), EnvelopeIssue> {
+    let object = payload.as_value().as_object().ok_or_else(|| {
+        EnvelopeIssue::new(
+            direction,
+            port,
+            &constructor.name,
+            "constructor payload must be a JSON object keyed by field name",
+        )
+    })?;
+    let expected: BTreeSet<&str> = constructor
+        .fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect();
+    let actual: BTreeSet<&str> = object.keys().map(String::as_str).collect();
+    if expected != actual {
+        let missing = expected
+            .difference(&actual)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let extra = actual
+            .difference(&expected)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(EnvelopeIssue::new(
+            direction,
+            port,
+            &constructor.name,
+            format!("payload field mismatch; missing [{missing}], extra [{extra}]"),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct EnvelopeIssue {
+    pub direction: String,
+    pub port: String,
+    pub constructor: String,
+    pub message: String,
+}
+
+impl EnvelopeIssue {
+    fn new(
+        direction: impl Into<String>,
+        port: impl Into<String>,
+        constructor: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            direction: direction.into(),
+            port: port.into(),
+            constructor: constructor.into(),
+            message: message.into(),
         }
     }
+}
 
-    pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
-        let kind = json
-            .get("kind")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("a provider message needs a `kind`")?;
-        match kind {
-            "command" => Ok(ProviderMsg::Command(CommandEnvelope {
-                port: ident_field(json, "port")?,
-                command: ident_field(json, "command")?,
-                correlation: str_field(json, "correlation")?,
-                payload: json.get("payload").cloned().ok_or("missing `payload`")?,
-            })),
-            "projection" => Ok(ProviderMsg::Projection(ProjectionUpdate::from_json(json)?)),
-            "projection-failed" => Ok(ProviderMsg::ProjectionFailed {
-                port: ident_field(json, "port")?,
-                projection: ident_field(json, "projection")?,
-                key: key_field(json)?,
-                reason: str_field(json, "reason")?,
-            }),
-            "outcome" => {
-                let updates = match json.get("updates") {
-                    None => Vec::new(),
-                    Some(serde_json::Value::Array(items)) => items
-                        .iter()
-                        .map(ProjectionUpdate::from_json)
-                        .collect::<Result<Vec<_>, _>>()?,
-                    Some(_) => return Err("`updates` must be a list".to_string()),
-                };
-                Ok(ProviderMsg::Outcome(OutcomeEnvelope {
-                    correlation: str_field(json, "correlation")?,
-                    outcome: OutcomeResult::from_json(
-                        json.get("outcome").ok_or("missing `outcome`")?,
-                    )?,
-                    updates,
-                }))
-            }
-            other => Err(format!("`{other}` is not a provider message kind")),
-        }
+impl fmt::Display for EnvelopeIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} {}.{}: {}",
+            self.direction, self.port, self.constructor, self.message
+        )
     }
 }
 
-fn str_field(json: &serde_json::Value, field: &str) -> Result<String, String> {
-    json.get(field)
-        .and_then(serde_json::Value::as_str)
-        .map(ToString::to_string)
-        .ok_or_else(|| format!("missing or non-text `{field}`"))
-}
-
-fn ident_field(json: &serde_json::Value, field: &str) -> Result<Ident, String> {
-    Ident::new(&str_field(json, field)?).map_err(|e| e.to_string())
-}
-
-fn key_field(json: &serde_json::Value) -> Result<Option<serde_json::Value>, String> {
-    match json.get("key") {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(k) => Ok(Some(k.clone())),
-    }
-}
+impl std::error::Error for EnvelopeIssue {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{PortDeclaration, TypeRef, request_port_instance};
 
-    fn ident(s: &str) -> Ident {
-        Ident::new(s).unwrap()
+    fn canonical(value: serde_json::Value) -> CanonicalJson {
+        CanonicalJson::new(value).unwrap()
+    }
+
+    fn request_port() -> PortDeclaration {
+        PortDeclaration::new(
+            "returns",
+            request_port_instance(
+                TypeRef::new("RequestId").unwrap(),
+                TypeRef::new("ReturnPayload").unwrap(),
+                TypeRef::new("Settlement").unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]
-    fn round_trips_every_kind() {
-        let msgs = [
-            ProviderMsg::Command(CommandEnvelope {
-                port: ident("feed"),
-                command: ident("like-post"),
-                correlation: "c-4".into(),
-                payload: serde_json::json!({ "post": "post-lena-glaze" }),
-            }),
-            ProviderMsg::Projection(ProjectionUpdate {
-                port: ident("feed"),
-                projection: ident("feed-page"),
-                key: None,
-                revision: 2,
-                value: serde_json::json!({ "has-more": true }),
-            }),
-            ProviderMsg::ProjectionFailed {
-                port: ident("feed"),
-                projection: ident("feed-page"),
-                key: None,
-                reason: "unreachable".into(),
-            },
-            ProviderMsg::Outcome(OutcomeEnvelope {
-                correlation: "c-4".into(),
-                outcome: OutcomeResult::Refused {
-                    refusal: ident("rate-limited"),
-                },
-                updates: vec![ProjectionUpdate {
-                    port: ident("comments"),
-                    projection: ident("for-post"),
-                    key: Some(serde_json::json!("post-lena-glaze")),
-                    revision: 3,
-                    value: serde_json::json!({ "comments": [] }),
-                }],
-            }),
-        ];
-        for msg in msgs {
-            let json = msg.to_json();
-            assert_eq!(ProviderMsg::from_json(&json).unwrap(), msg, "{json}");
-        }
+    fn validates_receive_and_send_against_the_resolved_qualified_family() {
+        let port = request_port();
+        QualifiedReceiveEnvelope::new(
+            "returns",
+            "settled",
+            canonical(serde_json::json!({
+                "id": { "RequestId": 2 },
+                "result": { "accepted": { "return_id": "return-900" } },
+            })),
+        )
+        .validate(&port)
+        .unwrap();
+        QualifiedSendEnvelope::new(
+            "returns",
+            "request",
+            canonical(serde_json::json!({
+                "id": { "RequestId": 2 },
+                "payload": { "order": "order-100" },
+            })),
+        )
+        .validate(&port)
+        .unwrap();
     }
 
     #[test]
-    fn outcome_shapes_match_the_design() {
-        assert_eq!(OutcomeResult::Ok.to_json().to_string(), r#"{"ok":{}}"#);
+    fn rejects_wrong_qualification_constructor_and_payload_shape() {
+        let port = request_port();
+        let wrong_port = QualifiedReceiveEnvelope::new(
+            "orders",
+            "settled",
+            canonical(serde_json::json!({ "id": 2, "result": {} })),
+        );
+        assert!(wrong_port.validate(&port).is_err());
+
+        let wrong_direction = QualifiedReceiveEnvelope::new(
+            "returns",
+            "request",
+            canonical(serde_json::json!({ "id": 2, "payload": {} })),
+        );
+        assert!(wrong_direction.validate(&port).is_err());
+
+        let extra_field = QualifiedSendEnvelope::new(
+            "returns",
+            "request",
+            canonical(serde_json::json!({
+                "id": 2,
+                "payload": {},
+                "ambient": true,
+            })),
+        );
+        assert!(extra_field.validate(&port).is_err());
+    }
+
+    #[test]
+    fn direction_tagged_wire_shape_round_trips() {
+        let envelope = QualifiedPortEnvelope::Send(QualifiedSendEnvelope::new(
+            "returns",
+            "request",
+            canonical(serde_json::json!({
+                "id": 2,
+                "payload": { "order": "order-100" },
+            })),
+        ));
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["direction"], "send");
+        assert_eq!(json["port"], "returns");
+        assert_eq!(json["constructor"], "request");
         assert_eq!(
-            OutcomeResult::Refused {
-                refusal: ident("rate-limited")
-            }
-            .to_json()
-            .to_string(),
-            r#"{"refused":{"refusal":"rate-limited"}}"#
+            serde_json::from_value::<QualifiedPortEnvelope>(json).unwrap(),
+            envelope
         );
     }
 }

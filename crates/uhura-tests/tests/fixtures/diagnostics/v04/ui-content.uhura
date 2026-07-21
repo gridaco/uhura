@@ -1,0 +1,12 @@
+use uhura::ui;
+
+pub machine Example {
+  events { Run }
+  outcomes { commit Done }
+  state {}
+  on Run { Done }
+}
+
+pub ui ExampleWeb for Example(view) {
+  <button on press -> Run><icon name="heart"/></button>
+}

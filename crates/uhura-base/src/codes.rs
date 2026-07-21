@@ -1,6 +1,6 @@
-//! The UHnxxx diagnostic code registry (plan micro-decision #5).
+//! The centralized Uhura diagnostic code registry.
 //!
-//! Blocks by pipeline pass:
+//! Toolchain and host contracts use the `UHnxxx` namespace:
 //! - UH0xxx — lex/parse (incl. bounds)
 //! - UH1xxx — routes / resolution / imports
 //! - UH2xxx — catalog / ports / lock
@@ -12,12 +12,73 @@
 //! - UH8xxx — runtime (minted by core, appear in `G`/traces)
 //! - UH9xxx — internal invariants
 //!
-//! Every constant pairs the stable code with its human `rule` slug. Codes
-//! are appended, never renumbered; each new pass adds its block here so
-//! collisions are impossible.
+//! The machine checker uses the `R1xxx`/`R3xxx` family. Those values live in
+//! [`machine`] rather than a second crate-local registry. Uhura 0.4 syntax
+//! uses `R1001` for parse failures while exposing the precise parser
+//! classification through stable rules in [`v04_parse`].
+//!
+//! Every constant pairs the stable code with its human `rule` slug. Existing
+//! codes are never renumbered.
 
 /// `(code, rule)` pair type for registry entries.
 pub type Code = (&'static str, &'static str);
+
+/// Deterministic-machine diagnostic families.
+///
+/// Several semantic rules intentionally share one code. Their rule slugs
+/// remain the finer public discriminator.
+pub mod machine {
+    pub const HEADER: &str = "R1002";
+    pub const MODULE: &str = "R1002";
+    pub const IMPORT: &str = "R1003";
+    pub const FEATURE: &str = "R1002";
+    pub const DUPLICATE: &str = "R1002";
+    pub const UNKNOWN_NAME: &str = "R1003";
+    pub const UNKNOWN_TYPE: &str = "R1003";
+    pub const ARITY: &str = "R1004";
+    pub const TYPE_MISMATCH: &str = "R1004";
+    pub const INVALID_REFINEMENT: &str = "R1005";
+    pub const NOT_EXHAUSTIVE: &str = "R1006";
+    pub const INPUT_COVERAGE: &str = "R1007";
+    pub const EFFECT: &str = "R1008";
+    pub const DEPENDENCY_CYCLE: &str = "R1009";
+    pub const TERMINATION: &str = "R1010";
+    pub const NOT_TOTAL: &str = "R1011";
+    pub const PARTIAL_OPERATION: &str = "R1011";
+    pub const OUTCOME: &str = "R1012";
+    pub const TRANSITION_SHAPE: &str = "R1012";
+    pub const INVARIANT: &str = "R1013";
+    pub const PROJECTION_NOT_TOTAL: &str = "R1013";
+    pub const PORT: &str = "R1004";
+    pub const UI: &str = "R3006";
+    pub const EVIDENCE: &str = "R1004";
+    pub const UI_NOT_ENABLED: &str = "R3001";
+    pub const EVIDENCE_NOT_ENABLED: &str = "R3011";
+    pub const ROUTE_CODEC_MISMATCH: &str = "R3012";
+    pub const UNSUPPORTED: &str = "R1002";
+}
+
+/// Public identities for Uhura 0.4 parser diagnostics.
+///
+/// `R1001` is the common parse code used by CLI and host consumers. The rule
+/// is the stable, lossless parser-kind discriminator.
+pub mod v04_parse {
+    use super::Code;
+
+    pub const LEXICAL: Code = ("R1001", "uhura-0.4/parse/lexical");
+    pub const UNEXPECTED_TOKEN: Code = ("R1001", "uhura-0.4/parse/unexpected-token");
+    pub const MISSING_TOKEN: Code = ("R1001", "uhura-0.4/parse/missing-token");
+    pub const INVALID_NAME: Code = ("R1001", "uhura-0.4/parse/invalid-name");
+    pub const INVALID_DECLARATION: Code = ("R1001", "uhura-0.4/parse/invalid-declaration");
+    pub const INVALID_MEMBER: Code = ("R1001", "uhura-0.4/parse/invalid-member");
+    pub const INVALID_TYPE: Code = ("R1001", "uhura-0.4/parse/invalid-type");
+    pub const INVALID_PATTERN: Code = ("R1001", "uhura-0.4/parse/invalid-pattern");
+    pub const INVALID_EXPRESSION: Code = ("R1001", "uhura-0.4/parse/invalid-expression");
+    pub const INVALID_STATEMENT: Code = ("R1001", "uhura-0.4/parse/invalid-statement");
+    pub const INVALID_UI: Code = ("R1001", "uhura-0.4/parse/invalid-ui");
+    pub const INVALID_EVIDENCE: Code = ("R1001", "uhura-0.4/parse/invalid-evidence");
+    pub const COMPARISON_CHAIN: Code = ("R1001", "uhura-0.4/parse/comparison-chain");
+}
 
 // ── UH0xxx: lex/parse ──────────────────────────────────────────────────────
 pub const UNEXPECTED_TOKEN: Code = ("UH0001", "syntax/unexpected-token");
@@ -135,3 +196,4 @@ pub const INVALID_FIXTURE: Code = ("UH2009", "contract/invalid-fixture");
 
 // ── UH9xxx: internal invariants ────────────────────────────────────────────────
 pub const TEMPLATE_ORIGIN_COVERAGE: Code = ("UH9001", "internal/template-origin-coverage");
+pub const ICON_SOURCE_COVERAGE: Code = ("UH9002", "internal/icon-source-coverage");

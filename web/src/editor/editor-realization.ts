@@ -1,19 +1,6 @@
-import type {
-  EditorNodeRealization,
-  EditorRenderNodeRef,
-  EditorRenderRoot,
-} from "../renderer/editor.js";
-
 export type RealizationOwner = object;
 
-const rootKey = (root: EditorRenderRoot): string => {
-  if (root.kind === "page") return "page";
-  if (root.kind === "fragment") return "fragment";
-  return `surface:${root.key}`;
-};
-
-export const realizationKey = (reference: EditorRenderNodeRef): string =>
-  `${rootKey(reference.root)}|${reference.path.join(".")}`;
+export const realizationKey = (key: string): string => `key|${key}`;
 
 /**
  * Direct semantic-node handles and their geometry subscriptions for one
@@ -47,18 +34,18 @@ export class RealizationResources {
     this.#owner = to;
   }
 
-  register(realization: EditorNodeRealization): void {
+  registerKey(key: string, element: HTMLElement): void {
     if (this.#disposed) throw new Error("cannot register into disposed realization resources");
-    const key = realizationKey(realization);
-    if (this.#elements.has(key)) {
-      throw new Error(`duplicate semantic realization ${key}`);
+    const realization = realizationKey(key);
+    if (this.#elements.has(realization)) {
+      throw new Error(`duplicate semantic realization ${realization}`);
     }
-    this.#elements.set(key, realization.element);
+    this.#elements.set(realization, element);
   }
 
-  resolve(reference: EditorRenderNodeRef): HTMLElement | null {
+  resolve(key: string): HTMLElement | null {
     if (this.#disposed) return null;
-    return this.#elements.get(realizationKey(reference)) ?? null;
+    return this.#elements.get(realizationKey(key)) ?? null;
   }
 
   realizedElements(): readonly HTMLElement[] {

@@ -1,0 +1,1462 @@
+use uhura::boundary::Token;
+use uhura::observation::Observation;
+use uhura::ports::RequestPort;
+use uhura::web_router::{Router, Routes};
+
+pub key OrderId(Text);
+
+pub key LineId(Text);
+
+pub key ReturnId(Text);
+
+pub key RequestId(PositiveInt);
+
+pub key ScopeId(PositiveInt);
+
+pub key SurfaceId(PositiveInt);
+
+pub const ORDER_100: OrderId = OrderId("order-100");
+
+pub const LAMP: LineId = LineId("lamp");
+
+pub const MUG: LineId = LineId("mug");
+
+pub enum Step {
+  Items,
+  Method,
+  Review,
+}
+
+pub enum ReturnMethod {
+  DropOff,
+  Pickup,
+}
+
+pub enum Reason {
+  Damaged,
+  NotNeeded,
+}
+
+pub enum Location {
+  Flow {
+    order: OrderId,
+    step: Option<Text>,
+  },
+  Order {
+    order: OrderId,
+  },
+  Receipt {
+    return_id: ReturnId,
+  },
+}
+
+pub const RETURN_ROUTES: Routes<Location> = Routes::from([("Flow", "/orders/{order}/return?step={step?}"), ("Order", "/orders/{order}"), ("Receipt", "/returns/{return_id}")]);
+
+pub enum NavigationIntent {
+  UserPush {
+    target: Location,
+  },
+  RequiredReplace {
+    target: Location,
+  },
+}
+
+pub struct OrderLineWire {
+  id: LineId,
+  title: Text,
+  purchased_quantity: Int,
+  returnable_quantity: Int,
+  policy_summary: Text,
+}
+
+pub struct OrderWire {
+  id: OrderId,
+  revision: Int,
+  lines: Seq<OrderLineWire>,
+  allowed_methods: Seq<Text>,
+}
+
+pub struct OrderLine {
+  id: LineId,
+  title: Text,
+  purchased_quantity: Nat,
+  returnable_quantity: Nat,
+  policy_summary: Text,
+}
+
+pub struct Order {
+  id: OrderId,
+  revision: PositiveInt,
+  lines: Map<LineId, OrderLine>,
+  allowed_methods: Set<ReturnMethod>,
+}
+
+pub struct Selection {
+  quantity: PositiveInt,
+  reason: Option<Reason>,
+}
+
+pub struct ReturnDraft {
+  order: OrderId,
+  base_revision: PositiveInt,
+  selections: Map<LineId, Selection>,
+  method: Option<ReturnMethod>,
+}
+
+pub struct SubmittedSelection {
+  quantity: PositiveInt,
+  reason: Reason,
+}
+
+pub struct ReturnPayload {
+  order: OrderId,
+  expected_revision: PositiveInt,
+  selections: Map<LineId, SubmittedSelection>,
+  method: ReturnMethod,
+}
+
+pub struct PendingRequest {
+  id: RequestId,
+  payload: ReturnPayload,
+}
+
+pub enum Settlement {
+  Accepted {
+    return_id: Text,
+  },
+  RefusedOrderChanged {
+    current_revision: Int,
+  },
+  Unavailable,
+}
+
+pub enum Submission {
+  Idle,
+  Pending {
+    request: PendingRequest,
+  },
+  Refused {
+    request: PendingRequest,
+    required_revision: PositiveInt,
+  },
+  UnavailableFor {
+    request: PendingRequest,
+  },
+  Completed {
+    request: RequestId,
+    return_id: ReturnId,
+  },
+}
+
+pub enum ReceiptAccess {
+  NoCompletion,
+  Redirecting,
+  Offered,
+  Acknowledged,
+}
+
+pub struct PolicySurface {
+  id: SurfaceId,
+  owner: ScopeId,
+  line: LineId,
+}
+
+pub struct SourceConflict {
+  draft_revision: PositiveInt,
+  observed_revision: PositiveInt,
+  required_revision: Option<PositiveInt>,
+}
+
+pub enum BlockReason {
+  WrongLocation,
+  Normalizing,
+  OrderWaiting,
+  PendingSubmission,
+  CompletedReturn,
+  SourceChanged,
+  NavigationPending,
+  IncompleteItems,
+  IncompleteMethod,
+  RevisionFence,
+  SubmissionPhase,
+  NoCompletionNotice,
+}
+
+pub enum InvalidReason {
+  LocationOutsideDomain,
+  OrderStructure,
+  EqualRevisionOrder,
+  UnknownLine,
+  InvalidQuantity,
+  UnselectedLine,
+  UnknownReason,
+  UnknownMethod,
+  DisallowedMethod,
+  UnknownStep,
+  InvalidReturnId,
+  InvalidRefusalRevision,
+}
+
+pub enum CheckedOrder {
+  Valid {
+    order: Order,
+  },
+  Invalid {
+    reason: InvalidReason,
+  },
+}
+
+pub enum UserNavigation {
+  Ready,
+  Repeated,
+  PendingOther,
+  UnavailableWhileNormalizing,
+}
+
+pub enum Page {
+  NoLocation,
+  NormalizingTo {
+    target: Location,
+  },
+  ItemsPage,
+  MethodPage,
+  ReviewPage,
+  OrderPage,
+  ReceiptPage {
+    return_id: ReturnId,
+  },
+}
+
+pub struct Actions {
+  quantity_lines: Set<LineId>,
+  reason_lines: Set<LineId>,
+  methods: Set<ReturnMethod>,
+  steps: Set<Step>,
+  policy_lines: Set<LineId>,
+  dismiss_surface: Option<SurfaceId>,
+  restart: Bool,
+  submit: Bool,
+  follow_order: Bool,
+  follow_receipt: Bool,
+}
+
+pub struct PolicyView {
+  instance: SurfaceId,
+  line: LineId,
+  title: Text,
+  summary: Text,
+}
+
+pub machine ReturnDesk {
+  port router = Router<Location> {
+    routes: RETURN_ROUTES,
+  };
+
+  port orders = Observation<OrderWire> {};
+
+  port returns = RequestPort<RequestId, ReturnPayload, Settlement> {};
+
+  events {
+    ChooseQuantity(line: LineId, value: BoundaryNumber),
+    ChooseReason(line: LineId, value: Token<Reason>),
+    ChooseMethod(value: Token<ReturnMethod>),
+    GoToStep(value: Token<Step>),
+    OpenPolicy(line: LineId),
+    DismissPolicy(surface: SurfaceId),
+    RestartFromCurrentOrder,
+    Submit,
+    FollowOrderLink,
+    FollowReceiptLink,
+  }
+
+  outcomes {
+    commit Accepted,
+    abort Blocked(reason: BlockReason),
+    abort Duplicate,
+    abort Stale,
+    abort Invalid(reason: InvalidReason),
+  }
+
+  state {
+    location: Option<Location> = None,
+    order: Option<Order> = None,
+    draft: Option<ReturnDraft> = None,
+    submission: Submission = Submission::Idle,
+    receipt_access: ReceiptAccess = ReceiptAccess::NoCompletion,
+    navigation: Option<NavigationIntent> = None,
+    route_scope: Option<ScopeId> = None,
+    surface: Option<PolicySurface> = None,
+    settled: Set<RequestId> = Set::empty(),
+    next_request: Nat = 0,
+    next_scope: Nat = 0,
+    next_surface: Nat = 0,
+  }
+
+  fn parse_step(value: Text) -> Option<Step> {
+    match value {
+      "items" => Some(Step::Items),
+      "method" => Some(Step::Method),
+      "review" => Some(Step::Review),
+      _ => None,
+    }
+  }
+
+  fn step_text(value: Step) -> Text {
+    match value {
+      Step::Items => "items",
+      Step::Method => "method",
+      Step::Review => "review",
+    }
+  }
+
+  fn parse_method(value: Text) -> Option<ReturnMethod> {
+    match value {
+      "drop-off" => Some(ReturnMethod::DropOff),
+      "pickup" => Some(ReturnMethod::Pickup),
+      _ => None,
+    }
+  }
+
+  fn is_flow(value: Option<Location>) -> Bool {
+    (value is Some(Location::Flow {
+      order: order,
+      step: _,
+    }) && (order == ORDER_100))
+  }
+
+  fn completed_return(phase: Submission) -> Option<ReturnId> {
+    match phase {
+      Submission::Completed {
+        request: _,
+        return_id: return_id,
+      } => Some(return_id),
+      _ => None,
+    }
+  }
+
+  fn completion_notice(phase: Submission, access: ReceiptAccess) -> Option<ReturnId> {
+    match (phase, access) {
+      (Submission::Completed {
+        request: _,
+        return_id: return_id,
+      }, ReceiptAccess::Offered) => Some(return_id),
+      _ => None,
+    }
+  }
+
+  fn navigation_target(intent: NavigationIntent) -> Location {
+    match intent {
+      NavigationIntent::UserPush {
+        target: target,
+      } | NavigationIntent::RequiredReplace {
+        target: target,
+      } => target,
+    }
+  }
+
+  fn refusal_fence(phase: Submission) -> Option<PositiveInt> {
+    match phase {
+      Submission::Refused {
+        request: _,
+        required_revision: required,
+      } => Some(required),
+      _ => None,
+    }
+  }
+
+  fn line_of(current: Option<Order>, line: LineId) -> Option<OrderLine> {
+    match current {
+      None => None,
+      Some(order) => order.lines.get(line),
+    }
+  }
+
+  fn blank_draft(order: Order) -> ReturnDraft {
+    ReturnDraft {
+      order: order.id,
+      base_revision: order.revision,
+      selections: Map::empty(),
+      method: None,
+    }
+  }
+
+  fn is_blank(value: ReturnDraft) -> Bool {
+    (value.selections.is_empty() && (value.method == None))
+  }
+
+  fn return_payload(value: ReturnDraft) -> Option<ReturnPayload> {
+    if value.selections.is_empty() {
+      None
+    } else {
+      let selections = value.selections.try_map_values(|entry| match entry.value.reason {
+        None => None,
+        Some(reason) => Some(SubmittedSelection {
+          quantity: entry.value.quantity,
+          reason: reason,
+        }),
+      });
+      match (selections, value.method) {
+        (Some(selections), Some(method)) => Some(ReturnPayload {
+          order: value.order,
+          expected_revision: value.base_revision,
+          selections: selections,
+          method: method,
+        }),
+        _ => None,
+      }
+    }
+  }
+
+  fn reason_complete(value: Option<Reason>) -> Bool {
+    value is Some(_)
+  }
+
+  fn items_complete(current_order: Option<Order>, current_draft: Option<ReturnDraft>) -> Bool {
+    match (current_order, current_draft) {
+      (Some(order), Some(draft)) => ((((draft.order == order.id) && (draft.base_revision == order.revision)) && !(draft.selections.is_empty())) && draft.selections.entries().all(|entry| ((order.lines.get(entry.key) is Some(current) && (entry.value.quantity <= current.returnable_quantity)) && reason_complete(entry.value.reason)))),
+      _ => false,
+    }
+  }
+
+  fn method_complete(current_order: Option<Order>, current_draft: Option<ReturnDraft>) -> Bool {
+    ((((items_complete(current_order, current_draft) && current_order is Some(order)) && current_draft is Some(draft)) && draft.method is Some(chosen)) && order.allowed_methods.contains(chosen))
+  }
+
+  fn source_conflict(current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Option<SourceConflict> {
+    match (current_order, current_draft) {
+      (Some(order), Some(draft)) => {
+        let fence = refusal_fence(phase);
+        if ((draft.base_revision != order.revision) || fence is Some(_)) {
+          Some(SourceConflict {
+            draft_revision: draft.base_revision,
+            observed_revision: order.revision,
+            required_revision: fence,
+          })
+        } else {
+          None
+        }
+      },
+      _ => None,
+    }
+  }
+
+  fn required_target(current_location: Option<Location>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Option<Location> {
+    match current_location {
+      None => None,
+      Some(Location::Flow {
+        order: order_id,
+        step: raw_step,
+      }) => {
+        match completed_return(phase) {
+          Some(return_id) => Some(Location::Receipt {
+            return_id: return_id,
+          }),
+          None => {
+            let requested = match raw_step {
+              None => None,
+              Some(text) => parse_step(text),
+            };
+            match requested {
+              None => Some(Location::Flow {
+                order: order_id,
+                step: Some("items"),
+              }),
+              Some(Step::Items) => None,
+              Some(Step::Method) => if items_complete(current_order, current_draft) {
+                None
+              } else {
+                Some(Location::Flow {
+                  order: order_id,
+                  step: Some("items"),
+                })
+              },
+              Some(Step::Review) => if !(items_complete(current_order, current_draft)) {
+                Some(Location::Flow {
+                  order: order_id,
+                  step: Some("items"),
+                })
+              } else {
+                if !(method_complete(current_order, current_draft)) {
+                  Some(Location::Flow {
+                    order: order_id,
+                    step: Some("method"),
+                  })
+                } else {
+                  None
+                }
+              },
+            }
+          },
+        }
+      },
+      Some(Location::Order {
+        order: _,
+      }) | Some(Location::Receipt {
+        return_id: _,
+      }) => None,
+    }
+  }
+
+  fn active_step(current_location: Option<Location>, current_scope: Option<ScopeId>) -> Option<Step> {
+    match (current_location, current_scope) {
+      (Some(Location::Flow {
+        order: order_id,
+        step: Some(raw),
+      }), Some(_)) => {
+        if (order_id != ORDER_100) {
+          None
+        } else {
+          parse_step(raw)
+        }
+      },
+      _ => None,
+    }
+  }
+
+  fn step_admissible(target: Step, current_order: Option<Order>, current_draft: Option<ReturnDraft>) -> Bool {
+    match target {
+      Step::Items => true,
+      Step::Method => items_complete(current_order, current_draft),
+      Step::Review => method_complete(current_order, current_draft),
+    }
+  }
+
+  fn step_rank(value: Step) -> Nat {
+    match value {
+      Step::Items => 0,
+      Step::Method => 1,
+      Step::Review => 2,
+    }
+  }
+
+  fn page(current_location: Option<Location>, current_scope: Option<ScopeId>, phase: Submission, current_order: Option<Order>, current_draft: Option<ReturnDraft>, current_navigation: Option<NavigationIntent>) -> Page {
+    match current_location {
+      None => Page::NoLocation,
+      Some(current) => match current {
+        Location::Flow {
+          order: _,
+          step: _,
+        } => {
+          match active_step(current_location, current_scope) {
+            Some(Step::Items) => Page::ItemsPage,
+            Some(Step::Method) => Page::MethodPage,
+            Some(Step::Review) => Page::ReviewPage,
+            None => {
+              let target = match required_target(current_location, current_order, current_draft, phase) {
+                Some(target) => target,
+                None => match current_navigation {
+                  Some(NavigationIntent::RequiredReplace {
+                    target: target,
+                  }) => target,
+                  _ => current,
+                },
+              };
+              Page::NormalizingTo {
+                target: target,
+              }
+            },
+          }
+        },
+        Location::Order {
+          order: _,
+        } => Page::OrderPage,
+        Location::Receipt {
+          return_id: return_id,
+        } => match completed_return(phase) {
+          Some(current) => {
+            if (current == return_id) {
+              Page::ReceiptPage {
+                return_id: return_id,
+              }
+            } else {
+              Page::NoLocation
+            }
+          },
+          None => Page::NoLocation,
+        },
+      },
+    }
+  }
+
+  fn user_navigation(current_location: Option<Location>, current_navigation: Option<NavigationIntent>, current_scope: Option<ScopeId>, target: Location) -> UserNavigation {
+    if (current_location == Some(target)) {
+      UserNavigation::Repeated
+    } else {
+      if (current_navigation is Some(intent) && (navigation_target(intent) == target)) {
+        UserNavigation::Repeated
+      } else {
+        if current_navigation is Some(_) {
+          UserNavigation::PendingOther
+        } else {
+          if (is_flow(current_location) && (current_scope == None)) {
+            UserNavigation::UnavailableWhileNormalizing
+          } else {
+            UserNavigation::Ready
+          }
+        }
+      }
+    }
+  }
+
+  fn validate_line(wire: OrderLineWire) -> Option<OrderLine> {
+    if (((wire.purchased_quantity < 0) || (wire.returnable_quantity < 0)) || (wire.returnable_quantity > wire.purchased_quantity)) {
+      None
+    } else {
+      Some(OrderLine {
+        id: wire.id,
+        title: wire.title,
+        purchased_quantity: wire.purchased_quantity,
+        returnable_quantity: wire.returnable_quantity,
+        policy_summary: wire.policy_summary,
+      })
+    }
+  }
+
+  fn validate_order(wire: OrderWire) -> CheckedOrder {
+    if ((wire.id != ORDER_100) || (wire.revision <= 0)) {
+      CheckedOrder::Invalid {
+        reason: InvalidReason::OrderStructure,
+      }
+    } else {
+      let checked_lines = wire.lines.try_map(|value| validate_line(value));
+      let checked_methods = wire.allowed_methods.try_map(|value| parse_method(value));
+      match (checked_lines, checked_methods) {
+        (Some(lines), Some(methods)) => {
+          let line_pairs = lines.map(|value| (value.id, value));
+          match (Map::from_unique(line_pairs), Set::from_unique(methods)) {
+            (Some(lines), Some(allowed_methods)) => CheckedOrder::Valid {
+              order: Order {
+                id: wire.id,
+                revision: wire.revision,
+                lines: lines,
+                allowed_methods: allowed_methods,
+              },
+            },
+            _ => CheckedOrder::Invalid {
+              reason: InvalidReason::OrderStructure,
+            },
+          }
+        },
+        _ => CheckedOrder::Invalid {
+          reason: InvalidReason::OrderStructure,
+        },
+      }
+    }
+  }
+
+  fn edit_block(required_step: Step, current_location: Option<Location>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Option<BlockReason> {
+    if (is_flow(current_location) && (current_scope == None)) {
+      Some(BlockReason::Normalizing)
+    } else {
+      if (active_step(current_location, current_scope) != Some(required_step)) {
+        Some(BlockReason::WrongLocation)
+      } else {
+        if ((current_order == None) || (current_draft == None)) {
+          Some(BlockReason::OrderWaiting)
+        } else {
+          if phase is Submission::Pending {
+            request: _,
+          } {
+            Some(BlockReason::PendingSubmission)
+          } else {
+            if phase is Submission::Completed {
+              request: _,
+              return_id: _,
+            } {
+              Some(BlockReason::CompletedReturn)
+            } else {
+              if source_conflict(current_order, current_draft, phase) is Some(_) {
+                Some(BlockReason::SourceChanged)
+              } else {
+                None
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn clear_retryable(phase: Submission) -> Submission {
+    match phase {
+      Submission::UnavailableFor {
+        request: _,
+      } => Submission::Idle,
+      _ => phase,
+    }
+  }
+
+  fn can_go(target: Step, current_location: Option<Location>, current_navigation: Option<NavigationIntent>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Bool {
+    ((((user_navigation(current_location, current_navigation, current_scope, Location::Flow {
+      order: ORDER_100,
+      step: Some(step_text(target)),
+    }) == UserNavigation::Ready) && active_step(current_location, current_scope) is Some(current)) && step_admissible(target, current_order, current_draft)) && ((source_conflict(current_order, current_draft, phase) == None) || (step_rank(target) <= step_rank(current))))
+  }
+
+  fn quantity_lines(current_location: Option<Location>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Set<LineId> {
+    match current_order {
+      None => Set::empty(),
+      Some(order) => Set::filter_map(order.lines.entries(), |entry| match (entry.value.returnable_quantity > 0) && (edit_block(Step::Items, current_location, current_scope, current_order, current_draft, phase) == None) {
+        true => Some(entry.key),
+        _ => None,
+      }),
+    }
+  }
+
+  fn reason_lines(current_location: Option<Location>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Set<LineId> {
+    match (current_order, current_draft) {
+      (Some(order), Some(draft)) => Set::filter_map(order.lines.entries(), |entry| match draft.selections.get(entry.key) is Some(_) && (edit_block(Step::Items, current_location, current_scope, current_order, current_draft, phase) == None) {
+        true => Some(entry.key),
+        _ => None,
+      }),
+      _ => Set::empty(),
+    }
+  }
+
+  fn method_choices(current_location: Option<Location>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Set<ReturnMethod> {
+    Set::filter_map([ReturnMethod::DropOff, ReturnMethod::Pickup], |entry| match current_order is Some(order) && current_draft is Some(draft) && order.allowed_methods.contains(entry) && (draft.method != Some(entry)) && items_complete(current_order, current_draft) && (edit_block(Step::Method, current_location, current_scope, current_order, current_draft, phase) == None) {
+      true => Some(entry),
+      _ => None,
+    })
+  }
+
+  fn step_choices(current_location: Option<Location>, current_navigation: Option<NavigationIntent>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Set<Step> {
+    Set::filter_map([Step::Items, Step::Method, Step::Review], |entry| match can_go(entry, current_location, current_navigation, current_scope, current_order, current_draft, phase) {
+      true => Some(entry),
+      _ => None,
+    })
+  }
+
+  fn surface_line(current_surface: Option<PolicySurface>) -> Option<LineId> {
+    match current_surface {
+      None => None,
+      Some(surface) => Some(surface.line),
+    }
+  }
+
+  fn policy_lines(current_location: Option<Location>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_surface: Option<PolicySurface>) -> Set<LineId> {
+    match current_order {
+      None => Set::empty(),
+      Some(order) => Set::filter_map(order.lines.entries(), |entry| match (active_step(current_location, current_scope) == Some(Step::Items)) && (surface_line(current_surface) != Some(entry.key)) {
+        true => Some(entry.key),
+        _ => None,
+      }),
+    }
+  }
+
+  fn can_restart(current_location: Option<Location>, current_scope: Option<ScopeId>, current_order: Option<Order>, current_draft: Option<ReturnDraft>, phase: Submission) -> Bool {
+    match current_order {
+      None => false,
+      Some(order) => (((((active_step(current_location, current_scope) == Some(Step::Items)) && !(phase is Submission::Pending {
+        request: _,
+      })) && !(phase is Submission::Completed {
+        request: _,
+        return_id: _,
+      })) && ((refusal_fence(phase) == None) || (refusal_fence(phase) is Some(required) && (order.revision >= required)))) && !(((((current_draft is Some(draft) && (draft.base_revision == order.revision)) && is_blank(draft)) && (refusal_fence(phase) == None)) && (phase == Submission::Idle)))),
+    }
+  }
+
+  computed items_ready: Bool = items_complete(order, draft);
+
+  computed method_ready: Bool = method_complete(order, draft);
+
+  computed conflict: Option<SourceConflict> = source_conflict(order, draft, submission);
+
+  computed notice: Option<ReturnId> = completion_notice(submission, receipt_access);
+
+  computed current_page: Page = page(location, route_scope, submission, order, draft, navigation);
+
+  invariant {
+    (next_request >= settled.len()),
+    match surface {
+      None => true,
+      Some(open) => (((route_scope == Some(open.owner)) && (active_step(location, route_scope) == Some(Step::Items))) && line_of(order, open.line) is Some(_)),
+    },
+    match route_scope {
+      None => true,
+      Some(_) => (is_flow(location) && (required_target(location, order, draft, submission) == None)),
+    },
+    match required_target(location, order, draft, submission) {
+      Some(target) => (((route_scope == None) && (surface == None)) && (navigation == Some(NavigationIntent::RequiredReplace {
+        target: target,
+      }))),
+      None => if is_flow(location) {
+        route_scope is Some(_)
+      } else {
+        true
+      },
+    },
+    match submission {
+      Submission::Pending {
+        request: request,
+      } => (((draft is Some(current) && (return_payload(current) == Some(request.payload))) && !(settled.contains(request.id))) && (receipt_access == ReceiptAccess::NoCompletion)),
+      Submission::Refused {
+        request: request,
+        required_revision: required,
+      } => (((((required > request.payload.expected_revision) && draft is Some(current)) && (return_payload(current) == Some(request.payload))) && settled.contains(request.id)) && (receipt_access == ReceiptAccess::NoCompletion)),
+      Submission::UnavailableFor {
+        request: request,
+      } => (((draft is Some(current) && (return_payload(current) == Some(request.payload))) && settled.contains(request.id)) && (receipt_access == ReceiptAccess::NoCompletion)),
+      Submission::Completed {
+        request: request,
+        return_id: _,
+      } => (((draft == None) && settled.contains(request)) && (receipt_access != ReceiptAccess::NoCompletion)),
+      Submission::Idle => (receipt_access == ReceiptAccess::NoCompletion),
+    },
+    match (completed_return(submission), location, receipt_access) {
+      (None, _, ReceiptAccess::NoCompletion) => true,
+      (Some(return_id), Some(Location::Receipt {
+        return_id: current,
+      }), ReceiptAccess::Acknowledged) => (current == return_id),
+      (Some(_), Some(Location::Flow {
+        order: _,
+        step: _,
+      }), ReceiptAccess::Redirecting) => true,
+      (Some(_), Some(Location::Flow {
+        order: _,
+        step: _,
+      }), ReceiptAccess::Acknowledged) => true,
+      (Some(_), Some(Location::Order {
+        order: _,
+      }), ReceiptAccess::Offered) => true,
+      (Some(_), Some(Location::Order {
+        order: _,
+      }), ReceiptAccess::Acknowledged) => true,
+      _ => false,
+    },
+  }
+
+  observe {
+    location,
+    page: current_page,
+    order,
+    draft,
+    conflict,
+    items_complete: items_ready,
+    method_complete: method_ready,
+    submission,
+    policy: match surface {
+      None => None,
+      Some(open) => match line_of(order, open.line) {
+        None => None,
+        Some(line) => Some(PolicyView {
+          instance: open.id,
+          line: line.id,
+          title: line.title,
+          summary: line.policy_summary,
+        }),
+      },
+    },
+    completion_notice: notice,
+    actions: Actions {
+      quantity_lines: quantity_lines(location, route_scope, order, draft, submission),
+      reason_lines: reason_lines(location, route_scope, order, draft, submission),
+      methods: method_choices(location, route_scope, order, draft, submission),
+      steps: step_choices(location, navigation, route_scope, order, draft, submission),
+      policy_lines: policy_lines(location, route_scope, order, surface),
+      dismiss_surface: match surface {
+        Some(open) => if (route_scope == Some(open.owner)) {
+          Some(open.id)
+        } else {
+          None
+        },
+        None => None,
+      },
+      restart: can_restart(location, route_scope, order, draft, submission),
+      submit: ((((active_step(location, route_scope) == Some(Step::Review)) && (source_conflict(order, draft, submission) == None)) && method_complete(order, draft)) && ((submission == Submission::Idle) || submission is Submission::UnavailableFor {
+        request: _,
+      })),
+      follow_order: (((location is Some(Location::Flow {
+        order: order_id,
+        step: _,
+      }) && (order_id == ORDER_100)) || (location is Some(Location::Receipt {
+        return_id: return_id,
+      }) && (completed_return(submission) == Some(return_id)))) && (user_navigation(location, navigation, route_scope, Location::Order {
+        order: ORDER_100,
+      }) == UserNavigation::Ready)),
+      follow_receipt: (notice is Some(return_id) && (user_navigation(location, navigation, route_scope, Location::Receipt {
+        return_id: return_id,
+      }) == UserNavigation::Ready)),
+    },
+  }
+
+  on router.Changed(next) {
+    match next {
+      Location::Flow {
+        order: order_id,
+        step: _,
+      } | Location::Order {
+        order: order_id,
+      } => {
+        if (order_id != ORDER_100) {
+          return Invalid(InvalidReason::LocationOutsideDomain);
+        }
+      },
+      Location::Receipt {
+        return_id: return_id,
+      } => {
+        if (completed_return(submission) != Some(return_id)) {
+          return Invalid(InvalidReason::LocationOutsideDomain);
+        }
+      },
+    };
+    if (location == Some(next)) {
+      return Duplicate;
+    };
+    location = Some(next);
+    navigation = None;
+    route_scope = None;
+    surface = None;
+    match completed_return(submission) {
+      None => {},
+      Some(return_id) => {
+        receipt_access = match next {
+          Location::Receipt {
+            return_id: current,
+          } => match current == return_id {
+            true => ReceiptAccess::Acknowledged,
+            false => receipt_access,
+          },
+          Location::Flow {
+            order: _,
+            step: _,
+          } => match receipt_access == ReceiptAccess::Acknowledged {
+            true => ReceiptAccess::Acknowledged,
+            false => ReceiptAccess::Redirecting,
+          },
+          Location::Order {
+            order: _,
+          } => match receipt_access == ReceiptAccess::Acknowledged {
+            true => ReceiptAccess::Acknowledged,
+            false => ReceiptAccess::Offered,
+          },
+        };
+      },
+    };
+    if (((is_flow(location) && order is Some(current_order)) && (draft == None)) && (completed_return(submission) == None)) {
+      draft = Some(blank_draft(current_order));
+    };
+    if (is_flow(location) && (required_target(location, order, draft, submission) == None)) {
+      let serial: PositiveInt = (next_scope + 1);
+      next_scope = serial;
+      route_scope = Some(ScopeId(serial));
+    };
+    return Accepted;
+  }
+
+  on orders.Observed(wire) {
+    let next = match validate_order(wire) {
+      CheckedOrder::Valid {
+        order: order,
+      } => order,
+      CheckedOrder::Invalid {
+        reason: reason,
+      } => return Invalid(reason),
+    };
+    match order {
+      None => {},
+      Some(current) => {
+        if (next.revision < current.revision) {
+          return Stale;
+        };
+        if (next.revision == current.revision) {
+          if (next == current) {
+            return Duplicate;
+          };
+          return Invalid(InvalidReason::EqualRevisionOrder);
+        }
+      },
+    };
+    order = Some(next);
+    if (surface is Some(open) && (next.lines.get(open.line) == None)) {
+      surface = None;
+    };
+    if ((is_flow(location) && (draft == None)) && (completed_return(submission) == None)) {
+      draft = Some(blank_draft(next));
+    };
+    return Accepted;
+  }
+
+  on ChooseQuantity(line, value) {
+    let quantity = match Int::from(value) {
+      None => return Invalid(InvalidReason::InvalidQuantity),
+      Some(quantity) => quantity,
+    };
+    if (quantity < 0) {
+      return Invalid(InvalidReason::InvalidQuantity);
+    };
+    let current_line = match line_of(order, line) {
+      Some(line) => line,
+      None => return Invalid(InvalidReason::UnknownLine),
+    };
+    if (quantity > current_line.returnable_quantity) {
+      return Invalid(InvalidReason::InvalidQuantity);
+    };
+    let current = match draft {
+      None => None,
+      Some(draft) => draft.selections.get(line),
+    };
+    if ((quantity == 0) && (current == None)) {
+      return Duplicate;
+    };
+    if (((quantity > 0) && current is Some(selection)) && (selection.quantity == quantity)) {
+      return Duplicate;
+    };
+    match edit_block(Step::Items, location, route_scope, order, draft, submission) {
+      Some(reason) => return Blocked(reason),
+      None => {},
+    };
+    let current_draft = match draft {
+      Some(draft) => draft,
+      None => {
+        unreachable;
+      },
+    };
+    if (quantity == 0) {
+      draft = Some(ReturnDraft {
+        selections: current_draft.selections.remove(line),
+        ..current_draft,
+      });
+    } else {
+      let reason = match current {
+        None => None,
+        Some(selection) => selection.reason,
+      };
+      draft = Some(ReturnDraft {
+        selections: current_draft.selections.put(line, Selection {
+          quantity: quantity,
+          reason: reason,
+        }),
+        ..current_draft,
+      });
+    };
+    submission = clear_retryable(submission);
+    return Accepted;
+  }
+
+  on ChooseReason(line, value) {
+    let reason = match value {
+      Token::Unknown {
+        value: _,
+      } => return Invalid(InvalidReason::UnknownReason),
+      Token::Known {
+        value: reason,
+      } => reason,
+    };
+    match line_of(order, line) {
+      Some(_) => {},
+      None => return Invalid(InvalidReason::UnknownLine),
+    };
+    let current_draft = match draft {
+      None => return Invalid(InvalidReason::UnselectedLine),
+      Some(draft) => draft,
+    };
+    let selection = match current_draft.selections.get(line) {
+      None => return Invalid(InvalidReason::UnselectedLine),
+      Some(selection) => selection,
+    };
+    if (selection.reason == Some(reason)) {
+      return Duplicate;
+    };
+    match edit_block(Step::Items, location, route_scope, order, draft, submission) {
+      Some(block) => return Blocked(block),
+      None => {},
+    };
+    draft = Some(ReturnDraft {
+      selections: current_draft.selections.put(line, Selection {
+        reason: Some(reason),
+        ..selection,
+      }),
+      ..current_draft,
+    });
+    submission = clear_retryable(submission);
+    return Accepted;
+  }
+
+  on ChooseMethod(value) {
+    let chosen = match value {
+      Token::Unknown {
+        value: _,
+      } => return Invalid(InvalidReason::UnknownMethod),
+      Token::Known {
+        value: method,
+      } => method,
+    };
+    match order {
+      Some(current) => {
+        if !(current.allowed_methods.contains(chosen)) {
+          return Invalid(InvalidReason::DisallowedMethod);
+        }
+      },
+      None => {},
+    };
+    if (draft is Some(current) && (current.method == Some(chosen))) {
+      return Duplicate;
+    };
+    match edit_block(Step::Method, location, route_scope, order, draft, submission) {
+      Some(block) => return Blocked(block),
+      None => {},
+    };
+    if !(items_complete(order, draft)) {
+      return Blocked(BlockReason::IncompleteItems);
+    };
+    let current = match draft {
+      Some(draft) => draft,
+      None => {
+        unreachable;
+      },
+    };
+    draft = Some(ReturnDraft {
+      method: Some(chosen),
+      ..current,
+    });
+    submission = clear_retryable(submission);
+    return Accepted;
+  }
+
+  on GoToStep(value) {
+    let target = match value {
+      Token::Unknown {
+        value: _,
+      } => return Invalid(InvalidReason::UnknownStep),
+      Token::Known {
+        value: step,
+      } => step,
+    };
+    let target_location = Location::Flow {
+      order: ORDER_100,
+      step: Some(step_text(target)),
+    };
+    match user_navigation(location, navigation, route_scope, target_location) {
+      UserNavigation::Repeated => return Duplicate,
+      UserNavigation::PendingOther => return Blocked(BlockReason::NavigationPending),
+      UserNavigation::UnavailableWhileNormalizing => return Blocked(BlockReason::Normalizing),
+      UserNavigation::Ready => {},
+    };
+    let current = match active_step(location, route_scope) {
+      None => return Blocked(BlockReason::WrongLocation),
+      Some(step) => step,
+    };
+    if !(step_admissible(target, order, draft)) {
+      return Blocked(match target {
+        Step::Method => BlockReason::IncompleteItems,
+        Step::Review => BlockReason::IncompleteMethod,
+        Step::Items => BlockReason::IncompleteItems,
+      });
+    };
+    if (source_conflict(order, draft, submission) is Some(_) && (step_rank(target) > step_rank(current))) {
+      return Blocked(BlockReason::SourceChanged);
+    };
+    let intent: NavigationIntent = NavigationIntent::UserPush {
+      target: target_location,
+    };
+    navigation = Some(intent);
+    emit router.Push(target_location);
+    return Accepted;
+  }
+
+  on OpenPolicy(line) {
+    match line_of(order, line) {
+      None => return Invalid(InvalidReason::UnknownLine),
+      Some(_) => {},
+    };
+    if (surface is Some(open) && (open.line == line)) {
+      return Duplicate;
+    };
+    let owner = match (active_step(location, route_scope), route_scope) {
+      (Some(Step::Items), Some(scope)) => scope,
+      _ => {
+        if (is_flow(location) && (route_scope == None)) {
+          return Blocked(BlockReason::Normalizing);
+        };
+        return Blocked(BlockReason::WrongLocation);
+      },
+    };
+    let serial: PositiveInt = (next_surface + 1);
+    next_surface = serial;
+    surface = Some(PolicySurface {
+      id: SurfaceId(serial),
+      owner: owner,
+      line: line,
+    });
+    return Accepted;
+  }
+
+  on DismissPolicy(id) {
+    match surface {
+      Some(open) => {
+        if ((open.id != id) || (route_scope != Some(open.owner))) {
+          return Stale;
+        }
+      },
+      None => return Stale,
+    };
+    surface = None;
+    return Accepted;
+  }
+
+  on RestartFromCurrentOrder {
+    if submission is Submission::Pending {
+      request: _,
+    } {
+      return Blocked(BlockReason::PendingSubmission);
+    };
+    if (active_step(location, route_scope) != Some(Step::Items)) {
+      if (is_flow(location) && (route_scope == None)) {
+        return Blocked(BlockReason::Normalizing);
+      };
+      return Blocked(BlockReason::WrongLocation);
+    };
+    let current = match order {
+      None => return Blocked(BlockReason::OrderWaiting),
+      Some(order) => order,
+    };
+    match refusal_fence(submission) {
+      Some(required) => {
+        if (current.revision < required) {
+          return Blocked(BlockReason::RevisionFence);
+        }
+      },
+      None => {},
+    };
+    if ((((draft is Some(current_draft) && (current_draft.base_revision == current.revision)) && is_blank(current_draft)) && (refusal_fence(submission) == None)) && (submission == Submission::Idle)) {
+      return Duplicate;
+    };
+    if submission is Submission::Completed {
+      request: _,
+      return_id: _,
+    } {
+      return Blocked(BlockReason::CompletedReturn);
+    };
+    draft = Some(blank_draft(current));
+    submission = Submission::Idle;
+    return Accepted;
+  }
+
+  on Submit {
+    match submission {
+      Submission::Pending {
+        request: _,
+      } => return Duplicate,
+      Submission::Completed {
+        request: _,
+        return_id: _,
+      } => return Blocked(BlockReason::CompletedReturn),
+      _ => {},
+    };
+    if (active_step(location, route_scope) != Some(Step::Review)) {
+      if (is_flow(location) && (route_scope == None)) {
+        return Blocked(BlockReason::Normalizing);
+      };
+      return Blocked(BlockReason::WrongLocation);
+    };
+    if source_conflict(order, draft, submission) is Some(_) {
+      return Blocked(BlockReason::SourceChanged);
+    };
+    if !(method_complete(order, draft)) {
+      return Blocked(BlockReason::IncompleteMethod);
+    };
+    match submission {
+      Submission::Idle | Submission::UnavailableFor {
+        request: _,
+      } => {},
+      Submission::Refused {
+        request: _,
+        required_revision: _,
+      } => return Blocked(BlockReason::SubmissionPhase),
+      Submission::Pending {
+        request: _,
+      } | Submission::Completed {
+        request: _,
+        return_id: _,
+      } => {
+        unreachable;
+      },
+    };
+    let current = match draft {
+      Some(draft) => draft,
+      None => {
+        unreachable;
+      },
+    };
+    let payload = match return_payload(current) {
+      Some(payload) => payload,
+      None => {
+        unreachable;
+      },
+    };
+    let serial: PositiveInt = (next_request + 1);
+    let request: PendingRequest = PendingRequest {
+      id: RequestId(serial),
+      payload: payload,
+    };
+    next_request = serial;
+    submission = Submission::Pending {
+      request: request,
+    };
+    emit returns.Request(request.id, request.payload);
+    return Accepted;
+  }
+
+  on returns.Settled(request_id, result) {
+    match result {
+      Settlement::Accepted {
+        return_id: raw_return_id,
+      } => {
+        if raw_return_id.is_empty() {
+          return Invalid(InvalidReason::InvalidReturnId);
+        }
+      },
+      Settlement::RefusedOrderChanged {
+        current_revision: revision,
+      } => {
+        if (revision <= 0) {
+          return Invalid(InvalidReason::InvalidRefusalRevision);
+        }
+      },
+      Settlement::Unavailable => {},
+    };
+    let pending_request = match submission {
+      Submission::Pending {
+        request: request,
+      } => request,
+      _ => return Stale,
+    };
+    if (pending_request.id != request_id) {
+      return Stale;
+    };
+    match result {
+      Settlement::Accepted {
+        return_id: raw_return_id,
+      } => {
+        let return_id = ReturnId(raw_return_id);
+        settled = settled.add(request_id);
+        draft = None;
+        receipt_access = match location {
+          Some(Location::Flow {
+            order: _,
+            step: _,
+          }) => ReceiptAccess::Redirecting,
+          Some(Location::Receipt {
+            return_id: current,
+          }) => match current == return_id {
+            true => ReceiptAccess::Acknowledged,
+            false => ReceiptAccess::Offered,
+          },
+          _ => ReceiptAccess::Offered,
+        };
+        submission = Submission::Completed {
+          request: request_id,
+          return_id: return_id,
+        };
+        return Accepted;
+      },
+      Settlement::RefusedOrderChanged {
+        current_revision: revision,
+      } => {
+        if (revision <= pending_request.payload.expected_revision) {
+          return Invalid(InvalidReason::InvalidRefusalRevision);
+        };
+        settled = settled.add(request_id);
+        submission = Submission::Refused {
+          request: pending_request,
+          required_revision: revision,
+        };
+        return Accepted;
+      },
+      Settlement::Unavailable => {
+        settled = settled.add(request_id);
+        submission = Submission::UnavailableFor {
+          request: pending_request,
+        };
+        return Accepted;
+      },
+    }
+  }
+
+  on FollowOrderLink {
+    match location {
+      Some(Location::Flow {
+        order: order_id,
+        step: _,
+      }) => {
+        if (order_id != ORDER_100) {
+          return Blocked(BlockReason::WrongLocation);
+        }
+      },
+      Some(Location::Receipt {
+        return_id: return_id,
+      }) => {
+        if (completed_return(submission) != Some(return_id)) {
+          return Blocked(BlockReason::WrongLocation);
+        }
+      },
+      _ => return Blocked(BlockReason::WrongLocation),
+    };
+    let target = Location::Order {
+      order: ORDER_100,
+    };
+    match user_navigation(location, navigation, route_scope, target) {
+      UserNavigation::Repeated => return Duplicate,
+      UserNavigation::PendingOther => return Blocked(BlockReason::NavigationPending),
+      UserNavigation::UnavailableWhileNormalizing => return Blocked(BlockReason::Normalizing),
+      UserNavigation::Ready => {},
+    };
+    navigation = Some(NavigationIntent::UserPush {
+      target: target,
+    });
+    emit router.Push(target);
+    return Accepted;
+  }
+
+  on FollowReceiptLink {
+    let return_id = match notice {
+      None => return Blocked(BlockReason::NoCompletionNotice),
+      Some(return_id) => return_id,
+    };
+    if (location != Some(Location::Order {
+      order: ORDER_100,
+    })) {
+      return Blocked(BlockReason::WrongLocation);
+    };
+    let target = Location::Receipt {
+      return_id: return_id,
+    };
+    match user_navigation(location, navigation, route_scope, target) {
+      UserNavigation::Repeated => return Duplicate,
+      UserNavigation::PendingOther => return Blocked(BlockReason::NavigationPending),
+      UserNavigation::UnavailableWhileNormalizing => return Blocked(BlockReason::Normalizing),
+      UserNavigation::Ready => {},
+    };
+    navigation = Some(NavigationIntent::UserPush {
+      target: target,
+    });
+    emit router.Push(target);
+    return Accepted;
+  }
+
+  before commit {
+    if (surface is Some(open) && ((route_scope != Some(open.owner)) || (line_of(order, open.line) == None))) {
+      surface = None;
+    };
+    match required_target(location, order, draft, submission) {
+      Some(target) => {
+        route_scope = None;
+        surface = None;
+        let required_intent: NavigationIntent = NavigationIntent::RequiredReplace {
+          target: target,
+        };
+        if (navigation != Some(required_intent)) {
+          navigation = Some(required_intent);
+          emit router.Replace(target);
+        }
+      },
+      None => {
+        if !(is_flow(location)) {
+          route_scope = None;
+          surface = None;
+        }
+      },
+    }
+  }
+}
