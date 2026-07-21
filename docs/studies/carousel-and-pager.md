@@ -52,11 +52,12 @@ the current page is "uncontrolled in the spike", and `page-change` is
 
 On `feature/uhura-0.4-language-rewrite`:
 
-- The checker keeps `pager` in the native element vocabulary, keeps
-  `("pager", "page-change")` as a valid event, restricts attributes to
-  `indicator` (`none | dots`) and `label` (required text), and defines **no
-  current-page, page-size, or direction attribute**
-  (`crates/uhura-check/src/checker.rs`).
+- The checked vocabulary keeps `pager` as a native element with attributes
+  restricted to `indicator` (`none | dots`) and a required `label`, a
+  `page-change` event, and **no current-page, page-size, or direction
+  attribute** (`crates/uhura-check/src/ui_catalog/elements.rs` at the current
+  head; earlier revisions carried the same rules inside
+  `crates/uhura-check/src/checker.rs`).
 - The web renderer projects `pager` to `role="group"` plus an `aria-label`
   taken from `label`, builds a scroll-snap track
   (`scroll-snap-type: x mandatory`; each child `flex: 0 0 100%;
