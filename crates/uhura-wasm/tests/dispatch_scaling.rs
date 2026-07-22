@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value as JsonValue, json};
 use uhura_base::to_canonical_json;
-use uhura_check::check_v04_project_modules;
-use uhura_syntax::v04::{Module, SourceIdentity, parse};
+use uhura_check::check_project_modules;
+use uhura_syntax::{Module, SourceIdentity, parse};
 use uhura_wasm::{BROWSER_PROTOCOL, Session};
 
 const PACKAGE: &str = "example.dispatch-scaling@1";
@@ -65,7 +65,7 @@ fn module(file: u32, logical: &str, source: &str) -> Module {
 }
 
 fn session() -> Session {
-    let checked = check_v04_project_modules(&[module(1, "counter", MACHINE), module(2, "web", UI)]);
+    let checked = check_project_modules(&[module(1, "counter", MACHINE), module(2, "web", UI)]);
     assert!(
         checked.diagnostics.is_empty(),
         "checker diagnostics:\n{:#?}",

@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use crate::resource_manifest::{ResourceManifest, ResourceManifestIssue, load_resource_manifest};
 
-pub const LANGUAGE_0_4: &str = "0.4";
+pub const LANGUAGE_VERSION: &str = "0.4";
 
 /// A parsed `uhura.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -356,12 +356,12 @@ fn parse_project(
         .and_then(|name| package_name(name, "project.name", issues));
     let version = positive_integer(project.get("version"), "project.version", issues);
     let language = match required_string(project.get("language"), "project.language", issues) {
-        Some(LANGUAGE_0_4) => Some(LANGUAGE_0_4.to_string()),
+        Some(LANGUAGE_VERSION) => Some(LANGUAGE_VERSION.to_string()),
         Some(language) => {
             issue(
                 issues,
                 "project.language",
-                format!("expected exact language version `{LANGUAGE_0_4}`, found `{language}`"),
+                format!("expected exact language version `{LANGUAGE_VERSION}`, found `{language}`"),
             );
             None
         }

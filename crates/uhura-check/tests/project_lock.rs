@@ -345,7 +345,7 @@ fn every_package_dependency_map_and_relative_path_is_exact() {
 }
 
 #[test]
-fn vendored_dependency_resources_are_reserved_in_language_0_4() {
+fn vendored_dependency_resources_are_reserved() {
     let (root, mut captures, lock) = valid_graph();
     captures[0].manifest.resources.assets.manifest = Some("assets/manifest.toml".into());
     let issues = check_project_lock(&root, Some(&lock), &captures).unwrap_err();

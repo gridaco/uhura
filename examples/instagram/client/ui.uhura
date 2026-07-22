@@ -2255,6 +2255,7 @@ pub ui PostCard for Instagram(view) {
   {#if view.authority is Authority::Ready {
     data: data,
   }}
+    <!-- @annotation The complete post-card presentation, shared across every static PostCard example. -->
     <view class="post-card">
       <view class="author-row">
         <img

@@ -394,7 +394,7 @@ impl MachineProgram {
                 self.identity_protocol
             ));
         }
-        self.validate_v04_finite_view_boundaries()?;
+        self.validate_finite_view_boundaries()?;
         for (machine, declarations) in &self.composed_part_declarations {
             if !self.machines.contains_key(machine) {
                 return Err(format!(
@@ -444,44 +444,44 @@ impl MachineProgram {
         Ok(())
     }
 
-    fn validate_v04_finite_view_boundaries(&self) -> Result<(), String> {
+    fn validate_finite_view_boundaries(&self) -> Result<(), String> {
         for (id, definition) in &self.types {
             if let TypeDef::Key { underlying, .. } = definition {
-                self.validate_v04_boundary_type(underlying, &format!("key `{id}`"))?;
+                self.validate_boundary_type(underlying, &format!("key `{id}`"))?;
             }
         }
         for (id, ty) in &self.constant_types {
-            self.validate_v04_boundary_type(ty, &format!("constant `{id}`"))?;
+            self.validate_boundary_type(ty, &format!("constant `{id}`"))?;
         }
         for machine in self.machines.values() {
-            self.validate_v04_boundary_type(
+            self.validate_boundary_type(
                 &machine.config,
                 &format!("machine `{}` configuration", machine.id),
             )?;
-            self.validate_v04_boundary_definition(
+            self.validate_boundary_definition(
                 &machine.local_input,
                 &format!("machine `{}` input", machine.id),
             )?;
             for command in &machine.local_commands {
-                self.validate_v04_boundary_constructor(
+                self.validate_boundary_constructor(
                     &command.constructor,
                     &format!("machine `{}` command", machine.id),
                 )?;
             }
             for outcome in &machine.outcomes {
-                self.validate_v04_boundary_constructor(
+                self.validate_boundary_constructor(
                     &outcome.constructor,
                     &format!("machine `{}` outcome", machine.id),
                 )?;
             }
             for field in &machine.state {
-                self.validate_v04_boundary_type(
+                self.validate_boundary_type(
                     &field.ty,
                     &format!("machine `{}` state field `{}`", machine.id, field.name),
                 )?;
             }
             for field in &machine.observation {
-                self.validate_v04_boundary_type(
+                self.validate_boundary_type(
                     &field.ty,
                     &format!(
                         "machine `{}` observation field `{}`",
@@ -491,7 +491,7 @@ impl MachineProgram {
             }
             for port in &machine.ports {
                 for (index, ty) in port.type_arguments.iter().enumerate() {
-                    self.validate_v04_boundary_type(
+                    self.validate_boundary_type(
                         ty,
                         &format!(
                             "machine `{}` port `{}` contract type argument #{}",
@@ -502,7 +502,7 @@ impl MachineProgram {
                     )?;
                 }
                 if let Some(configuration) = &port.configuration
-                    && let Some(path) = self.v04_expression_finite_view_path(configuration)
+                    && let Some(path) = self.expression_finite_view_path(configuration)
                 {
                     return Err(format!(
                         "Uhura 0.4 `FiniteView` is ephemeral and cannot cross machine `{}` port `{}` configuration; nested path: `{}`",
@@ -512,13 +512,13 @@ impl MachineProgram {
                     ));
                 }
                 for constructor in &port.receive {
-                    self.validate_v04_boundary_constructor(
+                    self.validate_boundary_constructor(
                         constructor,
                         &format!("machine `{}` port `{}` receive", machine.id, port.name),
                     )?;
                 }
                 for constructor in &port.send {
-                    self.validate_v04_boundary_constructor(
+                    self.validate_boundary_constructor(
                         constructor,
                         &format!("machine `{}` port `{}` send", machine.id, port.name),
                     )?;
@@ -528,31 +528,29 @@ impl MachineProgram {
         Ok(())
     }
 
-    fn validate_v04_boundary_definition(
+    fn validate_boundary_definition(
         &self,
         definition: &TypeDef,
         boundary: &str,
     ) -> Result<(), String> {
         match definition {
-            TypeDef::Key { underlying, .. } => {
-                self.validate_v04_boundary_type(underlying, boundary)
-            }
+            TypeDef::Key { underlying, .. } => self.validate_boundary_type(underlying, boundary),
             TypeDef::Record { fields, .. } => {
                 for (name, ty) in fields {
-                    self.validate_v04_boundary_type(ty, &format!("{boundary} field `{name}`"))?;
+                    self.validate_boundary_type(ty, &format!("{boundary} field `{name}`"))?;
                 }
                 Ok(())
             }
             TypeDef::Sum { constructors, .. } => {
                 for constructor in constructors {
-                    self.validate_v04_boundary_constructor(constructor, boundary)?;
+                    self.validate_boundary_constructor(constructor, boundary)?;
                 }
                 Ok(())
             }
         }
     }
 
-    fn validate_v04_boundary_constructor(
+    fn validate_boundary_constructor(
         &self,
         constructor: &ConstructorDef,
         boundary: &str,
@@ -562,7 +560,7 @@ impl MachineProgram {
                 || format!("positional field #{}", index + 1),
                 |name| format!("field `{name}`"),
             );
-            self.validate_v04_boundary_type(
+            self.validate_boundary_type(
                 ty,
                 &format!("{boundary} constructor `{}` {field}", constructor.name),
             )?;
@@ -570,7 +568,7 @@ impl MachineProgram {
         Ok(())
     }
 
-    fn validate_v04_boundary_type(&self, ty: &TypeRef, boundary: &str) -> Result<(), String> {
+    fn validate_boundary_type(&self, ty: &TypeRef, boundary: &str) -> Result<(), String> {
         let Some(path) = finite_view_path(ty, &self.types, &mut BTreeSet::new()) else {
             return Ok(());
         };
@@ -580,7 +578,7 @@ impl MachineProgram {
         ))
     }
 
-    fn v04_expression_finite_view_path(&self, expression: &Expr) -> Option<Vec<String>> {
+    fn expression_finite_view_path(&self, expression: &Expr) -> Option<Vec<String>> {
         match expression {
             Expr::Call { result_type, .. }
             | Expr::Method { result_type, .. }
@@ -602,56 +600,56 @@ impl MachineProgram {
             Expr::Tuple { values } => values.iter().enumerate().find_map(|(index, value)| {
                 nested_finite_view_path(
                     format!("Tuple[{}]", index + 1),
-                    self.v04_expression_finite_view_path(value),
+                    self.expression_finite_view_path(value),
                 )
             }),
             Expr::Record { fields } => fields.iter().find_map(|(name, value)| {
                 nested_finite_view_path(
                     format!("Record.{name}"),
-                    self.v04_expression_finite_view_path(value),
+                    self.expression_finite_view_path(value),
                 )
             }),
             Expr::Seq { values } => values.iter().find_map(|value| {
-                nested_finite_view_path("Seq.item", self.v04_expression_finite_view_path(value))
+                nested_finite_view_path("Seq.item", self.expression_finite_view_path(value))
             }),
             Expr::Table { entries, .. } => entries.iter().find_map(|(_, value)| {
-                nested_finite_view_path("Table.value", self.v04_expression_finite_view_path(value))
+                nested_finite_view_path("Table.value", self.expression_finite_view_path(value))
             }),
             Expr::If {
                 then_value,
                 else_value,
                 ..
             } => self
-                .v04_expression_finite_view_path(then_value)
-                .or_else(|| self.v04_expression_finite_view_path(else_value)),
+                .expression_finite_view_path(then_value)
+                .or_else(|| self.expression_finite_view_path(else_value)),
             Expr::Match { arms, .. } => arms
                 .iter()
-                .find_map(|arm| self.v04_expression_finite_view_path(&arm.value)),
+                .find_map(|arm| self.expression_finite_view_path(&arm.value)),
             Expr::Update { value, fields } => {
-                self.v04_expression_finite_view_path(value).or_else(|| {
+                self.expression_finite_view_path(value).or_else(|| {
                     fields.iter().find_map(|(name, value)| {
                         nested_finite_view_path(
                             format!("Record.{name}"),
-                            self.v04_expression_finite_view_path(value),
+                            self.expression_finite_view_path(value),
                         )
                     })
                 })
             }
-            Expr::Let { value, .. } => self.v04_expression_finite_view_path(value),
+            Expr::Let { value, .. } => self.expression_finite_view_path(value),
             Expr::Invoke { function, .. } => match function.as_ref() {
-                Expr::Lambda { body, .. } => self.v04_expression_finite_view_path(body),
+                Expr::Lambda { body, .. } => self.expression_finite_view_path(body),
                 _ => None,
             },
             Expr::Collect { clauses } => clauses.iter().find_map(|(_, value)| {
-                nested_finite_view_path("Seq.item", self.v04_expression_finite_view_path(value))
+                nested_finite_view_path("Seq.item", self.expression_finite_view_path(value))
             }),
             Expr::Field { value, field } => match value.as_ref() {
                 Expr::Record { fields } => fields
                     .iter()
                     .find(|(name, _)| name == field)
-                    .and_then(|(_, value)| self.v04_expression_finite_view_path(value)),
+                    .and_then(|(_, value)| self.expression_finite_view_path(value)),
                 _ => self
-                    .v04_expression_declared_type(expression)
+                    .expression_declared_type(expression)
                     .and_then(|ty| finite_view_path(&ty, &self.types, &mut BTreeSet::new())),
             },
             Expr::Literal { .. }
@@ -660,12 +658,12 @@ impl MachineProgram {
             | Expr::Is { .. }
             | Expr::Lambda { .. } => None,
             Expr::Index { .. } => self
-                .v04_expression_declared_type(expression)
+                .expression_declared_type(expression)
                 .and_then(|ty| finite_view_path(&ty, &self.types, &mut BTreeSet::new())),
         }
     }
 
-    fn v04_expression_declared_type(&self, expression: &Expr) -> Option<TypeRef> {
+    fn expression_declared_type(&self, expression: &Expr) -> Option<TypeRef> {
         match expression {
             Expr::Literal { value } => match value {
                 Value::Unit => Some(TypeRef::Unit),
@@ -687,7 +685,7 @@ impl MachineProgram {
                 Value::Tuple(values) => values
                     .iter()
                     .map(|value| {
-                        self.v04_expression_declared_type(&Expr::Literal {
+                        self.expression_declared_type(&Expr::Literal {
                             value: value.clone(),
                         })
                     })
@@ -696,7 +694,7 @@ impl MachineProgram {
                 Value::Record(fields) => fields
                     .iter()
                     .map(|(name, value)| {
-                        self.v04_expression_declared_type(&Expr::Literal {
+                        self.expression_declared_type(&Expr::Literal {
                             value: value.clone(),
                         })
                         .map(|ty| (name.clone(), ty))
@@ -704,7 +702,7 @@ impl MachineProgram {
                     .collect::<Option<Vec<_>>>()
                     .map(|fields| TypeRef::Record { fields }),
                 Value::Seq(values) => values.first().and_then(|value| {
-                    self.v04_expression_declared_type(&Expr::Literal {
+                    self.expression_declared_type(&Expr::Literal {
                         value: value.clone(),
                     })
                     .map(|value| TypeRef::Seq {
@@ -712,7 +710,7 @@ impl MachineProgram {
                     })
                 }),
                 Value::NonEmpty(values) => values.first().and_then(|value| {
-                    self.v04_expression_declared_type(&Expr::Literal {
+                    self.expression_declared_type(&Expr::Literal {
                         value: value.clone(),
                     })
                     .map(|value| TypeRef::NonEmpty {
@@ -727,19 +725,19 @@ impl MachineProgram {
             }),
             Expr::Tuple { values } => values
                 .iter()
-                .map(|value| self.v04_expression_declared_type(value))
+                .map(|value| self.expression_declared_type(value))
                 .collect::<Option<Vec<_>>>()
                 .map(|values| TypeRef::Tuple { values }),
             Expr::Record { fields } => fields
                 .iter()
                 .map(|(name, value)| {
-                    self.v04_expression_declared_type(value)
+                    self.expression_declared_type(value)
                         .map(|ty| (name.clone(), ty))
                 })
                 .collect::<Option<Vec<_>>>()
                 .map(|fields| TypeRef::Record { fields }),
             Expr::Seq { values } => values.first().and_then(|value| {
-                self.v04_expression_declared_type(value)
+                self.expression_declared_type(value)
                     .map(|value| TypeRef::Seq {
                         value: Box::new(value),
                     })
@@ -751,7 +749,7 @@ impl MachineProgram {
             Expr::Table {
                 key_type, entries, ..
             } => entries.first().and_then(|(_, value)| {
-                self.v04_expression_declared_type(value)
+                self.expression_declared_type(value)
                     .map(|value| TypeRef::Table {
                         key: Box::new(TypeRef::Named {
                             id: key_type.clone(),
@@ -761,13 +759,13 @@ impl MachineProgram {
             }),
             Expr::Unary { op, value } => match op {
                 UnaryOp::Not => Some(TypeRef::Bool),
-                UnaryOp::Negate => self.v04_expression_declared_type(value),
+                UnaryOp::Negate => self.expression_declared_type(value),
             },
             Expr::Binary {
                 op, left, right: _, ..
             } => match op {
                 BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
-                    self.v04_expression_declared_type(left)
+                    self.expression_declared_type(left)
                 }
                 BinaryOp::Equal
                 | BinaryOp::NotEqual
@@ -779,14 +777,14 @@ impl MachineProgram {
                 | BinaryOp::Or => Some(TypeRef::Bool),
             },
             Expr::Invoke { function, .. } => match function.as_ref() {
-                Expr::Lambda { body, .. } => self.v04_expression_declared_type(body),
+                Expr::Lambda { body, .. } => self.expression_declared_type(body),
                 _ => None,
             },
             Expr::Field { value, field } => {
-                let value = self.v04_expression_declared_type(value)?;
-                self.v04_field_type(&value, field, &mut BTreeSet::new())
+                let value = self.expression_declared_type(value)?;
+                self.field_type(&value, field, &mut BTreeSet::new())
             }
-            Expr::Index { value, .. } => match self.v04_expression_declared_type(value)? {
+            Expr::Index { value, .. } => match self.expression_declared_type(value)? {
                 TypeRef::Seq { value }
                 | TypeRef::NonEmpty { value }
                 | TypeRef::FiniteView { value } => Some(*value),
@@ -798,17 +796,17 @@ impl MachineProgram {
                 else_value,
                 ..
             } => self
-                .v04_expression_declared_type(then_value)
-                .or_else(|| self.v04_expression_declared_type(else_value)),
+                .expression_declared_type(then_value)
+                .or_else(|| self.expression_declared_type(else_value)),
             Expr::Match { arms, .. } => arms
                 .first()
-                .and_then(|arm| self.v04_expression_declared_type(&arm.value)),
+                .and_then(|arm| self.expression_declared_type(&arm.value)),
             Expr::Is { .. } => Some(TypeRef::Bool),
             Expr::Update { value, .. } | Expr::Let { value, .. } => {
-                self.v04_expression_declared_type(value)
+                self.expression_declared_type(value)
             }
             Expr::Collect { clauses } => clauses.first().and_then(|(_, value)| {
-                self.v04_expression_declared_type(value)
+                self.expression_declared_type(value)
                     .map(|value| TypeRef::Seq {
                         value: Box::new(value),
                     })
@@ -817,7 +815,7 @@ impl MachineProgram {
         }
     }
 
-    fn v04_field_type(
+    fn field_type(
         &self,
         ty: &TypeRef,
         field: &str,
@@ -834,7 +832,7 @@ impl MachineProgram {
                     .find(|(name, _)| name == field)
                     .map(|(_, ty)| ty.clone()),
                 Some(TypeDef::Key { underlying, .. }) => {
-                    self.v04_field_type(underlying, field, visited)
+                    self.field_type(underlying, field, visited)
                 }
                 Some(TypeDef::Sum { .. }) | None => None,
             },
@@ -1260,9 +1258,9 @@ impl Program {
         {
             self.machine_program.validate_protocol()?;
         }
-        self.machine_program.assign_v04_site_ids();
-        self.machine_program.validate_v04_site_ids()?;
-        self.assign_v04_presentation_node_ids();
+        self.machine_program.assign_site_ids();
+        self.machine_program.validate_site_ids()?;
+        self.assign_presentation_node_ids();
         let program_hashes = self
             .machine_program
             .machines
@@ -1642,7 +1640,7 @@ impl Program {
         let mut selected_constants = BTreeSet::new();
         let mut selected_functions = BTreeSet::new();
         let mut selected_routes = BTreeSet::new();
-        let machine_json = semantic_machine_json_v04(machine);
+        let machine_json = semantic_machine_json(machine);
 
         loop {
             let mut changed = false;
@@ -1718,7 +1716,7 @@ impl Program {
                 self.machine_program
                     .functions
                     .get(id)
-                    .map(|value| (id.clone(), semantic_function_json_v04(value)))
+                    .map(|value| (id.clone(), semantic_function_json(value)))
             })
             .collect::<BTreeMap<_, _>>();
         let constants = selected_constants
@@ -1778,7 +1776,7 @@ impl Program {
 }
 
 impl MachineProgram {
-    fn assign_v04_site_ids(&mut self) {
+    fn assign_site_ids(&mut self) {
         let identities = &mut self.site_identities;
         for (machine_id, machine) in &mut self.machines {
             for (index, (_, source)) in machine.invariants.iter_mut().enumerate() {
@@ -1815,7 +1813,7 @@ impl MachineProgram {
         }
     }
 
-    fn validate_v04_site_ids(&self) -> Result<(), String> {
+    fn validate_site_ids(&self) -> Result<(), String> {
         let mut used = BTreeMap::<&str, BTreeSet<&str>>::new();
         for (machine_id, machine) in &self.machines {
             for (_, source) in &machine.invariants {
@@ -1875,13 +1873,13 @@ impl MachineProgram {
 }
 
 impl Program {
-    fn assign_v04_presentation_node_ids(&mut self) {
+    fn assign_presentation_node_ids(&mut self) {
         for presentation in self.presentations.values_mut() {
             let name = presentation
                 .id
                 .rsplit_once("::")
                 .map_or(presentation.id.as_str(), |(_, name)| name);
-            presentation.source.id = v04_node_id(
+            presentation.source.id = node_id(
                 &presentation.id,
                 "root",
                 "ui",
@@ -2445,13 +2443,13 @@ fn semantic_json(value: &impl Serialize) -> serde_json::Value {
     value
 }
 
-fn semantic_function_json_v04(function: &Function) -> serde_json::Value {
+fn semantic_function_json(function: &Function) -> serde_json::Value {
     let mut function = function.clone();
     function.source.id.clear();
     semantic_json(&function)
 }
 
-fn semantic_machine_json_v04(machine: &Machine) -> serde_json::Value {
+fn semantic_machine_json(machine: &Machine) -> serde_json::Value {
     let mut machine = machine.clone();
     machine.source.id.clear();
     for (_, source) in &mut machine.requires {
@@ -2627,10 +2625,10 @@ fn assign_ui_node_ids(public_owner: &str, prefix: &str, nodes: &mut [UiNode]) {
         let path = format!("{prefix}/{ordinal}");
         match node {
             UiNode::Text { source, .. } => {
-                source.id = v04_node_id(public_owner, "root", "ui_text", &format!("{path}/text"));
+                source.id = node_id(public_owner, "root", "ui_text", &format!("{path}/text"));
             }
             UiNode::Interpolation { source, .. } => {
-                source.id = v04_node_id(
+                source.id = node_id(
                     public_owner,
                     "root",
                     "ui_interpolation",
@@ -2643,7 +2641,7 @@ fn assign_ui_node_ids(public_owner: &str, prefix: &str, nodes: &mut [UiNode]) {
                 children,
                 source,
             } => {
-                source.id = v04_node_id(
+                source.id = node_id(
                     public_owner,
                     "root",
                     "ui_element",
@@ -2665,7 +2663,7 @@ fn assign_ui_node_ids(public_owner: &str, prefix: &str, nodes: &mut [UiNode]) {
                         "attribute"
                     };
                     let duplicate = duplicates.entry((category, name)).or_default();
-                    attribute.source.id = v04_node_id(
+                    attribute.source.id = node_id(
                         public_owner,
                         "root",
                         kind,
@@ -2678,13 +2676,13 @@ fn assign_ui_node_ids(public_owner: &str, prefix: &str, nodes: &mut [UiNode]) {
             UiNode::If {
                 children, source, ..
             } => {
-                source.id = v04_node_id(public_owner, "root", "ui_if", &format!("{path}/if"));
+                source.id = node_id(public_owner, "root", "ui_if", &format!("{path}/if"));
                 assign_ui_node_ids(public_owner, &format!("{path}/then"), children);
             }
             UiNode::Match { cases, source, .. } => {
-                source.id = v04_node_id(public_owner, "root", "ui_match", &format!("{path}/match"));
+                source.id = node_id(public_owner, "root", "ui_match", &format!("{path}/match"));
                 for (case, value) in cases.iter_mut().enumerate() {
-                    value.source.id = v04_node_id(
+                    value.source.id = node_id(
                         public_owner,
                         "root",
                         "ui_case",
@@ -2700,7 +2698,7 @@ fn assign_ui_node_ids(public_owner: &str, prefix: &str, nodes: &mut [UiNode]) {
             UiNode::Each {
                 children, source, ..
             } => {
-                source.id = v04_node_id(public_owner, "root", "ui_each", &format!("{path}/each"));
+                source.id = node_id(public_owner, "root", "ui_each", &format!("{path}/each"));
                 assign_ui_node_ids(public_owner, &format!("{path}/children"), children);
             }
         }
@@ -2762,7 +2760,7 @@ fn pattern_semantic_path(pattern: &Pattern) -> String {
     uhura_base::sha256_hex(canonical.as_bytes())
 }
 
-fn v04_node_id(owner: &str, composition: &str, kind: &str, path: &str) -> String {
+fn node_id(owner: &str, composition: &str, kind: &str, path: &str) -> String {
     crate::semantic_node_id(owner, composition, kind, path)
 }
 
@@ -3974,7 +3972,7 @@ mod tests {
         }
     }
 
-    fn assert_v04_finite_view_boundary(program: &Program, boundary: &str, nested_path: &str) {
+    fn assert_finite_view_boundary(program: &Program, boundary: &str, nested_path: &str) {
         let error = program.validate_protocol().unwrap_err();
         assert!(
             error.contains(boundary) && error.contains(nested_path),
@@ -3982,17 +3980,9 @@ mod tests {
         );
     }
 
-    fn hash_program_v04() -> Program {
-        hash_program()
-    }
-
-    fn profile_program_v04() -> Program {
-        profile_program()
-    }
-
     #[test]
-    fn v04_machine_identity_excludes_logical_module_layout() {
-        let base = hash_program_v04();
+    fn machine_identity_excludes_logical_module_layout() {
+        let base = hash_program();
         base.validate_protocol().unwrap();
 
         let mut moved = base.clone();
@@ -4008,7 +3998,7 @@ mod tests {
 
     #[test]
     fn current_identity_protocol_is_mandatory() {
-        let mut program = hash_program_v04();
+        let mut program = hash_program();
         program.machine_program.identity_protocol = "removed-identity-protocol".into();
         assert!(
             program
@@ -4020,7 +4010,7 @@ mod tests {
 
     #[test]
     fn retired_language_artifacts_are_rejected() {
-        let mut program = hash_program_v04();
+        let mut program = hash_program();
         program.machine_program.language = "uhura 0.3".into();
         assert_eq!(
             program.validate_protocol().unwrap_err(),
@@ -4033,8 +4023,8 @@ mod tests {
     }
 
     #[test]
-    fn v04_protocol_rejects_finite_views_at_every_declared_value_boundary() {
-        let mut key = hash_program_v04();
+    fn protocol_rejects_finite_views_at_every_declared_value_boundary() {
+        let mut key = hash_program();
         key.machine_program.types.insert(
             "example.hash@1::InvalidKey".into(),
             TypeDef::Key {
@@ -4042,9 +4032,9 @@ mod tests {
                 underlying: finite_view(),
             },
         );
-        assert_v04_finite_view_boundary(&key, "key `example.hash@1::InvalidKey`", "FiniteView");
+        assert_finite_view_boundary(&key, "key `example.hash@1::InvalidKey`", "FiniteView");
 
-        let mut constant = hash_program_v04();
+        let mut constant = hash_program();
         constant
             .machine_program
             .constants
@@ -4053,13 +4043,9 @@ mod tests {
             .machine_program
             .constant_types
             .insert("example.hash@1::cached".into(), finite_view());
-        assert_v04_finite_view_boundary(
-            &constant,
-            "constant `example.hash@1::cached`",
-            "FiniteView",
-        );
+        assert_finite_view_boundary(&constant, "constant `example.hash@1::cached`", "FiniteView");
 
-        let mut configuration = hash_program_v04();
+        let mut configuration = hash_program();
         configuration
             .machine_program
             .machines
@@ -4068,13 +4054,13 @@ mod tests {
             .config = TypeRef::Option {
             value: Box::new(finite_view()),
         };
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &configuration,
             "machine `example.hash@1::Machine` configuration",
             "Option.value -> FiniteView",
         );
 
-        let mut input = hash_program_v04();
+        let mut input = hash_program();
         let TypeDef::Sum { constructors, .. } = &mut input
             .machine_program
             .machines
@@ -4087,13 +4073,13 @@ mod tests {
         constructors[0]
             .fields
             .push((Some("value".into()), finite_view()));
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &input,
             "machine `example.hash@1::Machine` input constructor `ping` field `value`",
             "FiniteView",
         );
 
-        let mut command = hash_program_v04();
+        let mut command = hash_program();
         command
             .machine_program
             .machines
@@ -4107,13 +4093,13 @@ mod tests {
                 },
                 source: source("send"),
             });
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &command,
             "machine `example.hash@1::Machine` command constructor `send` field `value`",
             "FiniteView",
         );
 
-        let mut outcome = hash_program_v04();
+        let mut outcome = hash_program();
         outcome
             .machine_program
             .machines
@@ -4123,14 +4109,14 @@ mod tests {
             .constructor
             .fields
             .push((Some("value".into()), finite_view()));
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &outcome,
             "machine `example.hash@1::Machine` outcome constructor `done` field `value`",
             "FiniteView",
         );
 
         let wrapper = "example.hash@1::EphemeralBox";
-        let mut state = hash_program_v04();
+        let mut state = hash_program();
         state.machine_program.types.insert(
             wrapper.into(),
             TypeDef::Record {
@@ -4150,13 +4136,13 @@ mod tests {
             .unwrap()
             .state[0]
             .ty = TypeRef::Named { id: wrapper.into() };
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &state,
             "machine `example.hash@1::Machine` state field `count`",
             "EphemeralBox.values -> Option.value -> FiniteView",
         );
 
-        let mut observation = hash_program_v04();
+        let mut observation = hash_program();
         observation
             .machine_program
             .machines
@@ -4164,7 +4150,7 @@ mod tests {
             .unwrap()
             .observation[0]
             .ty = finite_view();
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &observation,
             "machine `example.hash@1::Machine` observation field `count`",
             "FiniteView",
@@ -4181,20 +4167,20 @@ mod tests {
             contract_hash: String::new(),
             source: source("forged-port"),
         };
-        let mut port_argument = hash_program_v04();
+        let mut port_argument = hash_program();
         port_argument
             .machine_program
             .machines
             .get_mut(MACHINE)
             .unwrap()
             .ports = vec![forged_port(vec![finite_view()], Vec::new(), Vec::new())];
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &port_argument,
             "port `forged` contract type argument #1",
             "FiniteView",
         );
 
-        let mut port_configuration = hash_program_v04();
+        let mut port_configuration = hash_program();
         let configuration_wrapper = "example.hash@1::PortConfigurationProbe";
         port_configuration.machine_program.types.insert(
             configuration_wrapper.into(),
@@ -4220,7 +4206,7 @@ mod tests {
         assert!(
             port_configuration
                 .machine_program
-                .v04_expression_finite_view_path(&safe_field)
+                .expression_finite_view_path(&safe_field)
                 .is_none(),
             "selecting a storable field must not reject an ephemeral sibling",
         );
@@ -4235,13 +4221,13 @@ mod tests {
             .get_mut(MACHINE)
             .unwrap()
             .ports = vec![configured];
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &port_configuration,
             "port `forged` configuration",
             "FiniteView",
         );
 
-        let mut port_receive = hash_program_v04();
+        let mut port_receive = hash_program();
         port_receive
             .machine_program
             .machines
@@ -4255,13 +4241,13 @@ mod tests {
             }],
             Vec::new(),
         )];
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &port_receive,
             "port `forged` receive constructor `received` field `value`",
             "FiniteView",
         );
 
-        let mut port_send = hash_program_v04();
+        let mut port_send = hash_program();
         port_send
             .machine_program
             .machines
@@ -4275,7 +4261,7 @@ mod tests {
                 fields: vec![(Some("value".into()), finite_view())],
             }],
         )];
-        assert_v04_finite_view_boundary(
+        assert_finite_view_boundary(
             &port_send,
             "port `forged` send constructor `sent` field `value`",
             "FiniteView",
@@ -4283,10 +4269,10 @@ mod tests {
     }
 
     #[test]
-    fn v04_protocol_keeps_finite_views_inside_ephemeral_evaluator_material() {
+    fn protocol_keeps_finite_views_inside_ephemeral_evaluator_material() {
         let wrapper = "example.hash@1::EphemeralBox";
         let function = "example.hash@1::ephemeral_identity";
-        let mut program = hash_program_v04();
+        let mut program = hash_program();
         program.machine_program.types.insert(
             wrapper.into(),
             TypeDef::Record {
@@ -4357,7 +4343,7 @@ mod tests {
     #[test]
     fn public_ir_rejects_a_forged_recursive_finite_view_boundary_before_admission() {
         let wrapper = "example.hash@1::ForgedStoredView";
-        let mut program = hash_program_v04();
+        let mut program = hash_program();
         program.machine_program.types.insert(
             wrapper.into(),
             TypeDef::Record {
@@ -4400,8 +4386,8 @@ mod tests {
     }
 
     #[test]
-    fn v04_composed_part_public_ids_are_runtime_inert_machine_identity_material() {
-        let base = hash_program_v04();
+    fn composed_part_public_ids_are_runtime_inert_machine_identity_material() {
+        let base = hash_program();
         let mut composed = base.clone();
         composed.machine_program.composed_part_declarations.insert(
             MACHINE.into(),
@@ -4424,7 +4410,7 @@ mod tests {
 
     #[test]
     fn composed_part_identity_rejects_unknown_machines() {
-        let mut unknown_machine = hash_program_v04();
+        let mut unknown_machine = hash_program();
         unknown_machine
             .machine_program
             .composed_part_declarations
@@ -4441,8 +4427,8 @@ mod tests {
     }
 
     #[test]
-    fn v04_hash_retains_only_stable_runtime_site_ids() {
-        let mut base = hash_program_v04();
+    fn hash_retains_only_stable_runtime_site_ids() {
+        let mut base = hash_program();
         let machine = base.machine_program.machines.get_mut(MACHINE).unwrap();
         machine.invariants.push((
             Expr::Literal {
@@ -4501,8 +4487,8 @@ mod tests {
     }
 
     #[test]
-    fn public_v04_ir_rejects_an_unframed_valid_looking_site_id() {
-        let mut program = hash_program_v04();
+    fn public_ir_rejects_an_unframed_valid_looking_site_id() {
+        let mut program = hash_program();
         program
             .machine_program
             .machines
@@ -4746,8 +4732,8 @@ mod tests {
     }
 
     #[test]
-    fn v04_ui_identity_uses_exact_public_ids_and_reachable_contracts() {
-        let base = profile_program_v04();
+    fn ui_identity_uses_exact_public_ids_and_reachable_contracts() {
+        let base = profile_program();
         let presentation_id = "example.hash@1::Web";
         let interface = base.machine_ui_interface_hash(MACHINE).unwrap();
         let presentation = base.presentation_hashes[presentation_id].clone();
@@ -4942,7 +4928,7 @@ mod tests {
 
     #[test]
     fn application_program_uses_the_flat_current_wire_contract() {
-        let program = profile_program_v04();
+        let program = profile_program();
         let actual = serde_json::to_value(&program).expect("application program serializes");
         let mut expected = serde_json::to_value(program.as_machine_program())
             .expect("machine program serializes")
@@ -5293,7 +5279,7 @@ mod tests {
     }
 
     #[test]
-    fn v04_machine_ui_interface_identity_covers_the_complete_aggregate_input_contract() {
+    fn machine_ui_interface_identity_covers_the_complete_aggregate_input_contract() {
         let presentation_id = "example.hash@1::Web";
         let port_data = "example.hash@1::PortData";
         let receive_port = PortDef {
@@ -5321,7 +5307,7 @@ mod tests {
             source: source("requests-port"),
         };
 
-        let mut base = profile_program_v04();
+        let mut base = profile_program();
         base.machine_program.types.insert(
             port_data.into(),
             TypeDef::Record {

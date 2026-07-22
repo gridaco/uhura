@@ -61,7 +61,7 @@ boundary.
 
 ### Compiler boundary
 
-[`compile_v04_project`](../../crates/uhura-check/src/v04_compile.rs) is the
+[`compile_project`](../../crates/uhura-check/src/compile.rs) is the
 canonical pure 0.4 frontend service after source admission. It receives an
 already admitted manifest, exact dependency captures, and source bytes; it
 parses, resolves, checks, lowers, and returns deterministically ordered
@@ -79,7 +79,7 @@ icon name.
 ### UI boundary
 
 UI phrase structure is parsed under
-[`uhura-syntax/src/v04/ui.rs`](../../crates/uhura-syntax/src/v04/ui.rs), while
+[`uhura-syntax/src/ui.rs`](../../crates/uhura-syntax/src/ui.rs), while
 the finite 0.4 semantic vocabulary lives in
 [`uhura-check/src/ui_catalog/elements.rs`](../../crates/uhura-check/src/ui_catalog/elements.rs).
 That catalogue owns element availability, attributes, content models, events,
@@ -112,7 +112,7 @@ Use the smallest route that covers the semantic change.
 | Machine semantics or IR | Update the owning 0.4 kernel/source document, checker lowering, `MachineProgram`/runtime code, focused core tests, and native/Wasm conformance where the wire or behavior changes. UI and host code should remain untouched unless their declared interface changes. |
 | Core source syntax | Update the 0.4 source document and grammar together, then lexer/parser/AST/formatter, semantic checking, exact diagnostics, and at least one harness or negative fixture. Do not make the host parse syntax. |
 | Project composition or identity | Update the 0.4 project/source documents, resolution and canonical compiler service, CLI/host admission adapters, identity/provenance tests, and source-layout equivalence fixtures. |
-| UI syntax only | Update the 0.4 application document, the v0.4 UI parser/formatter, and parser/checker tests. Element semantics still belong to the catalogue. |
+| UI syntax only | Update the 0.4 application document, the UI parser/formatter, and parser/checker tests. Element semantics still belong to the catalogue. |
 | Element, attribute, event, or content rule | Update the executable 0.4 checker catalogue, its focused checker tests, this version's catalogue page, and conformance coverage. Add or change a browser adapter only when physical realization changes. |
 | Uhura browser primitive | In the same patch, update the checker catalogue realization class, browser parity JSON, one adapter under `web/src/renderer/primitives/`, shared primitive CSS when needed, and Rust/TypeScript parity plus behavior tests. |
 | Native HTML realization | Keep semantics in the checker catalogue and generic projection. Do not create an adapter merely to repeat the platform element without an Uhura-owned lifecycle. |

@@ -1,7 +1,10 @@
 # RFC 0003 — Source comments, declaration docs, and markup annotations
 
 - **Status:** Accepted
-- **Implementation:** Pending
+- **Implementation:** Partial — 0.4 sibling-list markup comments, annotation
+  attachment, and checked authoring projection are implemented; the exact
+  non-sibling `UH0001` placement gate, DSL ordinary-comment attachment, and
+  declaration documentation remain pending
 - **Scope:** `.uhura` ordinary comments, declaration documentation, tagged
   markup annotations, attachment, canonical formatting, checked authoring
   metadata, and diagnostics. The accepted 0.3 `.examples.uhura` target maps to

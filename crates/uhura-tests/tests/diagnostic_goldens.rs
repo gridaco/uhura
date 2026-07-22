@@ -1,8 +1,8 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use uhura_base::{SourceMap, to_envelope};
-use uhura_check::check_v04_module;
-use uhura_syntax::v04::{SourceIdentity, parse};
+use uhura_check::check_module;
+use uhura_syntax::{SourceIdentity, parse};
 
 struct GoldenCase {
     name: &'static str,
@@ -13,28 +13,28 @@ struct GoldenCase {
 const CASES: &[GoldenCase] = &[
     GoldenCase {
         name: "parse-invalid-expression",
-        source: include_str!("fixtures/diagnostics/v04/parse-invalid-expression.uhura"),
-        expected: include_str!("fixtures/diagnostics/v04/parse-invalid-expression.json"),
+        source: include_str!("fixtures/diagnostics/parse-invalid-expression.uhura"),
+        expected: include_str!("fixtures/diagnostics/parse-invalid-expression.json"),
     },
     GoldenCase {
         name: "parse-fix-declaration-typo",
-        source: include_str!("fixtures/diagnostics/v04/parse-fix-declaration-typo.uhura"),
-        expected: include_str!("fixtures/diagnostics/v04/parse-fix-declaration-typo.json"),
+        source: include_str!("fixtures/diagnostics/parse-fix-declaration-typo.uhura"),
+        expected: include_str!("fixtures/diagnostics/parse-fix-declaration-typo.json"),
     },
     GoldenCase {
         name: "name-resolution",
-        source: include_str!("fixtures/diagnostics/v04/name-resolution.uhura"),
-        expected: include_str!("fixtures/diagnostics/v04/name-resolution.json"),
+        source: include_str!("fixtures/diagnostics/name-resolution.uhura"),
+        expected: include_str!("fixtures/diagnostics/name-resolution.json"),
     },
     GoldenCase {
         name: "type-mismatch",
-        source: include_str!("fixtures/diagnostics/v04/type-mismatch.uhura"),
-        expected: include_str!("fixtures/diagnostics/v04/type-mismatch.json"),
+        source: include_str!("fixtures/diagnostics/type-mismatch.uhura"),
+        expected: include_str!("fixtures/diagnostics/type-mismatch.json"),
     },
     GoldenCase {
         name: "ui-content",
-        source: include_str!("fixtures/diagnostics/v04/ui-content.uhura"),
-        expected: include_str!("fixtures/diagnostics/v04/ui-content.json"),
+        source: include_str!("fixtures/diagnostics/ui-content.uhura"),
+        expected: include_str!("fixtures/diagnostics/ui-content.json"),
     },
 ];
 
@@ -46,7 +46,7 @@ fn public_envelope(path: &str, source: &str) -> serde_json::Value {
         source,
     );
     let diagnostics = if parsed.diagnostics.is_empty() {
-        check_v04_module(&parsed.module).diagnostics
+        check_module(&parsed.module).diagnostics
     } else {
         parsed
             .diagnostics
@@ -58,7 +58,7 @@ fn public_envelope(path: &str, source: &str) -> serde_json::Value {
 }
 
 #[test]
-fn v04_public_diagnostic_envelopes_match_goldens() {
+fn public_diagnostic_envelopes_match_goldens() {
     let mut mismatches = Vec::new();
     for case in CASES {
         let path = format!("diagnostics/{}.uhura", case.name);
@@ -81,7 +81,7 @@ fn v04_public_diagnostic_envelopes_match_goldens() {
 }
 
 #[test]
-fn v04_malformed_input_smoke_never_panics() {
+fn malformed_input_smoke_never_panics() {
     const MALFORMED: &[&str] = &[
         "",
         "pub",
@@ -168,7 +168,7 @@ pub ui ExampleWeb for Example(view) {
                 "semantic smoke case must parse: {:#?}",
                 parsed.diagnostics
             );
-            check_v04_module(&parsed.module)
+            check_module(&parsed.module)
         }));
         assert!(result.is_ok(), "checker panicked for semantic case {index}");
     }

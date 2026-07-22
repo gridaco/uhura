@@ -26,7 +26,11 @@ use uhura_check::project_lock::{
 };
 use uhura_check::project_manifest::{ProjectManifest, ProjectManifestIssue, load_project_manifest};
 use uhura_check::resource_manifest::ResourceManifest;
-use uhura_check::{AssetInput, CheckedIconFonts, IconFontInput};
+use uhura_check::{
+    AssetInput, AuthoringEntryClass as CheckedAuthoringEntryClass, AuthoringProjection,
+    AuthoringTarget, AuthoringTargetClass as CheckedAuthoringTargetClass, CheckedIconFonts,
+    IconFontInput,
+};
 use uhura_core::ir::{
     EvidenceRef, Expr, Machine, ScenarioOrigin, SourceRef, Statement, UiAttributeValue, UiNode,
 };
@@ -46,8 +50,9 @@ use uhura_editor_model::{
     Interaction, InteractionKind, MachineDeployment, MachineSidecar, MachineSidecarInput, Preview,
     PreviewContent, PreviewDocumentation, PreviewEvidence, PreviewField, PreviewFieldGroup,
     PreviewFieldValue, PreviewGroup, PreviewIdentity, PreviewKind, PreviewProvenance,
-    RenderFreshness, SourceTarget, SourceTargetClass, SourceTargetOwner, SourceTargetOwnerKind,
-    TargetOccurrence, UHURA_EVIDENCE_SUMMARY_PROTOCOL, stable_group_id, stable_preview_id,
+    RenderFreshness, SourceMetadataClass, SourceMetadataEntry, SourceTarget, SourceTargetClass,
+    SourceTargetOwner, SourceTargetOwnerKind, TargetOccurrence, UHURA_EVIDENCE_SUMMARY_PROTOCOL,
+    stable_group_id, stable_preview_id,
 };
 
 pub mod source;
@@ -749,6 +754,7 @@ struct EditorInputs<'a> {
     semantic_provenance: &'a Provenance,
     interaction_graph: &'a serde_json::Value,
     graph_sources: &'a serde_json::Value,
+    authoring: &'a AuthoringProjection,
     assets: &'a BTreeMap<String, Asset>,
 }
 
@@ -768,6 +774,7 @@ struct CheckedProject {
     semantic_provenance: Provenance,
     interaction_graph: serde_json::Value,
     graph_sources: serde_json::Value,
+    authoring: AuthoringProjection,
 }
 
 struct ProjectResources {
@@ -959,7 +966,8 @@ fn check_project_snapshot(
         mut diagnostics,
         program,
         provenance: semantic_provenance,
-    } = check_v04_sources(snapshot, &sources, &manifest)?;
+        authoring,
+    } = check_sources(snapshot, &sources, &manifest)?;
     if let Some(program) = program.as_ref() {
         diagnostics.extend(uhura_check::icon_token_diagnostics(
             program,
@@ -1050,6 +1058,7 @@ fn check_project_snapshot(
         semantic_provenance,
         interaction_graph,
         graph_sources,
+        authoring,
     })
 }
 
@@ -1139,17 +1148,17 @@ fn validate_interaction_graph_source_inventory(
     Ok(())
 }
 
-fn check_v04_sources(
+fn check_sources(
     snapshot: &ProjectSourceSnapshot,
     sources: &[(String, String)],
     manifest: &ProjectManifest,
 ) -> Result<uhura_check::CheckOutput, serde_json::Value> {
-    let captured_dependencies = capture_v04_dependencies(snapshot, sources, manifest)?;
+    let captured_dependencies = capture_dependencies(snapshot, sources, manifest)?;
     let dependency_roots = captured_dependencies
         .iter()
         .map(|package| package.source.as_str())
         .collect::<Vec<_>>();
-    let messages = validate_v04_source_inventory(snapshot, sources, manifest, &dependency_roots);
+    let messages = validate_source_inventory(snapshot, sources, manifest, &dependency_roots);
     if !messages.is_empty() {
         return Err(diagnostics_envelope(
             "UH2001",
@@ -1162,17 +1171,17 @@ fn check_v04_sources(
         .iter()
         .enumerate()
         .map(|(file, (path, text))| {
-            uhura_check::V04ProjectSource::new(FileId(file as u32), path, text)
+            uhura_check::ProjectSource::new(FileId(file as u32), path, text)
         })
         .collect::<Vec<_>>();
-    Ok(uhura_check::compile_v04_project(
+    Ok(uhura_check::compile_project(
         manifest,
         &compiler_sources,
         &captured_dependencies,
     ))
 }
 
-fn capture_v04_dependencies(
+fn capture_dependencies(
     snapshot: &ProjectSourceSnapshot,
     sources: &[(String, String)],
     manifest: &ProjectManifest,
@@ -1330,7 +1339,7 @@ fn owning_dependency_root<'a>(path: &str, roots: &[&'a str]) -> Option<&'a str> 
         .max_by_key(|root| root.len())
 }
 
-fn validate_v04_source_inventory(
+fn validate_source_inventory(
     snapshot: &ProjectSourceSnapshot,
     sources: &[(String, String)],
     manifest: &ProjectManifest,
@@ -1641,7 +1650,7 @@ fn admit_play(
         })?;
     let mut deployment = parse_host_manifest(&host_toml)
         .map_err(|message| host_failure("R3014", "uhura/host-manifest", message))?;
-    resolve_v04_deployment_selectors(program, selector_packages, &mut deployment)
+    resolve_deployment_selectors(program, selector_packages, &mut deployment)
         .map_err(|message| host_failure("R3014", "uhura/host-manifest", message))?;
     let admission = validate_deployment(program, &deployment)
         .map_err(|(code, message)| host_failure(code, "uhura/host-admission", message))?;
@@ -1719,6 +1728,7 @@ fn build_editor(
             semantic_provenance: &checked.semantic_provenance,
             interaction_graph: &checked.interaction_graph,
             graph_sources: &checked.graph_sources,
+            authoring: &checked.authoring,
             assets: &checked.editor_assets,
         },
     )?;
@@ -1917,19 +1927,19 @@ fn evidence_span(source: &uhura_core::ir::SourceRef, sources: &[(String, String)
         )
 }
 
-fn resolve_v04_deployment_selectors(
+fn resolve_deployment_selectors(
     program: &Program,
     packages: &BTreeMap<String, String>,
     deployment: &mut Deployment,
 ) -> Result<(), String> {
-    deployment.machine = resolve_v04_host_selector(
+    deployment.machine = resolve_host_selector(
         &deployment.machine,
         "machine",
         packages,
         program.machine_program.machines.keys().map(String::as_str),
     )?;
     if let Some(presentation) = deployment.presentation.as_mut() {
-        *presentation = resolve_v04_host_selector(
+        *presentation = resolve_host_selector(
             presentation,
             "presentation",
             packages,
@@ -1939,7 +1949,7 @@ fn resolve_v04_deployment_selectors(
     Ok(())
 }
 
-fn resolve_v04_host_selector<'a>(
+fn resolve_host_selector<'a>(
     selector: &str,
     kind: &str,
     packages: &BTreeMap<String, String>,
@@ -2601,6 +2611,7 @@ fn editor_render(
         semantic_provenance,
         interaction_graph,
         graph_sources,
+        authoring,
         ..
     } = inputs;
     let mut source_map = SourceMap::new();
@@ -2615,11 +2626,12 @@ fn editor_render(
             format!("semantic provenance is invalid: {error}"),
         )
     })?;
-    let mut authoring_targets = BTreeMap::<String, SourceTarget>::new();
     let mut previews = Vec::new();
     let presentation_kinds = presentation_kinds(evidence);
     let presentation_sources =
         presentation_authoring_sources(program, &presentation_kinds, semantic_provenance)?;
+    let (mut authoring_targets, authoring_entries) =
+        checked_authoring_metadata(authoring, &source_map, &source_files, &presentation_sources)?;
     let presentation_node_owners = presentation_node_owners(program);
     let projection_authoring = ProjectionAuthoringContext {
         source_map: &source_map,
@@ -2627,6 +2639,7 @@ fn editor_render(
         presentation_sources: &presentation_sources,
         presentation_node_owners: &presentation_node_owners,
         provenance: semantic_provenance,
+        checked_targets: &authoring.targets,
     };
     let mut default_presentations = BTreeSet::new();
     let declared_defaults = evidence
@@ -2816,7 +2829,7 @@ fn editor_render(
         },
         authoring: AuthoringMetadata {
             targets: sorted_authoring_targets(authoring_targets),
-            entries: Vec::new(),
+            entries: authoring_entries,
         },
         groups,
         previews,
@@ -2886,6 +2899,167 @@ struct ProjectionAuthoringContext<'a> {
     presentation_sources: &'a BTreeMap<String, PresentationAuthoringSource>,
     presentation_node_owners: &'a BTreeMap<String, String>,
     provenance: &'a Provenance,
+    checked_targets: &'a [AuthoringTarget],
+}
+
+fn checked_authoring_metadata(
+    projection: &AuthoringProjection,
+    source_map: &SourceMap,
+    source_files: &BTreeMap<String, FileId>,
+    presentation_sources: &BTreeMap<String, PresentationAuthoringSource>,
+) -> Result<(BTreeMap<String, SourceTarget>, Vec<SourceMetadataEntry>), serde_json::Value> {
+    projection.validate().map_err(|error| {
+        host_failure(
+            "R3014",
+            "uhura/editor-authoring",
+            format!("checked authoring projection is invalid: {error}"),
+        )
+    })?;
+    let mut targets = BTreeMap::<String, SourceTarget>::new();
+    for target in &projection.targets {
+        let file = source_files.get(&target.file).copied().ok_or_else(|| {
+            host_failure(
+                "R3014",
+                "uhura/editor-authoring",
+                format!(
+                    "checked authoring target `{}` refers to uncaptured file `{}`",
+                    target.id, target.file
+                ),
+            )
+        })?;
+        let span = checked_editor_span(
+            source_map,
+            file,
+            target.span.start,
+            target.span.end,
+            &target.id,
+        )?;
+        let presentation = presentation_sources.get(&target.owner).ok_or_else(|| {
+            host_failure(
+                "R3014",
+                "uhura/editor-authoring",
+                format!(
+                    "checked authoring target `{}` has unknown presentation owner `{}`",
+                    target.id, target.owner
+                ),
+            )
+        })?;
+        let class = match target.class {
+            CheckedAuthoringTargetClass::UiElement => SourceTargetClass::UiElement,
+            CheckedAuthoringTargetClass::IfBlock => SourceTargetClass::IfBlock,
+            CheckedAuthoringTargetClass::EachBlock => SourceTargetClass::EachBlock,
+        };
+        let text = source_map.text(file);
+        let start = usize::try_from(target.span.start).expect("validated authoring span start");
+        let end = usize::try_from(target.span.end).expect("validated authoring span end");
+        let editor_target = SourceTarget {
+            id: target.id.clone(),
+            class,
+            file: target.file.clone(),
+            span,
+            label: source_target_label(&text[start..end], &target.label),
+            owner: presentation.owner.clone(),
+        };
+        if targets
+            .insert(editor_target.id.clone(), editor_target)
+            .is_some()
+        {
+            return Err(host_failure(
+                "R3014",
+                "uhura/editor-authoring",
+                format!("checked authoring repeats target `{}`", target.id),
+            ));
+        }
+    }
+
+    let mut entries = Vec::with_capacity(projection.entries.len());
+    for entry in &projection.entries {
+        let target = targets.get(&entry.target_id).ok_or_else(|| {
+            host_failure(
+                "R3014",
+                "uhura/editor-authoring",
+                format!(
+                    "checked authoring entry `{}` refers to unknown target `{}`",
+                    entry.id, entry.target_id
+                ),
+            )
+        })?;
+        let file = source_files.get(&target.file).copied().ok_or_else(|| {
+            host_failure(
+                "R3014",
+                "uhura/editor-authoring",
+                format!(
+                    "checked authoring entry `{}` refers to uncaptured file `{}`",
+                    entry.id, target.file
+                ),
+            )
+        })?;
+        let class = match entry.class {
+            CheckedAuthoringEntryClass::Annotation => SourceMetadataClass::Annotation,
+        };
+        entries.push(SourceMetadataEntry {
+            id: entry.id.clone(),
+            class,
+            kind: entry.kind.clone(),
+            text: entry.text.clone(),
+            span: checked_editor_span(
+                source_map,
+                file,
+                entry.span.start,
+                entry.span.end,
+                &entry.id,
+            )?,
+            target_id: entry.target_id.clone(),
+            order: usize::try_from(entry.order).map_err(|_| {
+                host_failure(
+                    "R3014",
+                    "uhura/editor-authoring",
+                    format!(
+                        "checked authoring entry `{}` order does not fit usize",
+                        entry.id
+                    ),
+                )
+            })?,
+        });
+    }
+    entries.sort_by(|left, right| {
+        let left_target = &targets[&left.target_id];
+        let right_target = &targets[&right.target_id];
+        left_target
+            .file
+            .cmp(&right_target.file)
+            .then_with(|| left.span.offset.cmp(&right.span.offset))
+            .then_with(|| left.order.cmp(&right.order))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok((targets, entries))
+}
+
+fn checked_editor_span(
+    source_map: &SourceMap,
+    file: FileId,
+    start: u32,
+    end: u32,
+    identity: &str,
+) -> Result<EditorSourceSpan, serde_json::Value> {
+    let text = source_map.text(file);
+    let start_index = usize::try_from(start).unwrap_or(usize::MAX);
+    let end_index = usize::try_from(end).unwrap_or(usize::MAX);
+    if start > end
+        || end_index > text.len()
+        || !text.is_char_boundary(start_index)
+        || !text.is_char_boundary(end_index)
+    {
+        return Err(host_failure(
+            "R3014",
+            "uhura/editor-authoring",
+            format!("checked authoring identity `{identity}` has invalid byte span {start}..{end}"),
+        ));
+    }
+    Ok(EditorSourceSpan::from_span(
+        source_map,
+        Span::new(file, start, end),
+    ))
 }
 
 fn presentation_authoring_sources(
@@ -3130,10 +3304,22 @@ fn projection_provenance(
     }
 
     let mut occurrences = Vec::with_capacity(projected_sources.len());
-    for (target_id, (source, mut keys)) in projected_sources {
+    for (semantic_target_id, (source, mut keys)) in projected_sources {
         keys.sort();
         let (physical_path, owner, source_start, source_end) =
             projection_authoring_source(&source, presentation, context)?;
+        let target_id = context
+            .checked_targets
+            .iter()
+            .find(|target| {
+                target.class == CheckedAuthoringTargetClass::UiElement
+                    && target.owner == owner.name
+                    && target.file == physical_path
+                    && target.span.start == source_start
+                    && target.span.end == source_end
+            })
+            .map(|target| target.id.clone())
+            .unwrap_or(semantic_target_id);
         let file = context
             .source_files
             .get(physical_path.as_str())
@@ -3203,7 +3389,79 @@ fn projection_provenance(
             anchors: keys,
         });
     }
+    append_structural_authoring_occurrences(
+        preview_id,
+        presentation,
+        projection,
+        context,
+        &mut occurrences,
+    )?;
     Ok(PreviewProvenance { occurrences })
+}
+
+fn append_structural_authoring_occurrences(
+    preview_id: &str,
+    presentation: &str,
+    projection: &uhura_core::ProjectionSources,
+    context: &ProjectionAuthoringContext<'_>,
+    occurrences: &mut Vec<TargetOccurrence>,
+) -> Result<(), serde_json::Value> {
+    for target in context.checked_targets.iter().filter(|target| {
+        target.owner == presentation
+            && matches!(
+                target.class,
+                CheckedAuthoringTargetClass::IfBlock | CheckedAuthoringTargetClass::EachBlock
+            )
+    }) {
+        if occurrences
+            .iter()
+            .any(|occurrence| occurrence.target_id == target.id)
+        {
+            continue;
+        }
+        let mut candidates = Vec::<(u32, u32, String)>::new();
+        for (key, source) in &projection.nodes {
+            let (path, owner, start, end) =
+                projection_authoring_source(source, presentation, context)?;
+            if owner.name == target.owner
+                && path == target.file
+                && target.span.start <= start
+                && end <= target.span.end
+            {
+                candidates.push((start, end, key.clone()));
+            }
+        }
+        let mut anchors = candidates
+            .iter()
+            .filter(|(start, end, _)| {
+                !candidates.iter().any(|(outer_start, outer_end, _)| {
+                    outer_start <= start
+                        && end <= outer_end
+                        && (outer_start < start || end < outer_end)
+                })
+            })
+            .map(|(_, _, key)| key.clone())
+            .collect::<Vec<_>>();
+        anchors.sort();
+        anchors.dedup();
+        if anchors.is_empty() {
+            continue;
+        }
+        occurrences.push(TargetOccurrence {
+            id: sha256_hex(
+                to_canonical_json(&serde_json::json!({
+                    "preview": preview_id,
+                    "target": target.id,
+                    "keys": anchors,
+                }))
+                .as_bytes(),
+            ),
+            target_id: target.id.clone(),
+            anchors,
+        });
+    }
+    occurrences.sort_by(|left, right| left.target_id.cmp(&right.target_id));
+    Ok(())
 }
 
 fn presentation_source_path(provenance: &Provenance, presentation: &str) -> Option<String> {
@@ -6237,7 +6495,7 @@ mod tests {
         root
     }
 
-    const V04_MACHINE: &str = r#"pub machine Counter {
+    const COUNTER_MACHINE_SOURCE: &str = r#"pub machine Counter {
   events {
     Increment,
   }
@@ -6261,13 +6519,13 @@ mod tests {
 }
 "#;
 
-    fn v04_project(label: &str, manifest_extra: &str) -> std::path::PathBuf {
+    fn fixture_project(label: &str, manifest_extra: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "uhura-v04-host-{label}-{}-{unique}",
+            "uhura-host-{label}-{}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
@@ -6289,12 +6547,12 @@ default = "lucide"
             ),
         )
         .unwrap();
-        fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
+        fs::write(root.join("counter.uhura"), COUNTER_MACHINE_SOURCE).unwrap();
         root
     }
 
-    fn v04_route_project(label: &str, pattern: &str) -> std::path::PathBuf {
-        let root = v04_project(label, "");
+    fn route_fixture_project(label: &str, pattern: &str) -> std::path::PathBuf {
+        let root = fixture_project(label, "");
         let location = if pattern.contains("{segment}") {
             "Page { segment: Text }"
         } else {
@@ -6353,7 +6611,7 @@ router = "web.history"
             ("favicon", "/favicon.ico"),
             ("dynamic", "/{segment}"),
         ] {
-            let root = v04_route_project(label, pattern);
+            let root = route_fixture_project(label, pattern);
             let candidate =
                 super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
             assert!(
@@ -6390,7 +6648,7 @@ router = "web.history"
             ("play-child", "/play/child"),
             ("editor-child", "/_uhura/editor/child"),
         ] {
-            let root = v04_route_project(label, pattern);
+            let root = route_fixture_project(label, pattern);
             let candidate =
                 super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
             assert!(
@@ -6408,7 +6666,7 @@ router = "web.history"
 
     #[test]
     fn checked_route_claims_preserve_raw_and_decoded_path_semantics() {
-        let dynamic_root = v04_route_project("claim-dynamic", "/{segment}");
+        let dynamic_root = route_fixture_project("claim-dynamic", "/{segment}");
         let candidate =
             super::build_candidate(&crate::source::capture_project_snapshot(&dynamic_root), 1);
         let route = &candidate.checked_route_patterns().unwrap()[0];
@@ -6434,7 +6692,7 @@ router = "web.history"
         }));
         fs::remove_dir_all(dynamic_root).unwrap();
 
-        let encoded = v04_route_project("claim-encoded", "/graphql%2Fv2");
+        let encoded = route_fixture_project("claim-encoded", "/graphql%2Fv2");
         let candidate =
             super::build_candidate(&crate::source::capture_project_snapshot(&encoded), 1);
         let route = &candidate.checked_route_patterns().unwrap()[0];
@@ -6453,7 +6711,7 @@ router = "web.history"
 
     #[test]
     fn route_admission_ignores_unselected_route_tables() {
-        let root = v04_project("unselected-route-table", "");
+        let root = fixture_project("unselected-route-table", "");
         fs::write(
             root.join("counter.uhura"),
             r#"use uhura::web_router::{Router, Routes};
@@ -6630,7 +6888,7 @@ router = "web.history"
             semantic_node_id,
         };
 
-        let root = v04_project("composed-replay", "");
+        let root = fixture_project("composed-replay", "");
         let checked =
             super::check_project_snapshot(&crate::source::capture_project_snapshot(&root))
                 .expect("checked 0.4 project");
@@ -6654,7 +6912,7 @@ router = "web.history"
             .insert("controls.Increment".into(), handler);
         let input_type = machine.local_input.id().to_string();
 
-        let source = V04_MACHINE;
+        let source = COUNTER_MACHINE_SOURCE;
         let provenance = Provenance::canonical(
             vec![ProvenanceSource {
                 source: 0,
@@ -6709,8 +6967,8 @@ router = "web.history"
     }
 
     #[test]
-    fn host_checks_manifest_selected_v04_with_shared_project_resources() {
-        let root = v04_project("accepted", "");
+    fn host_checks_manifest_selected_project_with_shared_resources() {
+        let root = fixture_project("accepted", "");
         let snapshot = crate::source::capture_project_snapshot(&root);
 
         let checked = super::check_project_snapshot(&snapshot).expect("checked 0.4 project");
@@ -6750,7 +7008,7 @@ default = "lucide"
                 ),
             ),
         ] {
-            let root = v04_project(label, "");
+            let root = fixture_project(label, "");
             if let Some(manifest) = manifest {
                 fs::write(root.join("uhura.toml"), manifest).unwrap();
             } else {
@@ -6772,7 +7030,7 @@ default = "lucide"
 
     #[test]
     fn host_rejects_unknown_icon_tokens_before_editor_or_play_publication() {
-        let root = v04_project("unknown-icon", "");
+        let root = fixture_project("unknown-icon", "");
         fs::write(
             root.join("uhura.toml"),
             r#"[project]
@@ -6823,8 +7081,8 @@ pub ui CounterWeb for Counter(view) {
 
     #[test]
     fn host_rejects_unlisted_sources_and_admits_locked_path_dependencies() {
-        let unlisted_root = v04_project("unlisted", "");
-        fs::write(unlisted_root.join("stray.uhura"), V04_MACHINE).unwrap();
+        let unlisted_root = fixture_project("unlisted", "");
+        fs::write(unlisted_root.join("stray.uhura"), COUNTER_MACHINE_SOURCE).unwrap();
         let unlisted =
             super::check_project_snapshot(&crate::source::capture_project_snapshot(&unlisted_root))
                 .err()
@@ -6835,7 +7093,7 @@ pub ui CounterWeb for Counter(view) {
         );
         fs::remove_dir_all(unlisted_root).unwrap();
 
-        let dependency_root = v04_project(
+        let dependency_root = fixture_project(
             "dependency",
             r#"[dependencies.shared]
 package = "test.shared"
@@ -6846,7 +7104,7 @@ path = "vendor/shared"
         fs::create_dir_all(dependency_root.join("vendor/shared")).unwrap();
         fs::write(
             dependency_root.join("counter.uhura"),
-            V04_MACHINE
+            COUNTER_MACHINE_SOURCE
                 .replace("pub machine", "use shared::values::INITIAL;\n\npub machine")
                 .replace("count: Int = 0", "count: Int = INITIAL"),
         )
@@ -6917,8 +7175,8 @@ dependencies = {{}}
         assert_eq!(dependency.selector_packages["shared"], "test.shared@1");
 
         let invalid_vendor_source = b"pub const INITIAL: Int = ;\n";
-        let expected_parse = uhura_syntax::v04::parse(
-            uhura_syntax::v04::SourceIdentity::new(
+        let expected_parse = uhura_syntax::parse(
+            uhura_syntax::SourceIdentity::new(
                 0,
                 "test.shared@1",
                 "values",
@@ -7158,6 +7416,7 @@ dependencies = {{}}
             presentation_sources: &presentation_sources,
             presentation_node_owners: &presentation_node_owners,
             provenance: &provenance,
+            checked_targets: &[],
         };
         let projection = ProjectionSources {
             protocol: PROJECTION_SOURCES_PROTOCOL.into(),
@@ -7620,7 +7879,7 @@ module = "provider.mjs"
     }
 
     #[test]
-    fn v04_host_selectors_resolve_public_ids_and_dotted_part_ports() {
+    fn host_selectors_resolve_public_ids_and_dotted_part_ports() {
         let source = r#"
 [entry.app]
 machine = "crate::Application"
@@ -7642,7 +7901,7 @@ lifetime = "application-session"
 
         let packages = BTreeMap::from([("crate".to_string(), "example.app@1".to_string())]);
         assert_eq!(
-            super::resolve_v04_host_selector(
+            super::resolve_host_selector(
                 "crate::Application",
                 "machine",
                 &packages,
@@ -7652,7 +7911,7 @@ lifetime = "application-session"
             "example.app@1::Application"
         );
         assert!(
-            super::resolve_v04_host_selector(
+            super::resolve_host_selector(
                 "crate::machine::Application",
                 "machine",
                 &packages,
@@ -7662,7 +7921,7 @@ lifetime = "application-session"
             .contains("logical-module-qualified")
         );
         assert!(
-            super::resolve_v04_host_selector(
+            super::resolve_host_selector(
                 "vendor::Application",
                 "machine",
                 &packages,
@@ -8090,7 +8349,7 @@ module = "provider.mjs"
     }
 
     #[test]
-    fn v04_deployment_identity_excludes_resource_paths_but_covers_content_and_config() {
+    fn deployment_identity_excludes_resource_paths_but_covers_content_and_config() {
         let source = r#"
 [entry.return-desk]
 machine = "app.return_desk.machine@1::ReturnDesk"
@@ -8552,7 +8811,7 @@ returns = "return-desk.returns"
     }
 
     #[test]
-    fn uhura_a0_v04_navigation_nodes_are_preview_backed_and_deterministic() {
+    fn uhura_a0_navigation_nodes_are_preview_backed_and_deterministic() {
         let root = tool_root().join("examples/applications/a0-return-desk/answers/uhura-0.4");
         let candidate = super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
         let artifact = candidate
@@ -8777,6 +9036,124 @@ returns = "return-desk.returns"
             retry.replay.len() > resumed_receipts,
             "the cross-scenario edge includes the missing ancestor suffix exactly once"
         );
+    }
+
+    #[test]
+    fn structural_annotations_anchor_rendered_if_and_each_content() {
+        let root = copy_a0_fixture("structural-annotations");
+        let ui_path = root.join("ui.uhura");
+        let source = fs::read_to_string(&ui_path).unwrap();
+        let annotated = source
+            .replacen(
+                "    {#if view.page is Page::NoLocation}",
+                "    <!-- @rationale The active route branch. -->\n    {#if view.page is Page::NoLocation}",
+                1,
+            )
+            .replacen(
+                "              {#each order.lines.entries_by_key() as (id, line) (id)}",
+                "              <!-- @review-note Every visible order line. -->\n              {#each order.lines.entries_by_key() as (id, line) (id)}",
+                1,
+            );
+        assert_ne!(annotated, source);
+        fs::write(&ui_path, annotated).unwrap();
+
+        let candidate = super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+        assert!(
+            candidate.summary().editor_current,
+            "{:?}",
+            candidate.diagnostics()
+        );
+        let editor = accepted_editor_render(&candidate);
+        let entries = editor["authoring"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        let targets = editor["authoring"]["targets"].as_array().unwrap();
+        let previews = editor["previews"].as_array().unwrap();
+        for expected_class in ["if-block", "each-block"] {
+            let target = targets
+                .iter()
+                .find(|target| {
+                    target["class"] == expected_class
+                        && entries
+                            .iter()
+                            .any(|entry| entry["targetId"] == target["id"])
+                })
+                .unwrap_or_else(|| panic!("missing annotated `{expected_class}` target"));
+            assert!(previews.iter().any(|preview| {
+                preview["provenance"]["occurrences"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|occurrence| {
+                        occurrence["targetId"] == target["id"]
+                            && occurrence["anchors"]
+                                .as_array()
+                                .is_some_and(|anchors| !anchors.is_empty())
+                    })
+            }));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn annotation_only_source_changes_preserve_documents_and_refresh_projection_sources() {
+        let root = copy_a0_fixture("annotation-only-update");
+        let baseline_candidate =
+            super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+        assert!(
+            baseline_candidate.summary().editor_current,
+            "{:?}",
+            baseline_candidate.diagnostics()
+        );
+        let baseline = accepted_editor_render(&baseline_candidate);
+        assert!(
+            baseline["authoring"]["entries"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+
+        let ui_path = root.join("ui.uhura");
+        let source = fs::read_to_string(&ui_path).unwrap();
+        let annotated = source.replacen(
+            "  <main aria-label=\"Return desk\">",
+            "  <!-- @annotation Authoring-only prose with a different byte width. -->\n  <main aria-label=\"Return desk\">",
+            1,
+        );
+        assert_ne!(annotated, source);
+        fs::write(&ui_path, annotated).unwrap();
+
+        let revised_candidate =
+            super::build_candidate(&crate::source::capture_project_snapshot(&root), 2);
+        assert!(
+            revised_candidate.summary().editor_current,
+            "{:?}",
+            revised_candidate.diagnostics()
+        );
+        let revised = accepted_editor_render(&revised_candidate);
+        assert_eq!(revised["authoring"]["entries"].as_array().unwrap().len(), 1);
+
+        let baseline_previews = baseline["previews"].as_array().unwrap();
+        let revised_previews = revised["previews"].as_array().unwrap();
+        assert_eq!(baseline_previews.len(), revised_previews.len());
+        let mut refreshed_source_sidecar = false;
+        for baseline_preview in baseline_previews {
+            let id = baseline_preview["id"].as_str().unwrap();
+            let revised_preview = revised_previews
+                .iter()
+                .find(|preview| preview["id"] == id)
+                .expect("annotation-only changes retain preview identity");
+            assert_eq!(
+                baseline_preview["content"]["value"]["document"],
+                revised_preview["content"]["value"]["document"],
+                "annotation-only changes retain renderer-semantic content for `{id}`"
+            );
+            refreshed_source_sidecar |= baseline_preview["content"]["value"]["sources"]
+                != revised_preview["content"]["value"]["sources"];
+        }
+        assert!(
+            refreshed_source_sidecar,
+            "annotation byte offsets must refresh the projection source sidecar"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -10186,6 +10563,47 @@ glyphs = "icons/brand/missing.json"
             target_kinds,
             BTreeSet::from(["component", "page", "surface"])
         );
+        let annotations = editor["authoring"]["entries"].as_array().unwrap();
+        assert_eq!(annotations.len(), 1);
+        let annotation = &annotations[0];
+        assert_eq!(annotation["class"], "annotation");
+        assert_eq!(annotation["kind"], "annotation");
+        assert_eq!(
+            annotation["text"],
+            "The complete post-card presentation, shared across every static PostCard example."
+        );
+        assert_eq!(annotation["order"], 0);
+        let annotation_target = editor["authoring"]["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|target| target["id"] == annotation["targetId"])
+            .expect("the annotation retains its checked target");
+        assert_eq!(annotation_target["class"], "ui-element");
+        assert_eq!(annotation_target["file"], "ui.uhura");
+        assert_eq!(annotation_target["label"], "<view class=\"post-card\">");
+        assert_eq!(annotation_target["owner"]["kind"], "component");
+        assert_eq!(
+            annotation_target["owner"]["name"],
+            "app.instagram@1::PostCard"
+        );
+        let post_card_previews = previews
+            .iter()
+            .filter(|preview| preview["identity"]["subject"] == "app.instagram@1::PostCard")
+            .collect::<Vec<_>>();
+        assert_eq!(post_card_previews.len(), 5);
+        assert!(post_card_previews.iter().all(|preview| {
+            preview["provenance"]["occurrences"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|occurrence| {
+                    occurrence["targetId"] == annotation_target["id"]
+                        && occurrence["anchors"]
+                            .as_array()
+                            .is_some_and(|anchors| !anchors.is_empty())
+                })
+        }));
 
         let graph = &editor["interactionGraph"];
         assert_eq!(

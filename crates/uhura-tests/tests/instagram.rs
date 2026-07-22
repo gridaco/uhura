@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use uhura_core::{CHECKPOINT_PROTOCOL, Checkpoint, Program};
-use uhura_syntax::v04::{SourceIdentity, parse as parse_v04};
+use uhura_syntax::{SourceIdentity, parse};
 
 const MACHINE_COUNT: usize = 1;
 const PRESENTATION_COUNT: usize = 18;
@@ -23,7 +23,7 @@ fn checked_instagram() -> Program {
     .map(|(index, (logical, path))| {
         let source = std::fs::read_to_string(root.join(path))
             .unwrap_or_else(|error| panic!("{path}: {error}"));
-        let parsed = parse_v04(
+        let parsed = parse(
             SourceIdentity::new(index as u32, "app.instagram@1", logical, path),
             &source,
         );
@@ -39,7 +39,7 @@ fn checked_instagram() -> Program {
     let evidence_path = "evidence.uhura";
     let evidence_source = std::fs::read_to_string(root.join(evidence_path))
         .unwrap_or_else(|error| panic!("{evidence_path}: {error}"));
-    let evidence = parse_v04(
+    let evidence = parse(
         SourceIdentity::new(
             modules.len() as u32,
             "app.instagram@1",
@@ -54,8 +54,7 @@ fn checked_instagram() -> Program {
         evidence.diagnostics
     );
 
-    let checked =
-        uhura_check::check_v04_project_modules_with_evidence(&modules, &[evidence.module]);
+    let checked = uhura_check::check_project_modules_with_evidence(&modules, &[evidence.module]);
     assert!(
         checked.diagnostics.is_empty(),
         "Instagram check diagnostics: {:#?}",

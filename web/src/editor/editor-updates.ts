@@ -59,7 +59,16 @@ export const reusablePreviewIds = (
   const previousById = new Map(previous.previews.map((preview) => [preview.id, preview]));
   return new Set(next.previews.flatMap((preview) => {
     const candidate = previousById.get(preview.id);
-    return candidate && structurallyEqual(candidate.content, preview.content) ? [preview.id] : [];
+    // Projection sources are authoring/navigation metadata. Their physical
+    // spans can move after a comment-only edit even though the renderer input
+    // and every semantic realization key remain identical. Reuse the direct
+    // realization from the render document while the next model independently
+    // installs its refreshed source and provenance sidecars.
+    return candidate
+      && candidate.content.kind === preview.content.kind
+      && structurallyEqual(candidate.content.value.document, preview.content.value.document)
+      ? [preview.id]
+      : [];
   }));
 };
 

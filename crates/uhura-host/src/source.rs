@@ -217,7 +217,7 @@ impl ProjectSourceSnapshot {
 
     /// `uhura-source-revision/0` identity of the exact captured paths and raw
     /// bytes. Unlike the polling fingerprint, this is the persisted
-    /// source/provenance identity defined by the 0.4 project contract.
+    /// source/provenance identity defined by the project contract.
     #[must_use]
     pub fn source_revision_id(&self) -> &str {
         &self.source_revision_id

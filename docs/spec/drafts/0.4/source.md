@@ -1651,9 +1651,12 @@ them. The in-tree implementation now establishes that:
 The remaining language-design evidence is the post-implementation repetition
 of the equal-budget Rust-shaped-candidate and TypeScript-shaped-control
 acquisition, repair, and controlled-change trials. RFC 0003's comment
-attachment and checked authoring projection are also intentionally separate
-work: the formatter refuses to erase unsupported attached comments until that
-projection exists.
+taxonomy remains staged: sibling-list markup comments, annotations,
+attachment, canonical formatting, and the checked Editor projection are
+implemented for the 0.4 UI profile. The exact non-sibling markup-comment
+placement diagnostic, DSL ordinary-comment attachment, and declaration
+documentation remain separate work, and the formatter continues to refuse
+those unsupported DSL comments rather than erase them.
 
 Those trials may refine spelling. They cannot introduce another runtime
 machine, ambient authority, or a second concrete-syntax authority.

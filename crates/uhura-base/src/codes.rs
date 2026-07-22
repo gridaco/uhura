@@ -15,7 +15,7 @@
 //! The machine checker uses the `R1xxx`/`R3xxx` family. Those values live in
 //! [`machine`] rather than a second crate-local registry. Uhura 0.4 syntax
 //! uses `R1001` for parse failures while exposing the precise parser
-//! classification through stable rules in [`v04_parse`].
+//! classification through stable rules in [`parse`].
 //!
 //! Every constant pairs the stable code with its human `rule` slug. Existing
 //! codes are never renumbered.
@@ -62,7 +62,7 @@ pub mod machine {
 ///
 /// `R1001` is the common parse code used by CLI and host consumers. The rule
 /// is the stable, lossless parser-kind discriminator.
-pub mod v04_parse {
+pub mod parse {
     use super::Code;
 
     pub const LEXICAL: Code = ("R1001", "uhura-0.4/parse/lexical");
