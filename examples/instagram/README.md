@@ -7,14 +7,16 @@ one process and one port.
 
 > **RFD 0024 implementation preview — experimental, unstable, and
 > non-normative.** The backend uses proposed Spock `error` declarations that
-> the `0.5.2` and `0.5.3` backend toolchains accept as implementation evidence.
+> the `0.5.2` and later backend toolchains accept as implementation evidence.
 > RFD 0024 remains draft; this inclusion is not language acceptance or a
 > compatibility promise.
 
-The client is strict Uhura 0.4. Published `spock@0.5.3` and earlier embed the
-retired client frontend and cannot run this checkout. Until a compatible npm
-release exists, initialize this repository as the `uhura/` submodule of the
-companion Spock source checkout, then run from the Spock repository root:
+The client is strict Uhura 0.4. `spock@0.5.4` is the first npm release with a
+compatible embedded Uhura sidecar; `0.5.3` and earlier cannot run this client.
+This source example also owns an app-specific provider whose generated output
+is deliberately ignored, so initialize this repository as the `uhura/`
+submodule of the companion Spock source checkout and build it before running
+from the Spock repository root:
 
 ```sh
 git submodule update --init --recursive
@@ -77,7 +79,8 @@ The module exports typed adapters for the exact admitted `authority` and
 `mutations` port instances; browser history is supplied separately by Uhura's
 built-in `web.history` adapter. The Spock framework host serves the generated
 provider artifact but does not currently compile app-specific TypeScript. A
-future compatible npm distribution will carry that same boundary.
+compatible `spock@0.5.4` distribution carries the generic Uhura sidecar, not
+this application-specific build step.
 
 ## What the example proves
 

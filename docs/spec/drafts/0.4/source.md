@@ -186,9 +186,11 @@ pub machine Application {
 }
 ```
 
-`crate` names the current project package; an external first segment names a
-locked package. A path resolves one public declaration. Braced named imports,
-local aliases, and explicit same-name re-export are admitted:
+`crate` names the current package's single closed compilation unit and module
+tree—the role Rust calls a crate, not a Cargo package that may contain several
+crates. An external first segment names a locked package. A path resolves one
+public declaration. Braced named imports, local aliases, and explicit
+same-name re-export are admitted:
 
 ```uhura
 use uhura::web_router::{Link, Router};
