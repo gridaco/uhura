@@ -7,6 +7,7 @@
 pub mod ast;
 mod format;
 pub mod lexer;
+mod markup;
 mod parser;
 mod ui;
 

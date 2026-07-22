@@ -1068,13 +1068,11 @@ impl<'a> Builder<'a> {
                     let mut span = node.span;
                     let mut next = index + 1;
                     while let Some(candidate) = nodes.get(next) {
+                        if ui_node_is_source_only(candidate) {
+                            next += 1;
+                            continue;
+                        }
                         match &candidate.kind {
-                            ast::UiNodeKind::Comment(_) => next += 1,
-                            ast::UiNodeKind::Text(value)
-                                if value.raw.chars().all(char::is_whitespace) =>
-                            {
-                                next += 1;
-                            }
                             ast::UiNodeKind::Text(_) => {
                                 span = span.through(candidate.span);
                                 next += 1;
