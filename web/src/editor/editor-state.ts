@@ -1074,13 +1074,13 @@ const editorMachine = (value: unknown, path: string): EditorMachine | null => {
   for (const semanticSource of provenance.sources) {
     const physical = inventory.get(semanticSource.path);
     if (
-      physical === undefined
-      || physical.sha256 !== semanticSource.sha256
-      || physical.bytes !== semanticSource.bytes
+      physical !== undefined
+      && (physical.sha256 !== semanticSource.sha256
+        || physical.bytes !== semanticSource.bytes)
     ) {
       throw new EditorContractError(
         `${path}.provenance.sources`,
-        "entries matching the accepted source inventory",
+        "matching hashes and sizes for overlapping source paths",
       );
     }
   }

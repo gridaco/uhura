@@ -1,0 +1,39 @@
+use uhura::ui;
+use crate::instagram::StoryRing;
+use crate::routing::StoryId;
+
+pub ui StoriesTray(stories: Seq<StoryRing>) emits {
+  StoryOpened(id: StoryId),
+} {
+  <scroll
+    class="stories-tray"
+    direction="horizontal"
+  >
+    <view
+      role="list"
+      class="ring-row"
+    >
+      {#each stories as story (story.id)}
+        <view>
+          <region
+            label={story.user.username}
+            on activate -> StoryOpened(story.id)
+          >
+            <view class="ring-item">
+              <img
+                class={if story.unseen {
+                  "ring unseen"
+                } else {
+                  "ring seen"
+                }}
+                src={story.user.avatar.src}
+                alt={story.user.avatar.alt}
+              />
+              <text class="ring-name">{story.user.username}</text>
+            </view>
+          </region>
+        </view>
+      {/each}
+    </view>
+  </scroll>
+}

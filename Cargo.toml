@@ -38,6 +38,7 @@ uhura-port = { path = "crates/uhura-port" }
 uhura-check = { path = "crates/uhura-check" }
 uhura-core = { path = "crates/uhura-core" }
 uhura-editor-model = { path = "crates/uhura-editor-model" }
+uhura-project = { path = "crates/uhura-project" }
 uhura-host = { path = "crates/uhura-host" }
 uhura-cli = { path = "crates/uhura-cli" }
 

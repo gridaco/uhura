@@ -1,0 +1,27 @@
+pub key UserId(Text);
+
+pub key PostId(Text);
+
+pub key StoryId(Text);
+
+pub enum Location {
+  Feed,
+  Search,
+  Create,
+  Reels,
+  Post {
+    id: PostId,
+  },
+  Profile {
+    user: UserId,
+  },
+  Followers {
+    user: UserId,
+  },
+  Following {
+    user: UserId,
+  },
+  Story {
+    id: StoryId,
+  },
+}

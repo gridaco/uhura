@@ -1,0 +1,161 @@
+use uhura::ui;
+use crate::components::bottom_nav::BottomNav;
+use crate::components::notice_bar::NoticeBar;
+use crate::components::post_card::PostCard;
+use crate::components::stories_tray::StoriesTray;
+use crate::instagram::{Authority, FeedStatus, Instagram, Page, Section};
+use crate::presentation::{comments_for, effective_post_flag};
+use crate::surfaces::comments_sheet::CommentsSheet;
+
+pub ui FeedPage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen feed-page">
+      <view class="feed-head">
+        <text class="wordmark">Instagram</text>
+        <view class="feed-head-actions">
+          <button
+            label="Create post"
+            on press -> SelectTab(Section::Create)
+          >
+            <icon name="square-plus"/>
+          </button>
+          {#if view.authority is Authority::Ready {
+            data: data,
+          }}
+            <region
+              label="View your profile"
+              on activate -> OpenProfile(data.viewer.id)
+            >
+              <img
+                class="viewer-avatar"
+                src={data.viewer.avatar.src}
+                alt={data.viewer.avatar.alt}
+              />
+            </region>
+          {:else}
+            <view/>
+          {/if}
+        </view>
+      </view>
+      {#if view.notice is Some(message)}
+        <NoticeBar
+          message={message}
+          on Dismissed -> notice_controls.DismissNotice
+        />
+      {:else}
+        <view/>
+      {/if}
+      {#if view.page is Page::None}
+        <view class="fill-center">
+          <text class="muted">Opening Instagram…</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Loading}
+          <view class="fill-center">
+            <text class="muted">Loading your feed…</text>
+          </view>
+        {:else}
+          {#if view.authority is Authority::Failed {
+            ..,
+          }}
+            <view class="fill-center stack-sm">
+              <text>Your feed didn't load.</text>
+              <button
+                label="Retry"
+                on press -> RetryFeed
+              >
+                <text>Retry</text>
+              </button>
+            </view>
+          {:else}
+            {#if view.authority is Authority::Ready {
+              data: data,
+            }}
+              <!-- @annotation This scroll boundary owns infinite-feed pagination; near-end reaches the machine guard before any new request is admitted. -->
+              <scroll
+                class="feed-scroll"
+                on near-end -> FeedNearEnd
+              >
+                <StoriesTray
+                  stories={data.stories}
+                  on StoryOpened -> OpenStory(event.id)
+                />
+                {#if data.feed_posts.size == 0}
+                  <view class="feed-empty fill-center stack-sm">
+                    <text class="title">Nothing new yet</text>
+                    <text class="muted">Posts from people you follow will appear here.</text>
+                  </view>
+                {/if}
+                <view
+                  role="list"
+                  class="post-list"
+                >
+                  {#each data.feed_posts as post (post.id)}
+                    <PostCard
+                      post={post}
+                      liked={effective_post_flag(post.viewer_liked, view.like_overlay, post.id)}
+                      like_pending={view.like_pending.contains(post.id)}
+                      saved={effective_post_flag(post.viewer_saved, view.save_overlay, post.id)}
+                      save_pending={view.save_pending.contains(post.id)}
+                      show_open={true}
+                      on LikeToggled -> ToggleLike(event.post, event.liked)
+                      on SaveToggled -> ToggleSave(event.post, event.saved)
+                      on CommentsOpened -> OpenComments(event.post)
+                      on ProfileOpened -> OpenProfile(event.user)
+                      on PostOpened -> OpenPost(event.post)
+                    />
+                  {/each}
+                </view>
+                {#if view.feed_status is FeedStatus::Loading}
+                  <text class="muted row-center">Loading more…</text>
+                {:else}
+                  {#if view.feed_status is FeedStatus::Failed}
+                    <view class="row-center gap-sm">
+                      <text class="muted">Couldn't load more.</text>
+                      <button
+                        label="Retry"
+                        on press -> RetryFeed
+                      >
+                        <text>Retry</text>
+                      </button>
+                    </view>
+                  {:else}
+                    <view/>
+                  {/if}
+                {/if}
+                {#if !data.feed_has_more}
+                  <text class="muted row-center">You're all caught up.</text>
+                {/if}
+              </scroll>
+              {#if view.comments_post is Some(post)}
+                <CommentsSheet
+                  post={post}
+                  comments={comments_for(data, post)}
+                  viewer={data.viewer}
+                  pending_comment={view.pending_comment}
+                  draft={view.comment_draft}
+                  notice={view.notice}
+                  on Dismissed -> DismissComments
+                  on DraftChanged -> CommentChanged(event.value)
+                  on Submitted -> SubmitComment
+                />
+              {:else}
+                <view/>
+              {/if}
+            {/if}
+          {/if}
+        {/if}
+      {/if}
+    </view>
+    {#if view.page is Page::Feed}
+      <BottomNav
+        current={Section::Feed}
+        on FeedSelected -> SelectTab(Section::Feed)
+        on SearchSelected -> SelectTab(Section::Search)
+        on CreateSelected -> SelectTab(Section::Create)
+        on ReelsSelected -> SelectTab(Section::Reels)
+        on ProfileSelected -> SelectTab(Section::Profile)
+      />
+    {/if}
+  </view>
+}

@@ -16,8 +16,9 @@ use uhura_core::ir::{
     Machine as IrMachine, ObservationField, OutcomeDef, OutcomePolicy as IrOutcomePolicy, PortDef,
     Presentation, Scenario as IrScenario, ScenarioOrigin as IrScenarioOrigin, SourceRef,
     StateField, Statement, StatementMatchArm, Transition as IrTransition,
-    UiAttribute as IrUiAttribute, UiAttributeValue as IrUiAttributeValue, UiCase as IrUiCase,
-    UiNode as IrUiNode,
+    UiAttribute as IrUiAttribute, UiAttributeValue as IrUiAttributeValue,
+    UiCallBinding as IrUiCallBinding, UiCallTargetKind as IrUiCallTargetKind, UiCase as IrUiCase,
+    UiComponent as IrUiComponent, UiNode as IrUiNode,
 };
 use uhura_core::{
     BinaryOp as IrBinaryOp, BoundaryNumber, ConstructorDef, Decimal, EvidenceExampleMetadata,
@@ -69,6 +70,13 @@ enum Export {
     },
     Presentation {
         id: String,
+        machine: Option<String>,
+    },
+    Component {
+        id: String,
+        props: Vec<(String, TypeRef)>,
+        emit_type: String,
+        emits: Vec<ConstructorDef>,
     },
     PortContract,
     PureHelper,
@@ -374,12 +382,23 @@ impl<'a> Checker<'a> {
                             id: qualify(&id, &value.name.value),
                         },
                     ),
-                    ast::DeclarationKind::Ui(value) => (
-                        value.name.value.clone(),
-                        Export::Presentation {
-                            id: qualify(&id, &value.name.value),
-                        },
-                    ),
+                    ast::DeclarationKind::Ui(value) => {
+                        let id = qualify(&id, &value.name.value);
+                        (
+                            value.name.value.clone(),
+                            match value.binding {
+                                ast::UiBinding::Machine { .. } => {
+                                    Export::Presentation { id, machine: None }
+                                }
+                                ast::UiBinding::Component { .. } => Export::Component {
+                                    emit_type: format!("{id}.Emit"),
+                                    id,
+                                    props: Vec::new(),
+                                    emits: Vec::new(),
+                                },
+                            },
+                        )
+                    }
                     ast::DeclarationKind::Scenario(_)
                     | ast::DeclarationKind::Example(_)
                     | ast::DeclarationKind::Checkpoint(_) => continue,
@@ -574,6 +593,56 @@ impl<'a> Checker<'a> {
                                 result,
                             },
                         ));
+                    }
+                    ast::DeclarationKind::Ui(value) => {
+                        let id = qualify(&module_id, &value.name.value);
+                        match &value.binding {
+                            ast::UiBinding::Machine { machine, .. } => {
+                                let resolved = self.resolve_machine(&module, machine);
+                                updates.push((
+                                    value.name.value.clone(),
+                                    Export::Presentation {
+                                        id,
+                                        machine: resolved,
+                                    },
+                                ));
+                            }
+                            ast::UiBinding::Component { parameters, emits } => {
+                                let props = parameters
+                                    .iter()
+                                    .map(|parameter| {
+                                        (
+                                            parameter.name.value.clone(),
+                                            self.resolve_type(&module, &scope, &parameter.ty),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                let constructors = match emits {
+                                    ast::SumDomain::Never(_) => Vec::new(),
+                                    ast::SumDomain::Sum(sum) => sum
+                                        .variants
+                                        .iter()
+                                        .map(|variant| {
+                                            self.lower_constructor_def(&module, &scope, variant)
+                                        })
+                                        .collect(),
+                                };
+                                let emit_type = format!("{id}.Emit");
+                                self.registry.insert(TypeInfo {
+                                    id: emit_type.clone(),
+                                    shape: TypeShape::Sum(constructors.clone()),
+                                });
+                                updates.push((
+                                    value.name.value.clone(),
+                                    Export::Component {
+                                        id,
+                                        props,
+                                        emit_type,
+                                        emits: constructors,
+                                    },
+                                ));
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -798,6 +867,11 @@ impl<'a> Checker<'a> {
             .values()
             .find(|module| module.module.source_id.path == source.path)
             .map(|module| module.module.source_id.file)
+            .or_else(|| {
+                self.physical_source_paths
+                    .iter()
+                    .find_map(|(file, path)| (path == &source.path).then_some(*file))
+            })
             .unwrap_or(0);
         ast::SourceSpan::new(file, source.start, source.end)
     }
@@ -5470,7 +5544,13 @@ impl Checker<'_> {
 impl Checker<'_> {
     fn lower_presentations(&mut self) {
         let deferred = self.presentations.clone();
-        for value in deferred {
+        // Component signatures were established before imports were refreshed.
+        // Lower every pure body first so presentation order never controls call
+        // availability or cross-module composition.
+        for value in deferred
+            .iter()
+            .filter(|value| matches!(value.declaration.binding, ast::UiBinding::Component { .. }))
+        {
             let Some(module) = self.modules.get(&value.module).cloned() else {
                 continue;
             };
@@ -5482,7 +5562,71 @@ impl Checker<'_> {
                     value.span,
                 ));
             }
-            let Some(machine_id) = self.resolve_machine(&module, &value.declaration.machine) else {
+            let Some(Export::Component {
+                id,
+                props,
+                emit_type,
+                emits,
+            }) = module.lookup(&value.declaration.name.value).cloned()
+            else {
+                continue;
+            };
+            let mut scope = self.module_scope(&module);
+            self.populate_scope_constructors(&mut scope);
+            for (name, ty) in &props {
+                scope.bind(name, name, Ty::value(ty.clone()));
+            }
+            scope.input_type = Some(TypeRef::Named {
+                id: emit_type.clone(),
+            });
+            for constructor in &emits {
+                scope
+                    .constructors
+                    .entry(constructor.name.clone())
+                    .or_default()
+                    .push(ConstructorInfo {
+                        type_id: emit_type.clone(),
+                        name: constructor.name.clone(),
+                        fields: constructor.fields.clone(),
+                    });
+            }
+            let nodes = self.lower_ui_nodes(&module, &scope, &value.declaration.nodes, None);
+            self.program.components.insert(
+                id.clone(),
+                IrUiComponent {
+                    id,
+                    props,
+                    emit_type,
+                    emits,
+                    nodes,
+                    source: source(&module, value.span),
+                },
+            );
+        }
+
+        for value in deferred
+            .iter()
+            .filter(|value| matches!(value.declaration.binding, ast::UiBinding::Machine { .. }))
+        {
+            let Some(module) = self.modules.get(&value.module).cloned() else {
+                continue;
+            };
+            let ast::UiBinding::Machine {
+                machine: machine_name,
+                observation,
+            } = &value.declaration.binding
+            else {
+                continue;
+            };
+            if !module.features.contains("ui") {
+                self.diagnostics.push(error(
+                    codes::UI_NOT_ENABLED,
+                    "uhura/ui-without-use",
+                    "UI declarations require `use ui`",
+                    value.span,
+                ));
+            }
+            let Some(machine_id) = self.resolve_machine(&module, machine_name) else {
                 continue;
             };
             let Some(machine) = self
@@ -5496,7 +5640,7 @@ impl Checker<'_> {
                     codes::UNKNOWN_NAME,
                     "uhura/ui-machine-unavailable",
                     format!("machine `{machine_id}` was not checked before this presentation"),
-                    value.declaration.machine.span,
+                    machine_name.span,
                 ));
                 continue;
             };
@@ -5510,24 +5654,27 @@ impl Checker<'_> {
                     .collect(),
             };
             scope.bind(
-                &value.declaration.binding.value,
-                &value.declaration.binding.value,
+                &observation.value,
+                &observation.value,
                 Ty::value(observation_ty),
             );
             self.install_machine_io_scope(&machine, &mut scope);
-            let nodes = self.lower_ui_nodes(&module, &scope, &value.declaration.nodes, &machine);
+            let nodes =
+                self.lower_ui_nodes(&module, &scope, &value.declaration.nodes, Some(&machine));
             let id = qualify(&module.id, &value.declaration.name.value);
             self.program.presentations.insert(
                 id.clone(),
                 Presentation {
                     id,
                     machine: machine_id,
-                    binding: value.declaration.binding.value,
+                    binding: observation.value.clone(),
                     nodes,
                     source: source(&module, value.span),
                 },
             );
         }
+        self.check_ui_call_graph();
+        self.check_composed_ui_constraints();
     }
 
     fn resolve_machine(&mut self, module: &ModuleEnv<'_>, name: &ast::Name) -> Option<String> {
@@ -5547,7 +5694,7 @@ impl Checker<'_> {
 
     fn resolve_presentation(&mut self, module: &ModuleEnv<'_>, name: &ast::Name) -> Option<String> {
         match module.lookup(&name.value) {
-            Some(Export::Presentation { id }) => Some(id.clone()),
+            Some(Export::Presentation { id, .. }) => Some(id.clone()),
             _ => {
                 self.diagnostics.push(error(
                     codes::UNKNOWN_NAME,
@@ -5637,7 +5784,7 @@ impl Checker<'_> {
         module: &ModuleEnv<'_>,
         scope: &Scope,
         nodes: &[ast::UiNode],
-        machine: &IrMachine,
+        machine: Option<&IrMachine>,
     ) -> Vec<IrUiNode> {
         nodes
             .iter()
@@ -5666,6 +5813,38 @@ impl Checker<'_> {
                     }
                 }
                 ast::UiNodeKind::Element(element) => {
+                    match module.lookup(&element.name.value).cloned() {
+                        Some(Export::Component {
+                            id,
+                            props,
+                            emit_type: _,
+                            emits,
+                        }) => {
+                            return self.lower_ui_component_call(
+                                module,
+                                scope,
+                                element,
+                                node.span,
+                                &id,
+                                &props,
+                                &emits,
+                            );
+                        }
+                        Some(Export::Presentation {
+                            id,
+                            machine: target_machine,
+                        }) => {
+                            return self.lower_ui_presentation_call(
+                                module,
+                                element,
+                                node.span,
+                                machine,
+                                &id,
+                                target_machine.as_deref(),
+                            );
+                        }
+                        _ => {}
+                    }
                     self.check_ui_element_shape(module, element, node.span);
                     let attributes = element
                         .attributes
@@ -5698,7 +5877,6 @@ impl Checker<'_> {
                                 }
                                 ast::UiAttributeValue::Event { event, input } => {
                                     let event_payload = self.check_ui_event(
-                                        module,
                                         element,
                                         &event.value,
                                         event.span,
@@ -5843,9 +6021,342 @@ impl Checker<'_> {
             .collect()
     }
 
-    fn check_ui_event(
+    #[allow(clippy::too_many_arguments)]
+    fn lower_ui_component_call(
         &mut self,
         module: &ModuleEnv<'_>,
+        scope: &Scope,
+        element: &ast::UiElement,
+        span: ast::SourceSpan,
+        id: &str,
+        props: &[(String, TypeRef)],
+        emits: &[ConstructorDef],
+    ) -> IrUiNode {
+        if !element.self_closing || !element.children.is_empty() {
+            self.diagnostics.push(error(
+                codes::UI,
+                "uhura/ui-component-children",
+                format!(
+                    "pure UI component `<{}>` is self-closing and does not accept children",
+                    element.name.value
+                ),
+                span,
+            ));
+        }
+
+        let expected_props = props
+            .iter()
+            .map(|(name, ty)| (name.as_str(), ty))
+            .collect::<BTreeMap<_, _>>();
+        let expected_emits = emits
+            .iter()
+            .map(|constructor| (constructor.name.as_str(), constructor))
+            .collect::<BTreeMap<_, _>>();
+        let mut supplied_props = BTreeMap::<String, &ast::UiAttribute>::new();
+        let mut supplied_bindings = BTreeMap::<String, &ast::UiAttribute>::new();
+        for attribute in &element.attributes {
+            match &attribute.value {
+                ast::UiAttributeValue::Event { event, .. } => {
+                    if !expected_emits.contains_key(event.value.as_str()) {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/unknown-ui-component-event",
+                            format!(
+                                "component `<{}>` does not emit `{}`",
+                                element.name.value, event.value
+                            ),
+                            event.span,
+                        ));
+                    }
+                    if supplied_bindings
+                        .insert(event.value.clone(), attribute)
+                        .is_some()
+                    {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/duplicate-ui-component-event",
+                            format!("component event `{}` is bound more than once", event.value),
+                            attribute.span,
+                        ));
+                    }
+                }
+                ast::UiAttributeValue::Expression(_) | ast::UiAttributeValue::Text(_) => {
+                    if !expected_props.contains_key(attribute.name.as_str()) {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/unknown-ui-component-prop",
+                            format!(
+                                "component `<{}>` does not declare prop `{}`",
+                                element.name.value, attribute.name
+                            ),
+                            attribute.span,
+                        ));
+                    }
+                    if supplied_props
+                        .insert(attribute.name.clone(), attribute)
+                        .is_some()
+                    {
+                        self.diagnostics.push(error(
+                            codes::UI,
+                            "uhura/duplicate-ui-component-prop",
+                            format!(
+                                "component prop `{}` is supplied more than once",
+                                attribute.name
+                            ),
+                            attribute.span,
+                        ));
+                    }
+                }
+            }
+        }
+
+        let lowered_props = props
+            .iter()
+            .filter_map(|(name, expected)| {
+                let Some(attribute) = supplied_props.get(name) else {
+                    self.diagnostics.push(error(
+                        codes::UI,
+                        "uhura/missing-ui-component-prop",
+                        format!(
+                            "component `<{}>` requires prop `{name}`",
+                            element.name.value
+                        ),
+                        span,
+                    ));
+                    return None;
+                };
+                let expression = match &attribute.value {
+                    ast::UiAttributeValue::Expression(value) => {
+                        let (value, actual) =
+                            self.lower_expr(module, scope, value, Some(expected), ExprMode::Ui);
+                        self.expect_type(&actual, expected, attribute.span);
+                        value
+                    }
+                    ast::UiAttributeValue::Text(value) => {
+                        self.expect_type(&Ty::value(TypeRef::Text), expected, attribute.span);
+                        IrExpr::Literal {
+                            value: Value::Text(value.clone()),
+                        }
+                    }
+                    ast::UiAttributeValue::Event { .. } => unreachable!(),
+                };
+                Some((name.clone(), expression))
+            })
+            .collect();
+
+        let lowered_bindings = emits
+            .iter()
+            .filter_map(|constructor| {
+                let Some(attribute) = supplied_bindings.get(&constructor.name) else {
+                    self.diagnostics.push(error(
+                        codes::UI,
+                        "uhura/missing-ui-component-event",
+                        format!(
+                            "component `<{}>` requires a binding for emitted event `{}`",
+                            element.name.value, constructor.name
+                        ),
+                        span,
+                    ));
+                    return None;
+                };
+                let ast::UiAttributeValue::Event { input, .. } = &attribute.value else {
+                    unreachable!();
+                };
+                let payload = if constructor.fields.is_empty() {
+                    TypeRef::Unit
+                } else if constructor.fields.iter().all(|(name, _)| name.is_some()) {
+                    TypeRef::Record {
+                        fields: constructor
+                            .fields
+                            .iter()
+                            .map(|(name, ty)| {
+                                (name.clone().expect("checked named field"), ty.clone())
+                            })
+                            .collect(),
+                    }
+                } else {
+                    TypeRef::Tuple {
+                        values: constructor
+                            .fields
+                            .iter()
+                            .map(|(_, ty)| ty.clone())
+                            .collect(),
+                    }
+                };
+                let mut event_scope = scope.child();
+                event_scope.bind("event", "event", Ty::value(payload));
+                let (input, actual) = self.lower_expr(
+                    module,
+                    &event_scope,
+                    input,
+                    scope.input_type.as_ref(),
+                    ExprMode::Ui,
+                );
+                if let Some(expected) = &scope.input_type {
+                    self.expect_type(&actual, expected, attribute.span);
+                } else {
+                    self.diagnostics.push(error(
+                        codes::UI,
+                        "uhura/ui-component-event-outside-input-context",
+                        "component emitted events require an enclosing presentation input protocol",
+                        attribute.span,
+                    ));
+                }
+                Some(IrUiCallBinding {
+                    event: constructor.name.clone(),
+                    input,
+                    source: source(module, attribute.span),
+                })
+            })
+            .collect();
+
+        IrUiNode::Call {
+            target: id.into(),
+            target_kind: IrUiCallTargetKind::Component,
+            props: lowered_props,
+            bindings: lowered_bindings,
+            source: source(module, span),
+        }
+    }
+
+    fn lower_ui_presentation_call(
+        &mut self,
+        module: &ModuleEnv<'_>,
+        element: &ast::UiElement,
+        span: ast::SourceSpan,
+        caller_machine: Option<&IrMachine>,
+        id: &str,
+        target_machine: Option<&str>,
+    ) -> IrUiNode {
+        if !element.self_closing || !element.children.is_empty() || !element.attributes.is_empty() {
+            self.diagnostics.push(error(
+                codes::UI,
+                "uhura/ui-presentation-call-shape",
+                format!(
+                    "machine-bound presentation `<{}>` is a self-closing call with no props, events, or children",
+                    element.name.value
+                ),
+                span,
+            ));
+        }
+        match (caller_machine, target_machine) {
+            (None, _) => self.diagnostics.push(error(
+                codes::UI,
+                "uhura/ui-component-calls-presentation",
+                "a pure UI component cannot call a machine-bound presentation",
+                element.name.span,
+            )),
+            (Some(caller), Some(target)) if caller.id != target => {
+                self.diagnostics.push(error(
+                    codes::UI,
+                    "uhura/cross-machine-ui-call",
+                    format!(
+                        "presentation `{}` targets `{target}`, not caller machine `{}`",
+                        element.name.value, caller.id
+                    ),
+                    element.name.span,
+                ));
+            }
+            (Some(_), None) => self.diagnostics.push(error(
+                codes::UNKNOWN_NAME,
+                "uhura/ui-presentation-machine-unavailable",
+                format!(
+                    "could not resolve the machine bound by presentation `{}`",
+                    element.name.value
+                ),
+                element.name.span,
+            )),
+            _ => {}
+        }
+        IrUiNode::Call {
+            target: id.into(),
+            target_kind: IrUiCallTargetKind::Presentation,
+            props: Vec::new(),
+            bindings: Vec::new(),
+            source: source(module, span),
+        }
+    }
+
+    fn check_ui_call_graph(&mut self) {
+        let mut graph = BTreeMap::<String, BTreeSet<String>>::new();
+        for (id, component) in &self.program.components {
+            let owner = format!("component:{id}");
+            let mut targets = BTreeSet::new();
+            collect_ui_call_targets(&component.nodes, &mut targets);
+            graph.insert(owner, targets);
+        }
+        for (id, presentation) in &self.program.presentations {
+            let owner = format!("presentation:{id}");
+            let mut targets = BTreeSet::new();
+            collect_ui_call_targets(&presentation.nodes, &mut targets);
+            graph.insert(owner, targets);
+        }
+        for owner in cyclic_nodes(&graph) {
+            let source = owner
+                .strip_prefix("component:")
+                .and_then(|id| self.program.components.get(id))
+                .map(|component| &component.source)
+                .or_else(|| {
+                    owner
+                        .strip_prefix("presentation:")
+                        .and_then(|id| self.program.presentations.get(id))
+                        .map(|presentation| &presentation.source)
+                });
+            let Some(source) = source else {
+                continue;
+            };
+            self.diagnostics.push(error(
+                codes::DEPENDENCY_CYCLE,
+                "uhura/ui-call-cycle",
+                format!(
+                    "UI presentation-function `{}` participates in a call cycle",
+                    owner.split_once(':').map_or(owner.as_str(), |(_, id)| id)
+                ),
+                self.physical_span(source),
+            ));
+        }
+    }
+
+    fn check_composed_ui_constraints(&mut self) {
+        let catalog = self.ui_catalog();
+        let mut issues = Vec::new();
+        for component in self.program.components.values() {
+            collect_composed_ui_constraint_issues(
+                &self.program,
+                &component.nodes,
+                catalog,
+                &mut BTreeSet::from([format!("component:{}", component.id)]),
+                &mut issues,
+            );
+        }
+        for presentation in self.program.presentations.values() {
+            collect_composed_ui_constraint_issues(
+                &self.program,
+                &presentation.nodes,
+                catalog,
+                &mut BTreeSet::from([format!("presentation:{}", presentation.id)]),
+                &mut issues,
+            );
+        }
+        let mut seen = BTreeSet::new();
+        for issue in issues {
+            let span = self.physical_span(&issue.source);
+            let identity = (
+                issue.rule,
+                issue.message.clone(),
+                span.file,
+                span.start,
+                span.end,
+            );
+            if seen.insert(identity) {
+                self.diagnostics
+                    .push(error(codes::UI, issue.rule, issue.message, span));
+            }
+        }
+    }
+
+    fn check_ui_event(
+        &mut self,
         element: &ast::UiElement,
         event: &str,
         span: ast::SourceSpan,
@@ -5853,12 +6364,6 @@ impl Checker<'_> {
         let name = element.name.value.as_str();
         let catalog = self.ui_catalog();
         let Some(spec) = catalog.element(name) else {
-            // A presentation-shaped tag is rejected once at the element
-            // boundary. Recover with Unit here so an event edge does not
-            // misleadingly imply that presentation invocation exists.
-            if matches!(module.lookup(name), Some(Export::Presentation { .. })) {
-                return Some(TypeRef::Unit);
-            }
             self.diagnostics.push(error(
                 codes::UI,
                 "uhura/ui-event",
@@ -5917,22 +6422,11 @@ impl Checker<'_> {
         let catalog = self.ui_catalog();
         let spec = catalog.element(name);
         let imported_ui_element = matches!(module.lookup(name), Some(Export::UiElement));
-        let imported_presentation =
-            matches!(module.lookup(name), Some(Export::Presentation { .. }));
         let admitted = spec.is_some_and(|spec| match spec.availability {
             UiElementAvailability::Native => true,
             UiElementAvailability::StandardImport => imported_ui_element,
         });
-        if imported_presentation {
-            self.diagnostics.push(error(
-                codes::UI,
-                "uhura/ui-presentation-invocation-unavailable",
-                format!(
-                    "`<{name}>` resolves to a UI presentation, but presentation invocation is not part of Uhura 0.4; inline its markup or use a checked element"
-                ),
-                element.name.span,
-            ));
-        } else if !admitted {
+        if !admitted {
             self.diagnostics.push(error(
                 codes::UI,
                 "uhura/unknown-ui-element",
@@ -6083,42 +6577,7 @@ impl Checker<'_> {
                         ));
                     }
                     UiConstraint::Controlled { .. } => {}
-                    UiConstraint::AccessibleName { attributes }
-                        if !attributes.iter().any(|attribute| seen.contains(*attribute))
-                            && !ui_nodes_have_accessible_text(&element.children) =>
-                    {
-                        self.diagnostics.push(error(
-                            codes::UI,
-                            "uhura/ui-accessible-name",
-                            format!(
-                                "`<{name}>` requires visible text{}",
-                                if attributes.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(
-                                        " or one of {}",
-                                        attributes
-                                            .iter()
-                                            .map(|attribute| format!("`{attribute}`"))
-                                            .collect::<Vec<_>>()
-                                            .join(", ")
-                                    )
-                                }
-                            ),
-                            span,
-                        ));
-                    }
                     UiConstraint::AccessibleName { .. } => {}
-                    UiConstraint::NoInteractiveDescendants
-                        if ui_nodes_contain_interactive_element(&element.children, catalog) =>
-                    {
-                        self.diagnostics.push(error(
-                            codes::UI,
-                            "uhura/ui-nested-interactive",
-                            format!("`<{name}>` cannot contain another interactive element"),
-                            span,
-                        ));
-                    }
                     UiConstraint::NoInteractiveDescendants => {}
                     UiConstraint::AtLeastOneEvent(events)
                         if !events.iter().any(|event| has_ui_event(element, event)) =>
@@ -6138,18 +6597,6 @@ impl Checker<'_> {
                         ));
                     }
                     UiConstraint::AtLeastOneEvent(_) => {}
-                    UiConstraint::NeutralListItems {
-                        element: item_element,
-                    } if ui_element_has_text_attribute(element, "role", "list")
-                        && !ui_nodes_are_neutral_list_items(&element.children, item_element) =>
-                    {
-                        self.diagnostics.push(error(
-                            codes::UI,
-                            "uhura/ui-list-item-boundary",
-                            "`<view role=\"list\">` requires each rendered direct child to be an unroled `<view>`; nest buttons, regions, and other semantics inside that boundary",
-                            span,
-                        ));
-                    }
                     UiConstraint::NeutralListItems { .. } => {}
                 }
             }
@@ -6268,71 +6715,264 @@ fn has_ui_event(element: &ast::UiElement, event_name: &str) -> bool {
     })
 }
 
-fn ui_element_has_text_attribute(
-    element: &ast::UiElement,
-    attribute_name: &str,
-    expected: &str,
-) -> bool {
-    element.attributes.iter().any(|attribute| {
-        attribute.name == attribute_name
+struct ComposedUiConstraintIssue {
+    rule: &'static str,
+    message: String,
+    source: SourceRef,
+}
+
+fn ir_call_nodes<'a>(
+    program: &'a Program,
+    target: &str,
+    target_kind: &IrUiCallTargetKind,
+) -> Option<(&'a [IrUiNode], String)> {
+    match target_kind {
+        IrUiCallTargetKind::Component => program
+            .components
+            .get(target)
+            .map(|component| (component.nodes.as_slice(), format!("component:{target}"))),
+        IrUiCallTargetKind::Presentation => program.presentations.get(target).map(|presentation| {
+            (
+                presentation.nodes.as_slice(),
+                format!("presentation:{target}"),
+            )
+        }),
+    }
+}
+
+fn ir_attribute_present(attributes: &[IrUiAttribute], name: &str) -> bool {
+    attributes.iter().any(|attribute| attribute.name == name)
+}
+
+fn ir_text_attribute(attributes: &[IrUiAttribute], name: &str, expected: &str) -> bool {
+    attributes.iter().any(|attribute| {
+        attribute.name == name
             && matches!(
                 &attribute.value,
-                ast::UiAttributeValue::Text(value) if value == expected
+                IrUiAttributeValue::Text { value } if value == expected
             )
     })
 }
 
-fn ui_nodes_are_neutral_list_items(nodes: &[ast::UiNode], item_element: &str) -> bool {
-    nodes.iter().all(|node| match &node.value {
-        ast::UiNodeKind::Text(value) => value.trim().is_empty(),
-        ast::UiNodeKind::Element(element) => {
-            element.name.value == item_element
-                && !element
-                    .attributes
-                    .iter()
-                    .any(|attribute| attribute.name == "role")
-        }
-        ast::UiNodeKind::If { children, .. } | ast::UiNodeKind::Each { children, .. } => {
-            ui_nodes_are_neutral_list_items(children, item_element)
-        }
-        ast::UiNodeKind::Match { cases, .. } => cases
-            .iter()
-            .all(|case| ui_nodes_are_neutral_list_items(&case.children, item_element)),
-        ast::UiNodeKind::Interpolation(_) => false,
-    })
-}
-
-fn ui_nodes_have_accessible_text(nodes: &[ast::UiNode]) -> bool {
-    nodes.iter().any(|node| match &node.value {
-        ast::UiNodeKind::Text(value) => !value.trim().is_empty(),
-        ast::UiNodeKind::Interpolation(_) => true,
-        ast::UiNodeKind::Element(element) => ui_nodes_have_accessible_text(&element.children),
-        ast::UiNodeKind::If { children, .. } | ast::UiNodeKind::Each { children, .. } => {
-            ui_nodes_have_accessible_text(children)
-        }
-        ast::UiNodeKind::Match { cases, .. } => cases
-            .iter()
-            .any(|case| ui_nodes_have_accessible_text(&case.children)),
-    })
-}
-
-fn ui_nodes_contain_interactive_element(
-    nodes: &[ast::UiNode],
-    catalog: ui_catalog::Catalog,
+fn ir_nodes_have_accessible_text(
+    program: &Program,
+    nodes: &[IrUiNode],
+    visiting: &mut BTreeSet<String>,
 ) -> bool {
-    nodes.iter().any(|node| match &node.value {
-        ast::UiNodeKind::Element(element) => {
-            catalog.is_interactive(element.name.value.as_str())
-                || ui_nodes_contain_interactive_element(&element.children, catalog)
+    nodes.iter().any(|node| match node {
+        IrUiNode::Text { value, .. } => !value.trim().is_empty(),
+        IrUiNode::Interpolation { .. } => true,
+        IrUiNode::Element { children, .. }
+        | IrUiNode::If { children, .. }
+        | IrUiNode::Each { children, .. } => {
+            ir_nodes_have_accessible_text(program, children, visiting)
         }
-        ast::UiNodeKind::If { children, .. } | ast::UiNodeKind::Each { children, .. } => {
-            ui_nodes_contain_interactive_element(children, catalog)
-        }
-        ast::UiNodeKind::Match { cases, .. } => cases
+        IrUiNode::Match { cases, .. } => cases
             .iter()
-            .any(|case| ui_nodes_contain_interactive_element(&case.children, catalog)),
-        ast::UiNodeKind::Text(_) | ast::UiNodeKind::Interpolation(_) => false,
+            .any(|case| ir_nodes_have_accessible_text(program, &case.children, visiting)),
+        IrUiNode::Call {
+            target,
+            target_kind,
+            ..
+        } => {
+            let Some((nodes, owner)) = ir_call_nodes(program, target, target_kind) else {
+                return false;
+            };
+            if !visiting.insert(owner.clone()) {
+                return false;
+            }
+            let result = ir_nodes_have_accessible_text(program, nodes, visiting);
+            visiting.remove(&owner);
+            result
+        }
     })
+}
+
+fn ir_nodes_contain_interactive_element(
+    program: &Program,
+    nodes: &[IrUiNode],
+    catalog: ui_catalog::Catalog,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    nodes.iter().any(|node| match node {
+        IrUiNode::Element { name, children, .. } => {
+            catalog.is_interactive(name)
+                || ir_nodes_contain_interactive_element(program, children, catalog, visiting)
+        }
+        IrUiNode::If { children, .. } | IrUiNode::Each { children, .. } => {
+            ir_nodes_contain_interactive_element(program, children, catalog, visiting)
+        }
+        IrUiNode::Match { cases, .. } => cases.iter().any(|case| {
+            ir_nodes_contain_interactive_element(program, &case.children, catalog, visiting)
+        }),
+        IrUiNode::Call {
+            target,
+            target_kind,
+            ..
+        } => {
+            let Some((nodes, owner)) = ir_call_nodes(program, target, target_kind) else {
+                return false;
+            };
+            if !visiting.insert(owner.clone()) {
+                return false;
+            }
+            let result = ir_nodes_contain_interactive_element(program, nodes, catalog, visiting);
+            visiting.remove(&owner);
+            result
+        }
+        IrUiNode::Text { .. } | IrUiNode::Interpolation { .. } => false,
+    })
+}
+
+fn ir_nodes_are_neutral_list_items(
+    program: &Program,
+    nodes: &[IrUiNode],
+    item_element: &str,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    nodes.iter().all(|node| match node {
+        IrUiNode::Text { value, .. } => value.trim().is_empty(),
+        IrUiNode::Element {
+            name, attributes, ..
+        } => name == item_element && !ir_attribute_present(attributes, "role"),
+        IrUiNode::If { children, .. } | IrUiNode::Each { children, .. } => {
+            ir_nodes_are_neutral_list_items(program, children, item_element, visiting)
+        }
+        IrUiNode::Match { cases, .. } => cases.iter().all(|case| {
+            ir_nodes_are_neutral_list_items(program, &case.children, item_element, visiting)
+        }),
+        IrUiNode::Call {
+            target,
+            target_kind,
+            ..
+        } => {
+            let Some((nodes, owner)) = ir_call_nodes(program, target, target_kind) else {
+                return false;
+            };
+            if !visiting.insert(owner.clone()) {
+                return false;
+            }
+            let result = ir_nodes_are_neutral_list_items(program, nodes, item_element, visiting);
+            visiting.remove(&owner);
+            result
+        }
+        IrUiNode::Interpolation { .. } => false,
+    })
+}
+
+fn collect_composed_ui_constraint_issues(
+    program: &Program,
+    nodes: &[IrUiNode],
+    catalog: ui_catalog::Catalog,
+    visiting: &mut BTreeSet<String>,
+    issues: &mut Vec<ComposedUiConstraintIssue>,
+) {
+    for node in nodes {
+        match node {
+            IrUiNode::Element {
+                name,
+                attributes,
+                children,
+                source,
+            } => {
+                if let Some(spec) = catalog.element(name) {
+                    for constraint in spec.constraints {
+                        match constraint {
+                            UiConstraint::AccessibleName { attributes: names }
+                                if !names
+                                    .iter()
+                                    .any(|name| ir_attribute_present(attributes, name))
+                                    && !ir_nodes_have_accessible_text(
+                                        program, children, visiting,
+                                    ) =>
+                            {
+                                issues.push(ComposedUiConstraintIssue {
+                                    rule: "uhura/ui-accessible-name",
+                                    message: format!(
+                                        "`<{name}>` requires visible text{}",
+                                        if names.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(
+                                                " or one of {}",
+                                                names
+                                                    .iter()
+                                                    .map(|name| format!("`{name}`"))
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ")
+                                            )
+                                        }
+                                    ),
+                                    source: source.clone(),
+                                });
+                            }
+                            UiConstraint::NoInteractiveDescendants
+                                if ir_nodes_contain_interactive_element(
+                                    program, children, catalog, visiting,
+                                ) =>
+                            {
+                                issues.push(ComposedUiConstraintIssue {
+                                    rule: "uhura/ui-nested-interactive",
+                                    message: format!(
+                                        "`<{name}>` cannot contain another interactive element"
+                                    ),
+                                    source: source.clone(),
+                                });
+                            }
+                            UiConstraint::NeutralListItems {
+                                element: item_element,
+                            } if ir_text_attribute(attributes, "role", "list")
+                                && !ir_nodes_are_neutral_list_items(
+                                    program,
+                                    children,
+                                    item_element,
+                                    visiting,
+                                ) =>
+                            {
+                                issues.push(ComposedUiConstraintIssue {
+                                    rule: "uhura/ui-list-item-boundary",
+                                    message: "`<view role=\"list\">` requires each rendered direct child to be an unroled `<view>`; nest buttons, regions, and other semantics inside that boundary".into(),
+                                    source: source.clone(),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                collect_composed_ui_constraint_issues(program, children, catalog, visiting, issues);
+            }
+            IrUiNode::If { children, .. } | IrUiNode::Each { children, .. } => {
+                collect_composed_ui_constraint_issues(program, children, catalog, visiting, issues);
+            }
+            IrUiNode::Match { cases, .. } => {
+                for case in cases {
+                    collect_composed_ui_constraint_issues(
+                        program,
+                        &case.children,
+                        catalog,
+                        visiting,
+                        issues,
+                    );
+                }
+            }
+            IrUiNode::Call {
+                target,
+                target_kind,
+                ..
+            } => {
+                let Some((nodes, owner)) = ir_call_nodes(program, target, target_kind) else {
+                    continue;
+                };
+                if visiting.insert(owner.clone()) {
+                    collect_composed_ui_constraint_issues(
+                        program, nodes, catalog, visiting, issues,
+                    );
+                    visiting.remove(&owner);
+                }
+            }
+            IrUiNode::Text { .. } | IrUiNode::Interpolation { .. } => {}
+        }
+    }
 }
 
 fn ui_element_context(element: &ast::UiElement) -> UiElementContext {
@@ -6367,10 +7007,6 @@ impl Checker<'_> {
                     }
                     if let Some(reference) = self.lower_evidence_ref(&module, &alias.target) {
                         let id = qualify(&module.id, &alias.name.value);
-                        let presentation = alias
-                            .presentation
-                            .as_ref()
-                            .and_then(|name| self.resolve_presentation(&module, name));
                         let kind = alias.kind.map(|kind| match kind {
                             ast::EvidencePresentationKind::Page => EvidencePresentationKind::Page,
                             ast::EvidencePresentationKind::Component => {
@@ -6380,6 +7016,75 @@ impl Checker<'_> {
                                 EvidencePresentationKind::Surface
                             }
                         });
+                        let (presentation, component_props) = match (
+                            alias.presentation.as_ref(),
+                            alias.kind,
+                        ) {
+                            (None, _) => {
+                                if alias.arguments.is_some() {
+                                    self.diagnostics.push(error(
+                                        codes::EVIDENCE,
+                                        "uhura/example-arguments-without-component",
+                                        "example arguments require an explicit pure component or surface target",
+                                        value.declaration.span,
+                                    ));
+                                }
+                                (None, Vec::new())
+                            }
+                            (Some(name), Some(ast::EvidencePresentationKind::Page) | None) => {
+                                if alias.arguments.is_some() {
+                                    self.diagnostics.push(error(
+                                        codes::EVIDENCE,
+                                        "uhura/page-example-arguments",
+                                        "page examples cannot supply a presentation argument list",
+                                        name.span,
+                                    ));
+                                }
+                                (self.resolve_presentation(&module, name), Vec::new())
+                            }
+                            (
+                                Some(name),
+                                Some(
+                                    ast::EvidencePresentationKind::Component
+                                    | ast::EvidencePresentationKind::Surface,
+                                ),
+                            ) => match module.lookup(&name.value).cloned() {
+                                Some(Export::Component { id, props, .. }) => {
+                                    if alias.arguments.is_none() {
+                                        self.diagnostics.push(error(
+                                            codes::EVIDENCE,
+                                            "uhura/component-example-argument-list",
+                                            "component and surface examples require an explicit argument list; use `()` when the component has no props",
+                                            name.span,
+                                        ));
+                                    }
+                                    let values =
+                                        self.lower_component_example_props(&module, alias, &props);
+                                    (Some(id), values)
+                                }
+                                Some(Export::Presentation { .. }) => {
+                                    self.diagnostics.push(error(
+                                        codes::EVIDENCE,
+                                        "uhura/component-example-target",
+                                        "component and surface examples must target a pure UI component; machine-bound presentations are pages",
+                                        name.span,
+                                    ));
+                                    (None, Vec::new())
+                                }
+                                _ => {
+                                    self.diagnostics.push(error(
+                                        codes::UNKNOWN_NAME,
+                                        "uhura/unknown-example-component",
+                                        format!(
+                                            "`{}` does not resolve to a pure UI component",
+                                            name.value
+                                        ),
+                                        name.span,
+                                    ));
+                                    (None, Vec::new())
+                                }
+                            },
+                        };
                         if alias.is_default
                             && presentation.as_ref().is_some_and(|presentation| {
                                 self.program
@@ -6408,6 +7113,7 @@ impl Checker<'_> {
                             EvidenceExampleMetadata {
                                 presentation,
                                 kind,
+                                component_props,
                                 is_default: alias.is_default,
                                 note: alias.note.clone(),
                             },
@@ -6438,7 +7144,56 @@ impl Checker<'_> {
             }
         }
 
-        for value in deferred {
+        let mut pending = deferred
+            .into_iter()
+            .filter(|value| matches!(value.declaration.value, ast::DeclarationKind::Scenario(_)))
+            .collect::<Vec<_>>();
+        let mut ordered = Vec::with_capacity(pending.len());
+        let mut ordered_ids = BTreeSet::new();
+        while !pending.is_empty() {
+            let ready = pending.iter().position(|value| {
+                let ast::DeclarationKind::Scenario(scenario) = &value.declaration.value else {
+                    return false;
+                };
+                match &scenario.origin {
+                    ast::ScenarioOrigin::Machine { .. } => true,
+                    ast::ScenarioOrigin::Snapshot(reference) => {
+                        let Some(module) = self.modules.get(&value.module) else {
+                            return true;
+                        };
+                        let parts = reference
+                            .path
+                            .iter()
+                            .map(|part| part.value.as_str())
+                            .collect::<Vec<_>>();
+                        let dependency = match parts.as_slice() {
+                            [scenario, _] => Some(qualify(&module.id, scenario)),
+                            [checkpoint] => self
+                                .program
+                                .evidence
+                                .checkpoints
+                                .get(&qualify(&module.id, checkpoint))
+                                .map(|reference| reference.scenario.clone()),
+                            _ => None,
+                        };
+                        dependency.is_none_or(|dependency| {
+                            ordered_ids.contains(&dependency)
+                                || self.program.evidence.scenarios.contains_key(&dependency)
+                        })
+                    }
+                }
+            });
+            let index = ready.unwrap_or(0);
+            let value = pending.remove(index);
+            if let ast::DeclarationKind::Scenario(scenario) = &value.declaration.value
+                && let Some(module) = self.modules.get(&value.module)
+            {
+                ordered_ids.insert(qualify(&module.id, &scenario.name.value));
+            }
+            ordered.push(value);
+        }
+
+        for value in ordered {
             let ast::DeclarationKind::Scenario(scenario) = &value.declaration.value else {
                 continue;
             };
@@ -6804,6 +7559,113 @@ impl Checker<'_> {
                 ));
             }
         }
+    }
+
+    fn lower_component_example_props(
+        &mut self,
+        module: &ModuleEnv<'_>,
+        alias: &ast::EvidenceAliasDecl,
+        props: &[(String, TypeRef)],
+    ) -> Vec<(String, Value)> {
+        let expected = props
+            .iter()
+            .map(|(name, ty)| (name.as_str(), ty))
+            .collect::<BTreeMap<_, _>>();
+        let mut supplied = BTreeMap::<String, &ast::EvidenceArgument>::new();
+        for argument in alias.arguments.as_deref().unwrap_or_default() {
+            if !expected.contains_key(argument.name.value.as_str()) {
+                self.diagnostics.push(error(
+                    codes::EVIDENCE,
+                    "uhura/unknown-component-example-prop",
+                    format!(
+                        "component `{}` does not declare preview prop `{}`",
+                        alias
+                            .presentation
+                            .as_ref()
+                            .map_or("<unknown>", |name| name.value.as_str()),
+                        argument.name.value
+                    ),
+                    argument.name.span,
+                ));
+            }
+            if supplied
+                .insert(argument.name.value.clone(), argument)
+                .is_some()
+            {
+                self.diagnostics.push(error(
+                    codes::DUPLICATE,
+                    "uhura/duplicate-component-example-prop",
+                    format!(
+                        "component preview prop `{}` is supplied more than once",
+                        argument.name.value
+                    ),
+                    argument.span,
+                ));
+            }
+        }
+
+        let mut scope = self.module_scope(module);
+        self.populate_scope_constructors(&mut scope);
+        props
+            .iter()
+            .filter_map(|(name, ty)| {
+                let Some(argument) = supplied.get(name) else {
+                    self.diagnostics.push(error(
+                        codes::EVIDENCE,
+                        "uhura/missing-component-example-prop",
+                        format!(
+                            "component `{}` requires preview prop `{name}`",
+                            alias
+                                .presentation
+                                .as_ref()
+                                .map_or("<unknown>", |name| name.value.as_str())
+                        ),
+                        alias.name.span,
+                    ));
+                    return None;
+                };
+                let diagnostics_before = self.diagnostics.len();
+                let (expression, actual) = self.lower_expr(
+                    module,
+                    &scope,
+                    &argument.value,
+                    Some(ty),
+                    ExprMode::Pure,
+                );
+                self.expect_type(&actual, ty, argument.span);
+                if self.diagnostics.len() != diagnostics_before {
+                    return None;
+                }
+                let value = match const_eval(&expression, &self.program) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.diagnostics.push(error(
+                            codes::EFFECT,
+                            "uhura/non-constant-component-example-prop",
+                            format!(
+                                "component preview prop `{name}` is not compile-time total: {message}"
+                            ),
+                            argument.span,
+                        ));
+                        return None;
+                    }
+                };
+                match self.program.machine_program.canonicalize_value(ty, &value) {
+                    Ok(value) => Some((name.clone(), value)),
+                    Err(value_error) => {
+                        self.diagnostics.push(error(
+                            codes::EVIDENCE,
+                            "uhura/invalid-component-example-prop",
+                            format!(
+                                "component preview prop `{name}` is invalid: {value_error}"
+                            ),
+                            argument.span,
+                        ));
+                        None
+                    }
+                }
+            })
+            .collect()
     }
 
     fn evidence_feature_error(&mut self, module: &ModuleEnv<'_>, span: ast::SourceSpan) {
@@ -8560,6 +9422,35 @@ fn collect_pattern_bindings(pattern: &ast::Pattern, bound: &mut BTreeSet<String>
         | ast::PatternKind::Text(_)
         | ast::PatternKind::Bool(_)
         | ast::PatternKind::Error => {}
+    }
+}
+
+fn collect_ui_call_targets(nodes: &[IrUiNode], targets: &mut BTreeSet<String>) {
+    for node in nodes {
+        match node {
+            IrUiNode::Element { children, .. }
+            | IrUiNode::If { children, .. }
+            | IrUiNode::Each { children, .. } => collect_ui_call_targets(children, targets),
+            IrUiNode::Match { cases, .. } => {
+                for case in cases {
+                    collect_ui_call_targets(&case.children, targets);
+                }
+            }
+            IrUiNode::Call {
+                target,
+                target_kind,
+                ..
+            } => {
+                targets.insert(format!(
+                    "{}:{target}",
+                    match target_kind {
+                        IrUiCallTargetKind::Component => "component",
+                        IrUiCallTargetKind::Presentation => "presentation",
+                    }
+                ));
+            }
+            IrUiNode::Text { .. } | IrUiNode::Interpolation { .. } => {}
+        }
     }
 }
 

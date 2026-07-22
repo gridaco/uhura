@@ -18,7 +18,7 @@ pub ui FeedWeb for Feed(view) {
       <!-- one stable keyed card -->
       <PostCard
         post={view.by_id[id]}
-        on like -> ToggleLike(id)
+        on Like -> ToggleLike(id)
         featured
       />
     {/each}

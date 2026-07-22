@@ -1,0 +1,59 @@
+use uhura::ui;
+use crate::instagram::Section;
+
+pub ui BottomNav(current: Section) emits {
+  FeedSelected,
+  SearchSelected,
+  CreateSelected,
+  ReelsSelected,
+  ProfileSelected,
+} {
+  <view
+    role="navigation"
+    class="bottom-nav"
+  >
+    <text class="nav-brand">Instagram</text>
+    <view class="nav-items">
+      <button
+        label="Feed"
+        current={current == Section::Feed}
+        on press -> FeedSelected
+      >
+        <icon name="house"/>
+        <text class="nav-label">Home</text>
+      </button>
+      <button
+        label="Search"
+        current={current == Section::Search}
+        on press -> SearchSelected
+      >
+        <icon name="search"/>
+        <text class="nav-label">Search</text>
+      </button>
+      <button
+        label="Create"
+        current={current == Section::Create}
+        on press -> CreateSelected
+      >
+        <icon name="square-plus"/>
+        <text class="nav-label">Create</text>
+      </button>
+      <button
+        label="Reels"
+        current={current == Section::Reels}
+        on press -> ReelsSelected
+      >
+        <icon name="clapperboard"/>
+        <text class="nav-label">Reels</text>
+      </button>
+      <button
+        label="Profile"
+        current={current == Section::Profile}
+        on press -> ProfileSelected
+      >
+        <icon name="user-round"/>
+        <text class="nav-label">Profile</text>
+      </button>
+    </view>
+  </view>
+}

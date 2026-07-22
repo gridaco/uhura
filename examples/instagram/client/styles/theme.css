@@ -223,8 +223,8 @@ body {
   padding-block-end: 58px;
 }
 
-/* Instagram application projections. The project has one checked UI module
-   and one deployment-owned stylesheet. */
+/* Instagram application projections. Framework pages share one app-shell
+   class contract and one deployment-owned stylesheet. */
 .feed-page,
 .create-page,
 .profile-page,

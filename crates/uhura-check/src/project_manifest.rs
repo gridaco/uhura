@@ -17,6 +17,10 @@ pub const LANGUAGE_VERSION: &str = "0.4";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectManifest {
     pub project: ProjectConfig,
+    /// Optional root-project framework selection. Framework resolution is a
+    /// project-layer concern; the checker only validates this closed manifest
+    /// declaration and continues to compile explicit modules.
+    pub framework: Option<FrameworkConfig>,
     pub modules: BTreeMap<LogicalModulePath, ProjectPath>,
     /// Explicit tooling-only modules using the same 0.4 frontend under the
     /// evidence manifest role. These files cannot contribute deployable core
@@ -24,6 +28,85 @@ pub struct ProjectManifest {
     pub evidence: BTreeMap<LogicalModulePath, ProjectPath>,
     pub dependencies: BTreeMap<DependencyAlias, DependencyConfig>,
     pub resources: ResourceManifest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameworkConfig {
+    pub profile: FrameworkProfile,
+    pub version: u64,
+    pub machine: FrameworkLocator,
+    pub location: FrameworkLocator,
+}
+
+/// An explicit root-package declaration selected by a framework profile.
+///
+/// Framework locators deliberately retain their authored `crate::` spelling:
+/// they are project configuration, not imports, and must never be inferred
+/// from the declaration inventory.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FrameworkLocator {
+    value: String,
+    module: LogicalModulePath,
+    declaration: String,
+}
+
+impl FrameworkLocator {
+    pub fn parse(value: &str) -> Result<Self, ProjectValueError> {
+        let Some(relative) = value.strip_prefix("crate::") else {
+            return Err(ProjectValueError::new(
+                "expected `crate::<module>::<UpperCamelDeclaration>`",
+            ));
+        };
+        let Some((module, declaration)) = relative.rsplit_once("::") else {
+            return Err(ProjectValueError::new(
+                "expected `crate::<module>::<UpperCamelDeclaration>`",
+            ));
+        };
+        let module = LogicalModulePath::parse(module).map_err(|_| {
+            ProjectValueError::new("expected `crate::<module>::<UpperCamelDeclaration>`")
+        })?;
+        if !upper_name(declaration) {
+            return Err(ProjectValueError::new(
+                "expected `crate::<module>::<UpperCamelDeclaration>`",
+            ));
+        }
+        Ok(Self {
+            value: value.to_owned(),
+            module,
+            declaration: declaration.to_owned(),
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+
+    pub fn module(&self) -> &LogicalModulePath {
+        &self.module
+    }
+
+    pub fn declaration(&self) -> &str {
+        &self.declaration
+    }
+}
+
+impl fmt::Display for FrameworkLocator {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameworkProfile {
+    WebApp,
+}
+
+impl FrameworkProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WebApp => "web-app",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -297,6 +380,7 @@ fn parse_manifest(table: toml::Table) -> Result<ProjectManifest, Vec<ProjectMani
     for key in table.keys() {
         if ![
             "project",
+            "framework",
             "modules",
             "evidence",
             "dependencies",
@@ -310,6 +394,7 @@ fn parse_manifest(table: toml::Table) -> Result<ProjectManifest, Vec<ProjectMani
     }
 
     let project = parse_project(&table, &mut issues);
+    let framework = parse_framework(&table, &mut issues);
     let modules = parse_modules(&table, &mut issues);
     let evidence = parse_evidence(&table, modules.as_ref(), &mut issues);
     let dependencies = parse_dependencies(&table, &mut issues);
@@ -319,6 +404,7 @@ fn parse_manifest(table: toml::Table) -> Result<ProjectManifest, Vec<ProjectMani
         (Some(project), Some(modules), Some(resources)) if issues.is_empty() => {
             Ok(ProjectManifest {
                 project,
+                framework,
                 modules,
                 evidence,
                 dependencies,
@@ -326,6 +412,68 @@ fn parse_manifest(table: toml::Table) -> Result<ProjectManifest, Vec<ProjectMani
             })
         }
         _ => Err(issues),
+    }
+}
+
+fn parse_framework(
+    table: &toml::Table,
+    issues: &mut Vec<ProjectManifestIssue>,
+) -> Option<FrameworkConfig> {
+    let value = table.get("framework")?;
+    let Some(framework) = value.as_table() else {
+        issue(issues, "framework", "expected a `[framework]` table");
+        return None;
+    };
+
+    for key in framework.keys() {
+        if !["profile", "version", "machine", "location"].contains(&key.as_str()) {
+            issue(
+                issues,
+                format!("framework.{key}"),
+                format!("unknown key `{key}`"),
+            );
+        }
+    }
+
+    let profile = match required_string(framework.get("profile"), "framework.profile", issues) {
+        Some("web-app") => Some(FrameworkProfile::WebApp),
+        Some(profile) => {
+            issue(
+                issues,
+                "framework.profile",
+                format!("unsupported framework profile `{profile}`; expected `web-app`"),
+            );
+            None
+        }
+        None => None,
+    };
+    let version = positive_integer(framework.get("version"), "framework.version", issues).and_then(
+        |version| {
+            if version == 1 {
+                Some(version)
+            } else {
+                issue(
+                    issues,
+                    "framework.version",
+                    format!("unsupported framework version `{version}`; expected `1`"),
+                );
+                None
+            }
+        },
+    );
+    let machine = required_string(framework.get("machine"), "framework.machine", issues)
+        .and_then(|value| framework_locator(value, "framework.machine", issues));
+    let location = required_string(framework.get("location"), "framework.location", issues)
+        .and_then(|value| framework_locator(value, "framework.location", issues));
+
+    match (profile, version, machine, location) {
+        (Some(profile), Some(version), Some(machine), Some(location)) => Some(FrameworkConfig {
+            profile,
+            version,
+            machine,
+            location,
+        }),
+        _ => None,
     }
 }
 
@@ -685,6 +833,28 @@ fn logical_segment(segment: &str) -> bool {
             .iter()
             .skip(1)
             .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_'))
+}
+
+fn upper_name(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_uppercase())
+        && characters.all(|next| next.is_ascii_alphanumeric())
+}
+
+fn framework_locator(
+    value: &str,
+    path: &str,
+    issues: &mut Vec<ProjectManifestIssue>,
+) -> Option<FrameworkLocator> {
+    match FrameworkLocator::parse(value) {
+        Ok(locator) => Some(locator),
+        Err(error) => {
+            issue(issues, path, error.to_string());
+            None
+        }
+    }
 }
 
 fn project_path(

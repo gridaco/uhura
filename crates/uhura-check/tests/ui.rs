@@ -446,6 +446,259 @@ fn direct_ui_profile_lowers_into_the_same_executable_program() {
 }
 
 #[test]
+fn pure_components_inline_and_compose_emitted_events_back_to_machine_input() {
+    let ui = r#"
+use uhura::ui;
+use crate::counter::Counter;
+
+pub ui Action(label: Text) emits {
+  Pressed,
+} {
+  <button on press -> Pressed>{label}</button>
+}
+
+pub ui CounterAction(label: Text) emits {
+  Activated,
+} {
+  <Action label={label} on Pressed -> Activated />
+}
+
+pub ui CounterWeb for Counter(view) {
+  <main>
+    <!-- @annotation The reusable counter action call. -->
+    <CounterAction label="Increment" on Activated -> Increment />
+    <output>{view.count}</output>
+  </main>
+}
+"#;
+    let output = checked(MACHINE, ui);
+    assert!(
+        output.diagnostics.is_empty(),
+        "component diagnostics:\n{:#?}",
+        output.diagnostics
+    );
+    let program = output.program.expect("checked component program");
+    assert_eq!(program.components.len(), 2);
+    let call_target = output
+        .authoring
+        .targets
+        .iter()
+        .find(|target| target.label == "<CounterAction>")
+        .expect("the component call is an authoring target");
+    assert!(output.authoring.entries.iter().any(|entry| {
+        entry.target_id == call_target.id && entry.text == "The reusable counter action call."
+    }));
+    let machine = "example.ui@1::Counter";
+    let presentation = "example.ui@1::CounterWeb";
+    let (instance, _) = program
+        .machine_program
+        .admit(machine, Value::Unit, "ui/components")
+        .expect("machine admission");
+    let projection = program
+        .project(&instance, presentation)
+        .expect("component projection");
+    let mut text = String::new();
+    rendered_text(&projection.document.nodes, &mut text);
+    assert!(text.contains("Increment"));
+    let binding =
+        event_binding(&projection.document.nodes, "button", "press").expect("nested native event");
+    let input = program
+        .resolve_ui_input(&instance, &projection, &binding, Value::Unit)
+        .expect("nested component event maps to machine input");
+    let Value::Variant {
+        type_id,
+        constructor,
+        ..
+    } = input
+    else {
+        panic!("expected machine input variant");
+    };
+    assert_eq!(type_id, "example.ui@1::Counter.Input");
+    assert_eq!(constructor, "Increment");
+}
+
+#[test]
+fn pure_component_calls_require_exact_props_and_total_event_bindings() {
+    let ui = r#"
+use uhura::ui;
+use crate::counter::Counter;
+
+pub ui Action(label: Text) emits {
+  Pressed,
+} {
+  <button on press -> Pressed>{label}</button>
+}
+
+pub ui CounterWeb for Counter(view) {
+  <Action extra="no" />
+}
+"#;
+    let output = checked(MACHINE, ui);
+    assert!(output.program.is_none());
+    let rules = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.rule)
+        .collect::<BTreeSet<_>>();
+    assert!(rules.contains("uhura/unknown-ui-component-prop"));
+    assert!(rules.contains("uhura/missing-ui-component-prop"));
+    assert!(rules.contains("uhura/missing-ui-component-event"));
+
+    let lower_emit_name = r#"
+use uhura::ui;
+use crate::counter::Counter;
+
+pub ui Action() emits {
+  Pressed,
+} {
+  <button on press -> Pressed />
+}
+
+pub ui CounterWeb for Counter(view) {
+  <Action on pressed -> Increment />
+}
+"#;
+    let output = checked(MACHINE, lower_emit_name);
+    let rules = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.rule)
+        .collect::<BTreeSet<_>>();
+    assert!(rules.contains("uhura/unknown-ui-component-event"));
+    assert!(rules.contains("uhura/missing-ui-component-event"));
+}
+
+#[test]
+fn upper_camel_standard_elements_keep_their_lowercase_catalogue_events() {
+    let source = r#"
+use uhura::ui;
+use uhura::web_router::{Link, Routes};
+
+pub enum Location {
+  Home,
+}
+
+pub const ROUTES: Routes<Location> = Routes::from([
+  ("Home", "/"),
+]);
+
+pub machine App {
+  events { Follow }
+  outcomes { commit Accepted }
+  state {}
+  observe {}
+  on Follow { Accepted }
+}
+
+pub ui AppWeb for App(view) {
+  <Link routes={ROUTES} to={Location::Home} on follow -> Follow>Home</Link>
+}
+"#;
+    let output = check_project_modules(&[module(1, "link", source)]);
+    assert!(
+        output.diagnostics.is_empty(),
+        "standard Link diagnostics: {:#?}",
+        output.diagnostics
+    );
+    assert!(output.program.is_some());
+}
+
+#[test]
+fn structural_ui_constraints_follow_pure_component_expansion() {
+    let valid = r#"
+use uhura::ui;
+use crate::counter::Counter;
+
+pub ui ListItem() {
+  <view><text>Item</text></view>
+}
+
+pub ui ButtonLabel() {
+  <text>Increment</text>
+}
+
+pub ui CounterWeb for Counter(view) {
+  <main>
+    <view role="list"><ListItem /></view>
+    <button on press -> Increment><ButtonLabel /></button>
+  </main>
+}
+"#;
+    let output = checked(MACHINE, valid);
+    assert!(
+        output.diagnostics.is_empty(),
+        "composed structural constraints: {:#?}",
+        output.diagnostics
+    );
+
+    let bad_list_item = valid.replace(
+        "<view><text>Item</text></view>",
+        "<text>Not a neutral item boundary</text>",
+    );
+    let output = checked(MACHINE, &bad_list_item);
+    assert!(output.program.is_none());
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.rule == "uhura/ui-list-item-boundary" })
+    );
+
+    let nested_interactive = r#"
+use uhura::ui;
+use crate::counter::Counter;
+
+pub ui InnerControl() emits {
+  Pressed,
+} {
+  <button label="Inner" on press -> Pressed />
+}
+
+pub ui CounterWeb for Counter(view) {
+  <button label="Outer" on press -> Increment>
+    <InnerControl on Pressed -> Increment />
+  </button>
+}
+"#;
+    let output = checked(MACHINE, nested_interactive);
+    assert!(output.program.is_none());
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.rule == "uhura/ui-nested-interactive" })
+    );
+
+    let reused_invalid_component = r#"
+use uhura::ui;
+use crate::counter::Counter;
+
+pub ui UnnamedAction() {
+  <button><icon name="heart" /></button>
+}
+
+pub ui CounterWeb for Counter(view) {
+  <main>
+    <UnnamedAction />
+    <UnnamedAction />
+  </main>
+}
+"#;
+    let output = checked(MACHINE, reused_invalid_component);
+    assert!(output.program.is_none());
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == "uhura/ui-accessible-name")
+            .count(),
+        1,
+        "one invalid authored component node produces one diagnostic regardless of call count: {:#?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn if_else_is_lowered_without_a_kernel_conditional_gap() {
     let output = checked(MACHINE, UI);
     let program = output.program.expect("checked UI");
@@ -587,7 +840,7 @@ pub ui CompactCounterWeb for Counter(view) {
 }
 
 #[test]
-fn presentation_names_are_rejected_until_typed_ui_calls_exist() {
+fn presentation_names_are_checked_same_machine_calls() {
     let unknown_component = UI.replace("<main>", "<main><UnknownCard />");
     let output = checked(MACHINE, &unknown_component);
     assert!(output.program.is_none());
@@ -612,7 +865,7 @@ use crate::counter::Counter;
 use crate::card::CounterCard as Card;
 
 pub ui CardScreen for Counter(view) {
-  <main><Card count={view.count} /></main>
+  <main><Card /></main>
 }
 "#;
     let output = check_project_modules(&[
@@ -620,26 +873,21 @@ pub ui CardScreen for Counter(view) {
         module(2, "card", card),
         module(3, "screen", screen),
     ]);
-    assert!(output.program.is_none());
-    let diagnostic = output
-        .diagnostics
-        .iter()
-        .find(|value| value.rule == "uhura/ui-presentation-invocation-unavailable")
-        .unwrap_or_else(|| {
-            panic!(
-                "missing unavailable presentation-call diagnostic: {:#?}",
-                output.diagnostics
-            )
-        });
-    assert_eq!(diagnostic.span.file.0, 3);
-    assert!(diagnostic.message.contains("presentation invocation"));
-    assert!(
-        !output
-            .diagnostics
-            .iter()
-            .any(|value| value.rule == "uhura/unknown-ui-element"),
-        "a resolved presentation should receive the precise boundary diagnostic"
-    );
+    let program = output.program.unwrap_or_else(|| {
+        panic!(
+            "same-machine presentation call should check: {:#?}",
+            output.diagnostics
+        )
+    });
+    let screen = program
+        .presentations
+        .values()
+        .find(|presentation| presentation.id.ends_with("::CardScreen"))
+        .expect("screen presentation");
+    let UiNode::Element { children, .. } = &screen.nodes[0] else {
+        panic!("screen root");
+    };
+    assert!(matches!(children.as_slice(), [UiNode::Call { .. }]));
 }
 
 #[test]
@@ -791,6 +1039,12 @@ fn unrelated_earlier_declaration_does_not_shift_presentation_or_ui_target_ids() 
                         output.insert(case.source.id.clone());
                         source_ids(&case.children, output);
                     }
+                }
+                UiNode::Call {
+                    bindings, source, ..
+                } => {
+                    output.insert(source.id.clone());
+                    output.extend(bindings.iter().map(|binding| binding.source.id.clone()));
                 }
             }
         }

@@ -1,0 +1,22 @@
+use crate::components::bottom_nav::BottomNav;
+use crate::example_values::{BOTTOM_NAV_CREATE, BOTTOM_NAV_FEED, BOTTOM_NAV_PROFILE, BOTTOM_NAV_REELS, BOTTOM_NAV_SEARCH};
+
+example bottom_nav_feed_active for BottomNav(
+  current: BOTTOM_NAV_FEED,
+) as component default = crate::scenarios::bottom_nav_feed_scenario::frame;
+
+example bottom_nav_profile_active for BottomNav(
+  current: BOTTOM_NAV_PROFILE,
+) as component = crate::scenarios::bottom_nav_profile_scenario::frame;
+
+example bottom_nav_create_active for BottomNav(
+  current: BOTTOM_NAV_CREATE,
+) as component = crate::scenarios::bottom_nav_create_scenario::frame;
+
+example bottom_nav_search_active for BottomNav(
+  current: BOTTOM_NAV_SEARCH,
+) as component = crate::scenarios::bottom_nav_search_scenario::frame;
+
+example bottom_nav_reels_active for BottomNav(
+  current: BOTTOM_NAV_REELS,
+) as component = crate::scenarios::bottom_nav_reels_scenario::frame;

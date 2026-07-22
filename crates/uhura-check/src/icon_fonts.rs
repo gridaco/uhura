@@ -78,6 +78,9 @@ pub fn check_program_icon_tokens(
     for presentation in program.presentations.values() {
         check_icon_nodes(program, fonts, &presentation.nodes, &mut issues);
     }
+    for component in program.components.values() {
+        check_icon_nodes(program, fonts, &component.nodes, &mut issues);
+    }
     issues
 }
 
@@ -108,7 +111,7 @@ fn check_icon_nodes(
                     check_icon_nodes(program, fonts, &case.children, issues);
                 }
             }
-            UiNode::Text { .. } | UiNode::Interpolation { .. } => {}
+            UiNode::Call { .. } | UiNode::Text { .. } | UiNode::Interpolation { .. } => {}
         }
     }
 }

@@ -1,0 +1,121 @@
+use crate::instagram::{ALL_STORIES, Comment, Connection, ImageRef, LENA, LENA_COMMENTS, MIRA, NILS, RequestId, Section, StoryRing, User};
+
+pub const BOTTOM_NAV_FEED: Section = Section::Feed;
+
+pub const BOTTOM_NAV_PROFILE: Section = Section::Profile;
+
+pub const BOTTOM_NAV_CREATE: Section = Section::Create;
+
+pub const BOTTOM_NAV_SEARCH: Section = Section::Search;
+
+pub const BOTTOM_NAV_REELS: Section = Section::Reels;
+
+pub const COMMENT_SETTLED_AVATAR: ImageRef = ImageRef {
+  src: "avatar-kenji",
+  alt: "Kenji Tanaka",
+};
+
+pub const COMMENT_SETTLED_USERNAME: Text = "kenji.rides";
+
+pub const COMMENT_SETTLED_BODY: Text = "That copper red is unreal. What cone are you firing to?";
+
+pub const COMMENT_SETTLED_POSTED_LABEL: Text = "1h";
+
+pub const COMMENT_SETTLED_PENDING: Bool = false;
+
+pub const COMMENT_PENDING_AVATAR: ImageRef = ImageRef {
+  src: "avatar-mira",
+  alt: "Mira Santos",
+};
+
+pub const COMMENT_PENDING_USERNAME: Text = "mira.santos";
+
+pub const COMMENT_PENDING_BODY: Text = "Saving this palette for my kitchen reno — stunning work!";
+
+pub const COMMENT_PENDING_POSTED_LABEL: Text = "Posting…";
+
+pub const COMMENT_PENDING_PENDING: Bool = true;
+
+pub const CONNECTION_LENA: Connection = Connection {
+  user: LENA,
+  follows_viewer: true,
+  viewer_follows: true,
+};
+
+pub const CONNECTION_NILS: Connection = Connection {
+  user: NILS,
+  follows_viewer: true,
+  viewer_follows: false,
+};
+
+pub const CONNECTION_FOLLOWING: Bool = true;
+
+pub const CONNECTION_NOT_FOLLOWING: Bool = false;
+
+pub const CONNECTION_PENDING: Bool = true;
+
+pub const CONNECTION_SETTLED: Bool = false;
+
+pub const NOTICE_LIKE_REFUSAL: Text = "Couldn't update this like. Try again.";
+
+pub const POST_CARD_LIKED: Bool = true;
+
+pub const POST_CARD_NOT_LIKED: Bool = false;
+
+pub const POST_CARD_LIKE_PENDING: Bool = true;
+
+pub const POST_CARD_LIKE_SETTLED: Bool = false;
+
+pub const POST_CARD_SAVED: Bool = true;
+
+pub const POST_CARD_NOT_SAVED: Bool = false;
+
+pub const POST_CARD_SAVE_PENDING: Bool = true;
+
+pub const POST_CARD_SAVE_SETTLED: Bool = false;
+
+pub const POST_CARD_HIDE_OPEN_LINK: Bool = false;
+
+pub const PROFILE_HEADER_FOLLOWING: Bool = true;
+
+pub const PROFILE_HEADER_NOT_FOLLOWING: Bool = false;
+
+pub const PROFILE_HEADER_PENDING: Bool = true;
+
+pub const PROFILE_HEADER_SETTLED: Bool = false;
+
+pub const REEL_CARD_NOT_LIKED: Bool = false;
+
+pub const REEL_CARD_LIKE_SETTLED: Bool = false;
+
+pub const REEL_CARD_SAVED: Bool = true;
+
+pub const REEL_CARD_NOT_SAVED: Bool = false;
+
+pub const REEL_CARD_SAVE_PENDING: Bool = true;
+
+pub const REEL_CARD_SAVE_SETTLED: Bool = false;
+
+pub const STORIES_TRAY_STORIES: Seq<StoryRing> = ALL_STORIES;
+
+pub const COMMENTS_POPULATED: Seq<Comment> = LENA_COMMENTS;
+
+pub const COMMENTS_EMPTY: Seq<Comment> = [];
+
+pub const COMMENTS_VIEWER: User = MIRA;
+
+pub const COMMENTS_NO_PENDING: Option<(RequestId, Text)> = None;
+
+pub const COMMENTS_POPULATED_PENDING: Option<(RequestId, Text)> = Some((RequestId(1), "Saving this palette for my kitchen reno"));
+
+pub const COMMENTS_EMPTY_PENDING: Option<(RequestId, Text)> = Some((RequestId(1), "First comment"));
+
+pub const COMMENTS_EMPTY_DRAFT: Text = "";
+
+pub const COMMENTS_POPULATED_DRAFT: Text = "Saving this palette for my kitchen reno";
+
+pub const COMMENTS_FIRST_DRAFT: Text = "First comment";
+
+pub const COMMENTS_NO_NOTICE: Option<Text> = None;
+
+pub const COMMENTS_REFUSAL: Option<Text> = Some("Couldn't post your comment. Try again.");

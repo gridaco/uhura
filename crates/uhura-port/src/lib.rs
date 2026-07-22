@@ -26,8 +26,8 @@ pub use route::{
 };
 pub use standard::{
     CANONICAL_VALUE_CODEC, OBSERVATION_CONTRACT_HASH, OBSERVATION_MODULE, PORTS_MODULE,
-    REQUEST_PORT_CONTRACT_HASH, ROUTER_CONTRACT_HASH, ROUTER_MODULE, ROUTER_ROUTE_CODEC,
-    SINK_PORT_CONTRACT_HASH, observation_contract, observation_instance, request_port_contract,
-    request_port_instance, router_contract, router_instance, sink_port_contract,
-    sink_port_instance,
+    REQUEST_PORT_CONTRACT_HASH, ROUTER_CONTRACT_HASH, ROUTER_CONTRACT_ID, ROUTER_MODULE,
+    ROUTER_ROUTE_CODEC, SINK_PORT_CONTRACT_HASH, observation_contract, observation_instance,
+    request_port_contract, request_port_instance, router_contract, router_instance,
+    sink_port_contract, sink_port_instance,
 };

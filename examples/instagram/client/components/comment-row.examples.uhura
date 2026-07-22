@@ -1,0 +1,18 @@
+use crate::components::comment_row::CommentRow;
+use crate::example_values::{COMMENT_PENDING_AVATAR, COMMENT_PENDING_BODY, COMMENT_PENDING_PENDING, COMMENT_PENDING_POSTED_LABEL, COMMENT_PENDING_USERNAME, COMMENT_SETTLED_AVATAR, COMMENT_SETTLED_BODY, COMMENT_SETTLED_PENDING, COMMENT_SETTLED_POSTED_LABEL, COMMENT_SETTLED_USERNAME};
+
+example comment_row_settled for CommentRow(
+  avatar: COMMENT_SETTLED_AVATAR,
+  username: COMMENT_SETTLED_USERNAME,
+  body: COMMENT_SETTLED_BODY,
+  posted_label: COMMENT_SETTLED_POSTED_LABEL,
+  pending: COMMENT_SETTLED_PENDING,
+) as component default = crate::scenarios::comment_row_settled_scenario::frame;
+
+example comment_row_pending for CommentRow(
+  avatar: COMMENT_PENDING_AVATAR,
+  username: COMMENT_PENDING_USERNAME,
+  body: COMMENT_PENDING_BODY,
+  posted_label: COMMENT_PENDING_POSTED_LABEL,
+  pending: COMMENT_PENDING_PENDING,
+) as component = crate::scenarios::comment_row_pending_scenario::frame;

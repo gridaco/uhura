@@ -1,4 +1,4 @@
-use uhura_check::project_manifest::{LANGUAGE_VERSION, load_project_manifest};
+use uhura_check::project_manifest::{FrameworkProfile, LANGUAGE_VERSION, load_project_manifest};
 
 fn issue_paths(text: &str) -> Vec<String> {
     load_project_manifest(text)
@@ -63,6 +63,7 @@ glyphs = "assets/brand.json"
     assert_eq!(manifest.project.name.as_str(), "examples.design-programs");
     assert_eq!(manifest.project.version, 2);
     assert_eq!(manifest.project.language, LANGUAGE_VERSION);
+    assert_eq!(manifest.framework, None);
     assert_eq!(
         manifest.project.package_id().to_string(),
         "examples.design-programs@2"
@@ -101,6 +102,91 @@ glyphs = "assets/brand.json"
         Some("fixtures/assets/manifest.toml")
     );
     assert_eq!(manifest.resources.icons.default.as_str(), "brand");
+}
+
+#[test]
+fn framework_selection_is_additive_closed_and_versioned() {
+    let manifest = load_project_manifest(
+        r#"
+[project]
+name = "example"
+version = 1
+language = "0.4"
+
+[framework]
+profile = "web-app"
+version = 1
+machine = "crate::programs::App"
+location = "crate::routes::Location"
+
+[modules]
+programs = "programs.uhura"
+"#,
+    )
+    .unwrap();
+    let framework = manifest.framework.unwrap();
+    assert_eq!(framework.profile, FrameworkProfile::WebApp);
+    assert_eq!(framework.profile.as_str(), "web-app");
+    assert_eq!(framework.version, 1);
+    assert_eq!(framework.machine.as_str(), "crate::programs::App");
+    assert_eq!(framework.machine.module().as_str(), "programs");
+    assert_eq!(framework.machine.declaration(), "App");
+    assert_eq!(framework.location.as_str(), "crate::routes::Location");
+
+    for (framework, expected_path) in [
+        (
+            "profile = \"desktop\"\nversion = 1\nmachine = \"crate::programs::App\"\nlocation = \"crate::routes::Location\"",
+            "framework.profile",
+        ),
+        (
+            "profile = \"web-app\"\nversion = 2\nmachine = \"crate::programs::App\"\nlocation = \"crate::routes::Location\"",
+            "framework.version",
+        ),
+        (
+            "profile = \"web-app\"\nversion = 1\nmachine = \"programs::App\"\nlocation = \"crate::routes::Location\"",
+            "framework.machine",
+        ),
+        (
+            "profile = \"web-app\"\nversion = 1\nmachine = \"crate::programs::App\"\nlocation = \"crate::routes::location\"",
+            "framework.location",
+        ),
+    ] {
+        let paths = issue_paths(&format!(
+            r#"
+[project]
+name = "example"
+version = 1
+language = "0.4"
+
+[framework]
+{framework}
+
+[modules]
+programs = "programs.uhura"
+"#
+        ));
+        assert!(paths.contains(&expected_path.to_string()));
+    }
+
+    let paths = issue_paths(
+        r#"
+[project]
+name = "example"
+version = 1
+language = "0.4"
+
+[framework]
+profile = "web-app"
+version = 1
+machine = "crate::programs::App"
+location = "crate::routes::Location"
+discovery = true
+
+[modules]
+programs = "programs.uhura"
+"#,
+    );
+    assert!(paths.contains(&"framework.discovery".to_string()));
 }
 
 #[test]

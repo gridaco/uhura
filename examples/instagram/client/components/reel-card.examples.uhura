@@ -1,0 +1,27 @@
+use crate::components::reel_card::ReelCard;
+use crate::example_values::{REEL_CARD_LIKE_SETTLED, REEL_CARD_NOT_LIKED, REEL_CARD_NOT_SAVED, REEL_CARD_SAVED, REEL_CARD_SAVE_PENDING, REEL_CARD_SAVE_SETTLED};
+use crate::instagram::{NILS_AURORA, THEO_COURT};
+
+example reel_card_aurora for ReelCard(
+  post: NILS_AURORA,
+  liked: REEL_CARD_NOT_LIKED,
+  like_pending: REEL_CARD_LIKE_SETTLED,
+  saved: REEL_CARD_SAVED,
+  save_pending: REEL_CARD_SAVE_SETTLED,
+) as component default note "a real vertical player surface backed by the seeded aurora MP4" = crate::scenarios::reel_card_aurora_scenario::frame;
+
+example reel_card_court for ReelCard(
+  post: THEO_COURT,
+  liked: REEL_CARD_NOT_LIKED,
+  like_pending: REEL_CARD_LIKE_SETTLED,
+  saved: REEL_CARD_NOT_SAVED,
+  save_pending: REEL_CARD_SAVE_SETTLED,
+) as component = crate::scenarios::reel_card_court_scenario::frame;
+
+example reel_card_save_pending for ReelCard(
+  post: THEO_COURT,
+  liked: REEL_CARD_NOT_LIKED,
+  like_pending: REEL_CARD_LIKE_SETTLED,
+  saved: REEL_CARD_SAVED,
+  save_pending: REEL_CARD_SAVE_PENDING,
+) as component = crate::scenarios::reel_card_save_pending_scenario::frame;

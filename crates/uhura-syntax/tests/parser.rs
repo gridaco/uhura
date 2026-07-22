@@ -250,3 +250,69 @@ fn evidence_patterns_admit_nominal_key_constructors_without_relaxing_core_patter
             && diagnostic.message.contains("only the prelude")
     }));
 }
+
+#[test]
+fn component_examples_parse_named_arguments_and_explicit_crate_evidence_locators() {
+    let source = r#"example post_card_image
+  for PostCard(post: LENA_GLAZE, liked: false) as component default
+  = crate::shared::feed::frame;
+"#;
+    let parsed = parse_source(source);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+    let DeclarationKind::Example(example) = &parsed.module.declarations[0].kind else {
+        panic!("expected example");
+    };
+    let arguments = example.arguments.as_ref().expect("explicit argument list");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0].name.text, "post");
+    assert_eq!(arguments[1].name.text, "liked");
+    assert_eq!(
+        example.target.root,
+        uhura_syntax::ast::EvidenceReferenceRoot::Crate
+    );
+    assert_eq!(
+        example
+            .target
+            .path
+            .iter()
+            .map(|part| part.text.as_str())
+            .collect::<Vec<_>>(),
+        ["shared", "feed", "frame"]
+    );
+
+    let formatted = uhura_syntax::format(&parsed.module).expect("example formats");
+    let reparsed = parse_source(&formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(
+        formatted,
+        uhura_syntax::format(&reparsed.module).expect("formatted example is stable")
+    );
+}
+
+#[test]
+fn evidence_argument_list_presence_distinguishes_pages_and_zero_prop_components() {
+    let component = parse_source("example empty for Empty() as component = scenario::frame;");
+    assert!(
+        component.diagnostics.is_empty(),
+        "{:#?}",
+        component.diagnostics
+    );
+    let DeclarationKind::Example(example) = &component.module.declarations[0].kind else {
+        panic!("expected example");
+    };
+    assert_eq!(example.arguments.as_deref(), Some([].as_slice()));
+    assert_eq!(
+        uhura_syntax::format(&component.module).expect("zero-prop example formats"),
+        "example empty for Empty() as component = scenario::frame;\n"
+    );
+
+    let page = parse_source("example page for Page() as page = scenario::frame;");
+    assert!(page.diagnostics.iter().any(|diagnostic| {
+        diagnostic.kind == ParseDiagnosticKind::InvalidEvidence
+            && diagnostic.message.contains("do not accept")
+    }));
+}

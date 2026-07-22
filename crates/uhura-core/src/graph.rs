@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use super::ir::{
-    Expr, Machine, OutcomePolicy, Program, SourceRef, Statement, UiAttributeValue, UiNode,
+    Expr, Machine, OutcomePolicy, Program, SourceRef, Statement, UiAttributeValue,
+    UiCallTargetKind, UiNode,
 };
 
 pub const INTERACTION_GRAPH_PROTOCOL: &str = "uhura-interaction-graph/0";
@@ -136,6 +137,7 @@ pub fn build_interaction_graph_artifacts(program: &Program) -> InteractionGraphA
     }
     for (presentation_id, presentation) in &program.presentations {
         builder.presentation(
+            program,
             presentation_id,
             &presentation.machine,
             &presentation.nodes,
@@ -379,6 +381,7 @@ impl InteractionGraphBuilder {
 
     fn presentation(
         &mut self,
+        program: &Program,
         presentation_id: &str,
         machine_id: &str,
         nodes: &[UiNode],
@@ -400,20 +403,25 @@ impl InteractionGraphBuilder {
         );
         let mut event_index = 0usize;
         self.ui_nodes(
+            program,
             machine_id,
             presentation_id,
             &presentation_node,
             nodes,
+            &[],
             &mut event_index,
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn ui_nodes(
         &mut self,
+        program: &Program,
         machine_id: &str,
         presentation_id: &str,
         presentation_node: &str,
         nodes: &[UiNode],
+        emit_mappings: &[(String, BTreeMap<String, Expr>)],
         event_index: &mut usize,
     ) {
         for node in nodes {
@@ -448,8 +456,8 @@ impl InteractionGraphBuilder {
                             InteractionGraphEdgeKind::Exposes,
                             &attribute.source,
                         );
-                        for (_, constructor) in root_constructors(input) {
-                            let input_node = interaction_node_id("input", machine_id, constructor);
+                        for (_, constructor) in mapped_ui_root_constructors(input, emit_mappings) {
+                            let input_node = interaction_node_id("input", machine_id, &constructor);
                             if self.nodes.contains_key(&input_node) {
                                 self.edge(
                                     &event_node,
@@ -461,31 +469,81 @@ impl InteractionGraphBuilder {
                         }
                     }
                     self.ui_nodes(
+                        program,
                         machine_id,
                         presentation_id,
                         presentation_node,
                         children,
+                        emit_mappings,
                         event_index,
                     );
                 }
                 UiNode::If { children, .. } | UiNode::Each { children, .. } => self.ui_nodes(
+                    program,
                     machine_id,
                     presentation_id,
                     presentation_node,
                     children,
+                    emit_mappings,
                     event_index,
                 ),
                 UiNode::Match { cases, .. } => {
                     for case in cases {
                         self.ui_nodes(
+                            program,
                             machine_id,
                             presentation_id,
                             presentation_node,
                             &case.children,
+                            emit_mappings,
                             event_index,
                         );
                     }
                 }
+                UiNode::Call {
+                    target,
+                    target_kind,
+                    bindings,
+                    ..
+                } => match target_kind {
+                    UiCallTargetKind::Component => {
+                        let Some(component) = program.components.get(target) else {
+                            continue;
+                        };
+                        let mut nested_mappings = Vec::with_capacity(emit_mappings.len() + 1);
+                        nested_mappings.push((
+                            component.emit_type.clone(),
+                            bindings
+                                .iter()
+                                .map(|binding| (binding.event.clone(), binding.input.clone()))
+                                .collect(),
+                        ));
+                        nested_mappings.extend_from_slice(emit_mappings);
+                        self.ui_nodes(
+                            program,
+                            machine_id,
+                            presentation_id,
+                            presentation_node,
+                            &component.nodes,
+                            &nested_mappings,
+                            event_index,
+                        );
+                    }
+                    UiCallTargetKind::Presentation => {
+                        let Some(presentation) = program.presentations.get(target) else {
+                            continue;
+                        };
+                        self.ui_nodes(
+                            program,
+                            machine_id,
+                            presentation_id,
+                            presentation_node,
+                            &presentation.nodes,
+                            emit_mappings,
+                            event_index,
+                        );
+                    }
+                },
             }
         }
     }
@@ -696,6 +754,34 @@ fn root_constructors(expression: &Expr) -> Vec<(&str, &str)> {
         Expr::Let { value, .. } => root_constructors(value),
         _ => Vec::new(),
     }
+}
+
+fn mapped_ui_root_constructors(
+    expression: &Expr,
+    emit_mappings: &[(String, BTreeMap<String, Expr>)],
+) -> Vec<(String, String)> {
+    let mut constructors = root_constructors(expression)
+        .into_iter()
+        .map(|(type_id, constructor)| (type_id.to_string(), constructor.to_string()))
+        .collect::<Vec<_>>();
+    for (emit_type, bindings) in emit_mappings {
+        constructors = constructors
+            .into_iter()
+            .flat_map(|(type_id, constructor)| {
+                if type_id != *emit_type {
+                    return vec![(type_id, constructor)];
+                }
+                bindings
+                    .get(&constructor)
+                    .map(root_constructors)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(type_id, constructor)| (type_id.to_string(), constructor.to_string()))
+                    .collect()
+            })
+            .collect();
+    }
+    constructors
 }
 
 #[cfg(test)]

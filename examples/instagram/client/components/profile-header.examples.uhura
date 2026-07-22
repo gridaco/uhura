@@ -1,0 +1,24 @@
+use crate::components::profile_header::ProfileHeader;
+use crate::example_values::{PROFILE_HEADER_FOLLOWING, PROFILE_HEADER_NOT_FOLLOWING, PROFILE_HEADER_PENDING, PROFILE_HEADER_SETTLED};
+use crate::instagram::{LENA_PROFILE, MIRA_PROFILE, NILS_PROFILE, USER_MIRA};
+
+example profile_header_lena for ProfileHeader(
+  profile: LENA_PROFILE,
+  viewer: USER_MIRA,
+  following: PROFILE_HEADER_FOLLOWING,
+  pending: PROFILE_HEADER_SETTLED,
+) as component default = crate::scenarios::profile_header_lena_scenario::frame;
+
+example profile_header_self for ProfileHeader(
+  profile: MIRA_PROFILE,
+  viewer: USER_MIRA,
+  following: PROFILE_HEADER_NOT_FOLLOWING,
+  pending: PROFILE_HEADER_SETTLED,
+) as component note "the current actor gets a New post action, never a self-follow action" = crate::scenarios::profile_header_self_scenario::frame;
+
+example profile_header_follow_pending for ProfileHeader(
+  profile: NILS_PROFILE,
+  viewer: USER_MIRA,
+  following: PROFILE_HEADER_FOLLOWING,
+  pending: PROFILE_HEADER_PENDING,
+) as component = crate::scenarios::profile_header_follow_pending_scenario::frame;

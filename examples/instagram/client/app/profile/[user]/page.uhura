@@ -1,0 +1,113 @@
+use uhura::ui;
+use crate::components::bottom_nav::BottomNav;
+use crate::components::notice_bar::NoticeBar;
+use crate::components::profile_header::ProfileHeader;
+use crate::instagram::{Authority, Instagram, ProfileTab, Section};
+use crate::presentation::{effective_follow, profile_empty_label, profile_for_page, tiles_for};
+
+pub ui ProfilePage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen profile-page">
+      {#if view.notice is Some(message)}
+        <NoticeBar
+          message={message}
+          on Dismissed -> notice_controls.DismissNotice
+        />
+      {:else}
+        <view/>
+      {/if}
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        <view class="top-bar">
+          {#if profile_for_page(data, view.page).user.id != data.viewer.id}
+            <button
+              label="Back"
+              on press -> GoBack
+            >
+              <icon name="chevron-left"/>
+            </button>
+          {:else}
+            <view/>
+          {/if}
+          <text class="title">{profile_for_page(data, view.page).user.username}</text>
+        </view>
+        <scroll class="profile-scroll">
+          <ProfileHeader
+            profile={profile_for_page(data, view.page)}
+            viewer={data.viewer.id}
+            following={effective_follow(profile_for_page(data, view.page).viewer_follows, view.follow_overlay, profile_for_page(data, view.page).user.id)}
+            pending={view.follow_pending.contains(profile_for_page(data, view.page).user.id)}
+            on FollowersOpened -> OpenFollowers(event.user)
+            on FollowingOpened -> OpenFollowing(event.user)
+            on FollowToggled -> ToggleFollow(event.user, event.following)
+            on CreateSelected -> SelectTab(Section::Create)
+          />
+          <view class="profile-tabs">
+            <button
+              label="Posts"
+              pressed={view.profile_tab == ProfileTab::Posts}
+              on press -> SelectProfileTab(ProfileTab::Posts)
+            >
+              <icon name="grid-3x3"/>
+            </button>
+            <button
+              label="Reels"
+              pressed={view.profile_tab == ProfileTab::Reels}
+              on press -> SelectProfileTab(ProfileTab::Reels)
+            >
+              <icon name="clapperboard"/>
+            </button>
+            <button
+              label="Tagged"
+              pressed={view.profile_tab == ProfileTab::Tagged}
+              on press -> SelectProfileTab(ProfileTab::Tagged)
+            >
+              <icon name="tag"/>
+            </button>
+            {#if profile_for_page(data, view.page).user.id == data.viewer.id}
+              <button
+                label="Saved"
+                pressed={view.profile_tab == ProfileTab::Saved}
+                on press -> SelectProfileTab(ProfileTab::Saved)
+              >
+                <icon name="bookmark"/>
+              </button>
+            {/if}
+          </view>
+          {#if tiles_for(profile_for_page(data, view.page), view.profile_tab).size == 0}
+            <view class="profile-empty fill-center pad-lg">
+              <text class="muted">{profile_empty_label(view.profile_tab)}</text>
+            </view>
+          {/if}
+          <view class="profile-grid">
+            {#each tiles_for(profile_for_page(data, view.page), view.profile_tab) as tile (tile.post)}
+              <region
+                label={tile.image.alt}
+                on activate -> OpenPost(tile.post)
+              >
+                <img
+                  class="grid-tile"
+                  src={tile.image.src}
+                  alt={tile.image.alt}
+                />
+              </region>
+            {/each}
+          </view>
+        </scroll>
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading profile…</text>
+        </view>
+      {/if}
+    </view>
+    <BottomNav
+      current={Section::Profile}
+      on FeedSelected -> SelectTab(Section::Feed)
+      on SearchSelected -> SelectTab(Section::Search)
+      on CreateSelected -> SelectTab(Section::Create)
+      on ReelsSelected -> SelectTab(Section::Reels)
+      on ProfileSelected -> SelectTab(Section::Profile)
+    />
+  </view>
+}

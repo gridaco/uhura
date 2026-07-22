@@ -1,0 +1,75 @@
+use uhura::ui;
+use crate::instagram::Profile;
+use crate::routing::UserId;
+
+pub ui ProfileHeader(profile: Profile, viewer: UserId, following: Bool, pending: Bool) emits {
+  FollowersOpened(user: UserId),
+  FollowingOpened(user: UserId),
+  FollowToggled(user: UserId, following: Bool),
+  CreateSelected,
+} {
+  <view class="profile-header">
+    <view class="head-row">
+      <img
+        class="profile-avatar"
+        src={profile.user.avatar.src}
+        alt={profile.user.avatar.alt}
+      />
+      <view class="stats">
+        <view class="stat">
+          <text class="stat-num">{profile.post_count}</text>
+          <text class="stat-name">Posts</text>
+        </view>
+        <region
+          label="View followers"
+          on activate -> FollowersOpened(profile.user.id)
+        >
+          <view class="stat">
+            <text class="stat-num">{profile.follower_count}</text>
+            <text class="stat-name">Followers</text>
+          </view>
+        </region>
+        <region
+          label="View following"
+          on activate -> FollowingOpened(profile.user.id)
+        >
+          <view class="stat">
+            <text class="stat-num">{profile.following_count}</text>
+            <text class="stat-name">Following</text>
+          </view>
+        </region>
+      </view>
+    </view>
+    <text class="display-name">{profile.user.display_name}</text>
+    <text class="profile-handle">{profile.user.username}</text>
+    <text class="bio">{profile.bio}</text>
+    <view class="profile-actions">
+      {#if profile.user.id == viewer}
+        <button
+          class="secondary-button profile-action"
+          label="Create a new post"
+          on press -> CreateSelected
+        >
+          <text>New post</text>
+        </button>
+      {:else}
+        <button
+          class="primary-button profile-action"
+          label={if following {
+            "Unfollow"
+          } else {
+            "Follow"
+          }}
+          busy={pending}
+          on press -> FollowToggled(profile.user.id, !following)
+        >
+          <text>{if following {
+            "Following"
+          } else {
+            "Follow"
+          }}</text>
+        </button>
+      {/if}
+    </view>
+  </view>
+}

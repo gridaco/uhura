@@ -1,0 +1,21 @@
+use crate::app::profile::param__user::ProfilePage;
+
+example profile_loading for ProfilePage as page = crate::scenarios::profile_loading_scenario::frame;
+
+example profile_lena_posts for ProfilePage as page default = crate::scenarios::profile_lena_posts_scenario::frame;
+
+example profile_lena_tagged for ProfilePage as page note "the tile is Priya's real sourdough post from the seeded tag edge" = crate::scenarios::profile_lena_tagged_scenario::frame;
+
+example profile_self for ProfilePage as page = crate::scenarios::profile_self_scenario::frame;
+
+example profile_self_tagged for ProfilePage as page note "Mira's tagged grid carries Marco's real Baja post id" = crate::scenarios::profile_self_tagged_scenario::frame;
+
+example profile_self_reels for ProfilePage as page note "Reels is a filtered view of Mira's genuine video posts" = crate::scenarios::profile_self_reels_scenario::frame;
+
+example profile_self_saved for ProfilePage as page note "Saved is private to Mira and mirrors her two seeded save edges" = crate::scenarios::profile_self_saved_scenario::frame;
+
+example profile_nils_posts for ProfilePage as page = crate::scenarios::profile_nils_posts_scenario::frame;
+
+example profile_nils_reels for ProfilePage as page = crate::scenarios::profile_nils_reels_scenario::frame;
+
+example profile_nils_tagged_empty for ProfilePage as page = crate::scenarios::profile_nils_tagged_empty_scenario::frame;

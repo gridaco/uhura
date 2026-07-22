@@ -1,0 +1,61 @@
+use uhura::ui;
+use crate::components::bottom_nav::BottomNav;
+use crate::components::reel_card::ReelCard;
+use crate::instagram::{Authority, Instagram, Section};
+use crate::presentation::{comments_for, effective_post_flag};
+use crate::surfaces::comments_sheet::CommentsSheet;
+
+pub ui ReelsPage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen reels-page">
+      <view class="reels-head">
+        <text class="title">Reels</text>
+      </view>
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        <scroll class="reels-scroll">
+          {#each data.reels as post (post.id)}
+            <ReelCard
+              post={post}
+              liked={effective_post_flag(post.viewer_liked, view.like_overlay, post.id)}
+              like_pending={view.like_pending.contains(post.id)}
+              saved={effective_post_flag(post.viewer_saved, view.save_overlay, post.id)}
+              save_pending={view.save_pending.contains(post.id)}
+              on LikeToggled -> ToggleLike(event.post, event.liked)
+              on SaveToggled -> ToggleSave(event.post, event.saved)
+              on CommentsOpened -> OpenComments(event.post)
+            />
+          {/each}
+        </scroll>
+        {#if view.comments_post is Some(post)}
+          <CommentsSheet
+            post={post}
+            comments={comments_for(data, post)}
+            viewer={data.viewer}
+            pending_comment={view.pending_comment}
+            draft={view.comment_draft}
+            notice={view.notice}
+            on Dismissed -> DismissComments
+            on DraftChanged -> CommentChanged(event.value)
+            on Submitted -> SubmitComment
+          />
+        {:else}
+          <view/>
+        {/if}
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading reels…</text>
+        </view>
+      {/if}
+    </view>
+    <BottomNav
+      current={Section::Reels}
+      on FeedSelected -> SelectTab(Section::Feed)
+      on SearchSelected -> SelectTab(Section::Search)
+      on CreateSelected -> SelectTab(Section::Create)
+      on ReelsSelected -> SelectTab(Section::Reels)
+      on ProfileSelected -> SelectTab(Section::Profile)
+    />
+  </view>
+}

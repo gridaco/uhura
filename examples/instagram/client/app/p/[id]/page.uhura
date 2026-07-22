@@ -1,0 +1,68 @@
+use uhura::ui;
+use crate::components::bottom_nav::BottomNav;
+use crate::components::post_card::PostCard;
+use crate::instagram::{Authority, Instagram, Section};
+use crate::presentation::{comments_for, effective_post_flag, post_for_page};
+use crate::surfaces::comments_sheet::CommentsSheet;
+
+pub ui PostPage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen post-page">
+      <view class="detail-bar">
+        <button
+          label="Back"
+          on press -> GoBack
+        >
+          <icon name="chevron-left"/>
+        </button>
+        <text class="title">Post</text>
+      </view>
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        <scroll class="post-detail-scroll">
+          <PostCard
+            post={post_for_page(data, view.page)}
+            liked={effective_post_flag(post_for_page(data, view.page).viewer_liked, view.like_overlay, post_for_page(data, view.page).id)}
+            like_pending={view.like_pending.contains(post_for_page(data, view.page).id)}
+            saved={effective_post_flag(post_for_page(data, view.page).viewer_saved, view.save_overlay, post_for_page(data, view.page).id)}
+            save_pending={view.save_pending.contains(post_for_page(data, view.page).id)}
+            show_open={false}
+            on LikeToggled -> ToggleLike(event.post, event.liked)
+            on SaveToggled -> ToggleSave(event.post, event.saved)
+            on CommentsOpened -> OpenComments(event.post)
+            on ProfileOpened -> OpenProfile(event.user)
+            on PostOpened -> OpenPost(event.post)
+          />
+        </scroll>
+        {#if view.comments_post is Some(post)}
+          <CommentsSheet
+            post={post}
+            comments={comments_for(data, post)}
+            viewer={data.viewer}
+            pending_comment={view.pending_comment}
+            draft={view.comment_draft}
+            notice={view.notice}
+            on Dismissed -> DismissComments
+            on DraftChanged -> CommentChanged(event.value)
+            on Submitted -> SubmitComment
+          />
+        {:else}
+          <view/>
+        {/if}
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading post…</text>
+        </view>
+      {/if}
+    </view>
+    <BottomNav
+      current={Section::Feed}
+      on FeedSelected -> SelectTab(Section::Feed)
+      on SearchSelected -> SelectTab(Section::Search)
+      on CreateSelected -> SelectTab(Section::Create)
+      on ReelsSelected -> SelectTab(Section::Reels)
+      on ProfileSelected -> SelectTab(Section::Profile)
+    />
+  </view>
+}

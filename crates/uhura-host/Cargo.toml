@@ -14,6 +14,6 @@ uhura-check = { workspace = true }
 uhura-port = { workspace = true, features = ["toml"] }
 uhura-core = { workspace = true }
 uhura-editor-model = { workspace = true }
+uhura-project = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
-same-file = { workspace = true }

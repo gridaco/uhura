@@ -1,0 +1,20 @@
+use crate::components::connection_row::ConnectionRow;
+use crate::example_values::{CONNECTION_FOLLOWING, CONNECTION_LENA, CONNECTION_NILS, CONNECTION_NOT_FOLLOWING, CONNECTION_PENDING, CONNECTION_SETTLED};
+
+example connection_row_following for ConnectionRow(
+  person: CONNECTION_LENA,
+  following: CONNECTION_FOLLOWING,
+  pending: CONNECTION_SETTLED,
+) as component default = crate::scenarios::connection_following_scenario::frame;
+
+example connection_row_follow_action for ConnectionRow(
+  person: CONNECTION_NILS,
+  following: CONNECTION_NOT_FOLLOWING,
+  pending: CONNECTION_SETTLED,
+) as component = crate::scenarios::connection_follow_action_scenario::frame;
+
+example connection_row_pending for ConnectionRow(
+  person: CONNECTION_NILS,
+  following: CONNECTION_FOLLOWING,
+  pending: CONNECTION_PENDING,
+) as component = crate::scenarios::connection_pending_scenario::frame;

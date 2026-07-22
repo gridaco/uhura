@@ -1,0 +1,13 @@
+use crate::app::p::param__id::PostPage;
+
+example post_loading for PostPage as page = crate::scenarios::post_loading_scenario::frame;
+
+example post_lena for PostPage as page default = crate::scenarios::post_lena_scenario::frame;
+
+example post_profile_history for PostPage as page note "a profile-grid tile opens a genuine post, not a decorative thumbnail" = crate::scenarios::post_profile_history_scenario::frame;
+
+example post_like_pending for PostPage as page = crate::scenarios::post_like_pending_scenario::frame;
+
+example post_save_pending for PostPage as page = crate::scenarios::post_save_pending_scenario::frame;
+
+example post_comments_open for PostPage as page = crate::scenarios::post_comments_open_scenario::frame;

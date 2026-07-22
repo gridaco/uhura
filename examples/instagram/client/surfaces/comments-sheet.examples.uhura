@@ -1,0 +1,66 @@
+use crate::example_values::{COMMENTS_EMPTY, COMMENTS_EMPTY_DRAFT, COMMENTS_EMPTY_PENDING, COMMENTS_FIRST_DRAFT, COMMENTS_NO_NOTICE, COMMENTS_NO_PENDING, COMMENTS_POPULATED, COMMENTS_POPULATED_DRAFT, COMMENTS_POPULATED_PENDING, COMMENTS_REFUSAL, COMMENTS_VIEWER};
+use crate::instagram::{POST_AYLA_FERRY, POST_LENA_GLAZE};
+use crate::surfaces::comments_sheet::CommentsSheet;
+
+example comments_populated for CommentsSheet(
+  post: POST_LENA_GLAZE,
+  comments: COMMENTS_POPULATED,
+  viewer: COMMENTS_VIEWER,
+  pending_comment: COMMENTS_NO_PENDING,
+  draft: COMMENTS_EMPTY_DRAFT,
+  notice: COMMENTS_NO_NOTICE,
+) as surface default = crate::scenarios::comments_populated_scenario::frame;
+
+example comments_composing for CommentsSheet(
+  post: POST_LENA_GLAZE,
+  comments: COMMENTS_POPULATED,
+  viewer: COMMENTS_VIEWER,
+  pending_comment: COMMENTS_NO_PENDING,
+  draft: COMMENTS_POPULATED_DRAFT,
+  notice: COMMENTS_NO_NOTICE,
+) as surface note "composer mid-draft; post enables once non-empty" = crate::scenarios::comments_composing_scenario::frame;
+
+example comments_pending_append for CommentsSheet(
+  post: POST_LENA_GLAZE,
+  comments: COMMENTS_POPULATED,
+  viewer: COMMENTS_VIEWER,
+  pending_comment: COMMENTS_POPULATED_PENDING,
+  draft: COMMENTS_EMPTY_DRAFT,
+  notice: COMMENTS_NO_NOTICE,
+) as surface note "optimistic dimmed row until the outcome settles" = crate::scenarios::comments_pending_append_scenario::frame;
+
+example comments_empty for CommentsSheet(
+  post: POST_AYLA_FERRY,
+  comments: COMMENTS_EMPTY,
+  viewer: COMMENTS_VIEWER,
+  pending_comment: COMMENTS_NO_PENDING,
+  draft: COMMENTS_EMPTY_DRAFT,
+  notice: COMMENTS_NO_NOTICE,
+) as surface = crate::scenarios::comments_empty_scenario::frame;
+
+example comments_empty_composing for CommentsSheet(
+  post: POST_AYLA_FERRY,
+  comments: COMMENTS_EMPTY,
+  viewer: COMMENTS_VIEWER,
+  pending_comment: COMMENTS_NO_PENDING,
+  draft: COMMENTS_FIRST_DRAFT,
+  notice: COMMENTS_NO_NOTICE,
+) as surface = crate::scenarios::comments_empty_composing_scenario::frame;
+
+example comments_empty_pending for CommentsSheet(
+  post: POST_AYLA_FERRY,
+  comments: COMMENTS_EMPTY,
+  viewer: COMMENTS_VIEWER,
+  pending_comment: COMMENTS_EMPTY_PENDING,
+  draft: COMMENTS_EMPTY_DRAFT,
+  notice: COMMENTS_NO_NOTICE,
+) as surface note "the optimistic row replaces the empty state and serializes submission" = crate::scenarios::comments_empty_pending_scenario::frame;
+
+example comments_rejected for CommentsSheet(
+  post: POST_AYLA_FERRY,
+  comments: COMMENTS_EMPTY,
+  viewer: COMMENTS_VIEWER,
+  pending_comment: COMMENTS_NO_PENDING,
+  draft: COMMENTS_FIRST_DRAFT,
+  notice: COMMENTS_REFUSAL,
+) as surface note "a refusal restores the submitted body for correction" = crate::scenarios::comments_rejected_scenario::frame;

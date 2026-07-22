@@ -1,0 +1,15 @@
+use uhura::ui;
+
+pub ui NoticeBar(message: Text) emits {
+  Dismissed,
+} {
+  <view class="notice">
+    <text>{message}</text>
+    <button
+      label="Dismiss notice"
+      on press -> Dismissed
+    >
+      <icon name="x"/>
+    </button>
+  </view>
+}

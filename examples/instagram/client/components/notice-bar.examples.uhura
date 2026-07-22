@@ -1,0 +1,6 @@
+use crate::components::notice_bar::NoticeBar;
+use crate::example_values::NOTICE_LIKE_REFUSAL;
+
+example notice_bar_refusal for NoticeBar(
+  message: NOTICE_LIKE_REFUSAL,
+) as component default = crate::scenarios::notice_refusal_scenario::frame;

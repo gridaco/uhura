@@ -345,6 +345,12 @@ pub struct Program {
     pub machine_program: MachineProgram,
     #[serde(default)]
     pub presentations: BTreeMap<String, Presentation>,
+    /// Pure UI declarations referenced by presentation call nodes.
+    ///
+    /// Components are presentation functions only. They own no machine,
+    /// runtime instance, state, lifecycle, or renderer node.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub components: BTreeMap<String, UiComponent>,
     #[serde(default)]
     pub evidence: EvidenceSuite,
     #[serde(default)]
@@ -434,6 +440,7 @@ impl MachineProgram {
         let mut application = Program {
             machine_program: self.clone(),
             presentations: BTreeMap::new(),
+            components: BTreeMap::new(),
             evidence: EvidenceSuite::default(),
             route_tables: BTreeMap::new(),
             presentation_hashes: BTreeMap::new(),
@@ -1070,6 +1077,7 @@ impl Program {
         Self {
             machine_program: MachineProgram::new(),
             presentations: BTreeMap::new(),
+            components: BTreeMap::new(),
             evidence: EvidenceSuite::default(),
             route_tables: BTreeMap::new(),
             presentation_hashes: BTreeMap::new(),
@@ -1094,6 +1102,192 @@ impl Program {
     pub fn validate_protocol(&self) -> Result<(), String> {
         self.machine_program.validate_protocol()?;
         self.validate_port_contract_instances()?;
+        self.validate_ui_program()?;
+        Ok(())
+    }
+
+    fn validate_ui_program(&self) -> Result<(), String> {
+        for (id, component) in &self.components {
+            if component.id != *id {
+                return Err(format!(
+                    "Uhura component map key `{id}` differs from its resolved PublicId `{}`",
+                    component.id
+                ));
+            }
+            let mut prop_names = BTreeSet::new();
+            for (name, ty) in &component.props {
+                if !prop_names.insert(name) {
+                    return Err(format!(
+                        "Uhura component `{id}` declares duplicate prop `{name}`"
+                    ));
+                }
+                super::typed::canonical_type_identity_bytes(ty).map_err(|error| {
+                    format!("Uhura component `{id}` prop `{name}` has invalid type: {error}")
+                })?;
+            }
+            let expected_emit_type = format!("{id}.Emit");
+            if component.emit_type != expected_emit_type {
+                return Err(format!(
+                    "Uhura component `{id}` has emit type `{}`, expected `{expected_emit_type}`",
+                    component.emit_type
+                ));
+            }
+            let mut event_names = BTreeSet::new();
+            for event in &component.emits {
+                if !event_names.insert(&event.name) {
+                    return Err(format!(
+                        "Uhura component `{id}` declares duplicate emitted event `{}`",
+                        event.name
+                    ));
+                }
+                let mut field_names = BTreeSet::new();
+                for (name, ty) in &event.fields {
+                    if let Some(name) = name
+                        && !field_names.insert(name)
+                    {
+                        return Err(format!(
+                            "Uhura component `{id}` event `{}` declares duplicate field `{name}`",
+                            event.name
+                        ));
+                    }
+                    super::typed::canonical_type_identity_bytes(ty).map_err(|error| {
+                        format!(
+                            "Uhura component `{id}` event `{}` has invalid field type: {error}",
+                            event.name
+                        )
+                    })?;
+                }
+            }
+            self.validate_ui_nodes(id, UiCallOwnerKind::Component, None, &component.nodes)?;
+            // Walking every root guarantees unused components receive the same
+            // target and cycle validation as presentation-reachable ones.
+            self.component_identity_material(id)?;
+        }
+
+        for (id, presentation) in &self.presentations {
+            if presentation.id != *id {
+                return Err(format!(
+                    "Uhura presentation map key `{id}` differs from its resolved PublicId `{}`",
+                    presentation.id
+                ));
+            }
+            if !self
+                .machine_program
+                .machines
+                .contains_key(&presentation.machine)
+            {
+                return Err(format!(
+                    "Uhura presentation `{id}` targets unknown machine `{}`",
+                    presentation.machine
+                ));
+            }
+            if presentation.binding.is_empty() {
+                return Err(format!(
+                    "Uhura presentation `{id}` has an empty observation binding"
+                ));
+            }
+            self.validate_ui_nodes(
+                id,
+                UiCallOwnerKind::Presentation,
+                Some(&presentation.machine),
+                &presentation.nodes,
+            )?;
+            let mut references = SemanticReferences::default();
+            self.presentation_call_closure(id, &presentation.machine, &mut references)?;
+        }
+        Ok(())
+    }
+
+    fn validate_ui_nodes(
+        &self,
+        owner: &str,
+        owner_kind: UiCallOwnerKind,
+        root_machine: Option<&str>,
+        nodes: &[UiNode],
+    ) -> Result<(), String> {
+        for node in nodes {
+            match node {
+                UiNode::Element { children, .. }
+                | UiNode::If { children, .. }
+                | UiNode::Each { children, .. } => {
+                    self.validate_ui_nodes(owner, owner_kind, root_machine, children)?;
+                }
+                UiNode::Match { cases, .. } => {
+                    for case in cases {
+                        self.validate_ui_nodes(owner, owner_kind, root_machine, &case.children)?;
+                    }
+                }
+                UiNode::Call {
+                    target,
+                    target_kind,
+                    props,
+                    bindings,
+                    ..
+                } => match target_kind {
+                    UiCallTargetKind::Component => {
+                        let component = self.components.get(target).ok_or_else(|| {
+                            format!(
+                                "Uhura UI `{owner}` calls unknown component PublicId `{target}`"
+                            )
+                        })?;
+                        if props.len() != component.props.len() {
+                            return Err(format!(
+                                "Uhura UI `{owner}` calls component `{target}` with {} props, expected {}",
+                                props.len(),
+                                component.props.len()
+                            ));
+                        }
+                        for ((provided, _), (expected, _)) in props.iter().zip(&component.props) {
+                            if provided != expected {
+                                return Err(format!(
+                                    "Uhura UI `{owner}` calls component `{target}` with prop `{provided}`, expected `{expected}`"
+                                ));
+                            }
+                        }
+                        if bindings.len() != component.emits.len() {
+                            return Err(format!(
+                                "Uhura UI `{owner}` calls component `{target}` with {} event bindings, expected {}",
+                                bindings.len(),
+                                component.emits.len()
+                            ));
+                        }
+                        for (binding, event) in bindings.iter().zip(&component.emits) {
+                            if binding.event != event.name {
+                                return Err(format!(
+                                    "Uhura UI `{owner}` binds component `{target}` event `{}`, expected `{}`",
+                                    binding.event, event.name
+                                ));
+                            }
+                        }
+                    }
+                    UiCallTargetKind::Presentation => {
+                        if owner_kind == UiCallOwnerKind::Component {
+                            return Err(format!(
+                                "pure Uhura UI component `{owner}` cannot call machine-bound presentation `{target}`"
+                            ));
+                        }
+                        if !props.is_empty() || !bindings.is_empty() {
+                            return Err(format!(
+                                "Uhura UI `{owner}` calls presentation `{target}` with unsupported props or event bindings"
+                            ));
+                        }
+                        let presentation = self.presentations.get(target).ok_or_else(|| {
+                            format!(
+                                "Uhura UI `{owner}` calls unknown presentation PublicId `{target}`"
+                            )
+                        })?;
+                        if root_machine.is_some_and(|machine| machine != presentation.machine) {
+                            return Err(format!(
+                                "Uhura presentation `{target}` targets `{}`, but caller `{owner}` targets `{}`",
+                                presentation.machine,
+                                root_machine.unwrap_or_default()
+                            ));
+                        }
+                    }
+                },
+                UiNode::Text { .. } | UiNode::Interpolation { .. } => {}
+            }
+        }
         Ok(())
     }
 
@@ -1258,6 +1452,7 @@ impl Program {
         {
             self.machine_program.validate_protocol()?;
         }
+        self.validate_ui_program()?;
         self.machine_program.assign_site_ids();
         self.machine_program.validate_site_ids()?;
         self.assign_presentation_node_ids();
@@ -1301,11 +1496,27 @@ impl Program {
                         presentation.id
                     ));
                 }
-                let material = serde_json::json!({
+                let call_closure = self.presentation_call_closure(
+                    id,
+                    &presentation.machine,
+                    &mut references,
+                )?;
+                let mut material = serde_json::json!({
                     "binding": presentation.binding,
                     "nodes": semantic_json(&presentation.nodes),
                     "dependencies": self.dependency_material(references),
                 });
+                let closure_is_empty = call_closure
+                    .as_object()
+                    .is_some_and(|object| object.values().all(|value| {
+                        value.as_object().is_some_and(serde_json::Map::is_empty)
+                    }));
+                if !closure_is_empty {
+                    material
+                        .as_object_mut()
+                        .expect("presentation material is an object")
+                        .insert("callClosure".into(), call_closure);
+                }
                 let semantic_ir = uhura_base::try_to_canonical_json(&material)
                     .map_err(|error| {
                         format!(
@@ -1399,14 +1610,73 @@ impl Program {
                         collect_scenario_references(scenario, &mut references);
                     }
                 }
-                let semantic_ir = uhura_base::try_to_canonical_json(&serde_json::json!({
+                let component_examples = self
+                    .evidence
+                    .examples
+                    .iter()
+                    .filter(|(_, reference)| scenario_ids.contains(&reference.scenario))
+                    .filter_map(|(id, _)| {
+                        let metadata = self.evidence.example_metadata.get(id)?;
+                        let target = metadata.presentation.as_ref()?;
+                        self.components
+                            .get(target)
+                            .map(|component| (id, metadata, component))
+                    })
+                    .map(|(id, metadata, component)| {
+                        if metadata.component_props.len() != component.props.len() {
+                            return Err(format!(
+                                "component example `{id}` has {} props, expected {}",
+                                metadata.component_props.len(),
+                                component.props.len()
+                            ));
+                        }
+                        let props = metadata
+                            .component_props
+                            .iter()
+                            .zip(&component.props)
+                            .map(|((provided_name, value), (expected_name, ty))| {
+                                if provided_name != expected_name {
+                                    return Err(format!(
+                                        "component example `{id}` has prop `{provided_name}`, expected `{expected_name}`"
+                                    ));
+                                }
+                                let bytes = self
+                                    .machine_program
+                                    .canonical_value_bytes(ty, value)
+                                    .map_err(|error| error.to_string())?;
+                                Ok((provided_name.clone(), super::codec::hex(&bytes)))
+                            })
+                            .collect::<Result<BTreeMap<_, _>, String>>()?;
+                        Ok((
+                            id.clone(),
+                            serde_json::json!({
+                                "target": component.id,
+                                "kind": metadata.kind,
+                                "props": props,
+                                "component": self.component_identity_material(&component.id)?,
+                            }),
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, String>>()?;
+                let mut evidence_material = serde_json::json!({
                     "identityProtocol": self.machine_program.identity_protocol,
                     "machine": machine,
                     "scenarios": scenarios,
                     "examples": examples,
                     "checkpoints": checkpoints,
                     "dependencies": self.dependency_material(references),
-                }))
+                });
+                if !component_examples.is_empty() {
+                    evidence_material
+                        .as_object_mut()
+                        .expect("evidence identity material is an object")
+                        .insert(
+                            "componentExamples".into(),
+                            serde_json::to_value(component_examples)
+                                .expect("component example identity material serializes"),
+                        );
+                }
+                let semantic_ir = uhura_base::try_to_canonical_json(&evidence_material)
                 .map_err(|error| {
                     format!("Uhura evidence for `{machine}` has noncanonical material: {error}")
                 })?
@@ -1431,6 +1701,97 @@ impl Program {
             presentations: presentation_hashes,
             evidence: evidence_hashes,
         })
+    }
+
+    /// Validates and selects the presentation-function call graph reachable
+    /// from one machine-bound root. Unused UI declarations are deliberately
+    /// excluded from the root presentation's identity.
+    fn presentation_call_closure(
+        &self,
+        root: &str,
+        machine: &str,
+        references: &mut SemanticReferences,
+    ) -> Result<serde_json::Value, String> {
+        let mut closure = UiCallClosure::default();
+        closure
+            .visiting
+            .insert(UiCallOwner::Presentation(root.into()));
+        let presentation = self
+            .presentations
+            .get(root)
+            .expect("presentation hash root exists");
+        collect_ui_calls(
+            self,
+            &presentation.nodes,
+            UiCallOwnerKind::Presentation,
+            machine,
+            references,
+            &mut closure,
+        )?;
+        closure
+            .visiting
+            .remove(&UiCallOwner::Presentation(root.into()));
+        Ok(serde_json::json!({
+            "components": closure.components,
+            "presentations": closure.presentations,
+        }))
+    }
+
+    /// Canonical semantics reachable from one pure component root.
+    ///
+    /// Direct component examples bypass machine-bound presentations, so their
+    /// evidence identity must carry the root component, its transitive pure
+    /// component call closure, and every referenced pure dependency itself.
+    /// Physical source placement is erased by [`semantic_json`].
+    fn component_identity_material(&self, root: &str) -> Result<serde_json::Value, String> {
+        let component = self
+            .components
+            .get(root)
+            .ok_or_else(|| format!("unknown Uhura component PublicId `{root}`"))?;
+        if component.id != root {
+            return Err(format!(
+                "Uhura component map key `{root}` differs from its resolved PublicId `{}`",
+                component.id
+            ));
+        }
+
+        let mut references = SemanticReferences::default();
+        for (_, ty) in &component.props {
+            collect_type_references(ty, &mut references);
+        }
+        collect_constructor_references(&component.emits, &mut references);
+        for node in &component.nodes {
+            collect_ui_node_references(node, &mut references);
+        }
+
+        let owner = UiCallOwner::Component(root.into());
+        let mut closure = UiCallClosure::default();
+        closure.visiting.insert(owner.clone());
+        collect_ui_calls(
+            self,
+            &component.nodes,
+            UiCallOwnerKind::Component,
+            "",
+            &mut references,
+            &mut closure,
+        )?;
+        closure.visiting.remove(&owner);
+
+        let mut material = serde_json::json!({
+            "root": semantic_json(component),
+            "dependencies": self.dependency_material(references),
+        });
+        if !closure.components.is_empty() {
+            material
+                .as_object_mut()
+                .expect("component identity material is an object")
+                .insert(
+                    "callClosure".into(),
+                    serde_json::to_value(closure.components)
+                        .expect("component call closure serializes"),
+                );
+        }
+        Ok(material)
     }
 
     pub fn machine_ui_interface_hash(&self, machine_id: &str) -> Result<String, String> {
@@ -1874,6 +2235,19 @@ impl MachineProgram {
 
 impl Program {
     fn assign_presentation_node_ids(&mut self) {
+        for component in self.components.values_mut() {
+            let name = component
+                .id
+                .rsplit_once("::")
+                .map_or(component.id.as_str(), |(_, name)| name);
+            component.source.id = node_id(
+                &component.id,
+                "root",
+                "ui_component",
+                &format!("declaration/{name}"),
+            );
+            assign_ui_node_ids(&component.id, "tree", &mut component.nodes);
+        }
         for presentation in self.presentations.values_mut() {
             let name = presentation
                 .id
@@ -2188,6 +2562,153 @@ fn collect_presentation_references(
     }
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum UiCallOwner {
+    Component(String),
+    Presentation(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UiCallOwnerKind {
+    Component,
+    Presentation,
+}
+
+#[derive(Default)]
+struct UiCallClosure {
+    visiting: BTreeSet<UiCallOwner>,
+    visited: BTreeSet<UiCallOwner>,
+    components: BTreeMap<String, serde_json::Value>,
+    presentations: BTreeMap<String, serde_json::Value>,
+}
+
+fn collect_ui_calls(
+    program: &Program,
+    nodes: &[UiNode],
+    owner_kind: UiCallOwnerKind,
+    root_machine: &str,
+    references: &mut SemanticReferences,
+    closure: &mut UiCallClosure,
+) -> Result<(), String> {
+    for node in nodes {
+        match node {
+            UiNode::Element { children, .. }
+            | UiNode::If { children, .. }
+            | UiNode::Each { children, .. } => collect_ui_calls(
+                program,
+                children,
+                owner_kind,
+                root_machine,
+                references,
+                closure,
+            )?,
+            UiNode::Match { cases, .. } => {
+                for case in cases {
+                    collect_ui_calls(
+                        program,
+                        &case.children,
+                        owner_kind,
+                        root_machine,
+                        references,
+                        closure,
+                    )?;
+                }
+            }
+            UiNode::Call {
+                target,
+                target_kind,
+                ..
+            } => match target_kind {
+                UiCallTargetKind::Component => {
+                    let component = program.components.get(target).ok_or_else(|| {
+                        format!("Uhura UI call resolves unknown component PublicId `{target}`")
+                    })?;
+                    if component.id != *target {
+                        return Err(format!(
+                            "Uhura component map key `{target}` differs from its resolved PublicId `{}`",
+                            component.id
+                        ));
+                    }
+                    let owner = UiCallOwner::Component(target.clone());
+                    if closure.visiting.contains(&owner) {
+                        return Err(format!(
+                            "Uhura UI presentation-function call graph contains a cycle at component `{target}`"
+                        ));
+                    }
+                    if closure.visited.insert(owner.clone()) {
+                        closure.visiting.insert(owner.clone());
+                        for (_, ty) in &component.props {
+                            collect_type_references(ty, references);
+                        }
+                        collect_constructor_references(&component.emits, references);
+                        for child in &component.nodes {
+                            collect_ui_node_references(child, references);
+                        }
+                        collect_ui_calls(
+                            program,
+                            &component.nodes,
+                            UiCallOwnerKind::Component,
+                            root_machine,
+                            references,
+                            closure,
+                        )?;
+                        closure.visiting.remove(&owner);
+                        closure
+                            .components
+                            .insert(target.clone(), semantic_json(component));
+                    }
+                }
+                UiCallTargetKind::Presentation => {
+                    if owner_kind == UiCallOwnerKind::Component {
+                        return Err(format!(
+                            "pure Uhura UI component cannot call machine-bound presentation `{target}`"
+                        ));
+                    }
+                    let presentation = program.presentations.get(target).ok_or_else(|| {
+                        format!("Uhura UI call resolves unknown presentation PublicId `{target}`")
+                    })?;
+                    if presentation.id != *target {
+                        return Err(format!(
+                            "Uhura presentation map key `{target}` differs from its resolved PublicId `{}`",
+                            presentation.id
+                        ));
+                    }
+                    if presentation.machine != root_machine {
+                        return Err(format!(
+                            "Uhura presentation `{target}` targets `{}`, but its caller targets `{root_machine}`",
+                            presentation.machine
+                        ));
+                    }
+                    let owner = UiCallOwner::Presentation(target.clone());
+                    if closure.visiting.contains(&owner) {
+                        return Err(format!(
+                            "Uhura UI presentation-function call graph contains a cycle at presentation `{target}`"
+                        ));
+                    }
+                    if closure.visited.insert(owner.clone()) {
+                        closure.visiting.insert(owner.clone());
+                        collect_presentation_references(presentation, references);
+                        collect_ui_calls(
+                            program,
+                            &presentation.nodes,
+                            UiCallOwnerKind::Presentation,
+                            root_machine,
+                            references,
+                            closure,
+                        )?;
+                        closure.visiting.remove(&owner);
+                        closure
+                            .presentations
+                            .insert(target.clone(), semantic_json(presentation));
+                    }
+                }
+            },
+            UiNode::Text { .. } | UiNode::Interpolation { .. } => {}
+        }
+    }
+    Ok(())
+}
+
 fn collect_ui_node_references(node: &UiNode, references: &mut SemanticReferences) {
     match node {
         UiNode::Text { .. } => {}
@@ -2245,6 +2766,16 @@ fn collect_ui_node_references(node: &UiNode, references: &mut SemanticReferences
             collect_expression_references(key, references);
             for child in children {
                 collect_ui_node_references(child, references);
+            }
+        }
+        UiNode::Call {
+            props, bindings, ..
+        } => {
+            for (_, value) in props {
+                collect_expression_references(value, references);
+            }
+            for binding in bindings {
+                collect_expression_references(&binding.input, references);
             }
         }
     }
@@ -2700,6 +3231,30 @@ fn assign_ui_node_ids(public_owner: &str, prefix: &str, nodes: &mut [UiNode]) {
             } => {
                 source.id = node_id(public_owner, "root", "ui_each", &format!("{path}/each"));
                 assign_ui_node_ids(public_owner, &format!("{path}/children"), children);
+            }
+            UiNode::Call {
+                target,
+                bindings,
+                source,
+                ..
+            } => {
+                source.id = node_id(
+                    public_owner,
+                    "root",
+                    "ui_call",
+                    &format!("{path}/call/{target}"),
+                );
+                let mut duplicates = BTreeMap::<&str, usize>::new();
+                for binding in bindings {
+                    let duplicate = duplicates.entry(binding.event.as_str()).or_default();
+                    binding.source.id = node_id(
+                        public_owner,
+                        "root",
+                        "ui_emit_binding",
+                        &format!("{path}/emit/{}/{duplicate}", binding.event),
+                    );
+                    *duplicate += 1;
+                }
             }
         }
     }
@@ -3312,6 +3867,35 @@ pub struct Presentation {
     pub source: SourceRef,
 }
 
+/// A pure, reusable Web presentation function.
+///
+/// A component is evaluated only through [`UiNode::Call`]. It has immutable
+/// value parameters and a finite emitted-event protocol, but no machine or
+/// runtime identity of its own.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UiComponent {
+    pub id: String,
+    pub props: Vec<(String, TypeRef)>,
+    pub emit_type: String,
+    pub emits: Vec<ConstructorDef>,
+    pub nodes: Vec<UiNode>,
+    pub source: SourceRef,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UiCallTargetKind {
+    Component,
+    Presentation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UiCallBinding {
+    pub event: String,
+    pub input: Expr,
+    pub source: SourceRef,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum UiNode {
@@ -3346,6 +3930,15 @@ pub enum UiNode {
         children: Vec<UiNode>,
         source: SourceRef,
     },
+    /// Pure presentation-function application. The projector evaluates this
+    /// node without allocating a component instance or emitting a DOM node.
+    Call {
+        target: String,
+        target_kind: UiCallTargetKind,
+        props: Vec<(String, Expr)>,
+        bindings: Vec<UiCallBinding>,
+        source: SourceRef,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -3375,8 +3968,9 @@ pub struct EvidenceSuite {
     pub scenarios: BTreeMap<String, Scenario>,
     pub examples: BTreeMap<String, EvidenceRef>,
     pub checkpoints: BTreeMap<String, EvidenceRef>,
-    /// Editor/catalog metadata attached to examples. It does not participate
-    /// in machine or evidence behavior hashes.
+    /// Editor/catalog metadata attached to examples. Machine hashes exclude
+    /// it; direct component targets and canonical props contribute to evidence
+    /// identity, while catalogue-only fields such as note/default do not.
     #[serde(default)]
     pub example_metadata: BTreeMap<String, EvidenceExampleMetadata>,
     /// Physical declaration provenance for example registrations. This table
@@ -3394,6 +3988,11 @@ pub struct EvidenceSuite {
 pub struct EvidenceExampleMetadata {
     pub presentation: Option<String>,
     pub kind: Option<EvidencePresentationKind>,
+    /// Canonical concrete props for a direct pure-component preview.
+    ///
+    /// Empty for pages and for zero-prop components.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub component_props: Vec<(String, Value)>,
     pub is_default: bool,
     pub note: Option<String>,
 }
@@ -3734,6 +4333,9 @@ mod tests {
     const UI_READ: &str = "example.hash@1::ui_read";
     const EVIDENCE_FLAG: &str = "example.hash@1::evidence_flag";
     const EVIDENCE_CHECK: &str = "example.hash@1::evidence_check";
+    const CARD: &str = "example.hash@1::Card";
+    const BADGE: &str = "example.hash@1::Badge";
+    const UNUSED_COMPONENT: &str = "example.hash@1::UnusedComponent";
 
     fn source(id: &str) -> SourceRef {
         SourceRef {
@@ -3956,6 +4558,71 @@ mod tests {
             EvidenceRef {
                 scenario: "example.hash@1::proof".into(),
                 pin: "ready".into(),
+            },
+        );
+        program.freeze_program_hashes();
+        program
+    }
+
+    fn component_evidence_program() -> Program {
+        let mut program = profile_program();
+        program.components.insert(
+            BADGE.into(),
+            UiComponent {
+                id: BADGE.into(),
+                props: Vec::new(),
+                emit_type: format!("{BADGE}.Emit"),
+                emits: Vec::new(),
+                nodes: vec![UiNode::Interpolation {
+                    value: Expr::Call {
+                        function: UI_READ.into(),
+                        args: Vec::new(),
+                        result_type: TypeRef::Text,
+                    },
+                    source: source("badge-label"),
+                }],
+                source: source("badge"),
+            },
+        );
+        program.components.insert(
+            CARD.into(),
+            UiComponent {
+                id: CARD.into(),
+                props: vec![("label".into(), TypeRef::Text)],
+                emit_type: format!("{CARD}.Emit"),
+                emits: Vec::new(),
+                nodes: vec![UiNode::Call {
+                    target: BADGE.into(),
+                    target_kind: UiCallTargetKind::Component,
+                    props: Vec::new(),
+                    bindings: Vec::new(),
+                    source: source("card-badge-call"),
+                }],
+                source: source("card"),
+            },
+        );
+        program.components.insert(
+            UNUSED_COMPONENT.into(),
+            UiComponent {
+                id: UNUSED_COMPONENT.into(),
+                props: Vec::new(),
+                emit_type: format!("{UNUSED_COMPONENT}.Emit"),
+                emits: Vec::new(),
+                nodes: vec![UiNode::Text {
+                    value: "unused".into(),
+                    source: source("unused-component-text"),
+                }],
+                source: source("unused-component"),
+            },
+        );
+        program.evidence.example_metadata.insert(
+            "example.hash@1::example".into(),
+            EvidenceExampleMetadata {
+                presentation: Some(CARD.into()),
+                kind: Some(EvidencePresentationKind::Component),
+                component_props: vec![("label".into(), Value::Text("preview".into()))],
+                is_default: true,
+                note: None,
             },
         );
         program.freeze_program_hashes();
@@ -5026,6 +5693,36 @@ mod tests {
     }
 
     #[test]
+    fn public_ir_rejects_an_unused_malformed_component_call_graph() {
+        let mut program = profile_program();
+        let unused = "example.hash@1::MalformedUnused";
+        program.components.insert(
+            unused.into(),
+            UiComponent {
+                id: unused.into(),
+                props: Vec::new(),
+                emit_type: format!("{unused}.Emit"),
+                emits: Vec::new(),
+                nodes: vec![UiNode::Call {
+                    target: "example.hash@1::MissingComponent".into(),
+                    target_kind: UiCallTargetKind::Component,
+                    props: Vec::new(),
+                    bindings: Vec::new(),
+                    source: source("malformed-unused-call"),
+                }],
+                source: source("malformed-unused"),
+            },
+        );
+
+        let error = Program::from_json(&program.to_canonical_string())
+            .expect_err("canonical external IR must validate unused UI declarations");
+        assert!(
+            error.contains("unknown component PublicId"),
+            "unexpected validation error: {error}"
+        );
+    }
+
+    #[test]
     fn public_ir_float_and_invalid_type_material_return_errors_without_panicking() {
         let mut float_json = serde_json::to_value(hash_program()).unwrap();
         float_json["machines"][MACHINE]["source"]["start"] = serde_json::json!(1.5);
@@ -5276,6 +5973,73 @@ mod tests {
             referenced_interface_type_changed.presentation_hashes[presentation_id],
             base.presentation_hashes[presentation_id],
         );
+    }
+
+    #[test]
+    fn direct_component_evidence_identity_tracks_only_reachable_component_semantics() {
+        let base = component_evidence_program();
+        let base_hash = base.evidence_hashes[MACHINE].clone();
+
+        let mut called_component_changed = base.clone();
+        called_component_changed
+            .components
+            .get_mut(BADGE)
+            .expect("called component")
+            .nodes = vec![UiNode::Text {
+            value: "changed called component".into(),
+            source: source("badge-label"),
+        }];
+        called_component_changed.freeze_program_hashes();
+        assert_ne!(called_component_changed.evidence_hashes[MACHINE], base_hash);
+
+        let mut dependency_changed = base.clone();
+        dependency_changed
+            .machine_program
+            .constants
+            .insert(UI_LABEL.into(), Value::Text("changed dependency".into()));
+        dependency_changed.freeze_program_hashes();
+        assert_ne!(dependency_changed.evidence_hashes[MACHINE], base_hash);
+
+        let mut concrete_prop_changed = base.clone();
+        concrete_prop_changed
+            .evidence
+            .example_metadata
+            .get_mut("example.hash@1::example")
+            .expect("component example metadata")
+            .component_props[0]
+            .1 = Value::Text("another preview".into());
+        concrete_prop_changed.freeze_program_hashes();
+        assert_ne!(concrete_prop_changed.evidence_hashes[MACHINE], base_hash);
+
+        let mut moved = base.clone();
+        let component = moved.components.get_mut(BADGE).expect("called component");
+        component.source.path = "moved/components/badge.uhura".into();
+        component.source.start = 9_000;
+        component.source.end = 9_100;
+        let UiNode::Interpolation {
+            source: moved_source,
+            ..
+        } = &mut component.nodes[0]
+        else {
+            unreachable!()
+        };
+        moved_source.path = "moved/components/badge.uhura".into();
+        moved_source.start = 9_200;
+        moved_source.end = 9_300;
+        moved.freeze_program_hashes();
+        assert_eq!(moved.evidence_hashes[MACHINE], base_hash);
+
+        let mut unused_changed = base;
+        unused_changed
+            .components
+            .get_mut(UNUSED_COMPONENT)
+            .expect("unused component")
+            .nodes = vec![UiNode::Text {
+            value: "changed but still unreachable".into(),
+            source: source("unused-component-text"),
+        }];
+        unused_changed.freeze_program_hashes();
+        assert_eq!(unused_changed.evidence_hashes[MACHINE], base_hash);
     }
 
     #[test]

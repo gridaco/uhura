@@ -140,8 +140,24 @@ impl Adapter<'_> {
     ) -> ast::UiDecl {
         ast::UiDecl {
             name: self.name(&declaration.name),
-            machine: self.ui_machine_name(&declaration.machine),
-            binding: self.name(&declaration.observation),
+            binding: match &declaration.binding {
+                uhura_syntax::ast::UiBinding::Machine {
+                    machine,
+                    observation,
+                } => ast::UiBinding::Machine {
+                    machine: self.ui_machine_name(machine),
+                    observation: self.name(observation),
+                },
+                uhura_syntax::ast::UiBinding::Component { parameters, emits } => {
+                    ast::UiBinding::Component {
+                        parameters: parameters
+                            .iter()
+                            .map(|parameter| self.parameter(parameter))
+                            .collect(),
+                        emits: self.protocol_domain(emits),
+                    }
+                }
+            },
             nodes: self.ui_nodes(&declaration.body.nodes),
         }
     }

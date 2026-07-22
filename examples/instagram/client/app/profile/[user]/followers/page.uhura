@@ -1,0 +1,57 @@
+use uhura::ui;
+use crate::components::bottom_nav::BottomNav;
+use crate::components::connection_row::ConnectionRow;
+use crate::instagram::{Authority, Instagram, Section};
+use crate::presentation::{effective_follow, followers_for};
+use crate::routing::Location;
+
+pub ui FollowersPage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen connections-page">
+      <view class="detail-bar">
+        <button
+          label="Back"
+          on press -> GoBack
+        >
+          <icon name="chevron-left"/>
+        </button>
+        <text class="title">Followers</text>
+      </view>
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        {#if view.location is Some(Location::Followers {
+          user: user,
+        })}
+          <scroll class="connection-list">
+            {#each followers_for(data, user) as person (person.user.id)}
+              <ConnectionRow
+                person={person}
+                following={effective_follow(person.viewer_follows, view.follow_overlay, person.user.id)}
+                pending={view.follow_pending.contains(person.user.id)}
+                on ProfileOpened -> OpenProfile(event.user)
+                on FollowToggled -> ToggleFollow(event.user, event.following)
+              />
+            {/each}
+          </scroll>
+        {:else}
+          <view class="fill-center">
+            <text class="muted">Loading followers…</text>
+          </view>
+        {/if}
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading followers…</text>
+        </view>
+      {/if}
+    </view>
+    <BottomNav
+      current={Section::Profile}
+      on FeedSelected -> SelectTab(Section::Feed)
+      on SearchSelected -> SelectTab(Section::Search)
+      on CreateSelected -> SelectTab(Section::Create)
+      on ReelsSelected -> SelectTab(Section::Reels)
+      on ProfileSelected -> SelectTab(Section::Profile)
+    />
+  </view>
+}

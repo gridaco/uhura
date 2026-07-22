@@ -1,60 +1,30 @@
 use std::path::{Path, PathBuf};
 
-use uhura_core::{CHECKPOINT_PROTOCOL, Checkpoint, Program};
-use uhura_syntax::{SourceIdentity, parse};
+use uhura_core::{CHECKPOINT_PROTOCOL, Checkpoint, EvidencePresentationKind, Program};
+use uhura_project::{ResolvedApplication, ResolvedUiRole};
 
 const MACHINE_COUNT: usize = 1;
-const PRESENTATION_COUNT: usize = 18;
+const PAGE_COUNT: usize = 9;
+const COMPONENT_COUNT: usize = 9;
+const PRESENTATION_COUNT: usize = PAGE_COUNT + 1;
+const SUBJECT_COUNT: usize = PAGE_COUNT + COMPONENT_COUNT;
 const EXAMPLE_COUNT: usize = 91;
 
 fn instagram_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/instagram/client")
 }
 
-fn checked_instagram() -> Program {
+fn checked_instagram() -> (Program, ResolvedApplication) {
     let root = instagram_root();
-    let modules = [
-        ("instagram", "machine.uhura"),
-        ("parts", "parts.uhura"),
-        ("ui", "ui.uhura"),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, (logical, path))| {
-        let source = std::fs::read_to_string(root.join(path))
-            .unwrap_or_else(|error| panic!("{path}: {error}"));
-        let parsed = parse(
-            SourceIdentity::new(index as u32, "app.instagram@1", logical, path),
-            &source,
-        );
-        assert!(
-            parsed.diagnostics.is_empty(),
-            "Instagram {path} parse diagnostics: {:#?}",
-            parsed.diagnostics
-        );
-        parsed.module
-    })
-    .collect::<Vec<_>>();
-
-    let evidence_path = "evidence.uhura";
-    let evidence_source = std::fs::read_to_string(root.join(evidence_path))
-        .unwrap_or_else(|error| panic!("{evidence_path}: {error}"));
-    let evidence = parse(
-        SourceIdentity::new(
-            modules.len() as u32,
-            "app.instagram@1",
-            "evidence",
-            evidence_path,
-        ),
-        &evidence_source,
-    );
-    assert!(
-        evidence.diagnostics.is_empty(),
-        "Instagram evidence parse diagnostics: {:#?}",
-        evidence.diagnostics
-    );
-
-    let checked = uhura_check::check_project_modules_with_evidence(&modules, &[evidence.module]);
+    let snapshot = uhura_project::capture_project_snapshot(&root);
+    let resolved = uhura_project::resolve_project(&snapshot).unwrap_or_else(|rejection| {
+        panic!(
+            "Instagram project resolution diagnostics: {:#?}",
+            rejection.diagnostics
+        )
+    });
+    let application = resolved.application().clone();
+    let checked = resolved.check();
     assert!(
         checked.diagnostics.is_empty(),
         "Instagram check diagnostics: {:#?}",
@@ -62,14 +32,36 @@ fn checked_instagram() -> Program {
     );
     let mut program = checked.program.expect("Instagram lowers to one program");
     program.freeze_program_hashes();
-    program
+    (program, application)
 }
 
 #[test]
 fn instagram_is_the_current_machine_ui_and_evidence_acceptance_corpus() {
-    let program = checked_instagram();
+    let (program, application) = checked_instagram();
+    let web_app = application.web_app.expect("Instagram selects web-app@1");
     assert_eq!(program.machine_program.machines.len(), MACHINE_COUNT);
     assert_eq!(program.presentations.len(), PRESENTATION_COUNT);
+    assert_eq!(program.components.len(), COMPONENT_COUNT);
+    assert_eq!(web_app.subjects.len(), SUBJECT_COUNT);
+    assert_eq!(
+        web_app
+            .subjects
+            .iter()
+            .filter(|subject| subject.role == ResolvedUiRole::Page)
+            .count(),
+        PAGE_COUNT
+    );
+    assert_eq!(
+        web_app
+            .subjects
+            .iter()
+            .filter(|subject| matches!(
+                subject.role,
+                ResolvedUiRole::Component | ResolvedUiRole::Surface
+            ))
+            .count(),
+        COMPONENT_COUNT
+    );
     assert_eq!(program.evidence.examples.len(), EXAMPLE_COUNT);
 
     let report = program.run_evidence();
@@ -115,14 +107,25 @@ fn instagram_is_the_current_machine_ui_and_evidence_acceptance_corpus() {
             .unwrap_or_else(|error| panic!("example `{name}` cannot restore: {error}"));
         assert_eq!(instance.observation, artifact.observation);
 
-        let projection = program
-            .project(&instance, presentation)
-            .unwrap_or_else(|error| {
-                panic!("example `{name}` cannot project through `{presentation}`: {error}")
-            });
+        let projection = match metadata.kind {
+            Some(EvidencePresentationKind::Page) => program.project(&instance, presentation),
+            Some(EvidencePresentationKind::Component | EvidencePresentationKind::Surface) => {
+                program.project_component(&instance, presentation, &metadata.component_props)
+            }
+            None => panic!("example `{name}` has no presentation role"),
+        }
+        .unwrap_or_else(|error| {
+            panic!("example `{name}` cannot project through `{presentation}`: {error}")
+        });
         assert_eq!(projection.document.presentation, presentation);
         assert_eq!(projection.document.machine, snapshot.machine);
         assert_eq!(projection.document.instance, snapshot.instance);
+        if !matches!(metadata.kind, Some(EvidencePresentationKind::Page)) {
+            assert!(
+                projection.bindings.is_empty(),
+                "direct component example `{name}` exposed live dispatch bindings"
+            );
+        }
     }
 }
 
