@@ -213,12 +213,12 @@ stable label. For example, “Mute” remains “Mute” while pressed state say
 whether it is active. An alternative command design may change “Like” to
 “Unlike” without exposing toggle state.
 
-The current Instagram example combines both models: every `pressed` button
-also changes labels such as Like/Unlike, Save/Remove, and Follow/Unfollow. The
-checker accepts this and the browser produces combinations such as “Unlike,
-pressed.” That implementation evidence must not be presented as an accepted
-accessibility default. The `pressed` contract and example authoring need a
-separate correction after the design is decided.
+The retired v0 Instagram snapshot combined both models: every `pressed` button
+also changed labels such as Like/Unlike, Save/Remove, and Follow/Unfollow. The
+v0 checker accepted this and the browser produced combinations such as
+“Unlike, pressed.” That historical implementation evidence must not be
+presented as an accepted accessibility default. The `pressed` contract and
+future example authoring need a separate decision.
 
 ### Current is not a tabs contract
 
@@ -226,8 +226,8 @@ separate correction after the design is decided.
 `tab` role, `aria-selected`, panel relationships, roving focus, or arrow-key
 navigation.
 
-The Instagram profile places current-marked buttons inside a `tablist`, but
-that does not implement the complete
+The retired v0 Instagram profile placed current-marked buttons inside a
+`tablist`, but that did not implement the complete
 [WAI-ARIA Tabs Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/).
 This is useful spike evidence for a future tab capability, not proof that the
 generic button's `current` boolean is sufficient.
@@ -293,7 +293,7 @@ into the semantic `press` event or command outcome.
 
 ## Conformance
 
-Existing executable coverage currently proves:
+Historical executable coverage established:
 
 - shared Editor/Play structure and explicit label application;
 - Editor inertness and Play click emission;
@@ -361,6 +361,6 @@ Historical implementation and research references:
 
 - [Native element, attribute, and event checking](../../../../../crates/uhura-check/src/checker.rs)
 - [Canonical shared projection renderer](../../../../../web/src/renderer/projection.ts)
-- [Instagram button usage](../../../../../examples/instagram/client/ui.uhura)
+- [Maintained Instagram button usage](../../../../../examples/instagram/client/components/post-card.uhura)
 - [Instagram spike element catalog](../../../../studies/instagram-spike-design.md)
 - [Instagram dogfood gaps](../../../../studies/instagram-demo-dogfood.md)

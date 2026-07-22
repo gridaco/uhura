@@ -1,0 +1,15 @@
+use crate::app::create::CreatePage;
+
+example create_loading for CreatePage as page = crate::scenarios::create_loading_scenario::frame;
+
+example create_empty for CreatePage as page default = crate::scenarios::create_empty_scenario::frame;
+
+example create_choosing for CreatePage as page note "the platform picker/upload is in flight; no bytes enter Core" = crate::scenarios::create_choosing_scenario::frame;
+
+example create_uploaded for CreatePage as page = crate::scenarios::create_uploaded_scenario::frame;
+
+example create_composed for CreatePage as page = crate::scenarios::create_composed_scenario::frame;
+
+example create_publishing for CreatePage as page note "publish carries only the storage object id and authored text" = crate::scenarios::create_publishing_scenario::frame;
+
+example create_publish_refused for CreatePage as page = crate::scenarios::create_publish_refused_scenario::frame;

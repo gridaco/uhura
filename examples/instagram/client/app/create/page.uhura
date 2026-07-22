@@ -1,0 +1,130 @@
+use uhura::ui;
+use crate::components::bottom_nav::BottomNav;
+use crate::components::notice_bar::NoticeBar;
+use crate::instagram::{Authority, Instagram, Section, Upload};
+
+pub ui CreatePage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen create-page">
+      <view class="create-head">
+        <button
+          label="Cancel"
+          on press -> GoBack
+        >
+          <icon name="chevron-left"/>
+        </button>
+        <text class="title">New post</text>
+      </view>
+      {#if view.notice is Some(message)}
+        <NoticeBar
+          message={message}
+          on Dismissed -> notice_controls.DismissNotice
+        />
+      {:else}
+        <view/>
+      {/if}
+      {#if view.authority is Authority::Loading}
+        <view class="fill-center">
+          <text class="muted">Preparing the uploader…</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Failed {
+          ..,
+        }}
+          <view class="fill-center">
+            <text class="muted">This uploader isn't available.</text>
+          </view>
+        {:else}
+          {#if view.upload is Upload::Empty}
+            <view class="fill-center stack-sm pad-lg">
+              <view class="upload-mark">
+                <icon name="square-plus"/>
+              </view>
+              <text class="create-empty-title">Share a photo</text>
+              <text class="muted">Choose a JPEG, PNG, or WebP image from this device.</text>
+              <button
+                class="primary-button"
+                label="Choose photo"
+                on press -> ChooseImage
+              >
+                <text>Choose photo</text>
+              </button>
+            </view>
+          {:else}
+            {#if view.upload is Upload::Choosing}
+              <view class="fill-center">
+                <text class="muted">Choosing a photo…</text>
+              </view>
+            {:else}
+              {#if view.upload is Upload::Uploaded {
+                object: object,
+                preview: preview,
+                name: name,
+              }}
+                <scroll class="create-form">
+                  <img
+                    class="create-preview"
+                    src={preview}
+                    alt={name}
+                  />
+                  <text class="muted">{name}</text>
+                  <textfield
+                    value={view.caption}
+                    label="Caption"
+                    placeholder="Write a caption…"
+                    on change -> CaptionChanged(event.text)
+                  />
+                  <textfield
+                    value={view.alt}
+                    label="Alternative text"
+                    placeholder="Describe this image…"
+                    on change -> AltChanged(event.text)
+                  />
+                  <view class="create-actions">
+                    <button
+                      label="Choose another photo"
+                      on press -> ChooseImage
+                    >
+                      <text>Choose another</text>
+                    </button>
+                    <button
+                      class="primary-button"
+                      label="Share post"
+                      on press -> PublishImage
+                    >
+                      <text>Share</text>
+                    </button>
+                  </view>
+                  <text class="technical-id">{object}</text>
+                </scroll>
+              {:else}
+                {#if view.upload is Upload::Publishing {
+                  preview: preview,
+                  name: name,
+                  ..,
+                }}
+                  <view class="create-form">
+                    <img
+                      class="create-preview"
+                      src={preview}
+                      alt={name}
+                    />
+                    <text class="muted">Publishing…</text>
+                  </view>
+                {/if}
+              {/if}
+            {/if}
+          {/if}
+        {/if}
+      {/if}
+    </view>
+    <BottomNav
+      current={Section::Create}
+      on FeedSelected -> SelectTab(Section::Feed)
+      on SearchSelected -> SelectTab(Section::Search)
+      on CreateSelected -> SelectTab(Section::Create)
+      on ReelsSelected -> SelectTab(Section::Reels)
+      on ProfileSelected -> SelectTab(Section::Profile)
+    />
+  </view>
+}

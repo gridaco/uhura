@@ -1,0 +1,96 @@
+use uhura::ui;
+use crate::instagram::{Media, Post};
+use crate::presentation::{like_label, save_label};
+use crate::routing::PostId;
+
+pub ui ReelCard(post: Post, liked: Bool, like_pending: Bool, saved: Bool, save_pending: Bool) emits {
+  LikeToggled(post: PostId, liked: Bool),
+  SaveToggled(post: PostId, saved: Bool),
+  CommentsOpened(post: PostId),
+} {
+  <view class="reel-card">
+    {#if post.media is Media::Video {
+      src: src,
+      poster: poster,
+    }}
+      <video
+        class="reel-media"
+        src={src}
+        poster={poster.src}
+        label={poster.alt}
+        muted={true}
+        loop={true}
+        controls={true}
+        playsinline={true}
+      />
+    {:else}
+      {#if post.media is Media::Image {
+        image: media,
+      }}
+        <img
+          class="reel-media"
+          src={media.src}
+          alt={media.alt}
+        />
+      {:else}
+        {#if post.media is Media::Carousel {
+          images: slides,
+        }}
+          <pager
+            class="reel-media"
+            indicator="dots"
+            label="Reel carousel"
+          >
+            {#each slides as slide (slide.src)}
+              <img
+                src={slide.src}
+                alt={slide.alt}
+              />
+            {/each}
+          </pager>
+        {/if}
+      {/if}
+    {/if}
+    <view class="reel-overlay">
+      <view class="reel-copy">
+        <view class="reel-author">
+          <img
+            class="avatar"
+            src={post.author.avatar.src}
+            alt={post.author.avatar.alt}
+          />
+          <text class="username">{post.author.username}</text>
+        </view>
+        <text>{post.caption}</text>
+      </view>
+      <view class="reel-actions">
+        <button
+          class="reel-action"
+          label={like_label(liked)}
+          pressed={liked}
+          busy={like_pending}
+          on press -> LikeToggled(post.id, !liked)
+        >
+          <icon name="heart"/>
+          <text>{post.like_count}</text>
+        </button>
+        <button
+          label="Comments"
+          on press -> CommentsOpened(post.id)
+        >
+          <icon name="message-circle"/>
+          <text>{post.comment_count}</text>
+        </button>
+        <button
+          class="reel-action reel-save-action"
+          label={save_label(saved)}
+          pressed={saved}
+          busy={save_pending}
+          on press -> SaveToggled(post.id, !saved)
+        >
+          <icon name="bookmark"/>
+        </button>
+      </view>
+    </view>
+  </view>
+}

@@ -1,0 +1,9 @@
+use crate::app::profile::param__user::followers::FollowersPage;
+
+example followers_loading for FollowersPage as page = crate::scenarios::followers_loading_scenario::frame;
+
+example followers_lena for FollowersPage as page default = crate::scenarios::followers_lena_scenario::frame;
+
+example followers_follow_pending for FollowersPage as page = crate::scenarios::followers_follow_pending_scenario::frame;
+
+example followers_mira for FollowersPage as page = crate::scenarios::followers_mira_scenario::frame;

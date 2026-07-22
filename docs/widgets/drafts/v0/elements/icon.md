@@ -226,4 +226,4 @@ Pre-0.4 implementation references (paths may now contain replacement code):
 - [Checked icon-font registry](../../../../../crates/uhura-check/src/icon_fonts.rs)
 - [Bundled Lucide provenance](../../../../../resources/icon-fonts/lucide/PROVENANCE.md)
 - [Editor state protocol](../../../../../web/src/editor/editor-state.ts)
-- [Instagram icon usage](../../../../../examples/instagram/client/ui.uhura)
+- [Maintained Instagram icon usage](../../../../../examples/instagram/client/components/bottom-nav.uhura)

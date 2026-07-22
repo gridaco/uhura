@@ -1,0 +1,42 @@
+use uhura::ui;
+use crate::instagram::Connection;
+use crate::routing::UserId;
+
+pub ui ConnectionRow(person: Connection, following: Bool, pending: Bool) emits {
+  ProfileOpened(user: UserId),
+  FollowToggled(user: UserId, following: Bool),
+} {
+  <view class="connection-row">
+    <region
+      label={person.user.username}
+      on activate -> ProfileOpened(person.user.id)
+    >
+      <view class="connection-person">
+        <img
+          class="avatar"
+          src={person.user.avatar.src}
+          alt={person.user.avatar.alt}
+        />
+        <view class="connection-copy">
+          <text class="username">{person.user.username}</text>
+          <text class="muted">{person.user.display_name}</text>
+        </view>
+      </view>
+    </region>
+    <button
+      label={if following {
+        "Unfollow"
+      } else {
+        "Follow"
+      }}
+      busy={pending}
+      on press -> FollowToggled(person.user.id, !following)
+    >
+      <text>{if following {
+        "Following"
+      } else {
+        "Follow"
+      }}</text>
+    </button>
+  </view>
+}

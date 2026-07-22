@@ -1,0 +1,7 @@
+use crate::app::profile::param__user::following::FollowingPage;
+
+example following_loading for FollowingPage as page = crate::scenarios::following_loading_scenario::frame;
+
+example following_lena for FollowingPage as page default = crate::scenarios::following_lena_scenario::frame;
+
+example following_mira for FollowingPage as page = crate::scenarios::following_mira_scenario::frame;

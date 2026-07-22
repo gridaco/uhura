@@ -1,13 +1,9 @@
 use uhura::observation::Observation;
 use uhura::ports::RequestPort;
-use uhura::web_router::{Router, Routes};
+use uhura::web_router::Router;
 use crate::parts::{Notice, NoticeControls};
-
-pub key UserId(Text);
-
-pub key PostId(Text);
-
-pub key StoryId(Text);
+use crate::routing::{Location, PostId, StoryId, UserId};
+use crate::framework::routes::APPLICATION_ROUTES;
 
 pub key RequestId(PositiveInt);
 
@@ -89,30 +85,6 @@ pub enum SearchStatus {
   Results,
   NoResults,
 }
-
-pub enum Location {
-  Feed,
-  Search,
-  Create,
-  Reels,
-  Post {
-    id: PostId,
-  },
-  Profile {
-    user: UserId,
-  },
-  Followers {
-    user: UserId,
-  },
-  Following {
-    user: UserId,
-  },
-  Story {
-    id: StoryId,
-  },
-}
-
-pub const INSTAGRAM_ROUTES: Routes<Location> = Routes::from([("Feed", "/"), ("Search", "/search"), ("Create", "/create"), ("Reels", "/reels"), ("Post", "/p/{id}"), ("Profile", "/profile/{user}"), ("Followers", "/profile/{user}/followers"), ("Following", "/profile/{user}/following"), ("Story", "/stories/{id}")]);
 
 pub enum Page {
   None,
@@ -1108,7 +1080,7 @@ pub const DEMO_EMPTY_EXPLORE: AppData = AppData {
 
 pub machine Instagram {
   port router = Router<Location> {
-    routes: INSTAGRAM_ROUTES,
+    routes: APPLICATION_ROUTES,
   };
 
   port authority = Observation<Authority> {};

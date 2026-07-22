@@ -1,0 +1,15 @@
+use crate::app::stories::param__id::StoryPage;
+
+example story_loading for StoryPage as page = crate::scenarios::story_loading_scenario::frame;
+
+example story_unseen for StoryPage as page default note "first of three: no previous target, next target present, all segments unseen" = crate::scenarios::story_unseen_scenario::frame;
+
+example story_lena_middle for StoryPage as page note "middle frame exposes both previous and next hit zones" = crate::scenarios::story_lena_middle_scenario::frame;
+
+example story_lena_last for StoryPage as page note "last frame replaces Next with the close affordance" = crate::scenarios::story_lena_last_scenario::frame;
+
+example story_self_middle_seen for StoryPage as page note "Mira's own three-frame sequence is fully viewed" = crate::scenarios::story_self_middle_seen_scenario::frame;
+
+example story_seen for StoryPage as page note "a single-frame seen story has one progress segment and closes on advance" = crate::scenarios::story_seen_scenario::frame;
+
+example story_marking_seen for StoryPage as page = crate::scenarios::story_marking_seen_scenario::frame;

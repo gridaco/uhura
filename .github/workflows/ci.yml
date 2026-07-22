@@ -196,7 +196,7 @@ jobs:
 
           curl --fail --silent --show-error \
             "http://127.0.0.1:$port/api/editor/state" --output "$state_json"
-          python3 - "$state_json" "$GITHUB_WORKSPACE/examples/instagram/client/ui.uhura" <<'PY'
+          python3 - "$state_json" "$GITHUB_WORKSPACE/examples/instagram/client/components/post-card.uhura" <<'PY'
           import json
           import pathlib
           import sys
@@ -213,14 +213,19 @@ jobs:
           assert render["authoring"]["targets"]
           assert isinstance(render["authoring"]["entries"], list)
           entries = render["authoring"]["entries"]
-          assert len(entries) == 1
-          annotation = entries[0]
+          assert len(entries) == 5
+          assert all(entry["class"] == "annotation" for entry in entries)
+          assert all(entry["kind"] == "annotation" for entry in entries)
+          annotation = next(
+              entry
+              for entry in entries
+              if entry["text"] == (
+                  "The complete post-card presentation, shared across every static "
+                  "PostCard example."
+              )
+          )
           assert annotation["class"] == "annotation"
           assert annotation["kind"] == "annotation"
-          assert annotation["text"] == (
-              "The complete post-card presentation, shared across every static "
-              "PostCard example."
-          )
           assert annotation["order"] == 0
           target = next(
               target
@@ -228,7 +233,7 @@ jobs:
               if target["id"] == annotation["targetId"]
           )
           assert target["class"] == "ui-element"
-          assert target["file"] == "ui.uhura"
+          assert target["file"] == "components/post-card.uhura"
           assert target["label"] == '<view class="post-card">'
           assert target["owner"] == {
               "kind": "component",

@@ -10,6 +10,7 @@ use super::route::{OPAQUE_PATH_CODEC, QUERY_VALUE_CODEC, RouteTable};
 pub const OBSERVATION_MODULE: &str = "uhura.observation";
 pub const PORTS_MODULE: &str = "uhura.ports";
 pub const ROUTER_MODULE: &str = "uhura.web_router";
+pub const ROUTER_CONTRACT_ID: &str = "uhura.web_router@1::Router";
 pub const CANONICAL_VALUE_CODEC: &str = "uhura.canonical-value@1";
 pub const ROUTER_ROUTE_CODEC: &str = "uhura.web-router.routes@1";
 pub const OBSERVATION_CONTRACT_HASH: &str =

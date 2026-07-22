@@ -247,11 +247,26 @@ impl Formatter {
         self.visibility(declaration.visibility);
         self.write("ui ");
         self.identifier(&declaration.name);
-        self.write(" for ");
-        self.type_path(&declaration.machine);
-        self.write("(");
-        self.identifier(&declaration.observation);
-        self.write(") {");
+        match &declaration.binding {
+            UiBinding::Machine {
+                machine,
+                observation,
+            } => {
+                self.write(" for ");
+                self.type_path(machine);
+                self.write("(");
+                self.identifier(observation);
+                self.write(")");
+            }
+            UiBinding::Component { parameters, emits } => {
+                self.parameters(parameters);
+                if !emits.variants.is_empty() {
+                    self.write(" ");
+                    self.protocol_section("emits", emits);
+                }
+            }
+        }
+        self.write(" {");
         if declaration.body.nodes.is_empty() {
             self.write("}");
             return;
@@ -300,6 +315,22 @@ impl Formatter {
         if let Some(presentation) = &declaration.presentation {
             self.write(" for ");
             self.identifier(presentation);
+            if let Some(arguments) = &declaration.arguments {
+                self.write("(");
+                if !arguments.is_empty() {
+                    self.indent += 1;
+                    for argument in arguments {
+                        self.newline();
+                        self.identifier(&argument.name);
+                        self.write(": ");
+                        self.expression(&argument.value);
+                        self.write(",");
+                    }
+                    self.indent -= 1;
+                    self.newline();
+                }
+                self.write(")");
+            }
             self.write(" as ");
             self.write(match declaration.kind {
                 Some(EvidencePresentationKind::Page) => "page",
@@ -321,6 +352,9 @@ impl Formatter {
     }
 
     fn evidence_reference(&mut self, reference: &EvidenceReference) {
+        if reference.root == EvidenceReferenceRoot::Crate {
+            self.write("crate::");
+        }
         for (index, segment) in reference.path.iter().enumerate() {
             if index > 0 {
                 self.write("::");

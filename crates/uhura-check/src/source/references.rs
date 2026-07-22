@@ -43,6 +43,11 @@ impl ReferenceVisitor {
             uhura_syntax::ast::DeclarationKind::Scenario(value) => self.scenario(value),
             uhura_syntax::ast::DeclarationKind::Example(value)
             | uhura_syntax::ast::DeclarationKind::Checkpoint(value) => {
+                if let Some(arguments) = &value.arguments {
+                    for argument in arguments {
+                        self.expression(&argument.value);
+                    }
+                }
                 self.evidence_reference(&value.target);
             }
             uhura_syntax::ast::DeclarationKind::Struct(value) => {
@@ -125,7 +130,13 @@ impl ReferenceVisitor {
     }
 
     fn ui(&mut self, ui: &uhura_syntax::ast::UiDeclaration) {
-        self.type_path(&ui.machine);
+        match &ui.binding {
+            uhura_syntax::ast::UiBinding::Machine { machine, .. } => self.type_path(machine),
+            uhura_syntax::ast::UiBinding::Component { parameters, emits } => {
+                self.parameters(parameters);
+                self.protocol_section(emits);
+            }
+        }
         self.ui_nodes(&ui.body.nodes);
     }
 
@@ -175,6 +186,9 @@ impl ReferenceVisitor {
     }
 
     fn evidence_reference(&mut self, reference: &uhura_syntax::ast::EvidenceReference) {
+        if reference.root == uhura_syntax::ast::EvidenceReferenceRoot::Crate {
+            return;
+        }
         if let Some(first) = reference.path.first() {
             self.reference(first);
         }
@@ -707,9 +721,18 @@ fn declaration_bound_names(declaration: &uhura_syntax::ast::Declaration) -> BTre
             );
             part_member_names(&value.members, &mut names);
         }
-        uhura_syntax::ast::DeclarationKind::Ui(value) => {
-            names.insert(value.observation.text.clone());
-        }
+        uhura_syntax::ast::DeclarationKind::Ui(value) => match &value.binding {
+            uhura_syntax::ast::UiBinding::Machine { observation, .. } => {
+                names.insert(observation.text.clone());
+            }
+            uhura_syntax::ast::UiBinding::Component { parameters, .. } => {
+                names.extend(
+                    parameters
+                        .iter()
+                        .map(|parameter| parameter.name.text.clone()),
+                );
+            }
+        },
     }
     names
 }
@@ -773,7 +796,7 @@ pub machine App {
 }
 
 pub ui Screen for App(view) {
-  <Panel value={format(view.ready)} on press -> Start(DEFAULT) />
+  <Panel value={format(view.ready)} on Press -> Start(DEFAULT) />
 }
 "#,
         );

@@ -1,6 +1,6 @@
 [entry.instagram]
 machine = "crate::Instagram"
-presentation = "crate::FeedPage"
+presentation = "crate::Application"
 lifetime = "application-session"
 stylesheet = "styles/theme.css"
 

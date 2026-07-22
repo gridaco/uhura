@@ -8,7 +8,8 @@
 - **Scope:** `.uhura` ordinary comments, declaration documentation, tagged
   markup annotations, attachment, canonical formatting, checked authoring
   metadata, and diagnostics. The accepted 0.3 `.examples.uhura` target maps to
-  ordinary 0.4 evidence modules selected by `[evidence.modules]`.
+  ordinary 0.4 evidence modules selected explicitly by `[evidence.modules]` or
+  discovered as subject-local `*.examples.uhura` by `web-app@1`.
 - **Supersedes:** None
 - **Related work:** [RFC 0001](0001-project-foundation.md),
   [Spock RFD 0016](https://github.com/gridaco/spock/blob/main/docs/rfd/0016-doc-comments.md)
@@ -105,22 +106,22 @@ The historical mapping is explicit:
 | Accepted 0.3 target | Active 0.4 treatment |
 | --- | --- |
 | `component` / `page` / `surface` header | `machine`, `part`, or activated `ui` declaration, according to what is declared |
-| `props` and route parameters | UI-profile declaration parameters when that profile closes its reusable-component grammar |
-| `emits` event and payload | Machine/part `events` entry and protocol payload parameter |
+| `props` and route parameters | Exact typed parameters on pure `ui` components; routes remain committed machine `Location` state observed by pages |
+| `emits` event and payload | Finite `emits` protocol on a pure `ui` component, mapped outward at every call; machine/part inputs remain separate `events` entries |
 | `store` scope | Removed; state belongs directly to a machine or part |
 | Store state field | Machine/part state field |
 | Event/outcome handler | Machine/part `on` handler |
 | `{#match}` block | Removed; 0.4 uses core `match` expressions and does not annotate an expression as a markup occurrence |
-| Component invocation | Unselected in 0.4; there is no active annotation target until a future UI grammar selects invocation |
+| Component invocation | Checked UpperCamelCase `ui` call; the call occurrence is an annotation target with the full call-element span |
 | Inline `<style>` region | Removed; 0.4 selects external CSS through `host.toml`, outside Uhura source metadata |
 
 Git history preserves the original spelling and rationale; this reconciliation
-does not pretend those forms were always 0.4 forms. Later references to
-component invocation or inline `<style>` describe the accepted 0.3 target set
-only and impose no 0.4 parser or conformance requirement. Evidence now uses
-the same 0.4 frontend under a manifest-enforced tooling role. Its file and
-example documentation rules below remain part of this RFC's accepted metadata
-decision.
+does not pretend those forms were always 0.4 forms. Later references to the
+0.3 component header or inline `<style>` describe that historical target set,
+not the current grammar. Current component-call annotation follows the active
+0.4 application profile. Evidence uses the same 0.4 frontend under a
+manifest-enforced tooling role. Its file and example documentation rules below
+remain part of this RFC's accepted metadata decision.
 
 ## 2. Motivation
 
@@ -325,12 +326,13 @@ or activated-profile declaration in a deployable `.uhura` module, or the first
 `use`/`example` item in an evidence module. Whitespace, ordinary comments, and
 other `//!` lines may coexist before that item.
 
-In Uhura 0.4, `//!` documents the source module. Evidence is not distinguished
-by a filename suffix: an ordinary `.uhura` file becomes an evidence module
-only when mapped under `[evidence.modules]`. This is the 0.4 successor to the
-RFC's original `.examples.uhura` file-doc target. File docs do not replace
-`///` documentation for a machine, part, type, value, `ui`, scenario,
-checkpoint, or example declared inside that module.
+In Uhura 0.4, `//!` documents the source module. In an explicit project, an
+ordinary `.uhura` file becomes an evidence module only when mapped under
+`[evidence.modules]`; a filename suffix alone has no meaning. The opted-in
+`web-app@1` resolver additionally assigns the evidence role to its closed set
+of subject-local `*.examples.uhura` files. File docs do not replace `///`
+documentation for a machine, part, type, value, `ui`, scenario, checkpoint, or
+example declared inside that module.
 
 A non-empty `//!` after the preamble is
 `UH0018 syntax/misplaced-inner-doc`.
@@ -556,6 +558,7 @@ opening tag.
 Markup annotations may target:
 
 - a UI element;
+- a checked UpperCamelCase UI call occurrence; and
 - a complete `{#if}` or keyed `{#each}` block.
 
 Raw text nodes, interpolations, attributes, event bindings, expressions,
@@ -563,9 +566,9 @@ arguments, `{:else}` arms, and parser recovery nodes are not annotatable.
 External CSS is outside Uhura source metadata. Authors annotate the nearest
 owning element or complete structural block.
 
-Uhura 0.4 has no component-invocation target. If a later UI grammar selects
-reusable invocation, its RFC must explicitly restore the historical target
-class and define its span.
+For a UI call, the annotation describes that call site rather than the called
+declaration. Its target span is the full self-closing call element. Declaration
+documentation remains the called declaration's durable contract.
 
 All annotation kinds, including `@doc`, use this same target table. The kind
 does not change target eligibility.
@@ -675,6 +678,13 @@ SourceMetadataEntry = {
 For `//!`/`///`, `class` and `kind` are both `doc`. For a markup annotation,
 `class` is `annotation` and `kind` is the exact marker text—even when that kind
 is `doc`. Consumers MUST distinguish the class from the kind.
+
+In a checked package graph, the exposed authoring projection is root-package
+owned. Locked dependency sources and occurrences remain available through the
+whole-graph provenance/source inventory, but dependency docs and annotations
+do not become editable metadata of the consuming project. Thus “project-wide”
+ordering below ranges over the root project's admitted authoring sources, not
+over annotations owned by acquired packages.
 
 `source-target class` uses this closed logical vocabulary:
 
@@ -914,10 +924,10 @@ only when tests demonstrate all of the following:
    trailing-`-` restrictions; well-formed comments elsewhere receive `UH0001`.
 7. All valid lower-kebab annotation kinds—including `doc`—survive exactly in
    target-local source order and remain annotation-class metadata.
-8. Markup annotations attach only to elements and complete `if`/`each`
-   structural blocks without crossing parent or arm boundaries. Component
-   invocation remains outside the 0.4 gate unless a future UI grammar selects
-   and specifies that target.
+8. Markup annotations attach only to native elements, checked UI call
+   occurrences, and complete `if`/`each` structural blocks without crossing
+   parent or arm boundaries. A call annotation identifies the call-site span,
+   not the called declaration.
 9. Formatter output is idempotent, selects markup shape from normalized text,
    and retains ordinary comments at item/list, trailing scope, and source-mode
    transition boundaries without consuming structural node bounds.
@@ -927,6 +937,6 @@ only when tests demonstrate all of the following:
     program hashes, checkpoints, observations, receipts, commands, traces, and
     runtime diagnostic meaning unchanged; only source locations may shift.
 12. Evidence-module file docs, example docs, and existing `note` clauses
-    remain distinct through checking and formatting. In 0.4 the evidence
-    module is an ordinary `.uhura` file selected by `[evidence.modules]`; the
-    original `.examples.uhura` spelling remains historical RFC context only.
+    remain distinct through checking and formatting. Explicit projects select
+    evidence modules through `[evidence.modules]`; `web-app@1` additionally
+    discovers its closed subject-local `*.examples.uhura` set.

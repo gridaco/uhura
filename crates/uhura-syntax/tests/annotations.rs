@@ -170,7 +170,7 @@ fn native_elements_and_complete_structural_blocks_are_targets() {
 }
 
 #[test]
-fn annotations_do_not_cross_incompatible_constructs_or_boundaries() {
+fn annotations_target_component_calls_but_not_incompatible_constructs_or_boundaries() {
     let incompatible = parse_source(
         "incompatible.uhura",
         r#"
@@ -188,7 +188,7 @@ fn annotations_do_not_cross_incompatible_constructs_or_boundaries() {
         .iter()
         .filter(|diagnostic| diagnostic.kind == ParseDiagnosticKind::IncompatibleMetadataTarget)
         .collect::<Vec<_>>();
-    assert_eq!(diagnostics.len(), 2, "{:#?}", incompatible.diagnostics);
+    assert_eq!(diagnostics.len(), 1, "{:#?}", incompatible.diagnostics);
     assert!(
         diagnostics
             .iter()
@@ -209,11 +209,9 @@ fn annotations_do_not_cross_incompatible_constructs_or_boundaries() {
         })
         .collect::<Vec<_>>();
     assert_eq!(elements[0].name.kind, UiNameKind::Component);
-    assert!(
-        elements
-            .iter()
-            .all(|element| element.annotations.is_empty())
-    );
+    assert_eq!(elements[0].annotations.len(), 1);
+    assert_eq!(elements[0].annotations[0].text, "Not component metadata.");
+    assert!(elements[1].annotations.is_empty());
 
     let dangling = parse_source(
         "dangling.uhura",

@@ -1,0 +1,11 @@
+use crate::app::reels::ReelsPage;
+
+example reels_loading for ReelsPage as page = crate::scenarios::reels_loading_scenario::frame;
+
+example reels_videos for ReelsPage as page default note "three real video posts backed by local fixture MP4s" = crate::scenarios::reels_videos_scenario::frame;
+
+example reels_like_pending for ReelsPage as page = crate::scenarios::reels_like_pending_scenario::frame;
+
+example reels_save_pending for ReelsPage as page = crate::scenarios::reels_save_pending_scenario::frame;
+
+example reels_unsave_pending for ReelsPage as page = crate::scenarios::reels_unsave_pending_scenario::frame;

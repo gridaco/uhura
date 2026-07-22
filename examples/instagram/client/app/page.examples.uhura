@@ -1,0 +1,27 @@
+use crate::app::FeedPage;
+
+example feed_loading for FeedPage as page note "cold start — nothing delivered yet" = crate::scenarios::feed_loading_scenario::frame;
+
+example feed_first_page for FeedPage as page default = crate::scenarios::feed_first_page_scenario::frame;
+
+example feed_like_pending for FeedPage as page note "optimistic heart + count while the like request is in flight" = crate::scenarios::feed_like_pending_scenario::frame;
+
+example feed_like_refused for FeedPage as page note "transport unavailable — rollback, notice explains" = crate::scenarios::feed_like_refused_scenario::frame;
+
+example feed_save_pending for FeedPage as page note "optimistic bookmark while the save request is in flight" = crate::scenarios::feed_save_pending_scenario::frame;
+
+example feed_unsave_pending for FeedPage as page note "Marco's post starts saved because the seed contains Mira's save edge" = crate::scenarios::feed_unsave_pending_scenario::frame;
+
+example feed_comments_open for FeedPage as page note "the sheet mounts because the machine owns its semantic lifetime" = crate::scenarios::feed_comments_open_scenario::frame;
+
+example feed_load_pending for FeedPage as page note "footer spinner; the machine suppresses duplicate pagination" = crate::scenarios::feed_load_pending_scenario::frame;
+
+example feed_load_failed for FeedPage as page = crate::scenarios::feed_load_failed_scenario::frame;
+
+example feed_appended for FeedPage as page note "all six followed-author posts are loaded, so has-more is false" = crate::scenarios::feed_appended_scenario::frame;
+
+example feed_exhausted for FeedPage as page note "has-more false — end cap; pinned state" = crate::scenarios::feed_exhausted_scenario::frame;
+
+example feed_empty for FeedPage as page = crate::scenarios::feed_empty_scenario::frame;
+
+example feed_failed for FeedPage as page note "provider reported an authoritative source failure" = crate::scenarios::feed_failed_scenario::frame;

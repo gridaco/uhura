@@ -252,7 +252,7 @@ fixed or replace the semantic and platform node when its role kind changes.
 
 `navigation` currently adds only the ARIA landmark role. It does not require
 navigational children, provide a label, or distinguish multiple navigation
-landmarks. The Instagram bottom bar is the sole current use.
+landmarks. The retired v0 Instagram bottom bar was the only captured use.
 
 The [navigation landmark guidance](https://www.w3.org/WAI/ARIA/apg/patterns/landmarks/examples/navigation.html)
 allows one landmark to remain unnamed. Multiple landmarks should be labeled so
@@ -267,9 +267,10 @@ buttons, route intents, or a dedicated navigation capability.
 `tabpanel` roles, `aria-selected`, accessible relationships, roving focus,
 orientation, or arrow-key behavior.
 
-The Instagram profile uses ordinary buttons with `aria-current` under this
-container. Because the [WAI-ARIA `tablist` role](https://www.w3.org/TR/wai-aria-1.2/#tablist)
-requires owned `tab` elements, the current output is structurally
+The retired v0 Instagram profile used ordinary buttons with `aria-current`
+under this container. Because the
+[WAI-ARIA `tablist` role](https://www.w3.org/TR/wai-aria-1.2/#tablist)
+requires owned `tab` elements, that output was structurally
 ARIA-nonconforming; `aria-current` on ordinary buttons does not substitute for
 `aria-selected` on tabs. It also does not implement the complete
 [WAI-ARIA Tabs Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/), including
@@ -308,7 +309,7 @@ explicit translation layer, or renderer-specific styling. The current
 ARIA-named role refinements are not yet a settled portable contract, and no
 renderer may infer semantic actions or viewport behavior from CSS appearance.
 
-The current Instagram corpus provides useful, non-normative evidence:
+The retired v0 Instagram corpus provided useful, non-normative evidence:
 
 - 118 views appear across 18 implementation definitions;
 - 113 carry a class, while only 15 carry a role;
@@ -337,12 +338,12 @@ animation event.
 
 ## Conformance
 
-Existing executable coverage currently proves:
+Historical executable coverage established:
 
 - the base catalog loads `<view>` as a layout-class, eventless element;
 - the complete Instagram corpus checks and lowers deterministically;
 - `on:press` on a view is rejected with the layout-element diagnostic;
-- role omission plus current `list`, `navigation`, and `tablist` uses survive
+- role omission plus the captured `list`, `navigation`, and `tablist` uses survived
   through semantic-view goldens; `none` has no corpus coverage; and
 - Editor and Play share browser structure for a list view and its synthesized
   direct-child list-item roles.
@@ -416,4 +417,4 @@ Historical implementation and research references:
 - [Shared projection renderer tests](../../../../../web/src/renderer/projection.test.ts)
 - [Instagram spike element catalog](../../../../studies/instagram-spike-design.md)
 - [Instagram dogfood gaps](../../../../studies/instagram-demo-dogfood.md)
-- [Current Instagram view composition](../../../../../examples/instagram/client/ui.uhura)
+- [Maintained Instagram view composition](../../../../../examples/instagram/client/app/page.uhura)

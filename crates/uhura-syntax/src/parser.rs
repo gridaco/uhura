@@ -235,11 +235,37 @@ impl<'a> Parser<'a> {
     fn parse_ui(&mut self, visibility: Visibility) -> UiDeclaration {
         self.expect_contextual("ui", "UI declaration");
         let name = self.expect_name(NameCategory::Upper, "UI declaration name");
-        self.expect_contextual("for", "UI declaration");
-        let machine = self.parse_type_path();
-        self.expect_simple(TokenKind::LParen, "UI observation binding");
-        let observation = self.expect_name(NameCategory::Lower, "UI observation binding");
-        self.expect_simple(TokenKind::RParen, "UI observation binding");
+        let binding = if self.eat_contextual("for").is_some() {
+            let machine = self.parse_type_path();
+            self.expect_simple(TokenKind::LParen, "UI observation binding");
+            let observation = self.expect_name(NameCategory::Lower, "UI observation binding");
+            self.expect_simple(TokenKind::RParen, "UI observation binding");
+            UiBinding::Machine {
+                machine,
+                observation,
+            }
+        } else if self.at_simple(TokenKind::LParen) {
+            let parameters = self.parse_parameter_list();
+            let emits = if self.eat_contextual("emits").is_some() {
+                self.parse_protocol_body("UI emitted-event protocol")
+            } else {
+                ProtocolSection {
+                    variants: Vec::new(),
+                }
+            };
+            UiBinding::Component { parameters, emits }
+        } else {
+            self.error_here(
+                ParseDiagnosticKind::InvalidUi,
+                "expected `for Machine(observation)` or a component parameter list after the UI declaration name",
+            );
+            UiBinding::Component {
+                parameters: Vec::new(),
+                emits: ProtocolSection {
+                    variants: Vec::new(),
+                },
+            }
+        };
         let open = self.expect_simple(TokenKind::LBrace, "UI declaration body");
 
         let (nodes, embedded_core_comments, body_span) = if self.at_simple(TokenKind::UiBody) {
@@ -266,8 +292,7 @@ impl<'a> Parser<'a> {
         UiDeclaration {
             visibility,
             name,
-            machine,
-            observation,
+            binding,
             body: UiBody {
                 nodes,
                 embedded_core_comments,
@@ -302,6 +327,7 @@ impl<'a> Parser<'a> {
                 "scenario requires `for Machine` or `from scenario::pin`",
             );
             ScenarioOrigin::Snapshot(EvidenceReference {
+                root: EvidenceReferenceRoot::Local,
                 path: vec![Identifier::new("error", self.current().span)],
                 span: self.current().span,
             })
@@ -339,11 +365,41 @@ impl<'a> Parser<'a> {
         self.bump(); // contextual `example` or `checkpoint`
         let name = self.expect_name(NameCategory::Lower, "evidence declaration name");
         let mut presentation = None;
+        let mut arguments = None;
         let mut kind = None;
         let mut is_default = false;
         let mut note = None;
         if is_example && self.eat_contextual("for").is_some() {
             presentation = Some(self.expect_name(NameCategory::Upper, "example presentation"));
+            if self.eat_simple(TokenKind::LParen).is_some() {
+                let mut values = Vec::new();
+                let previous_evidence_mode = self.evidence_expressions;
+                self.evidence_expressions = true;
+                while !self.at_simple(TokenKind::RParen) && !self.at_simple(TokenKind::Eof) {
+                    let start = self.current().span.start;
+                    let argument_name =
+                        self.expect_name(NameCategory::Lower, "component example argument");
+                    self.expect_simple(TokenKind::Colon, "component example argument");
+                    let value = self.parse_expression();
+                    values.push(EvidenceArgument {
+                        name: argument_name,
+                        span: Span::new(self.identity.file, start, value.span.end),
+                        value,
+                    });
+                    if self.eat_simple(TokenKind::Comma).is_none()
+                        && !self.at_simple(TokenKind::RParen)
+                    {
+                        self.error_here(
+                            ParseDiagnosticKind::MissingToken,
+                            "expected `,` or `)` after component example argument",
+                        );
+                        break;
+                    }
+                }
+                self.expect_simple(TokenKind::RParen, "component example arguments");
+                self.evidence_expressions = previous_evidence_mode;
+                arguments = Some(values);
+            }
             self.expect_keyword(Keyword::As, "example presentation");
             kind = Some(if self.eat_contextual("page").is_some() {
                 EvidencePresentationKind::Page
@@ -361,6 +417,15 @@ impl<'a> Parser<'a> {
                 }
                 EvidencePresentationKind::Page
             });
+            if arguments.is_some() && kind == Some(EvidencePresentationKind::Page) {
+                self.error(
+                    ParseDiagnosticKind::InvalidEvidence,
+                    "page examples do not accept a presentation argument list",
+                    presentation
+                        .as_ref()
+                        .map_or(self.current().span, |name| name.span),
+                );
+            }
             loop {
                 if self.eat_contextual("default").is_some() {
                     if is_default {
@@ -396,6 +461,7 @@ impl<'a> Parser<'a> {
         EvidenceAliasDeclaration {
             name,
             presentation,
+            arguments,
             kind,
             is_default,
             note,
@@ -406,11 +472,18 @@ impl<'a> Parser<'a> {
 
     fn parse_evidence_reference(&mut self) -> EvidenceReference {
         let start = self.current().span.start;
+        let root = if self.eat_keyword(Keyword::Crate).is_some() {
+            self.expect_simple(TokenKind::ColonColon, "cross-module evidence reference");
+            EvidenceReferenceRoot::Crate
+        } else {
+            EvidenceReferenceRoot::Local
+        };
         let mut path = vec![self.expect_name(NameCategory::Declaration, "evidence reference")];
         while self.eat_simple(TokenKind::ColonColon).is_some() {
             path.push(self.expect_name(NameCategory::Declaration, "evidence reference component"));
         }
         EvidenceReference {
+            root,
             span: Span::new(self.identity.file, start, self.previous_end()),
             path,
         }
@@ -935,7 +1008,11 @@ impl<'a> Parser<'a> {
 
     fn parse_protocol_section(&mut self, keyword: Keyword) -> ProtocolSection {
         self.expect_keyword(keyword, "protocol section");
-        self.expect_simple(TokenKind::LBrace, "protocol section");
+        self.parse_protocol_body("protocol section")
+    }
+
+    fn parse_protocol_body(&mut self, context: &str) -> ProtocolSection {
+        self.expect_simple(TokenKind::LBrace, context);
         let mut variants = Vec::new();
         while !self.at_simple(TokenKind::RBrace) && !self.at_simple(TokenKind::Eof) {
             variants.push(self.parse_protocol_variant());
@@ -949,7 +1026,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        self.expect_simple(TokenKind::RBrace, "protocol section");
+        self.expect_simple(TokenKind::RBrace, context);
         ProtocolSection { variants }
     }
 

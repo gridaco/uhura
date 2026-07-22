@@ -346,6 +346,13 @@ impl<'a> Builder<'a> {
             ast::Visibility::Private => return Ok(()),
         };
         let public_owner = format!("{}::{lowered_name}", self.package);
+        let kind = match &declaration.kind {
+            ast::DeclarationKind::Ui(ast::UiDeclaration {
+                binding: ast::UiBinding::Component { .. },
+                ..
+            }) => "ui_component",
+            _ => kind,
+        };
         self.push_semantic(
             &public_owner,
             "root",
@@ -1016,27 +1023,56 @@ impl<'a> Builder<'a> {
         public_owner: &str,
         ui: &ast::UiDeclaration,
     ) -> Result<(), ProvenanceBuildError> {
-        let machine_owner = singular_type_name(&ui.machine)
-            .and_then(|name| self.resolve_declaration(&module.identity.module, name))
-            .filter(|target| matches!(target.declaration.kind, ast::DeclarationKind::Machine(_)))
-            .and_then(|target| self.public_owner(target.declaration));
-
-        if let Some(machine_owner) = &machine_owner {
-            let node = self.public_declaration_node_for_owner(
-                machine_owner,
-                "machine",
-                &machine_name(machine_owner),
-            );
-            self.push_occurrence(node, ui.machine.span, "reference", "root")?;
-        }
-        self.push_semantic(
-            public_owner,
-            "root",
-            "ui_binding",
-            &format!("binding/{}", ui.observation.text),
-            ui.observation.span,
-            "definition",
-        )?;
+        let machine_owner = match &ui.binding {
+            ast::UiBinding::Machine {
+                machine,
+                observation,
+            } => {
+                let machine_owner = singular_type_name(machine)
+                    .and_then(|name| self.resolve_declaration(&module.identity.module, name))
+                    .filter(|target| {
+                        matches!(target.declaration.kind, ast::DeclarationKind::Machine(_))
+                    })
+                    .and_then(|target| self.public_owner(target.declaration));
+                if let Some(machine_owner) = &machine_owner {
+                    let node = self.public_declaration_node_for_owner(
+                        machine_owner,
+                        "machine",
+                        &machine_name(machine_owner),
+                    );
+                    self.push_occurrence(node, machine.span, "reference", "root")?;
+                }
+                self.push_semantic(
+                    public_owner,
+                    "root",
+                    "ui_binding",
+                    &format!("binding/{}", observation.text),
+                    observation.span,
+                    "definition",
+                )?;
+                machine_owner
+            }
+            ast::UiBinding::Component { parameters, emits } => {
+                self.visit_parameters(
+                    public_owner,
+                    "root",
+                    "ui_component",
+                    parameters,
+                    "definition",
+                )?;
+                for variant in &emits.variants {
+                    self.push_semantic(
+                        public_owner,
+                        "root",
+                        "ui_emit",
+                        &format!("emit/{}", variant.name.text),
+                        variant.name.span,
+                        "definition",
+                    )?;
+                }
+                None
+            }
+        };
         self.visit_ui_nodes(
             public_owner,
             machine_owner.as_deref(),
@@ -1101,6 +1137,60 @@ impl<'a> Builder<'a> {
                     "definition",
                 )?,
                 ast::UiNodeKind::Element(value) => {
+                    let call_target = (value.name.kind == ast::UiNameKind::Component)
+                        .then(|| self.ui_call_target(source_path, &value.name.text))
+                        .flatten();
+                    if let Some(target) = call_target {
+                        let call_path = format!("{path}/call/{target}");
+                        self.push_semantic(
+                            public_owner,
+                            "root",
+                            "ui_call",
+                            &call_path,
+                            node.span,
+                            "definition",
+                        )?;
+                        self.record_ui_annotations(
+                            public_owner,
+                            source_path,
+                            "ui_call",
+                            &call_path,
+                            AuthoringTargetClass::UiElement,
+                            node.span,
+                            format!("<{}>", value.name.text),
+                            &value.annotations,
+                        )?;
+                        let mut event_ordinals = BTreeMap::<String, usize>::new();
+                        for attribute in &value.attributes {
+                            let ast::UiAttribute::Event { event, input, span } = attribute else {
+                                continue;
+                            };
+                            let duplicate = event_ordinals.entry(event.text.clone()).or_default();
+                            let current = *duplicate;
+                            *duplicate += 1;
+                            self.push_semantic(
+                                public_owner,
+                                "root",
+                                "ui_emit_binding",
+                                &format!("{path}/emit/{}/{current}", event.text),
+                                *span,
+                                "definition",
+                            )?;
+                            if let (Some(machine_owner), Some((owner, variant, target_span))) =
+                                (machine_owner, ui_input_selector(input))
+                            {
+                                let node = semantic_node_id(
+                                    machine_owner,
+                                    &owner,
+                                    "event",
+                                    &format!("events/{variant}"),
+                                );
+                                self.push_occurrence(node, target_span, "reference", &owner)?;
+                            }
+                        }
+                        index += 1;
+                        continue;
+                    }
                     let element_path = format!("{path}/element/{}", value.name.text);
                     self.push_semantic(
                         public_owner,
@@ -1358,6 +1448,29 @@ impl<'a> Builder<'a> {
             .cloned()
             .unwrap_or_else(|| (module.to_owned(), local_name.to_owned()));
         self.declarations.get(&target).copied()
+    }
+
+    fn ui_call_target(&self, source_path: &str, local_name: &str) -> Option<String> {
+        let source_module = self
+            .modules
+            .iter()
+            .find(|module| module.identity.path == source_path)?
+            .identity
+            .module
+            .clone();
+        let (target_module, target_name) = self
+            .bindings
+            .get(&(source_module.clone(), local_name.to_owned()))
+            .cloned()
+            .unwrap_or_else(|| (source_module, local_name.to_owned()));
+        let declaration = self
+            .declarations
+            .get(&(target_module.clone(), target_name.clone()))?;
+        if !matches!(declaration.declaration.kind, ast::DeclarationKind::Ui(_)) {
+            return None;
+        }
+        let lowered = self.lowering_names.get(&(target_module, target_name))?;
+        Some(format!("{}::{lowered}", self.package))
     }
 
     fn public_owner(&self, declaration: &ast::Declaration) -> Option<String> {

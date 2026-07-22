@@ -1,0 +1,6 @@
+use crate::components::stories_tray::StoriesTray;
+use crate::example_values::STORIES_TRAY_STORIES;
+
+example stories_tray for StoriesTray(
+  stories: STORIES_TRAY_STORIES,
+) as component default = crate::scenarios::stories_tray_scenario::frame;

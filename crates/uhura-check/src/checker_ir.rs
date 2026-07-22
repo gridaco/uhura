@@ -550,9 +550,20 @@ pub struct RecordPatternField {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct UiDecl {
     pub name: Name,
-    pub machine: Name,
-    pub binding: Name,
+    pub binding: UiBinding,
     pub nodes: Vec<UiNode>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum UiBinding {
+    Machine {
+        machine: Name,
+        observation: Name,
+    },
+    Component {
+        parameters: Vec<Parameter>,
+        emits: SumDomain,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -631,10 +642,18 @@ pub struct EvidenceRef {
 pub struct EvidenceAliasDecl {
     pub name: Name,
     pub presentation: Option<Name>,
+    pub arguments: Option<Vec<EvidenceArgument>>,
     pub kind: Option<EvidencePresentationKind>,
     pub is_default: bool,
     pub note: Option<String>,
     pub target: EvidenceRef,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceArgument {
+    pub name: Name,
+    pub value: Expr,
+    pub span: SourceSpan,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

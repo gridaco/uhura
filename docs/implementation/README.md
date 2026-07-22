@@ -16,11 +16,12 @@ above.
 
 ```text
 filesystem and host policy
-  -> source capture, manifest, lock, and resource admission
+  -> one coherent project snapshot
+  -> manifest, lock, framework resolution, and source admission
   -> pure syntax and project compilation
   -> Program
        MachineProgram          source-neutral executable core
-       presentations/evidence application artifacts
+       presentations/components/routes/evidence application artifacts
   -> deterministic machine runtime
   -> pure semantic projection
   -> host/editor read models and Wasm protocols
@@ -41,9 +42,10 @@ boundary.
 | Shared foundation | [`uhura-base`](../../crates/uhura-base/) | Exact values, canonical serialization and hashing, spans, and diagnostics | Source grammar, filesystem policy, browser behavior |
 | Source frontend | [`uhura-syntax`](../../crates/uhura-syntax/) | Lexing, source-spanned ASTs, parsing, UI phrase recognition, and formatting | Element availability, type checking, runtime effects |
 | Static semantics and lowering | [`uhura-check`](../../crates/uhura-check/) | Name resolution, types, machine checks, the current UI catalogue, lowering, provenance, and the pure 0.4 project compiler | Filesystem discovery, HTTP, DOM mechanics |
+| Project resolution | [`uhura-project`](../../crates/uhura-project/) | Coherent filesystem snapshots, manifest/lock admission, optional framework discovery and generated source, and the canonical resolved application artifact shared by every host | Language checking, machine execution, browser or provider authority |
 | Machine core | [`uhura-core`](../../crates/uhura-core/) | `MachineProgram`, deterministic reactions, typed values, receipts, checkpoints, evidence execution, and pure projections | Parsing, project discovery, browser APIs |
 | Foreign boundary | [`uhura-port`](../../crates/uhura-port/) | Typed contract admission and standard route/port vocabulary | Provider I/O or an adapter implementation |
-| Host and CLI adapters | [`uhura-host`](../../crates/uhura-host/), [`uhura-cli`](../../crates/uhura-cli/) | Filesystem/resource admission, coherent builds, deployment selection, last-good publication, transport, and commands | A second parser, checker, runtime, or widget catalogue |
+| Host and CLI adapters | [`uhura-host`](../../crates/uhura-host/), [`uhura-cli`](../../crates/uhura-cli/) | Resource admission, deployment selection, last-good publication, transport, and commands over one `uhura-project` result | A second project resolver, parser, checker, runtime, or widget catalogue |
 | Editor read model | [`uhura-editor-model`](../../crates/uhura-editor-model/) | Versioned browser-neutral inspection and preview data derived from checked artifacts | Source evaluation or machine execution |
 | Wasm adapter | [`uhura-wasm`](../../crates/uhura-wasm/) | Lossless browser boundary around the canonical machine runtime and projection | A browser-specific execution model |
 | Browser application | [`web/src/`](../../web/src/) | Protocol decoding, Editor and Play UX, DOM reconciliation, browser mechanics, and styling | Language admission or semantic recovery from invalid source |
@@ -56,18 +58,25 @@ boundary.
 | Machine/application | Explicit owned `MachineProgram` inside `Program`; runtime and typed-value APIs target the machine artifact. Both artifacts still share `uhura-core`, `ir.rs`, and a flattened wire protocol. | This is an ownership-visible, compiler-enforced consumer seam inside one crate. Machine-only code accepts `MachineProgram`; application code accepts `Program`. |
 | Core/UI frontend | Core grammar and UI phrase parsing are separate modules; UI admission uses one current checker catalogue. | UI vocabulary can evolve without changing the reaction runtime. A change to shared expressions or lowering still crosses both frontend layers. |
 | Checker/browser catalogue | Rust owns semantics; a small JSON list and explicit TypeScript registry prove adapter coverage. | Primitive work has one reviewable cross-language seam instead of scattered element switches. |
-| Compiler/admission | CLI and host share one pure 0.4 compiler after their own source and resource capture. | I/O policy remains adapter-owned while parser/checker drift is prevented at the language boundary. |
+| Project/compiler admission | CLI and host share `uhura-project` for one immutable snapshot and resolved source inventory, then share the pure 0.4 compiler. | Filesystem and framework meaning cannot drift between commands; resource and deployment policy remain adapter-owned. |
 | Host/editor/browser | Protocol and ownership boundaries are explicit, but host orchestration remains physically concentrated. | Keep new semantics out of the host; split host modules only as behavior-preserving maintenance. |
 
-### Compiler boundary
+### Project and compiler boundaries
+
+[`resolve_project`](../../crates/uhura-project/src/resolve.rs) is the only
+filesystem-to-language admission path. It consumes one coherent snapshot,
+validates the root manifest and exact dependency lock, admits authored
+sources, and—only for an explicitly selected framework profile—derives the
+closed application source map and generated checked source. Generated files
+remain diagnostic provenance, not writable authoring files.
 
 [`compile_project`](../../crates/uhura-check/src/compile.rs) is the
 canonical pure 0.4 frontend service after source admission. It receives an
 already admitted manifest, exact dependency captures, and source bytes; it
 parses, resolves, checks, lowers, and returns deterministically ordered
 diagnostics and provenance. CLI and host code may differ in how they capture
-I/O, but they must converge on this service rather than copy the language
-pipeline.
+I/O, but they must converge on `uhura-project` and this service rather than
+copy either pipeline.
 
 Resource-backed checks deliberately follow pure compilation. For example,
 hosts load the checked icon-font registry and run
@@ -97,6 +106,12 @@ mechanics, and cleanup. The generic
 [`projection.ts`](../../web/src/renderer/projection.ts) reconciler owns keyed
 tree lifecycle, common event dispatch, and delegation through that interface.
 
+Reusable UI declarations lower to pure presentation functions in
+[`uhura-core`](../../crates/uhura-core/). Calls are checked and expanded by the
+Rust projector; they do not create browser components, runtime instances, or a
+second state owner. The browser therefore continues to receive one ordinary
+semantic render tree.
+
 Shared primitive presentation belongs in
 [`primitives/base.css`](../../web/src/renderer/primitives/base.css). Editor-
 or Play-only chrome stays in its respective surface. A new primitive should
@@ -112,6 +127,7 @@ Use the smallest route that covers the semantic change.
 | Machine semantics or IR | Update the owning 0.4 kernel/source document, checker lowering, `MachineProgram`/runtime code, focused core tests, and native/Wasm conformance where the wire or behavior changes. UI and host code should remain untouched unless their declared interface changes. |
 | Core source syntax | Update the 0.4 source document and grammar together, then lexer/parser/AST/formatter, semantic checking, exact diagnostics, and at least one harness or negative fixture. Do not make the host parse syntax. |
 | Project composition or identity | Update the 0.4 project/source documents, resolution and canonical compiler service, CLI/host admission adapters, identity/provenance tests, and source-layout equivalence fixtures. |
+| Web application convention | Update the 0.4 project/application documents and `uhura-project` discovery/generation tests. Keep generated semantics as ordinary checked source; do not add path inference to `uhura-syntax`, the machine kernel, browser, or Spock. |
 | UI syntax only | Update the 0.4 application document, the UI parser/formatter, and parser/checker tests. Element semantics still belong to the catalogue. |
 | Element, attribute, event, or content rule | Update the executable 0.4 checker catalogue, its focused checker tests, this version's catalogue page, and conformance coverage. Add or change a browser adapter only when physical realization changes. |
 | Uhura browser primitive | In the same patch, update the checker catalogue realization class, browser parity JSON, one adapter under `web/src/renderer/primitives/`, shared primitive CSS when needed, and Rust/TypeScript parity plus behavior tests. |
@@ -127,6 +143,8 @@ Use the smallest route that covers the semantic change.
   and evidence orchestration belong on `Program` or an application layer.
 - Keep filesystem traversal, symlink policy, file reads, HTTP, and DOM access
   outside the syntax, checker, and machine core.
+- Keep framework discovery and generated-source ownership in `uhura-project`.
+  CLI, standalone host, Editor, Play, and Spock must consume that same result.
 - Keep semantic validation before publication. Browser adapters may assert a
   checked contract defensively, but they must not make invalid source appear
   valid.

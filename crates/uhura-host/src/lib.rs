@@ -21,10 +21,6 @@ use uhura_base::{
 };
 use uhura_check::assets::{AssetIssue, load_asset_manifest, load_assets};
 use uhura_check::icon_fonts::load_icon_fonts;
-use uhura_check::project_lock::{
-    CapturedPackage, ProjectLockIssue, check_project_lock, parse_project_lock,
-};
-use uhura_check::project_manifest::{ProjectManifest, ProjectManifestIssue, load_project_manifest};
 use uhura_check::resource_manifest::ResourceManifest;
 use uhura_check::{
     AssetInput, AuthoringEntryClass as CheckedAuthoringEntryClass, AuthoringProjection,
@@ -54,6 +50,8 @@ use uhura_editor_model::{
     SourceTargetOwner, SourceTargetOwnerKind, TargetOccurrence, UHURA_EVIDENCE_SUMMARY_PROTOCOL,
     stable_group_id, stable_preview_id,
 };
+use uhura_port::ROUTER_CONTRACT_ID;
+use uhura_project::{ResolvedApplication, ResolvedUiRole};
 
 pub mod source;
 
@@ -689,7 +687,7 @@ pub fn build_candidate(snapshot: &ProjectSourceSnapshot, revision: u64) -> Clien
     let (editor, play, checked_routes) = build_machine_candidate(snapshot, revision);
     ClientCandidate {
         revision,
-        source_fingerprint: snapshot.fingerprint.clone(),
+        source_fingerprint: snapshot.fingerprint().clone(),
         source_revision_id: snapshot.source_revision_id().to_string(),
         editor,
         play,
@@ -748,6 +746,7 @@ struct DeploymentIdentity {
 }
 
 struct EditorInputs<'a> {
+    application: &'a ResolvedApplication,
     evidence: &'a EvidenceReport,
     sources: &'a [(String, String)],
     provenance: &'a [serde_json::Value],
@@ -760,6 +759,7 @@ struct EditorInputs<'a> {
 
 struct CheckedProject {
     program: Program,
+    application: ResolvedApplication,
     /// Host-selector roots resolved from the same project manifest as the
     /// checked program.
     selector_packages: BTreeMap<String, String>,
@@ -770,7 +770,11 @@ struct CheckedProject {
     evidence: EvidenceReport,
     evidence_diagnostics: serde_json::Value,
     sources: Vec<(String, String)>,
+    /// Root-authored and dependency source inventory exposed by the Editor.
     provenance: Vec<serde_json::Value>,
+    /// Complete checked source inventory for Play inspection, including
+    /// generated framework modules referenced by graph provenance.
+    inspection_provenance: Vec<serde_json::Value>,
     semantic_provenance: Provenance,
     interaction_graph: serde_json::Value,
     graph_sources: serde_json::Value,
@@ -887,7 +891,11 @@ fn build_machine_candidate(
             );
         }
     };
-    let authority = admit_play(snapshot, &checked.program, &checked.selector_packages);
+    let authority =
+        admit_play(snapshot, &checked.program, &checked.selector_packages).and_then(|authority| {
+            validate_web_app_play_authority(&checked.application, &checked.program, &authority)?;
+            Ok(authority)
+        });
     let checked_routes = authority
         .as_ref()
         .ok()
@@ -925,26 +933,66 @@ fn build_machine_candidate(
     (editor, play, checked_routes)
 }
 
+fn validate_web_app_play_authority(
+    application: &ResolvedApplication,
+    program: &Program,
+    authority: &PlayAuthority,
+) -> Result<(), serde_json::Value> {
+    let Some(web_app) = application.web_app.as_ref() else {
+        return Ok(());
+    };
+    let router = uhura_project::selected_web_app_router_port(application, program)
+        .map_err(|message| host_failure("R3014", "uhura/framework-router", message))?
+        .expect("web application has one selected Router after shared checking");
+    if authority.deployment.presentation.as_deref() != Some(web_app.application.as_str()) {
+        return Err(host_failure(
+            "R3014",
+            "uhura/framework-host-routing",
+            format!(
+                "web-app Play entry must select generated presentation `{}`, found `{}`",
+                web_app.application,
+                authority
+                    .deployment
+                    .presentation
+                    .as_deref()
+                    .unwrap_or("<none>")
+            ),
+        ));
+    }
+    let adapter = authority.deployment.ports.get(&router).map(String::as_str);
+    if adapter != Some(WEB_HISTORY_ADAPTER) {
+        return Err(host_failure(
+            "R3015",
+            "uhura/framework-host-routing",
+            format!(
+                "web-app Play entry must bind framework Router port `{router}` to `{WEB_HISTORY_ADAPTER}`, found `{}`",
+                adapter.unwrap_or("<unbound>")
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn check_project_snapshot(
     snapshot: &ProjectSourceSnapshot,
 ) -> Result<CheckedProject, serde_json::Value> {
-    snapshot.validate_for_build()?;
-    let manifest_text = snapshot
-        .files
-        .text("uhura.toml")
-        .map_err(|message| {
-            host_failure(
-                "UH2001",
-                "contract/invalid-manifest",
-                format!("uhura.toml: {message}"),
-            )
-        })?
-        .unwrap_or_default();
-    let manifest = load_project_manifest(&manifest_text).map_err(project_manifest_diagnostics)?;
-    let sources = snapshot
-        .files
-        .sources()
-        .map_err(|message| host_failure("R3014", "uhura/source", message))?;
+    let resolved = uhura_project::resolve_project(snapshot)
+        .map_err(|rejection| to_envelope(&rejection.diagnostics, &rejection.source_map))?;
+    let manifest = resolved.manifest();
+    let application = resolved.application().clone();
+    let all_source_inventory = resolved.sources().to_vec();
+    let all_sources = all_source_inventory
+        .iter()
+        .map(|source| (source.path.clone(), source.text.clone()))
+        .collect::<Vec<_>>();
+    let source_inventory = resolved
+        .non_generated_sources()
+        .cloned()
+        .collect::<Vec<_>>();
+    let sources = source_inventory
+        .iter()
+        .map(|source| (source.path.clone(), source.text.clone()))
+        .collect::<Vec<_>>();
     let resources = load_project_resources(snapshot, &manifest.resources)?;
     let selector_packages = std::iter::once((
         "crate".to_string(),
@@ -958,24 +1006,20 @@ fn check_project_snapshot(
     }))
     .collect();
 
-    let mut source_map = SourceMap::new();
-    for (path, text) in &sources {
-        source_map.add(path.clone(), text.clone());
-    }
     let uhura_check::CheckOutput {
         mut diagnostics,
         program,
         provenance: semantic_provenance,
         authoring,
-    } = check_sources(snapshot, &sources, &manifest)?;
+    } = resolved.check();
     if let Some(program) = program.as_ref() {
         diagnostics.extend(uhura_check::icon_token_diagnostics(
             program,
             &resources.icon_fonts,
-            sources
+            resolved
+                .sources()
                 .iter()
-                .enumerate()
-                .map(|(file, (path, _))| (FileId(file as u32), path.as_str())),
+                .map(|source| (source.file, source.path.as_str())),
         ));
     }
     diagnostics.sort_by_key(|diagnostic| {
@@ -990,12 +1034,12 @@ fn check_project_snapshot(
         .iter()
         .any(|diagnostic| diagnostic.severity == Severity::Error)
     {
-        return Err(to_envelope(&diagnostics, &source_map));
+        return Err(to_envelope(&diagnostics, resolved.source_map()));
     }
     let diagnostics_json = if diagnostics.is_empty() {
         serde_json::Value::Null
     } else {
-        to_envelope(&diagnostics, &source_map)
+        to_envelope(&diagnostics, resolved.source_map())
     };
     let mut program = program.ok_or_else(|| {
         host_failure(
@@ -1018,9 +1062,11 @@ fn check_project_snapshot(
     let evidence_diagnostics = if evidence.passed {
         serde_json::Value::Null
     } else {
-        evidence_failure(&evidence, &source_map, &sources)
+        evidence_failure(&evidence, resolved.source_map(), resolved.sources())
     };
-    let provenance = source_provenance(&sources);
+    let provenance = source_provenance(&source_inventory);
+    let inspection_provenance = source_provenance(&all_source_inventory);
+    let authoring = authored_authoring_projection(authoring, &sources);
     // Build topology once. Editor and Play inspection publish byte-equivalent
     // semantic and physical-source read models from this same checked program.
     let mut interaction = build_interaction_graph_artifacts(&program);
@@ -1033,7 +1079,7 @@ fn check_project_snapshot(
             )
         },
     )?;
-    validate_interaction_graph_source_inventory(&interaction, &sources).map_err(|message| {
+    validate_interaction_graph_source_inventory(&interaction, &all_sources).map_err(|message| {
         host_failure(
             "R3014",
             "uhura/interaction-topology",
@@ -1046,6 +1092,7 @@ fn check_project_snapshot(
         .expect("Uhura interaction graph provenance is serializable");
     Ok(CheckedProject {
         program,
+        application,
         selector_packages,
         icon_fonts: resources.icon_fonts,
         editor_assets: resources.editor_assets,
@@ -1055,6 +1102,7 @@ fn check_project_snapshot(
         evidence_diagnostics,
         sources,
         provenance,
+        inspection_provenance,
         semantic_provenance,
         interaction_graph,
         graph_sources,
@@ -1148,243 +1196,6 @@ fn validate_interaction_graph_source_inventory(
     Ok(())
 }
 
-fn check_sources(
-    snapshot: &ProjectSourceSnapshot,
-    sources: &[(String, String)],
-    manifest: &ProjectManifest,
-) -> Result<uhura_check::CheckOutput, serde_json::Value> {
-    let captured_dependencies = capture_dependencies(snapshot, sources, manifest)?;
-    let dependency_roots = captured_dependencies
-        .iter()
-        .map(|package| package.source.as_str())
-        .collect::<Vec<_>>();
-    let messages = validate_source_inventory(snapshot, sources, manifest, &dependency_roots);
-    if !messages.is_empty() {
-        return Err(diagnostics_envelope(
-            "UH2001",
-            "contract/invalid-project",
-            messages,
-        ));
-    }
-
-    let compiler_sources = sources
-        .iter()
-        .enumerate()
-        .map(|(file, (path, text))| {
-            uhura_check::ProjectSource::new(FileId(file as u32), path, text)
-        })
-        .collect::<Vec<_>>();
-    Ok(uhura_check::compile_project(
-        manifest,
-        &compiler_sources,
-        &captured_dependencies,
-    ))
-}
-
-fn capture_dependencies(
-    snapshot: &ProjectSourceSnapshot,
-    sources: &[(String, String)],
-    manifest: &ProjectManifest,
-) -> Result<Vec<CapturedPackage>, serde_json::Value> {
-    let lock_text = snapshot.files.text("uhura.lock").map_err(|message| {
-        diagnostics_envelope("UH2001", "contract/invalid-project", vec![message])
-    })?;
-    if manifest.dependencies.is_empty() {
-        return check_project_lock(manifest, lock_text.as_deref(), &[])
-            .map(|_| Vec::new())
-            .map_err(|issues| {
-                diagnostics_envelope(
-                    "UH2001",
-                    "contract/invalid-project",
-                    lock_issue_messages(issues),
-                )
-            });
-    }
-    let lock = parse_project_lock(lock_text.as_deref().ok_or_else(|| {
-        diagnostics_envelope(
-            "UH2001",
-            "contract/invalid-project",
-            vec!["uhura.lock: lock file is required".into()],
-        )
-    })?)
-    .map_err(|issues| {
-        diagnostics_envelope(
-            "UH2001",
-            "contract/invalid-project",
-            lock_issue_messages(issues),
-        )
-    })?;
-    let mut captured = Vec::new();
-    let mut messages = Vec::new();
-    let dependency_roots = lock
-        .packages
-        .values()
-        .map(|record| record.source.path.as_str())
-        .collect::<Vec<_>>();
-    for record in lock.packages.values() {
-        let manifest_path = format!("{}/uhura.toml", record.source.path);
-        let manifest_text = match snapshot.files.text(&manifest_path) {
-            Ok(Some(text)) => text,
-            Ok(None) => {
-                messages.push(format!(
-                    "package.{}.manifest: `{manifest_path}` is missing",
-                    record.package
-                ));
-                continue;
-            }
-            Err(error) => {
-                messages.push(format!("package.{}.manifest: {error}", record.package));
-                continue;
-            }
-        };
-        let package_manifest = match load_project_manifest(&manifest_text) {
-            Ok(manifest) => manifest,
-            Err(issues) => {
-                messages.extend(issues.into_iter().map(|issue| {
-                    format!(
-                        "package.{}.manifest.{}: {}",
-                        record.package, issue.path, issue.message
-                    )
-                }));
-                continue;
-            }
-        };
-        let declared_sources = package_manifest
-            .modules
-            .values()
-            .chain(package_manifest.evidence.values())
-            .map(|path| format!("{}/{}", record.source.path, path))
-            .collect::<BTreeSet<_>>();
-        let discovered_sources = sources
-            .iter()
-            .filter(|(path, _)| {
-                owning_dependency_root(path, &dependency_roots) == Some(record.source.path.as_str())
-            })
-            .map(|(path, _)| path.clone())
-            .collect::<BTreeSet<_>>();
-        for unlisted in discovered_sources.difference(&declared_sources) {
-            messages.push(format!(
-                "package.{}.sources: `{unlisted}` is not listed in `[modules]` or `[evidence.modules]`",
-                record.package
-            ));
-        }
-        let mut module_bytes = BTreeMap::new();
-        for (logical, physical) in &package_manifest.modules {
-            let global = format!("{}/{}", record.source.path, physical);
-            let Some((_, source)) = sources.iter().find(|(path, _)| path == &global) else {
-                messages.push(format!(
-                    "package.{}.modules.{}: mapped source `{global}` is missing",
-                    record.package, logical
-                ));
-                continue;
-            };
-            module_bytes.insert(logical.clone(), source.as_bytes().to_vec());
-        }
-        let resolved_dependencies = package_manifest
-            .dependencies
-            .iter()
-            .map(|(alias, dependency)| (alias.clone(), dependency.package_id()))
-            .collect();
-        captured.push(CapturedPackage {
-            manifest: package_manifest,
-            source: record.source.path.clone(),
-            modules: module_bytes,
-            resolved_dependencies,
-            resources: BTreeMap::new(),
-        });
-    }
-    if !messages.is_empty() {
-        messages.sort();
-        return Err(diagnostics_envelope(
-            "UH2001",
-            "contract/invalid-project",
-            messages,
-        ));
-    }
-    check_project_lock(manifest, lock_text.as_deref(), &captured).map_err(|issues| {
-        diagnostics_envelope(
-            "UH2001",
-            "contract/invalid-project",
-            lock_issue_messages(issues),
-        )
-    })?;
-    Ok(captured)
-}
-
-fn lock_issue_messages(issues: Vec<ProjectLockIssue>) -> Vec<String> {
-    issues
-        .into_iter()
-        .map(|issue| {
-            if issue.path.is_empty() {
-                issue.message
-            } else {
-                format!("{}: {}", issue.path, issue.message)
-            }
-        })
-        .collect()
-}
-
-fn path_is_within(path: &str, root: &str) -> bool {
-    path == root
-        || path
-            .strip_prefix(root)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-fn owning_dependency_root<'a>(path: &str, roots: &[&'a str]) -> Option<&'a str> {
-    roots
-        .iter()
-        .copied()
-        .filter(|root| path_is_within(path, root))
-        .max_by_key(|root| root.len())
-}
-
-fn validate_source_inventory(
-    snapshot: &ProjectSourceSnapshot,
-    sources: &[(String, String)],
-    manifest: &ProjectManifest,
-    dependency_roots: &[&str],
-) -> Vec<String> {
-    let mut messages = Vec::new();
-    let declared = manifest
-        .modules
-        .values()
-        .chain(manifest.evidence.values())
-        .map(|path| path.as_str())
-        .collect::<BTreeSet<_>>();
-    let discovered = sources
-        .iter()
-        .filter(|(path, _)| {
-            !dependency_roots
-                .iter()
-                .any(|root| path_is_within(path, root))
-        })
-        .map(|(path, _)| path.as_str())
-        .collect::<BTreeSet<_>>();
-    for missing in declared.difference(&discovered) {
-        messages.push(format!(
-            "mapped Uhura 0.4 source `{missing}` is missing from the project"
-        ));
-    }
-    for unlisted in discovered.difference(&declared) {
-        messages.push(format!(
-            "Uhura 0.4 source `{unlisted}` is not listed in `[modules]` or `[evidence.modules]`"
-        ));
-    }
-    for aliases in snapshot.files.duplicate_sources() {
-        messages.push(format!(
-            "Uhura source paths {} resolve to the same physical file",
-            aliases
-                .iter()
-                .map(|path| format!("`{path}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    messages.sort();
-    messages
-}
-
 fn load_project_resources(
     snapshot: &ProjectSourceSnapshot,
     manifest: &ResourceManifest,
@@ -1406,17 +1217,15 @@ fn load_project_icon_fonts(
     let mut inputs = BTreeMap::new();
     for (name, family) in &manifest.icons.families {
         let font_bytes = snapshot
-            .files
-            .resolve(Path::new(&family.font))
+            .read_bytes(Path::new(&family.font))
             .map_err(|message| {
                 host_failure(
                     "UH2010",
                     "contract/invalid-icon-font",
                     format!("icons.{name}.font: {message}"),
                 )
-            })?
-            .map(Arc::clone);
-        let glyphs_text = snapshot.files.text(&family.glyphs).map_err(|message| {
+            })?;
+        let glyphs_text = snapshot.read_text(&family.glyphs).map_err(|message| {
             host_failure(
                 "UH2010",
                 "contract/invalid-icon-font",
@@ -1454,13 +1263,12 @@ fn load_project_assets(
     let Some(manifest_relative) = manifest_relative else {
         return Ok((
             BTreeMap::new(),
-            snapshot.files.subtree(Path::new("fixtures/assets")),
+            snapshot.subtree(Path::new("fixtures/assets")),
         ));
     };
     let manifest_path = Path::new(manifest_relative);
     let manifest_text = snapshot
-        .files
-        .text(manifest_relative)
+        .read_text(manifest_relative)
         .map_err(|message| {
             host_failure(
                 "UH2001",
@@ -1489,17 +1297,13 @@ fn load_project_assets(
                 )
             },
         )?;
-        let bytes = snapshot
-            .files
-            .resolve(&path)
-            .map_err(|message| {
-                host_failure(
-                    "UH2001",
-                    "contract/invalid-manifest",
-                    format!("{manifest_relative} assets.{id}.file: {message}"),
-                )
-            })?
-            .map(Arc::clone);
+        let bytes = snapshot.read_bytes(&path).map_err(|message| {
+            host_failure(
+                "UH2001",
+                "contract/invalid-manifest",
+                format!("{manifest_relative} assets.{id}.file: {message}"),
+            )
+        })?;
         inputs.insert(
             id.clone(),
             AssetInput {
@@ -1523,7 +1327,7 @@ fn load_project_assets(
             )
         })
         .collect();
-    Ok((editor_assets, snapshot.files.subtree(asset_dir)))
+    Ok((editor_assets, snapshot.subtree(asset_dir)))
 }
 
 fn asset_diagnostics(manifest: &str, issues: Vec<AssetIssue>) -> serde_json::Value {
@@ -1535,20 +1339,6 @@ fn asset_diagnostics(manifest: &str, issues: Vec<AssetIssue>) -> serde_json::Val
                 format!("{manifest}: {}", issue.message)
             } else {
                 format!("{manifest} {}: {}", issue.path, issue.message)
-            }
-        }),
-    )
-}
-
-fn project_manifest_diagnostics(issues: Vec<ProjectManifestIssue>) -> serde_json::Value {
-    diagnostics_envelope(
-        "UH2001",
-        "contract/invalid-manifest",
-        issues.into_iter().map(|issue| {
-            if issue.path.is_empty() {
-                format!("uhura.toml: {}", issue.message)
-            } else {
-                format!("uhura.toml {}: {}", issue.path, issue.message)
             }
         }),
     )
@@ -1638,8 +1428,7 @@ fn admit_play(
     selector_packages: &BTreeMap<String, String>,
 ) -> Result<PlayAuthority, serde_json::Value> {
     let host_toml = snapshot
-        .files
-        .text("host.toml")
+        .read_text("host.toml")
         .map_err(|message| host_failure("R3014", "uhura/host-manifest", message))?
         .ok_or_else(|| {
             host_failure(
@@ -1659,8 +1448,7 @@ fn admit_play(
         .as_deref()
         .map(|path| {
             snapshot
-                .files
-                .text(path)
+                .read_text(path)
                 .map_err(|message| host_failure("R3014", "uhura/stylesheet", message))?
                 .ok_or_else(|| {
                     host_failure(
@@ -1677,8 +1465,7 @@ fn admit_play(
         .as_ref()
         .map(|provider| {
             snapshot
-                .files
-                .text(&provider.module)
+                .read_text(&provider.module)
                 .map_err(|message| host_failure("R3014", "uhura/provider", message))?
                 .ok_or_else(|| {
                     host_failure(
@@ -1722,6 +1509,7 @@ fn build_editor(
         &checked.program,
         authority,
         &EditorInputs {
+            application: &checked.application,
             evidence: &checked.evidence,
             sources: &checked.sources,
             provenance: &checked.provenance,
@@ -1774,7 +1562,7 @@ fn build_play(checked: &CheckedProject, authority: PlayAuthority) -> GoodBuild {
         "presentationHash": identity.presentation_hash,
         "evidenceHash": identity.evidence_hash,
         "deploymentHash": identity.deployment_hash,
-        "sources": checked.provenance,
+        "sources": checked.inspection_provenance,
         "provenance": checked.semantic_provenance,
         "interactionGraph": checked.interaction_graph,
         "graphSources": checked.graph_sources,
@@ -1886,7 +1674,7 @@ fn merge_diagnostics(envelopes: impl IntoIterator<Item = serde_json::Value>) -> 
 fn evidence_failure(
     report: &EvidenceReport,
     source_map: &SourceMap,
-    sources: &[(String, String)],
+    sources: &[uhura_project::AdmittedSource],
 ) -> serde_json::Value {
     let diagnostics = report
         .failures
@@ -1914,16 +1702,19 @@ fn evidence_failure(
     envelope
 }
 
-fn evidence_span(source: &uhura_core::ir::SourceRef, sources: &[(String, String)]) -> Span {
+fn evidence_span(
+    source: &uhura_core::ir::SourceRef,
+    sources: &[uhura_project::AdmittedSource],
+) -> Span {
     sources
         .iter()
-        .position(|(path, _)| path == &source.path)
-        .filter(|index| {
-            source.start <= source.end && source.end as usize <= sources[*index].1.len()
+        .find(|candidate| candidate.path == source.path)
+        .filter(|candidate| {
+            source.start <= source.end && source.end as usize <= candidate.text.len()
         })
         .map_or_else(
             || Span::new(FileId(0), 0, 0),
-            |file| Span::new(FileId(file as u32), source.start, source.end),
+            |candidate| Span::new(candidate.file, source.start, source.end),
         )
 }
 
@@ -2164,9 +1955,7 @@ fn host_binding(
             port.name
         )
     })?;
-    if adapter == HostAdapter::WebHistory
-        && checked.identity.to_string() != "uhura.web_router@1::Router"
-    {
+    if adapter == HostAdapter::WebHistory && checked.identity.to_string() != ROUTER_CONTRACT_ID {
         return Err(format!(
             "adapter `{adapter_identity}` requires uhura.web_router@1::Router, but port `{}` resolved {}",
             port.name, checked.identity
@@ -2583,19 +2372,40 @@ fn play_config(
     to_canonical_json(&config)
 }
 
-fn source_provenance(sources: &[(String, String)]) -> Vec<serde_json::Value> {
+fn source_provenance(sources: &[uhura_project::AdmittedSource]) -> Vec<serde_json::Value> {
     sources
         .iter()
-        .enumerate()
-        .map(|(file, (path, text))| {
+        .map(|source| {
             serde_json::json!({
-                "file": file,
-                "path": path,
-                "sha256": sha256_hex(text.as_bytes()),
-                "bytes": text.len(),
+                "file": source.file.0,
+                "path": source.path,
+                "sha256": sha256_hex(source.text.as_bytes()),
+                "bytes": source.text.len(),
             })
         })
         .collect()
+}
+
+fn authored_authoring_projection(
+    mut projection: AuthoringProjection,
+    sources: &[(String, String)],
+) -> AuthoringProjection {
+    let paths = sources
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect::<BTreeSet<_>>();
+    projection
+        .targets
+        .retain(|target| paths.contains(target.file.as_str()));
+    let targets = projection
+        .targets
+        .iter()
+        .map(|target| target.id.as_str())
+        .collect::<BTreeSet<_>>();
+    projection
+        .entries
+        .retain(|entry| targets.contains(entry.target_id.as_str()));
+    projection
 }
 
 fn editor_render(
@@ -2605,6 +2415,7 @@ fn editor_render(
     inputs: &EditorInputs<'_>,
 ) -> Result<EditorRender, serde_json::Value> {
     let EditorInputs {
+        application,
         evidence,
         sources,
         provenance,
@@ -2627,7 +2438,7 @@ fn editor_render(
         )
     })?;
     let mut previews = Vec::new();
-    let presentation_kinds = presentation_kinds(evidence);
+    let presentation_kinds = presentation_kinds(evidence, application)?;
     let presentation_sources =
         presentation_authoring_sources(program, &presentation_kinds, semantic_provenance)?;
     let (mut authoring_targets, authoring_entries) =
@@ -2655,19 +2466,28 @@ fn editor_render(
         })
         .collect::<BTreeSet<_>>();
     for (name, example) in &evidence.artifacts.examples {
-        let presentations = match example.metadata.presentation.as_deref() {
+        let subjects = match example.metadata.presentation.as_deref() {
+            Some(subject_id) if program.components.contains_key(subject_id) => {
+                vec![(subject_id.to_string(), true)]
+            }
             Some(presentation_id) => program
                 .presentations
                 .get(presentation_id)
-                .into_iter()
-                .collect::<Vec<_>>(),
+                .map(|presentation| vec![(presentation.id.clone(), false)])
+                .unwrap_or_default(),
             None => program
                 .presentations
                 .values()
-                .filter(|presentation| presentation.machine == example.snapshot.machine)
+                .filter(|presentation| {
+                    presentation.machine == example.snapshot.machine
+                        && application.web_app.as_ref().is_none_or(|_| {
+                            presentation_kinds.get(&presentation.id) == Some(&PreviewKind::Page)
+                        })
+                })
+                .map(|presentation| (presentation.id.clone(), false))
                 .collect::<Vec<_>>(),
         };
-        let instance = (!presentations.is_empty())
+        let instance = (!subjects.is_empty())
             .then(|| {
                 instance_from_snapshot(program, &example.snapshot).map_err(|message| {
                     host_failure(
@@ -2678,22 +2498,25 @@ fn editor_render(
                 })
             })
             .transpose()?;
-        for presentation in presentations {
+        for (subject, pure_component) in subjects {
             let instance = instance
                 .as_ref()
                 .expect("a projected evidence example has a restored instance");
-            let projection = program
-                .project(instance, &presentation.id)
-                .map_err(|error| {
-                    host_failure(
-                        "R3006",
-                        "uhura/editor-projection",
-                        format!(
-                            "example `{name}` could not project through `{}`: {error}",
-                            presentation.id
-                        ),
-                    )
-                })?;
+            let projection = (if pure_component {
+                program.project_component(instance, &subject, &example.metadata.component_props)
+            } else {
+                program.project(instance, &subject)
+            })
+            .map_err(|error| {
+                host_failure(
+                    "R3006",
+                    "uhura/editor-projection",
+                    format!(
+                        "example `{name}` could not project through `{}`: {error}",
+                        subject
+                    ),
+                )
+            })?;
             let interactions =
                 projection_interactions(&projection.document.nodes, &example.snapshot.machine);
             let pin_key = format!("{}::{}", example.reference.scenario, example.reference.pin);
@@ -2708,29 +2531,32 @@ fn editor_render(
             exactify_sequences(&mut snapshot);
             let scenario_receipts =
                 pin_receipt_log(evidence, &example.reference.scenario, &example.snapshot);
-            let kind = preview_kind(example.metadata.kind);
+            let kind = presentation_kinds
+                .get(&subject)
+                .copied()
+                .unwrap_or_else(|| preview_kind(example.metadata.kind));
             let identity = PreviewIdentity {
                 kind,
-                subject: presentation.id.clone(),
+                subject: subject.clone(),
                 example: name.clone(),
             };
             let preview_id = stable_preview_id(&identity);
             let preview_provenance = projection_provenance(
                 &preview_id,
-                &presentation.id,
+                &subject,
                 &projection.sources,
                 &projection_authoring,
                 &mut authoring_targets,
             )?;
             let is_default = example.metadata.is_default
-                || (!declared_defaults.contains(&presentation.id)
-                    && default_presentations.insert(presentation.id.clone()));
+                || (!declared_defaults.contains(&subject)
+                    && default_presentations.insert(subject.clone()));
             previews.push(Preview {
                 id: preview_id,
                 identity,
                 source_file: presentation_sources
-                    .get(&presentation.id)
-                    .expect("every checked presentation has an authoring source")
+                    .get(&subject)
+                    .expect("every checked UI subject has an authoring source")
                     .path
                     .clone(),
                 is_default,
@@ -2817,6 +2643,7 @@ fn editor_render(
         program,
         evidence,
         authority,
+        application,
         application_name.clone(),
         &previews,
     );
@@ -2858,7 +2685,24 @@ fn source_target_owner_kind(kind: PreviewKind) -> SourceTargetOwnerKind {
     }
 }
 
-fn presentation_kinds(evidence: &EvidenceReport) -> BTreeMap<String, PreviewKind> {
+fn presentation_kinds(
+    evidence: &EvidenceReport,
+    application: &ResolvedApplication,
+) -> Result<BTreeMap<String, PreviewKind>, serde_json::Value> {
+    if let Some(web_app) = &application.web_app {
+        let kinds = web_app
+            .subjects
+            .iter()
+            .map(|subject| {
+                (
+                    subject.declaration_id.clone(),
+                    resolved_preview_kind(subject.role),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        return Ok(kinds);
+    }
+
     let mut kinds = BTreeMap::new();
     for example in evidence.artifacts.examples.values() {
         let Some(presentation) = example.metadata.presentation.as_ref() else {
@@ -2872,7 +2716,15 @@ fn presentation_kinds(evidence: &EvidenceReport) -> BTreeMap<String, PreviewKind
         // broadest taxonomy while preserving each preview's own kind.
         retain_presentation_owner_kind(&mut kinds, presentation, kind);
     }
-    kinds
+    Ok(kinds)
+}
+
+fn resolved_preview_kind(role: ResolvedUiRole) -> PreviewKind {
+    match role {
+        ResolvedUiRole::Page => PreviewKind::Page,
+        ResolvedUiRole::Component => PreviewKind::Component,
+        ResolvedUiRole::Surface => PreviewKind::Surface,
+    }
 }
 
 fn retain_presentation_owner_kind(
@@ -3067,41 +2919,40 @@ fn presentation_authoring_sources(
     kinds: &BTreeMap<String, PreviewKind>,
     provenance: &Provenance,
 ) -> Result<BTreeMap<String, PresentationAuthoringSource>, serde_json::Value> {
-    program
-        .presentations
-        .values()
-        .map(|presentation| {
-            let path = if presentation.source.path == "<resolved-project>" {
-                presentation_source_path(provenance, &presentation.id).ok_or_else(|| {
-                    host_failure(
-                        "R3014",
-                        "uhura/editor-authoring",
-                        format!(
-                            "presentation `{}` has no physical declaration provenance",
-                            presentation.id
-                        ),
-                    )
-                })?
-            } else {
-                presentation.source.path.clone()
-            };
-            let kind = kinds
-                .get(&presentation.id)
-                .copied()
-                .unwrap_or(PreviewKind::Page);
-            Ok((
-                presentation.id.clone(),
-                PresentationAuthoringSource {
-                    source_id: presentation.source.id.clone(),
-                    path,
-                    owner: SourceTargetOwner {
-                        kind: source_target_owner_kind(kind),
-                        name: presentation.id.clone(),
-                    },
+    let mut output = BTreeMap::new();
+    let mut insert = |id: &str, source: &SourceRef, fallback_kind: PreviewKind| {
+        let path = if source.path == "<resolved-project>" {
+            presentation_source_path(provenance, id).ok_or_else(|| {
+                host_failure(
+                    "R3014",
+                    "uhura/editor-authoring",
+                    format!("UI subject `{id}` has no physical declaration provenance"),
+                )
+            })?
+        } else {
+            source.path.clone()
+        };
+        let kind = kinds.get(id).copied().unwrap_or(fallback_kind);
+        output.insert(
+            id.to_string(),
+            PresentationAuthoringSource {
+                source_id: source.id.clone(),
+                path,
+                owner: SourceTargetOwner {
+                    kind: source_target_owner_kind(kind),
+                    name: id.to_string(),
                 },
-            ))
-        })
-        .collect()
+            },
+        );
+        Ok::<_, serde_json::Value>(())
+    };
+    for presentation in program.presentations.values() {
+        insert(&presentation.id, &presentation.source, PreviewKind::Page)?;
+    }
+    for component in program.components.values() {
+        insert(&component.id, &component.source, PreviewKind::Component)?;
+    }
+    Ok(output)
 }
 
 fn source_is_within_presentation(source: &str, declaration: &str) -> bool {
@@ -3142,6 +2993,19 @@ fn presentation_node_owners(program: &Program) -> BTreeMap<String, String> {
                     }
                     continue;
                 }
+                uhura_core::UiNode::Call {
+                    source, bindings, ..
+                } => {
+                    if !source.id.is_empty() {
+                        output.insert(source.id.clone(), presentation.to_owned());
+                    }
+                    for binding in bindings {
+                        if !binding.source.id.is_empty() {
+                            output.insert(binding.source.id.clone(), presentation.to_owned());
+                        }
+                    }
+                    continue;
+                }
             };
             if !source.id.is_empty() {
                 output.insert(source.id.clone(), presentation.to_owned());
@@ -3155,6 +3019,9 @@ fn presentation_node_owners(program: &Program) -> BTreeMap<String, String> {
     let mut output = BTreeMap::new();
     for presentation in program.presentations.values() {
         collect(&presentation.nodes, &presentation.id, &mut output);
+    }
+    for component in program.components.values() {
+        collect(&component.nodes, &component.id, &mut output);
     }
     output
 }
@@ -3466,12 +3333,20 @@ fn append_structural_authoring_occurrences(
 
 fn presentation_source_path(provenance: &Provenance, presentation: &str) -> Option<String> {
     let name = presentation.rsplit("::").next()?;
-    let declaration = semantic_node_id(presentation, "root", "ui", &format!("declaration/{name}"));
+    let declarations = [
+        semantic_node_id(presentation, "root", "ui", &format!("declaration/{name}")),
+        semantic_node_id(
+            presentation,
+            "root",
+            "ui_component",
+            &format!("declaration/{name}"),
+        ),
+    ];
     let source = provenance
         .occurrences
         .iter()
         .find(|occurrence| {
-            occurrence.node == declaration
+            declarations.contains(&occurrence.node)
                 && occurrence.role == "definition"
                 && occurrence.owner == "root"
         })?
@@ -3514,6 +3389,7 @@ fn application_interaction_graph(
     program: &Program,
     evidence: &EvidenceReport,
     authority: Option<&PlayAuthority>,
+    application: &ResolvedApplication,
     application_name: String,
     previews: &[Preview],
 ) -> InteractionGraph {
@@ -3541,8 +3417,14 @@ fn application_interaction_graph(
         })
         .collect::<Vec<_>>();
 
-    let navigation =
-        application_navigation_graph(program, evidence, authority, &definitions, previews);
+    let navigation = application_navigation_graph(
+        program,
+        evidence,
+        authority,
+        application,
+        &definitions,
+        previews,
+    );
     nodes.extend(navigation.nodes);
     nodes.sort_by(|left, right| left.id.cmp(&right.id));
     nodes.dedup_by(|left, right| left.id == right.id);
@@ -3576,6 +3458,13 @@ fn application_interaction_graph(
     let entry = authority
         .and_then(|authority| authority.deployment.presentation.as_ref())
         .filter(|presentation| definitions.contains(&(PreviewKind::Page, (*presentation).clone())))
+        .or_else(|| {
+            application.web_app.as_ref().and_then(|web_app| {
+                definitions
+                    .contains(&(PreviewKind::Page, web_app.root_page.clone()))
+                    .then_some(&web_app.root_page)
+            })
+        })
         .or_else(|| {
             definitions.iter().find_map(|(kind, presentation)| {
                 (*kind == PreviewKind::Page).then_some(presentation)
@@ -3632,14 +3521,20 @@ fn application_navigation_graph(
     program: &Program,
     evidence: &EvidenceReport,
     authority: Option<&PlayAuthority>,
+    application: &ResolvedApplication,
     definitions: &BTreeSet<(PreviewKind, String)>,
     previews: &[Preview],
 ) -> ApplicationNavigationGraph {
     let mut graph = ApplicationNavigationGraph::default();
     for machine in program.machine_program.machines.values() {
-        for (port, route_type) in navigation_ports(machine, authority) {
-            let destinations =
-                route_presentation_destinations(evidence, machine, &route_type, definitions);
+        for (port, route_type) in navigation_ports(program, machine, authority, application) {
+            let destinations = route_presentation_destinations(
+                evidence,
+                machine,
+                &route_type,
+                application,
+                definitions,
+            );
             if destinations.is_empty() {
                 let fallback = application_preview_route_graph(
                     program,
@@ -3695,12 +3590,40 @@ fn application_navigation_graph(
     graph
 }
 
-fn navigation_ports(machine: &Machine, authority: Option<&PlayAuthority>) -> Vec<(String, String)> {
+fn navigation_ports(
+    program: &Program,
+    machine: &Machine,
+    authority: Option<&PlayAuthority>,
+    application: &ResolvedApplication,
+) -> Vec<(String, String)> {
+    if let Some(web_app) = &application.web_app {
+        let Some(declaration) = web_app.machine.rsplit("::").next() else {
+            return Vec::new();
+        };
+        let configured_machine = format!("{}::{declaration}", application.package);
+        if machine.id != configured_machine {
+            return Vec::new();
+        }
+        let Ok(Some(selected)) = uhura_project::selected_web_app_router_port(application, program)
+        else {
+            return Vec::new();
+        };
+        return machine
+            .ports
+            .iter()
+            .filter(|port| port.name == selected)
+            .filter_map(|port| {
+                port.type_arguments
+                    .first()
+                    .map(|route| (port.name.clone(), route.canonical_name()))
+            })
+            .collect();
+    }
     machine
         .ports
         .iter()
         .filter(|port| {
-            port.contract == "uhura.web_router@1::Router"
+            port.contract == ROUTER_CONTRACT_ID
                 || authority.is_some_and(|authority| {
                     authority
                         .deployment
@@ -3722,8 +3645,30 @@ fn route_presentation_destinations(
     evidence: &EvidenceReport,
     machine: &Machine,
     route_type: &str,
+    application: &ResolvedApplication,
     definitions: &BTreeSet<(PreviewKind, String)>,
 ) -> BTreeMap<String, BTreeSet<String>> {
+    if let Some(web_app) = &application.web_app
+        && machine.id == framework_declaration_id(application, &web_app.machine)
+        && route_type == framework_declaration_id(application, &web_app.location)
+    {
+        return web_app
+            .subjects
+            .iter()
+            .filter(|subject| {
+                subject.role == ResolvedUiRole::Page
+                    && definitions.contains(&(PreviewKind::Page, subject.declaration_id.clone()))
+            })
+            .filter_map(|subject| {
+                subject.route.as_ref().map(|route| {
+                    (
+                        route.constructor.clone(),
+                        BTreeSet::from([subject.declaration_id.clone()]),
+                    )
+                })
+            })
+            .collect();
+    }
     let mut destinations = BTreeMap::<String, BTreeSet<String>>::new();
     for example in evidence.artifacts.examples.values() {
         let Some(presentation) = example.metadata.presentation.as_ref() else {
@@ -3744,6 +3689,14 @@ fn route_presentation_destinations(
         }
     }
     destinations
+}
+
+fn framework_declaration_id(application: &ResolvedApplication, locator: &str) -> String {
+    let declaration = locator
+        .rsplit("::")
+        .next()
+        .expect("validated framework locator has a declaration");
+    format!("{}::{declaration}", application.package)
 }
 
 fn application_preview_route_graph(
@@ -3954,6 +3907,11 @@ fn collect_presentation_inputs(nodes: &[UiNode], input_type: &str, output: &mut 
             UiNode::Match { cases, .. } => {
                 for case in cases {
                     collect_presentation_inputs(&case.children, input_type, output);
+                }
+            }
+            UiNode::Call { bindings, .. } => {
+                for binding in bindings {
+                    collect_nominal_constructors(&binding.input, input_type, output);
                 }
             }
             UiNode::Text { .. } | UiNode::Interpolation { .. } => {}
@@ -6191,7 +6149,7 @@ mod tests {
     use std::sync::{Arc, Mutex, Weak};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use uhura_base::{SourceMap, sha256_hex, to_canonical_json};
+    use uhura_base::{FileId, SourceMap, sha256_hex, to_canonical_json};
     use uhura_core::ir::{
         ConstructorDef as MachineConstructorDef, Expr as MachineExpr, Machine as MachineDef,
         PortDef as MachinePortDef, SourceRef,
@@ -6203,7 +6161,7 @@ mod tests {
         Value,
     };
     use uhura_editor_model::{
-        Application, AuthoringMetadata, EditorRender, Preview, RenderFreshness,
+        Application, AuthoringMetadata, EditorRender, Preview, PreviewKind, RenderFreshness,
     };
 
     use super::{
@@ -6216,8 +6174,8 @@ mod tests {
         UHURA_EVIDENCE_SUMMARY_PROTOCOL, WEB_HISTORY_ADAPTER, WebAssets, WebFile, api_route,
         app_document, application_path, broadcast, captured_play_asset, content_type,
         decode_play_asset_path, deployment_identity, editor_sse_payload, evidence_failure,
-        index_asset_references, load_web_app_from, parse_host_manifest, serve_file_map,
-        split_request_url, subscribe, subscribe_with_blocking_keepalive, tool_root,
+        index_asset_references, load_web_app_from, parse_host_manifest, presentation_kinds,
+        serve_file_map, split_request_url, subscribe, subscribe_with_blocking_keepalive, tool_root,
         validate_deployment,
     };
 
@@ -6467,6 +6425,326 @@ mod tests {
         );
     }
 
+    #[test]
+    fn framework_roles_are_authoritative_and_generated_application_is_not_a_subject() {
+        let application = uhura_project::ResolvedApplication {
+            protocol: uhura_project::RESOLVED_APPLICATION_PROTOCOL,
+            source_revision: "revision".into(),
+            package: "example@1".into(),
+            language: "0.4".into(),
+            profile: uhura_project::ResolvedProfile::WebApp { version: 1 },
+            modules: Vec::new(),
+            evidence_modules: Vec::new(),
+            web_app: Some(uhura_project::ResolvedWebApplication {
+                machine: "crate::program::Machine".into(),
+                location: "crate::routing::Location".into(),
+                application: "example@1::Application".into(),
+                application_module: "framework::application".into(),
+                route_table: "example@1::APPLICATION_ROUTES".into(),
+                route_module: "framework::routes".into(),
+                root_page: "example@1::HomePage".into(),
+                subjects: vec![
+                    uhura_project::ResolvedUiSubject {
+                        role: uhura_project::ResolvedUiRole::Page,
+                        logical: "app".into(),
+                        path: "app/page.uhura".into(),
+                        declaration: "HomePage".into(),
+                        declaration_id: "example@1::HomePage".into(),
+                        route: Some(uhura_project::ResolvedRoute {
+                            constructor: "Home".into(),
+                            pattern: "/".into(),
+                            parameters: Vec::new(),
+                        }),
+                        evidence_logical: None,
+                        evidence_path: None,
+                    },
+                    uhura_project::ResolvedUiSubject {
+                        role: uhura_project::ResolvedUiRole::Component,
+                        logical: "components::card".into(),
+                        path: "components/card.uhura".into(),
+                        declaration: "Card".into(),
+                        declaration_id: "example@1::Card".into(),
+                        route: None,
+                        evidence_logical: None,
+                        evidence_path: None,
+                    },
+                ],
+            }),
+        };
+        let mut empty_evidence = evidence_report_with_payload("empty");
+        empty_evidence.artifacts.examples.clear();
+        let clean = presentation_kinds(&empty_evidence, &application)
+            .expect("framework roles are valid without examples");
+        assert_eq!(clean.get("example@1::HomePage"), Some(&PreviewKind::Page));
+        assert_eq!(clean.get("example@1::Card"), Some(&PreviewKind::Component));
+        assert!(!clean.contains_key("example@1::Application"));
+
+        let mut evidence = evidence_report_with_payload("role mismatch");
+        let example = evidence.artifacts.examples.get_mut("default").unwrap();
+        example.metadata.presentation = Some("example@1::Card".into());
+        example.metadata.kind = Some(uhura_core::EvidencePresentationKind::Page);
+        let trusted = presentation_kinds(&evidence, &application)
+            .expect("shared project validation owns framework evidence policy");
+        assert_eq!(
+            trusted.get("example@1::Card"),
+            Some(&PreviewKind::Component),
+            "host taxonomy remains authoritative and does not reinterpret evidence"
+        );
+    }
+
+    #[test]
+    fn framework_application_is_play_only_and_editor_sources_remain_authored() {
+        let root = framework_fixture_project("editor-boundary");
+        let snapshot = crate::source::capture_project_snapshot(&root);
+        let candidate = super::build_candidate(&snapshot, 1);
+        let summary = candidate.summary();
+        assert!(
+            summary.editor_current && summary.play_ok,
+            "framework fixture diagnostics: {:?}",
+            candidate.diagnostics()
+        );
+        assert_eq!(summary.preview_count, Some(1));
+
+        let editor = accepted_editor_render(&candidate);
+        let previews = editor["previews"].as_array().unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(
+            previews[0]["identity"]["subject"],
+            "test.framework@1::HomePage"
+        );
+        assert_eq!(previews[0]["sourceFile"], "app/page.uhura");
+        assert!(
+            previews.iter().all(|preview| {
+                preview["identity"]["subject"] != "test.framework@1::Application"
+            })
+        );
+        assert_eq!(
+            editor["interactionGraph"]["entry"],
+            "page:test.framework@1::HomePage"
+        );
+        assert!(
+            editor["machine"]["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|source| !source["path"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with(".uhura/generated/"))
+        );
+        assert!(
+            editor["machine"]["provenance"]["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|source| source["path"]
+                    .as_str()
+                    .is_some_and(|path| path.starts_with(".uhura/generated/"))),
+            "compiler provenance must retain generated framework sources"
+        );
+        assert!(
+            editor["authoring"]["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|target| !target["file"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with(".uhura/generated/"))
+        );
+
+        let play = candidate.play.as_ref().expect("framework Play build");
+        let config: serde_json::Value = serde_json::from_str(&play.config_json).unwrap();
+        assert_eq!(config["presentation"], "test.framework@1::Application");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn framework_editor_retains_vendored_component_sources_without_admitting_annotations() {
+        let root = framework_fixture_project("dependency-component");
+        let manifest = fs::read_to_string(root.join("uhura.toml")).unwrap();
+        fs::write(
+            root.join("uhura.toml"),
+            format!(
+                r#"{manifest}
+[dependencies.shared]
+package = "test.shared"
+version = 1
+path = "vendor/shared"
+"#
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("vendor/shared")).unwrap();
+        let vendor_manifest_text = r#"[project]
+name = "test.shared"
+version = 1
+language = "0.4"
+
+[modules]
+card = "card.uhura"
+"#;
+        let vendor_source = br#"use uhura::ui;
+
+pub ui SharedCard(label: Text) {
+  <!-- @annotation Dependency-owned component annotation. -->
+  <section>{label}</section>
+}
+"#;
+        fs::write(root.join("vendor/shared/uhura.toml"), vendor_manifest_text).unwrap();
+        fs::write(root.join("vendor/shared/card.uhura"), vendor_source).unwrap();
+        fs::write(
+            root.join("app/page.uhura"),
+            r#"use uhura::ui;
+use crate::program::App;
+use shared::card::SharedCard;
+
+pub ui HomePage for App(view) {
+  <main><SharedCard label="Dependency component" /></main>
+}
+"#,
+        )
+        .unwrap();
+        let vendor_capture = uhura_check::project_lock::CapturedPackage {
+            manifest: uhura_check::project_manifest::load_project_manifest(vendor_manifest_text)
+                .unwrap(),
+            source: uhura_check::project_manifest::ProjectPath::parse("vendor/shared").unwrap(),
+            modules: [(
+                uhura_check::project_manifest::LogicalModulePath::parse("card").unwrap(),
+                vendor_source.to_vec(),
+            )]
+            .into_iter()
+            .collect(),
+            resolved_dependencies: BTreeMap::new(),
+            resources: BTreeMap::new(),
+        };
+        let integrity = vendor_capture.artifact_integrity().unwrap();
+        fs::write(
+            root.join("uhura.lock"),
+            format!(
+                r#"protocol = "uhura-lock/0"
+
+[root]
+package = "test.framework@1"
+dependencies = {{ shared = "test.shared@1" }}
+
+[[package]]
+package = "test.shared@1"
+source = {{ kind = "path", path = "vendor/shared" }}
+integrity = "{integrity}"
+dependencies = {{}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let candidate = super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+        assert!(
+            candidate.summary().editor_current,
+            "editor diagnostics: {:#}",
+            candidate.diagnostics().editor
+        );
+        let editor = accepted_editor_render(&candidate);
+        assert!(
+            editor["machine"]["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|source| source["path"] == "vendor/shared/card.uhura")
+        );
+        assert!(
+            editor["machine"]["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|source| !source["path"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with(".uhura/generated/"))
+        );
+        assert!(
+            editor["authoring"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|entry| entry["text"] != "Dependency-owned component annotation."),
+            "dependency annotations remain outside root authoring metadata"
+        );
+        let editor_json = serde_json::to_string(&editor).unwrap();
+        assert!(
+            editor_json.contains("Dependency component"),
+            "a root page must render a public pure component from its locked dependency"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn framework_play_requires_generated_application_and_history_bound_router() {
+        let root = framework_fixture_project("play-routing-authority");
+        fs::write(root.join("provider.mjs"), TEST_PROVIDER_JS).unwrap();
+        fs::write(
+            root.join("host.toml"),
+            r#"[entry.app]
+machine = "crate::App"
+presentation = "crate::Application"
+lifetime = "application-session"
+
+[entry.app.ports]
+router = "app.provider"
+
+[entry.app.provider]
+module = "provider.mjs"
+"#,
+        )
+        .unwrap();
+        let wrong_adapter =
+            super::build_candidate(&crate::source::capture_project_snapshot(&root), 1);
+        assert!(wrong_adapter.summary().editor_current);
+        assert!(!wrong_adapter.summary().play_ok);
+        assert_eq!(
+            wrong_adapter.diagnostics().play["diagnostics"][0]["rule"],
+            "uhura/framework-host-routing"
+        );
+        assert!(
+            wrong_adapter.diagnostics().play["diagnostics"][0]["message"]
+                .as_str()
+                .is_some_and(
+                    |message| message.contains("router") && message.contains("web.history")
+                )
+        );
+
+        fs::write(
+            root.join("host.toml"),
+            r#"[entry.app]
+machine = "crate::App"
+presentation = "crate::HomePage"
+lifetime = "application-session"
+
+[entry.app.ports]
+router = "web.history"
+"#,
+        )
+        .unwrap();
+        let wrong_presentation =
+            super::build_candidate(&crate::source::capture_project_snapshot(&root), 2);
+        assert!(wrong_presentation.summary().editor_current);
+        assert!(!wrong_presentation.summary().play_ok);
+        assert_eq!(
+            wrong_presentation.diagnostics().play["diagnostics"][0]["rule"],
+            "uhura/framework-host-routing"
+        );
+        assert!(
+            wrong_presentation.diagnostics().play["diagnostics"][0]["message"]
+                .as_str()
+                .is_some_and(
+                    |message| message.contains("Application") && message.contains("HomePage")
+                )
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn copy_a0_fixture(label: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6548,6 +6826,102 @@ default = "lucide"
         )
         .unwrap();
         fs::write(root.join("counter.uhura"), COUNTER_MACHINE_SOURCE).unwrap();
+        root
+    }
+
+    fn framework_fixture_project(label: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "uhura-host-framework-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("app")).unwrap();
+        fs::write(
+            root.join("uhura.toml"),
+            r#"[project]
+name = "test.framework"
+version = 1
+language = "0.4"
+
+[framework]
+profile = "web-app"
+version = 1
+machine = "crate::program::App"
+location = "crate::routing::Location"
+
+[modules]
+program = "machine.uhura"
+routing = "routing.uhura"
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("routing.uhura"), "pub enum Location { Home }\n").unwrap();
+        fs::write(
+            root.join("machine.uhura"),
+            r#"use uhura::web_router::Router;
+use crate::framework::routes::APPLICATION_ROUTES;
+use crate::routing::Location;
+
+pub machine App {
+  port router = Router<Location> { routes: APPLICATION_ROUTES };
+  events { Refresh }
+  outcomes { commit Accepted }
+  state { location: Option<Location> = None }
+  observe { location }
+  on Refresh { Accepted }
+  on router.Changed(next) {
+    location = Some(next);
+    Accepted
+  }
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("app/page.uhura"),
+            r#"use uhura::ui;
+use crate::program::App;
+
+pub ui HomePage for App(view) {
+  <main>Home</main>
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("app/page.examples.uhura"),
+            r#"use uhura::web_router::Router;
+use crate::framework::routes::APPLICATION_ROUTES;
+use crate::program::App;
+use crate::app::HomePage;
+
+scenario home_scenario for App {
+  bind router = Router.fixture(APPLICATION_ROUTES)
+  start
+  pin frame
+}
+
+example home
+  for HomePage as page default
+  = home_scenario::frame;
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("host.toml"),
+            r#"[entry.app]
+machine = "crate::App"
+presentation = "crate::Application"
+lifetime = "application-session"
+
+[entry.app.ports]
+router = "web.history"
+"#,
+        )
+        .unwrap();
         root
     }
 
@@ -9479,15 +9853,22 @@ returns = "return-desk.returns"
         use uhura_core::{EvidenceArtifacts, EvidenceFailure, EvidenceFailureCode, EvidenceReport};
 
         let sources = vec![
-            ("machine.uhura".to_string(), "machine".to_string()),
-            (
-                "nested/conformance.uhura".to_string(),
-                "0123456789abcdefghijklmnop".to_string(),
-            ),
+            uhura_project::AdmittedSource {
+                file: FileId(0),
+                path: "machine.uhura".to_string(),
+                text: "machine".to_string(),
+                kind: uhura_project::AdmittedSourceKind::Authored,
+            },
+            uhura_project::AdmittedSource {
+                file: FileId(1),
+                path: "nested/conformance.uhura".to_string(),
+                text: "0123456789abcdefghijklmnop".to_string(),
+                kind: uhura_project::AdmittedSourceKind::Authored,
+            },
         ];
         let mut source_map = SourceMap::new();
-        for (path, source) in &sources {
-            source_map.add(path.clone(), source.clone());
+        for source in &sources {
+            source_map.add(source.path.clone(), source.text.clone());
         }
         let report = EvidenceReport {
             protocol: "uhura-evidence-report/0".into(),
@@ -10109,11 +10490,28 @@ glyphs = "icons/brand/missing.json"
         assert_eq!(
             graph_source_paths,
             BTreeSet::from([
+                ".uhura/generated/web-app/application.uhura".to_string(),
+                "app/create/page.uhura".to_string(),
+                "app/p/[id]/page.uhura".to_string(),
+                "app/page.uhura".to_string(),
+                "app/profile/[user]/followers/page.uhura".to_string(),
+                "app/profile/[user]/following/page.uhura".to_string(),
+                "app/profile/[user]/page.uhura".to_string(),
+                "app/reels/page.uhura".to_string(),
+                "app/search/page.uhura".to_string(),
+                "app/stories/[id]/page.uhura".to_string(),
+                "components/bottom-nav.uhura".to_string(),
+                "components/connection-row.uhura".to_string(),
+                "components/notice-bar.uhura".to_string(),
+                "components/post-card.uhura".to_string(),
+                "components/profile-header.uhura".to_string(),
+                "components/reel-card.uhura".to_string(),
+                "components/stories-tray.uhura".to_string(),
                 "machine.uhura".to_string(),
                 "parts.uhura".to_string(),
-                "ui.uhura".to_string(),
+                "surfaces/comments-sheet.uhura".to_string(),
             ]),
-            "every Instagram graph source resolves to its admitted authored file",
+            "every reachable Instagram graph fact resolves to its admitted authored or generated source",
         );
         assert!(
             inspection["graphSources"]
@@ -10547,16 +10945,27 @@ glyphs = "icons/brand/missing.json"
         let editor = accepted_editor_render(&first);
         let previews = editor["previews"].as_array().unwrap();
         assert_eq!(previews.len(), 91);
-        assert!(
-            previews
-                .iter()
-                .all(|preview| preview["sourceFile"] == "ui.uhura")
-        );
+        assert!(previews.iter().all(|preview| {
+            preview["sourceFile"].as_str().is_some_and(|path| {
+                matches!(
+                    path.split('/').next(),
+                    Some("app" | "components" | "surfaces")
+                ) && path.ends_with(".uhura")
+                    && !path.ends_with(".examples.uhura")
+                    && !path.starts_with(".uhura/generated/")
+            })
+        }));
         let target_kinds = editor["authoring"]["targets"]
             .as_array()
             .unwrap()
             .iter()
-            .inspect(|target| assert_eq!(target["file"], "ui.uhura"))
+            .inspect(|target| {
+                assert!(
+                    target["file"]
+                        .as_str()
+                        .is_some_and(|path| !path.starts_with(".uhura/generated/"))
+                )
+            })
             .map(|target| target["owner"]["kind"].as_str().unwrap())
             .collect::<BTreeSet<_>>();
         assert_eq!(
@@ -10564,8 +10973,14 @@ glyphs = "icons/brand/missing.json"
             BTreeSet::from(["component", "page", "surface"])
         );
         let annotations = editor["authoring"]["entries"].as_array().unwrap();
-        assert_eq!(annotations.len(), 1);
-        let annotation = &annotations[0];
+        assert_eq!(annotations.len(), 5);
+        let annotation = annotations
+            .iter()
+            .find(|entry| {
+                entry["text"]
+                    == "The complete post-card presentation, shared across every static PostCard example."
+            })
+            .expect("post-card annotation is published");
         assert_eq!(annotation["class"], "annotation");
         assert_eq!(annotation["kind"], "annotation");
         assert_eq!(
@@ -10580,7 +10995,7 @@ glyphs = "icons/brand/missing.json"
             .find(|target| target["id"] == annotation["targetId"])
             .expect("the annotation retains its checked target");
         assert_eq!(annotation_target["class"], "ui-element");
-        assert_eq!(annotation_target["file"], "ui.uhura");
+        assert_eq!(annotation_target["file"], "components/post-card.uhura");
         assert_eq!(annotation_target["label"], "<view class=\"post-card\">");
         assert_eq!(annotation_target["owner"]["kind"], "component");
         assert_eq!(

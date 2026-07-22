@@ -1,0 +1,111 @@
+use uhura::ui;
+use crate::components::bottom_nav::BottomNav;
+use crate::components::connection_row::ConnectionRow;
+use crate::components::notice_bar::NoticeBar;
+use crate::instagram::{Authority, Instagram, SearchStatus, Section};
+use crate::presentation::effective_follow;
+
+pub ui SearchPage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen search-page">
+      <view class="search-head">
+        <text class="search-title">Explore</text>
+        <view class="search-controls">
+          <textfield
+            value={view.search_query}
+            label="Search people"
+            placeholder="Search"
+            on change -> SearchChanged(event.text)
+          />
+          <button
+            label="Search"
+            disabled={view.search_query == ""}
+            on press -> SubmitSearch
+          >
+            <icon name="search"/>
+          </button>
+        </view>
+      </view>
+      {#if view.notice is Some(message)}
+        <NoticeBar
+          message={message}
+          on Dismissed -> notice_controls.DismissNotice
+        />
+      {:else}
+        <view/>
+      {/if}
+      {#if view.authority is Authority::Loading}
+        <view class="fill-center">
+          <text class="muted">Loading Explore…</text>
+        </view>
+      {:else}
+        {#if view.authority is Authority::Failed {
+          ..,
+        }}
+          <view class="fill-center">
+            <text class="muted">Search isn't available.</text>
+          </view>
+        {:else}
+          {#if view.authority is Authority::Ready {
+            data: data,
+          }}
+            <scroll class="search-scroll">
+              {#if view.search_status is SearchStatus::Explore}
+                <view class="explore-grid">
+                  {#each data.explore_tiles as tile (tile.post)}
+                    <region
+                      label={tile.image.alt}
+                      on activate -> OpenPost(tile.post)
+                    >
+                      <img
+                        class="grid-tile"
+                        src={tile.image.src}
+                        alt={tile.image.alt}
+                      />
+                    </region>
+                  {/each}
+                </view>
+              {:else}
+                {#if view.search_status is SearchStatus::Searching}
+                  <view class="fill-center">
+                    <text class="muted">Searching…</text>
+                  </view>
+                {:else}
+                  {#if view.search_status is SearchStatus::Results}
+                    <view
+                      role="list"
+                      class="connection-list"
+                    >
+                      {#each data.search_people as person (person.user.id)}
+                        <ConnectionRow
+                          person={person}
+                          following={effective_follow(person.viewer_follows, view.follow_overlay, person.user.id)}
+                          pending={view.follow_pending.contains(person.user.id)}
+                          on ProfileOpened -> OpenProfile(event.user)
+                          on FollowToggled -> ToggleFollow(event.user, event.following)
+                        />
+                      {/each}
+                    </view>
+                  {:else}
+                    <view class="fill-center stack-sm">
+                      <text class="title">No results</text>
+                      <text class="muted">Try another username.</text>
+                    </view>
+                  {/if}
+                {/if}
+              {/if}
+            </scroll>
+          {/if}
+        {/if}
+      {/if}
+    </view>
+    <BottomNav
+      current={Section::Search}
+      on FeedSelected -> SelectTab(Section::Feed)
+      on SearchSelected -> SelectTab(Section::Search)
+      on CreateSelected -> SelectTab(Section::Create)
+      on ReelsSelected -> SelectTab(Section::Reels)
+      on ProfileSelected -> SelectTab(Section::Profile)
+    />
+  </view>
+}

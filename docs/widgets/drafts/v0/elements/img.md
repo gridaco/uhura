@@ -322,4 +322,4 @@ Historical implementation and research references:
 - [Play provider asset resolution](../../../../../examples/instagram/client/providers/spock.ts)
 - [Projection renderer tests](../../../../../web/src/renderer/projection.test.ts)
 - [Asset resolution tests](../../../../../web/src/play/tests/assets.test.ts)
-- [Current Instagram image composition](../../../../../examples/instagram/client/ui.uhura)
+- [Maintained Instagram image composition](../../../../../examples/instagram/client/components/post-card.uhura)

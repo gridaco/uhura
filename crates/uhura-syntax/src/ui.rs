@@ -145,15 +145,10 @@ impl UiParser<'_> {
         }
 
         let target = match &mut node.kind {
-            UiNodeKind::Element(element) if element.name.kind == UiNameKind::Native => {
-                Some(&mut element.annotations)
-            }
+            UiNodeKind::Element(element) => Some(&mut element.annotations),
             UiNodeKind::If(value) => Some(&mut value.annotations),
             UiNodeKind::Each(value) => Some(&mut value.annotations),
-            UiNodeKind::Text(_)
-            | UiNodeKind::Comment(_)
-            | UiNodeKind::Interpolation(_)
-            | UiNodeKind::Element(_) => None,
+            UiNodeKind::Text(_) | UiNodeKind::Comment(_) | UiNodeKind::Interpolation(_) => None,
         };
 
         if let Some(target) = target {
@@ -447,7 +442,7 @@ impl UiParser<'_> {
             }
 
             let before = self.position;
-            attributes.push(self.parse_attribute());
+            attributes.push(self.parse_attribute(name.kind));
             if self.position == before {
                 self.bump();
             }
@@ -505,9 +500,12 @@ impl UiParser<'_> {
         )
     }
 
-    fn parse_attribute(&mut self) -> UiAttribute {
+    fn parse_attribute(&mut self, element_kind: UiNameKind) -> UiAttribute {
         let start = self.absolute();
-        let name = self.name(false, "attribute name");
+        let name = match element_kind {
+            UiNameKind::Native => self.name(false, "attribute name"),
+            UiNameKind::Component => self.component_prop_name("component prop name"),
+        };
         if name.text == "on" {
             if !self.skip_whitespace() {
                 self.error(
@@ -515,7 +513,19 @@ impl UiParser<'_> {
                     Span::empty(self.identity.file, self.absolute()),
                 );
             }
-            let event = self.name(false, "semantic event name");
+            // UpperCamel tags are not necessarily user components: standard
+            // extensions such as `<Link>` also use this spelling and expose
+            // lowercase semantic events. Parse both identifier domains here;
+            // checked element resolution decides whether the event is a
+            // standard-element event or an exact component emit variant.
+            let event = self.name(
+                element_kind == UiNameKind::Component,
+                if element_kind == UiNameKind::Component {
+                    "semantic event or emitted variant name"
+                } else {
+                    "semantic event name"
+                },
+            );
             self.skip_whitespace();
             if !self.eat_str("->") {
                 self.error(
@@ -898,6 +908,58 @@ impl UiParser<'_> {
         UiName {
             text: self.source[start..self.position].to_string(),
             kind,
+            span: Span::new(self.identity.file, absolute_start, self.absolute()),
+        }
+    }
+
+    fn component_prop_name(&mut self, context: &str) -> UiName {
+        let start = self.position;
+        let absolute_start = self.absolute();
+        if !self.peek().is_some_and(|value| value.is_ascii_lowercase()) {
+            self.error(
+                format!("expected {context} (lower_snake_case)"),
+                Span::empty(self.identity.file, absolute_start),
+            );
+            if !self.is_eof() {
+                self.bump();
+            }
+            return UiName {
+                text: self.source[start..self.position].to_string(),
+                kind: UiNameKind::Native,
+                span: Span::new(self.identity.file, absolute_start, self.absolute()),
+            };
+        }
+
+        self.bump();
+        while self
+            .peek()
+            .is_some_and(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
+        {
+            self.bump();
+        }
+        while self.peek() == Some('_') {
+            self.bump();
+            if !self
+                .peek()
+                .is_some_and(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
+            {
+                self.error(
+                    format!("{context} cannot end a segment with `_`"),
+                    Span::new(self.identity.file, absolute_start, self.absolute()),
+                );
+                break;
+            }
+            while self
+                .peek()
+                .is_some_and(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
+            {
+                self.bump();
+            }
+        }
+
+        UiName {
+            text: self.source[start..self.position].to_string(),
+            kind: UiNameKind::Native,
             span: Span::new(self.identity.file, absolute_start, self.absolute()),
         }
     }

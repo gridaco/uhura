@@ -292,6 +292,55 @@ test("strictly decodes the same machine graph artifact consumed by Play", () => 
   );
 });
 
+test("keeps generated provenance and evidence-only sources in their honest inventories", () => {
+  const state = stateFixture();
+  const authoredHash = "a".repeat(64);
+  const generatedHash = "b".repeat(64);
+  const evidenceHash = "c".repeat(64);
+  state.render!.machine.sources = [{
+    path: "web.uhura",
+    sha256: authoredHash,
+    bytes: 100,
+  }, {
+    path: "evidence.uhura",
+    sha256: evidenceHash,
+    bytes: 50,
+  }];
+  state.render!.machine.provenance.sources = [{
+    source: 0,
+    package: "example@1",
+    module: "web",
+    path: "web.uhura",
+    sha256: authoredHash,
+    bytes: 100,
+  }, {
+    source: 1,
+    package: "example@1",
+    module: "framework::application",
+    path: ".uhura/generated/web-app/application.uhura",
+    sha256: generatedHash,
+    bytes: 80,
+  }];
+
+  const decoded = decodeEditorState(state);
+  assert.deepEqual(decoded.render?.machine?.sources, [{
+    path: "web.uhura",
+    sha256: authoredHash,
+    bytes: 100,
+  }, {
+    path: "evidence.uhura",
+    sha256: evidenceHash,
+    bytes: 50,
+  }]);
+  assert.equal(decoded.render?.machine?.provenance.sources.length, 2);
+
+  state.render!.machine.sources[0].sha256 = "d".repeat(64);
+  assert.throws(
+    () => decodeEditorState(state),
+    /overlapping source paths/u,
+  );
+});
+
 test("rejects every retired Editor view and structural anchor encoding", () => {
   const oldProtocol = stateFixture();
   oldProtocol.protocol = "uhura-editor-state/4";

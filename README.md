@@ -19,6 +19,8 @@ to authoritative data and operations.
 
 - A closed, checkable language for deterministic state machines.
 - Optional checked Web presentations, semantic events, and surfaces.
+- An opt-in Web application topology with checked file routes and pure typed
+  UI components.
 - Deterministic reactions, checkpoints, evidence, and interaction traces.
 - Typed ports admitted against exact adapter ownership and contract identities.
 - A read-only Editor for browsing checked previews.
@@ -116,8 +118,8 @@ these references provide the current evidence:
 
 - [Uhura 0.4 incubation candidate](docs/spec/drafts/0.4/) consolidates the
   active design: a source-neutral transaction kernel, Rust-shaped
-  machine source, Svelte-shaped `ui`, and modular source that lowers to one
-  global machine IR.
+  machine source, Svelte-shaped `ui`, pure presentation composition, and
+  modular source that lowers to one global machine IR.
 - [Language necessity and surface reuse](docs/studies/language-necessity-and-surface-reuse.md)
   asks whether Uhura needs an independently owned language at all.
 - [Program harnesses](examples/programs/README.md) provide language-neutral

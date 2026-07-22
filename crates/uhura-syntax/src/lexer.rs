@@ -416,14 +416,35 @@ fn ui_header_open(tokens: &[Token], start: usize) -> Option<usize> {
         return None;
     }
     index += 1;
-    if !matches!(
+
+    if matches!(
         tokens.get(index)?.kind,
         TokenKind::Identifier(ref value) if value == "for"
     ) {
-        return None;
+        return machine_ui_header_open(tokens, index + 1);
     }
-    index += 1;
 
+    if tokens.get(index)?.kind == TokenKind::LParen {
+        let close = matching_delimiter(tokens, index, TokenKind::LParen, TokenKind::RParen)?;
+        index = close + 1;
+        if matches!(
+            tokens.get(index)?.kind,
+            TokenKind::Identifier(ref value) if value == "emits"
+        ) {
+            index += 1;
+            if tokens.get(index)?.kind != TokenKind::LBrace {
+                return None;
+            }
+            let close = matching_delimiter(tokens, index, TokenKind::LBrace, TokenKind::RBrace)?;
+            index = close + 1;
+        }
+        return (tokens.get(index)?.kind == TokenKind::LBrace).then_some(index);
+    }
+
+    None
+}
+
+fn machine_ui_header_open(tokens: &[Token], mut index: usize) -> Option<usize> {
     let machine_start = index;
     while !matches!(
         tokens.get(index)?.kind,
@@ -454,6 +475,31 @@ fn ui_header_open(tokens: &[Token], start: usize) -> Option<usize> {
     }
     index += 1;
     (tokens.get(index)?.kind == TokenKind::LBrace).then_some(index)
+}
+
+fn matching_delimiter(
+    tokens: &[Token],
+    open: usize,
+    open_kind: TokenKind,
+    close_kind: TokenKind,
+) -> Option<usize> {
+    if tokens.get(open)?.kind != open_kind {
+        return None;
+    }
+    let mut depth = 0u32;
+    for (index, token) in tokens.iter().enumerate().skip(open) {
+        if token.kind == open_kind {
+            depth += 1;
+        } else if token.kind == close_kind {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index);
+            }
+        } else if token.kind == TokenKind::Eof {
+            return None;
+        }
+    }
+    None
 }
 
 fn find_ui_body_close(source: &str, mut position: usize) -> Option<usize> {

@@ -1,0 +1,86 @@
+use uhura::ui;
+use crate::components::notice_bar::NoticeBar;
+use crate::instagram::{Authority, Instagram};
+use crate::presentation::story_for_page;
+
+pub ui StoryPage for Instagram(view) {
+  <view class="screen instagram-app">
+    <view class="screen story-page">
+      {#if view.notice is Some(message)}
+        <NoticeBar
+          message={message}
+          on Dismissed -> notice_controls.DismissNotice
+        />
+      {:else}
+        <view/>
+      {/if}
+      {#if view.authority is Authority::Ready {
+        data: data,
+      }}
+        <view class="story-stage">
+          <img
+            class="story-image"
+            src={story_for_page(data, view.page).image.src}
+            alt={story_for_page(data, view.page).image.alt}
+          />
+          <view class="story-progress">
+            {#each story_for_page(data, view.page).progress as segment (segment.id)}
+              <view class={if segment.viewed {
+                "story-segment viewed"
+              } else {
+                "story-segment"
+              }}/>
+            {/each}
+          </view>
+          <view class="story-head">
+            <img
+              class="avatar"
+              src={story_for_page(data, view.page).author.avatar.src}
+              alt={story_for_page(data, view.page).author.avatar.alt}
+            />
+            <text class="username">{story_for_page(data, view.page).author.username}</text>
+            <text>{story_for_page(data, view.page).posted_label}</text>
+            <button
+              label="Close story"
+              on press -> GoBack
+            >
+              <icon name="x"/>
+            </button>
+          </view>
+          <text class="story-caption">{story_for_page(data, view.page).caption}</text>
+          <view class="story-hit-zones">
+            {#if story_for_page(data, view.page).previous is Some(previous)}
+              <button
+                label="Previous story"
+                on press -> OpenStory(previous)
+              >
+                <text>Previous</text>
+              </button>
+            {:else}
+              <view/>
+            {/if}
+            {#if story_for_page(data, view.page).next is Some(next)}
+              <button
+                label="Next story"
+                on press -> OpenStory(next)
+              >
+                <text>Next</text>
+              </button>
+            {:else}
+              <button
+                label="Close story"
+                on press -> GoBack
+              >
+                <text>Close</text>
+              </button>
+            {/if}
+          </view>
+        </view>
+      {:else}
+        <view class="fill-center">
+          <text class="muted">Loading story…</text>
+        </view>
+      {/if}
+    </view>
+  </view>
+}

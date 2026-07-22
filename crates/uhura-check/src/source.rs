@@ -639,13 +639,15 @@ fn link_composed_package_source(
             .or_insert_with(|| declaration.clone());
     }
 
-    // Parts and UI declarations are source-composition inputs, not checker
-    // module exports. Their source imports have already served resolution and
-    // must not leak into the aggregate kernel linker.
+    // Parts are source-composition inputs, not checker module exports. Their
+    // source imports have already served composition and must not leak into
+    // the aggregate kernel linker. Public pure UI components, by contrast,
+    // are ordinary checked exports: keep those imports so dependency-owned
+    // components can participate in the same typed, acyclic call graph.
     resolution.external_imports.retain(|identity, _| {
         declarations
             .get(identity)
-            .is_none_or(|declaration| declaration.kind != "part" && declaration.kind != "ui")
+            .is_none_or(|declaration| declaration.kind != "part")
     });
 
     // A copied public Part body may reference another public declaration from
@@ -758,9 +760,10 @@ fn build_package_graph_provenance(
             &modules, references,
         )
         .map_err(|error| error.to_string())?;
-        // The current Editor source inventory contains only root-package
-        // files. Dependency annotations stay package-local until that
-        // inventory becomes package-qualified as well.
+        // The authoring projection is deliberately root-owned: dependency
+        // sources remain visible through whole-graph provenance and host
+        // source inventory, but dependency docs and annotations are not
+        // presented as editable metadata of the consuming project.
         if package.package == root_package {
             authoring.append(artifacts.authoring);
         }
@@ -2509,6 +2512,60 @@ impl<'a> ProjectAdapter<'a> {
         structs.extend(self.resolution.external_structs.clone());
         variants.extend(self.resolution.external_variants.clone());
 
+        let known_modules = self
+            .shape_sources
+            .iter()
+            .map(|source| source.identity.module.clone())
+            .collect::<BTreeSet<_>>();
+        let evidence_modules = self
+            .sources
+            .iter()
+            .filter(|source| {
+                source.declarations.iter().any(|declaration| {
+                    matches!(
+                        declaration.kind,
+                        uhura_syntax::ast::DeclarationKind::Scenario(_)
+                            | uhura_syntax::ast::DeclarationKind::Example(_)
+                            | uhura_syntax::ast::DeclarationKind::Checkpoint(_)
+                    )
+                })
+            })
+            .map(|source| source.identity.module.clone())
+            .collect::<BTreeSet<_>>();
+        let mut evidence_routes = BTreeMap::new();
+        for source in self.sources {
+            for declaration in &source.declarations {
+                let (name, kind) = match &declaration.kind {
+                    uhura_syntax::ast::DeclarationKind::Scenario(value) => {
+                        (&value.name, EvidenceRouteKind::Scenario)
+                    }
+                    uhura_syntax::ast::DeclarationKind::Checkpoint(value) => {
+                        (&value.name, EvidenceRouteKind::Checkpoint)
+                    }
+                    uhura_syntax::ast::DeclarationKind::Example(value) => {
+                        (&value.name, EvidenceRouteKind::Example)
+                    }
+                    _ => continue,
+                };
+                let lowered = self
+                    .resolution
+                    .modules
+                    .get(&source.identity.module)
+                    .and_then(|module| module.bindings.get(&name.text))
+                    .cloned()
+                    .unwrap_or_else(|| name.text.clone());
+                evidence_routes.insert(
+                    (source.identity.module.clone(), name.text.clone()),
+                    EvidenceRoute { kind, lowered },
+                );
+            }
+        }
+        let evidence_resolution = EvidenceResolution {
+            routes: evidence_routes,
+            modules: evidence_modules,
+            known_modules,
+        };
+
         let mut ordered = self.sources.iter().collect::<Vec<_>>();
         ordered.sort_by(|left, right| {
             left.identity
@@ -2555,6 +2612,7 @@ impl<'a> ProjectAdapter<'a> {
                 scoped_structs,
                 scoped_variants,
                 private_functions,
+                evidence_resolution.clone(),
             );
             declarations.extend(
                 source
@@ -2949,6 +3007,27 @@ struct Adapter<'a> {
     inlining: Vec<String>,
     inline_private_calls: bool,
     pure_temporary: u64,
+    evidence_resolution: EvidenceResolution,
+}
+
+#[derive(Clone, Debug)]
+struct EvidenceResolution {
+    routes: BTreeMap<(String, String), EvidenceRoute>,
+    modules: BTreeSet<String>,
+    known_modules: BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EvidenceRouteKind {
+    Scenario,
+    Checkpoint,
+    Example,
+}
+
+#[derive(Clone, Debug)]
+struct EvidenceRoute {
+    kind: EvidenceRouteKind,
+    lowered: String,
 }
 
 impl<'a> Adapter<'a> {
@@ -2958,6 +3037,7 @@ impl<'a> Adapter<'a> {
         structs: BTreeMap<String, RecordShape>,
         variants: BTreeMap<(String, String), RecordShape>,
         private_functions: BTreeMap<String, uhura_syntax::ast::FunctionDeclaration>,
+        evidence_resolution: EvidenceResolution,
     ) -> Self {
         Self {
             source,
@@ -2969,6 +3049,7 @@ impl<'a> Adapter<'a> {
             inlining: Vec::new(),
             inline_private_calls: false,
             pure_temporary: 0,
+            evidence_resolution,
         }
     }
 
@@ -3079,6 +3160,16 @@ impl<'a> Adapter<'a> {
                 .presentation
                 .as_ref()
                 .map(|name| self.resolved_name(name)),
+            arguments: value.arguments.as_ref().map(|arguments| {
+                arguments
+                    .iter()
+                    .map(|argument| ast::EvidenceArgument {
+                        name: self.name(&argument.name),
+                        value: self.expr(&argument.value, &ExprEnv::default()),
+                        span: self.span(argument.span),
+                    })
+                    .collect()
+            }),
             kind: value.kind.map(|kind| match kind {
                 uhura_syntax::ast::EvidencePresentationKind::Page => {
                     ast::EvidencePresentationKind::Page
@@ -3096,9 +3187,106 @@ impl<'a> Adapter<'a> {
         }
     }
 
-    fn evidence_reference(&self, value: &uhura_syntax::ast::EvidenceReference) -> ast::EvidenceRef {
+    fn evidence_reference(
+        &mut self,
+        value: &uhura_syntax::ast::EvidenceReference,
+    ) -> ast::EvidenceRef {
+        if value.root == uhura_syntax::ast::EvidenceReferenceRoot::Local {
+            return ast::EvidenceRef {
+                path: self.resolved_path(&value.path),
+                span: self.span(value.span),
+            };
+        }
+
+        let parts = value
+            .path
+            .iter()
+            .map(|part| part.text.as_str())
+            .collect::<Vec<_>>();
+        let mut candidates = Vec::<Vec<ast::Name>>::new();
+        if parts.len() >= 2 {
+            let module = parts[..parts.len() - 1].join("::");
+            let declaration = parts[parts.len() - 1];
+            if let Some(route) = self
+                .evidence_resolution
+                .routes
+                .get(&(module, declaration.to_owned()))
+                && route.kind == EvidenceRouteKind::Checkpoint
+            {
+                candidates.push(vec![ast::Spanned::new(
+                    route.lowered.clone(),
+                    self.span(value.path[parts.len() - 1].span),
+                )]);
+            }
+        }
+        if parts.len() >= 3 {
+            let module = parts[..parts.len() - 2].join("::");
+            let scenario = parts[parts.len() - 2];
+            if let Some(route) = self
+                .evidence_resolution
+                .routes
+                .get(&(module, scenario.to_owned()))
+                && route.kind == EvidenceRouteKind::Scenario
+            {
+                candidates.push(vec![
+                    ast::Spanned::new(
+                        route.lowered.clone(),
+                        self.span(value.path[parts.len() - 2].span),
+                    ),
+                    self.name(&value.path[parts.len() - 1]),
+                ]);
+            }
+        }
+        if candidates.len() == 1 {
+            return ast::EvidenceRef {
+                path: candidates.pop().expect("one evidence route"),
+                span: self.span(value.span),
+            };
+        }
+
+        let rule;
+        let message;
+        if candidates.len() > 1 {
+            rule = "uhura-0.4/ambiguous-evidence-reference";
+            message = "cross-module evidence reference is ambiguous between a checkpoint and a scenario pin; use distinct declaration names".to_string();
+        } else {
+            let possible_modules = [
+                (parts.len() >= 2).then(|| parts[..parts.len() - 1].join("::")),
+                (parts.len() >= 3).then(|| parts[..parts.len() - 2].join("::")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<BTreeSet<_>>();
+            if possible_modules.iter().any(|module| {
+                self.evidence_resolution.known_modules.contains(module)
+                    && !self.evidence_resolution.modules.contains(module)
+            }) {
+                rule = "uhura-0.4/evidence-reference-core-module";
+                message = "cross-module evidence references may target only modules admitted by `[evidence.modules]`, not core modules".to_string();
+            } else if possible_modules
+                .iter()
+                .all(|module| !self.evidence_resolution.known_modules.contains(module))
+            {
+                rule = "uhura-0.4/unknown-evidence-module";
+                message = format!(
+                    "cross-module evidence reference names no admitted evidence module in `{}`",
+                    parts.join("::")
+                );
+            } else {
+                rule = "uhura-0.4/unknown-cross-evidence-reference";
+                message = format!(
+                    "cross-module evidence reference `{}` names neither a checkpoint nor a scenario pin",
+                    parts.join("::")
+                );
+            }
+        }
+        self.diagnostics
+            .push(error(codes::EVIDENCE, rule, message, self.span(value.span)));
         ast::EvidenceRef {
-            path: self.resolved_path(&value.path),
+            path: vec![ast::Spanned::new(
+                "__invalid_evidence_reference".into(),
+                self.span(value.span),
+            )],
             span: self.span(value.span),
         }
     }

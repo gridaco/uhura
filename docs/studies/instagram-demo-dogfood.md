@@ -11,11 +11,14 @@ Instagram product truth into Uhura.
 > driver, projection topology, and navigation forms below describe the retired
 > v0 spike. The maintained Instagram client is now one canonical Uhura program
 > with [`machine.uhura`](../../examples/instagram/client/machine.uhura),
-> [`ui.uhura`](../../examples/instagram/client/ui.uhura),
-> [`evidence.uhura`](../../examples/instagram/client/evidence.uhura), and an
-> explicit [`host.toml`](../../examples/instagram/client/host.toml). The
-> product findings remain useful evidence; the old implementation vocabulary
-> is not current behavior.
+> an opt-in [`app/`](../../examples/instagram/client/app/) plus
+> [`components/`](../../examples/instagram/client/components/) and
+> [`surfaces/`](../../examples/instagram/client/surfaces/) tree, sibling
+> `*.examples.uhura` registrations plus shared
+> [evidence scenarios](../../examples/instagram/client/evidence/), and an explicit
+> [`host.toml`](../../examples/instagram/client/host.toml). The product findings
+> remain useful evidence; the old implementation vocabulary is not current
+> behavior.
 
 ## Outcome and boundary
 

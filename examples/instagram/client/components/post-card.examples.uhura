@@ -1,0 +1,48 @@
+use crate::components::post_card::PostCard;
+use crate::example_values::{POST_CARD_HIDE_OPEN_LINK, POST_CARD_LIKED, POST_CARD_LIKE_PENDING, POST_CARD_LIKE_SETTLED, POST_CARD_NOT_LIKED, POST_CARD_NOT_SAVED, POST_CARD_SAVED, POST_CARD_SAVE_PENDING, POST_CARD_SAVE_SETTLED};
+use crate::instagram::{LENA_GLAZE, MARCO_BAJA, NILS_AURORA};
+
+example post_card_image for PostCard(
+  post: LENA_GLAZE,
+  liked: POST_CARD_NOT_LIKED,
+  like_pending: POST_CARD_LIKE_SETTLED,
+  saved: POST_CARD_NOT_SAVED,
+  save_pending: POST_CARD_SAVE_SETTLED,
+  show_open: POST_CARD_HIDE_OPEN_LINK,
+) as component default = crate::scenarios::post_card_image_scenario::frame;
+
+example post_card_carousel_liked for PostCard(
+  post: MARCO_BAJA,
+  liked: POST_CARD_LIKED,
+  like_pending: POST_CARD_LIKE_SETTLED,
+  saved: POST_CARD_SAVED,
+  save_pending: POST_CARD_SAVE_SETTLED,
+  show_open: POST_CARD_HIDE_OPEN_LINK,
+) as component = crate::scenarios::post_card_carousel_scenario::frame;
+
+example post_card_video for PostCard(
+  post: NILS_AURORA,
+  liked: POST_CARD_NOT_LIKED,
+  like_pending: POST_CARD_LIKE_SETTLED,
+  saved: POST_CARD_SAVED,
+  save_pending: POST_CARD_SAVE_SETTLED,
+  show_open: POST_CARD_HIDE_OPEN_LINK,
+) as component note "native video with a fixture MP4, poster, accessible label, and controls" = crate::scenarios::post_card_video_scenario::frame;
+
+example post_card_like_pending for PostCard(
+  post: LENA_GLAZE,
+  liked: POST_CARD_LIKED,
+  like_pending: POST_CARD_LIKE_PENDING,
+  saved: POST_CARD_NOT_SAVED,
+  save_pending: POST_CARD_SAVE_SETTLED,
+  show_open: POST_CARD_HIDE_OPEN_LINK,
+) as component note "busy heart during the optimistic window" = crate::scenarios::post_card_like_pending_scenario::frame;
+
+example post_card_save_pending for PostCard(
+  post: LENA_GLAZE,
+  liked: POST_CARD_NOT_LIKED,
+  like_pending: POST_CARD_LIKE_SETTLED,
+  saved: POST_CARD_SAVED,
+  save_pending: POST_CARD_SAVE_PENDING,
+  show_open: POST_CARD_HIDE_OPEN_LINK,
+) as component note "optimistic bookmark while the private saved-library edge settles" = crate::scenarios::post_card_save_pending_scenario::frame;

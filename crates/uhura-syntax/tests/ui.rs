@@ -1,4 +1,4 @@
-use uhura_syntax::ast::{DeclarationKind, UiAttribute, UiNameKind, UiNodeKind};
+use uhura_syntax::ast::{DeclarationKind, UiAttribute, UiBinding, UiNameKind, UiNodeKind};
 use uhura_syntax::{FormatError, ParseDiagnosticKind, SourceIdentity, TokenKind, format, parse};
 
 const FEED: &str = include_str!("fixtures/feed-ui.uhura");
@@ -35,8 +35,15 @@ fn parses_the_complete_ui_profile_losslessly_with_exact_spans() {
         panic!("expected contextual UI declaration");
     };
     assert_eq!(ui.name.text, "FeedWeb");
-    assert_eq!(ui.machine.segments[0].name.text, "Feed");
-    assert_eq!(ui.observation.text, "view");
+    let UiBinding::Machine {
+        machine,
+        observation,
+    } = &ui.binding
+    else {
+        panic!("expected a machine-bound UI declaration");
+    };
+    assert_eq!(machine.segments[0].name.text, "Feed");
+    assert_eq!(observation.text, "view");
     let body_start = FEED.find("Feed(view) {").unwrap() + "Feed(view) {".len();
     assert_eq!(
         &FEED[ui.body.span.start as usize..ui.body.span.end as usize],
@@ -76,8 +83,138 @@ fn parses_the_complete_ui_profile_losslessly_with_exact_spans() {
         .iter()
         .any(|attribute| matches!(attribute, UiAttribute::Boolean { name, .. } if name.text == "featured")));
     assert!(component.attributes.iter().any(
-        |attribute| matches!(attribute, UiAttribute::Event { event, .. } if event.text == "like")
+        |attribute| matches!(attribute, UiAttribute::Event { event, .. } if event.text == "Like")
     ));
+}
+
+#[test]
+fn parses_and_formats_runtime_pure_ui_components() {
+    let source = r#"use uhura::ui;
+
+pub ui ProfileCard(user_id: UserId, display_name: Text) emits {
+  OpenProfile(id: UserId),
+  Dismiss,
+} {
+  <article data-user-id={user_id}>
+    <Avatar image_url={avatar_url(user_id)} on LoadFailed -> AvatarFailed(user_id) />
+    <button on click -> Dismiss>{display_name}</button>
+  </article>
+}
+"#;
+    let parsed = parse_clean("pure-component.uhura", source);
+    assert_eq!(
+        parsed
+            .tokens
+            .iter()
+            .filter(|token| token.kind == TokenKind::UiBody)
+            .count(),
+        1,
+    );
+    let DeclarationKind::Ui(ui) = &parsed.module.declarations[0].kind else {
+        panic!("expected UI declaration");
+    };
+    let UiBinding::Component { parameters, emits } = &ui.binding else {
+        panic!("expected runtime-pure component declaration");
+    };
+    assert_eq!(
+        parameters
+            .iter()
+            .map(|parameter| parameter.name.text.as_str())
+            .collect::<Vec<_>>(),
+        ["user_id", "display_name"],
+    );
+    assert_eq!(
+        emits
+            .variants
+            .iter()
+            .map(|variant| variant.name.text.as_str())
+            .collect::<Vec<_>>(),
+        ["OpenProfile", "Dismiss"],
+    );
+
+    let UiNodeKind::Element(article) = &ui.body.nodes[0].kind else {
+        panic!("expected article root");
+    };
+    let avatar = article
+        .children
+        .iter()
+        .find_map(|node| match &node.kind {
+            UiNodeKind::Element(element) if element.name.text == "Avatar" => Some(element),
+            _ => None,
+        })
+        .expect("component call");
+    assert!(avatar.attributes.iter().any(
+        |attribute| matches!(attribute, UiAttribute::Expression { name, .. } if name.text == "image_url")
+    ));
+    assert!(avatar.attributes.iter().any(
+        |attribute| matches!(attribute, UiAttribute::Event { event, .. } if event.text == "LoadFailed" && event.kind == UiNameKind::Component)
+    ));
+
+    let formatted = format(&parsed.module).expect("pure component formats");
+    assert!(formatted.contains(
+        "pub ui ProfileCard(user_id: UserId, display_name: Text) emits {\n  OpenProfile(id: UserId),\n  Dismiss,\n} {"
+    ));
+    assert!(formatted.contains("image_url={avatar_url(user_id)}"));
+    assert!(formatted.contains("on LoadFailed -> AvatarFailed(user_id)"));
+    assert!(formatted.contains("<button on click -> Dismiss>"));
+    let reparsed = parse_clean("pure-component.formatted.uhura", &formatted);
+    assert_eq!(
+        format(&reparsed.module).expect("formatted component remains formatable"),
+        formatted,
+    );
+}
+
+#[test]
+fn pure_ui_components_may_omit_the_emitted_event_protocol() {
+    let source = "pub ui Label(value: Text) {<span>{value}</span>}\n";
+    let parsed = parse_clean("component-without-emits.uhura", source);
+    let DeclarationKind::Ui(ui) = &parsed.module.declarations[0].kind else {
+        panic!("expected UI declaration");
+    };
+    let UiBinding::Component { parameters, emits } = &ui.binding else {
+        panic!("expected component declaration");
+    };
+    assert_eq!(parameters.len(), 1);
+    assert!(emits.variants.is_empty());
+    assert_eq!(
+        format(&parsed.module).expect("component formats"),
+        "pub ui Label(value: Text) {\n  <span>{value}</span>\n}\n",
+    );
+}
+
+#[test]
+fn component_and_native_attribute_name_grammars_remain_distinct() {
+    let valid = r#"pub ui Row(value: Text) emits {
+  Selected(value: Text),
+} {
+  <ItemRow item_value={value} on Selected -> Selected(value) />
+  <button aria-label="Select" on press -> Selected(value) />
+}
+"#;
+    parse_clean("attribute-domains.uhura", valid);
+
+    let native_snake_case = parse(
+        identity("native-snake-case.uhura"),
+        "pub ui Row() {<button aria_label=\"Select\" />}\n",
+    );
+    assert!(native_snake_case.diagnostics.iter().any(|diagnostic| {
+        diagnostic.kind == ParseDiagnosticKind::InvalidUi
+            && diagnostic.message.contains("expected attribute name")
+    }));
+
+    let native_upper_event = parse(
+        identity("native-upper-event.uhura"),
+        "pub ui Row() {<button on Press -> Submit />}\n",
+    );
+    assert!(native_upper_event.diagnostics.iter().any(|diagnostic| {
+        diagnostic.kind == ParseDiagnosticKind::InvalidUi
+            && diagnostic.message.contains("expected semantic event name")
+    }));
+
+    parse_clean(
+        "upper-tag-lower-event.uhura",
+        "pub ui Row() {<Link routes={ROUTES} to={Location::Home} on follow -> Submit />}\n",
+    );
 }
 
 #[test]
@@ -88,7 +225,7 @@ fn canonical_ui_format_is_parseable_and_idempotent() {
     assert!(formatted.contains("{#if view.loading}"));
     assert!(formatted.contains("{:else}"));
     assert!(formatted.contains("{#each view.posts as Post {"));
-    assert!(formatted.contains("on like -> ToggleLike(id)"));
+    assert!(formatted.contains("on Like -> ToggleLike(id)"));
     assert!(formatted.contains("featured"));
     assert!(formatted.contains("<!-- one stable keyed card -->"));
     assert!(formatted.contains(">Refresh</button>"));

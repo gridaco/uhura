@@ -1,0 +1,13 @@
+use crate::app::search::SearchPage;
+
+example search_loading for SearchPage as page = crate::scenarios::search_loading_scenario::frame;
+
+example search_explore for SearchPage as page default note "Explore combines real people and clickable post thumbnails" = crate::scenarios::search_explore_scenario::frame;
+
+example search_searching for SearchPage as page = crate::scenarios::search_searching_scenario::frame;
+
+example search_nils_results for SearchPage as page = crate::scenarios::search_nils_results_scenario::frame;
+
+example search_no_results for SearchPage as page = crate::scenarios::search_no_results_scenario::frame;
+
+example search_empty_explore for SearchPage as page = crate::scenarios::search_empty_explore_scenario::frame;

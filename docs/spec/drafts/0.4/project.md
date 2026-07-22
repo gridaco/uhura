@@ -28,7 +28,7 @@ The project root is the directory containing `uhura.toml`.
 
 | File | Authority | Required |
 | --- | --- | --- |
-| `uhura.toml` | Language version, package identity, logical modules, dependency requirements, and optional project resources | Always |
+| `uhura.toml` | Language version, package identity, explicit logical modules, optional framework profile, dependency requirements, and project resources | Always |
 | `uhura.lock` | Exact resolved non-standard package graph and integrity | Exactly when `[dependencies]` is non-empty |
 | `host.toml` | One live deployment entry, machine configuration, presentation selection, and host adapter bindings | Only for live admission such as Play |
 
@@ -170,8 +170,16 @@ name = "examples.programs"
 version = 1
 language = "0.4"
 
+[framework]
+profile = "web-app"
+version = 1
+machine = "crate::instagram::Instagram"
+location = "crate::routing::Location"
+
 [modules]
 programs = "programs.uhura"
+instagram = "instagram.uhura"
+routing = "routing.uhura"
 "shared::notice" = "src/shared/notice.uhura"
 
 [evidence.modules]
@@ -191,8 +199,8 @@ font = "assets/brand.woff2"
 glyphs = "assets/brand.json"
 ```
 
-The allowed top-level tables are exactly `project`, `modules`, `evidence`,
-`dependencies`, `assets`, and `icons`.
+The allowed top-level tables are exactly `project`, `framework`, `modules`,
+`evidence`, `dependencies`, `assets`, and `icons`.
 
 ### `[project]`
 
@@ -204,10 +212,48 @@ The allowed top-level tables are exactly `project`, `modules`, `evidence`,
 
 There is no default package identity or language version.
 
+### `[framework]`
+
+`framework` is optional. Its omission selects the explicit project profile:
+only `[modules]` and `[evidence.modules]` establish source roles, and physical
+source paths have no application meaning.
+
+Uhura 0.4 admits exactly this first-party application profile:
+
+```toml
+[framework]
+profile = "web-app"
+version = 1
+machine = "crate::instagram::Instagram"
+location = "crate::routing::Location"
+```
+
+The table is closed and every field is required:
+
+- `profile` is the exact string `"web-app"`;
+- `version` is the positive integer `1`;
+- `machine` locates the application machine as
+  `crate::<logical-module-path>::<UpperCamelDeclaration>`; and
+- `location` locates its route-state enum using the same form.
+
+The locators are explicit configuration, not executable imports or inferred
+ownership. Both declarations must resolve inside the root package. The
+location declaration must be in a different logical module from the machine:
+the machine imports the generated route table, while the generated
+application imports both declarations. Keeping route state in an ordinary
+module therefore prevents a generated import cycle.
+
+Selecting a framework does not grant source code new effects, host authority,
+or a second state system. It deterministically expands authored application
+files into the same closed module/evidence maps accepted by the checker.
+
 ### `[modules]`
 
-`modules` is required and non-empty. It is a one-to-one map from logical
-module path to safe project-relative `.uhura` file.
+`modules` is required and non-empty, including in a framework project. It is a
+one-to-one map from logical module path to safe project-relative `.uhura`
+file. A web-app project uses it for the machine, route-state declaration, and
+any other ordinary language modules; framework-owned UI files must not also
+be listed here.
 
 Resolution rejects:
 
@@ -238,8 +284,10 @@ ResolvedSource {
 }
 ```
 
-Source contains no language or module header. A framework may generate this
-map, but the checked resolver input remains this explicit closed map.
+Source contains no language or module header. Under `web-app@1`, the project
+resolver augments this explicit map with deterministic authored UI modules
+and two generated modules before checking. The resulting effective map is
+still closed and inspectable; no runtime filesystem discovery occurs.
 
 ### `[evidence.modules]`
 
@@ -260,7 +308,57 @@ import public declarations from the resolved package plus compiler-provided
 `uhura` contracts. They cannot contribute a machine, type, value, UI
 declaration, re-export, external package authority, or host authority, and do
 not enter `MachineProgramId` or `PresentationId`. Omission is the canonical
-empty evidence set; an empty table is rejected.
+empty evidence set; an empty table is rejected. Evidence files discovered by
+the web-app profile obey the same capability rules and must not also be listed
+explicitly.
+
+### `web-app@1` discovery and generated modules
+
+When `[framework]` selects `web-app@1`, these roots acquire application
+semantics:
+
+| Authored path | Effective logical module | Required role |
+| --- | --- | --- |
+| `app/page.uhura` | `app` | exactly one public machine-bound `*Page` UI |
+| `app/a/b/page.uhura` | `app::a::b` | exactly one public machine-bound `*Page` UI |
+| `components/a/b.uhura` | `components::a::b` | exactly one public pure component UI named from `b` |
+| `surfaces/a/b.uhura` | `surfaces::a::b` | exactly one public pure component UI named from `b` |
+
+Static path segments use lowercase kebab-case and become snake-case logical
+segments. A dynamic application segment `[user]` becomes logical segment
+`param__user` and route parameter `{user}`. The doubled underscore is a
+framework sentinel that cannot result from kebab-to-snake conversion, so the
+dynamic segment cannot collide with the valid static segment `param-user`.
+The root page is mandatory.
+Components and surfaces share language semantics; their distinct roles are
+tooling taxonomy, not separate runtime kinds.
+
+A sibling evidence file uses `page.examples.uhura` for a page and
+`<name>.examples.uhura` for a component or surface. It is admitted as the
+subject's logical module below the reserved `framework::evidence` namespace;
+for example, root `app/page.examples.uhura` becomes
+`framework::evidence::app`. This keeps an ordinary `/examples` route or
+`examples` component namespace available to authors. An evidence file without
+its subject is an error.
+
+The profile rejects unrecognized `.uhura` files below its owned roots,
+duplicate effective logical modules or public declarations, ambiguous route
+match shapes, explicit/discovered overlap, malformed dynamic segments, and
+occupation of reserved generated paths. It generates exactly:
+
+| Generated logical module | Provenance path | Contents |
+| --- | --- | --- |
+| `framework::routes` | `.uhura/generated/web-app/routes.uhura` | checked `APPLICATION_ROUTES: Routes<Location>` |
+| `framework::application` | `.uhura/generated/web-app/application.uhura` | checked machine-bound `Application` selecting a page from committed `view.location` |
+
+Generated source receives normal file identity, spans, checking, provenance,
+and semantic hashing where referenced. It is marked `generated`, is not an
+authored Editor source, and is never a target of formatting or source writes.
+Its pseudo-path is diagnostic provenance rather than an on-disk requirement.
+
+Only paths inside these profile-owned roots are semantic inputs to discovery.
+Outside the opt-in profile, the same paths are ordinary physical coordinates
+and remain semantically irrelevant.
 
 ### `[dependencies]`
 
@@ -278,6 +376,10 @@ The 0.4 candidate supports only vendored path acquisition. Registry names,
 URLs, Git references, mutable channels, version ranges, and implicit global
 search are outside this contract. Adding a future acquisition kind must not
 change `PackageId`, public-name resolution, or semantic hashing.
+
+Framework profiles are root-project configuration. A vendored dependency
+manifest containing `[framework]` is rejected rather than recursively
+discovering or generating an application inside a package.
 
 Dependency aliases are local locators. Renaming an alias and updating its
 `use` sites preserves semantic IR when it resolves to the same package and
@@ -302,11 +404,15 @@ Resource paths and manifest formatting do not enter machine-program identity.
 Resolved resource content enters presentation or deployment identity only
 when the applicable profile uses it.
 
-Vendored dependency packages are source-only in Uhura 0.4. Their manifests
-must omit `[assets]` and project-local `[icons]` families; the built-in
-`lucide` default remains available without package content. Canonical logical
-resource names for acquired packages are deliberately deferred instead of
-guessing a path-based identity in this version.
+Vendored dependency packages are source-only in Uhura 0.4: the checker compiles
+the complete captured dependency source, while only explicitly imported public
+declarations are visible to another package, including pure UI components.
+They contribute no independent host, framework application, or resource
+deployment. Their manifests must omit `[assets]` and project-local `[icons]`
+families; the built-in `lucide` default remains available without package
+content. Canonical logical resource names for acquired packages are
+deliberately deferred instead of guessing a path-based identity in this
+version.
 
 ## 4. Module and package resolution
 
@@ -315,15 +421,20 @@ Resolution is closed and precedes checking:
 1. parse and validate the root `uhura.toml`;
 2. when dependencies exist, parse and validate `uhura.lock`;
 3. capture each resolved package and verify its integrity;
-4. build the exact package-alias and logical-module maps;
-5. parse all mapped source against its supplied resolved source identity;
-6. collect package-global public declarations and explicit re-exports;
-7. resolve every `use` to one declaration or standard profile feature; and
-8. pass a closed resolved declaration graph to the checker.
+4. build the explicit package-alias and logical-module maps;
+5. when selected, discover web-app subjects and generate the route/application
+   modules, rejecting any collision before checking;
+6. build the exact effective core/evidence maps and source-role metadata;
+7. parse every admitted source against its supplied resolved source identity;
+8. collect package-global public declarations and explicit re-exports;
+9. resolve every `use` to one declaration or standard profile feature; and
+10. pass one closed resolved declaration graph to the checker.
 
-Filesystem discovery, current working directory, case folding, environment
-variables, package installation state, and import execution never participate
-in resolution.
+The resolver operates on one immutable, project-relative source snapshot.
+Current working directory, environment variables, package installation state,
+and import execution never participate in resolution. Filesystem discovery is
+used only to capture that snapshot and, for an explicitly selected framework,
+to classify paths under its closed roots; it never occurs during execution.
 
 Package resolution is acyclic. This does not forbid a statically closable
 cycle among declarations or types inside the already resolved package graph.
@@ -532,6 +643,11 @@ editor and inspection artifacts use the source table and node identities.
 The compiler retains sufficient occurrences to recover module and part
 hierarchy, state ownership, handlers, dependencies, ports, invariants,
 outcomes, UI edges, and generated lowering relationships.
+
+An Editor editable-source listing excludes generated framework modules. A
+Play inspection source table is complete for its physical-source projection:
+if `graphSources` names an authored, dependency, or generated path, that path
+and byte length must occur in the same inspection artifact's source table.
 
 ## 7. Identity layers and hashing
 

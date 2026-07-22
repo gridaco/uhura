@@ -1,0 +1,21 @@
+use uhura::ui;
+use crate::instagram::ImageRef;
+
+pub ui CommentRow(avatar: ImageRef, username: Text, body: Text, posted_label: Text, pending: Bool) {
+  <view class={if pending {
+    "comment-row pending"
+  } else {
+    "comment-row"
+  }}>
+    <img
+      class="avatar"
+      src={avatar.src}
+      alt={avatar.alt}
+    />
+    <view class="comment-copy">
+      <text class="username">{username}</text>
+      <text>{body}</text>
+      <text class="muted">{posted_label}</text>
+    </view>
+  </view>
+}

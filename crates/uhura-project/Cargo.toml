@@ -1,0 +1,18 @@
+[package]
+name = "uhura-project"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+uhura-base = { workspace = true }
+uhura-check = { workspace = true }
+uhura-core = { workspace = true }
+uhura-port = { workspace = true }
+uhura-syntax = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+same-file = { workspace = true }

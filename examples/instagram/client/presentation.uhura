@@ -1,0 +1,125 @@
+use crate::instagram::{AppData, Comment, Connection, Page, Post, Profile, ProfileTab, StoryDetail, Tile, LENA_GLAZE, LENA_PROFILE, LENA_STORY};
+use crate::routing::{PostId, StoryId, UserId};
+
+pub fn post_for(data: AppData, id: PostId) -> Post {
+  match data.posts.get(id) {
+    Some(post) => post,
+    None => LENA_GLAZE,
+  }
+}
+
+pub fn profile_for(data: AppData, user: UserId) -> Profile {
+  match data.profiles.get(user) {
+    Some(profile) => profile,
+    None => LENA_PROFILE,
+  }
+}
+
+pub fn comments_for(data: AppData, post: PostId) -> Seq<Comment> {
+  match data.comments.get(post) {
+    Some(comments) => comments,
+    None => [],
+  }
+}
+
+pub fn followers_for(data: AppData, user: UserId) -> Seq<Connection> {
+  match data.followers.get(user) {
+    Some(connections) => connections,
+    None => [],
+  }
+}
+
+pub fn following_for(data: AppData, user: UserId) -> Seq<Connection> {
+  match data.following.get(user) {
+    Some(connections) => connections,
+    None => [],
+  }
+}
+
+pub fn story_for(data: AppData, story: StoryId) -> StoryDetail {
+  match data.story_details.get(story) {
+    Some(detail) => detail,
+    None => LENA_STORY,
+  }
+}
+
+pub fn effective_post_flag(source: Bool, overlay: Map<PostId, Bool>, post: PostId) -> Bool {
+  match overlay.get(post) {
+    Some(value) => value,
+    None => source,
+  }
+}
+
+pub fn effective_follow(source: Bool, overlay: Map<UserId, Bool>, user: UserId) -> Bool {
+  match overlay.get(user) {
+    Some(value) => value,
+    None => source,
+  }
+}
+
+pub fn post_for_page(data: AppData, page: Page) -> Post {
+  match page {
+    Page::Post {
+      id,
+    } => post_for(data, id),
+    _ => LENA_GLAZE,
+  }
+}
+
+pub fn profile_for_page(data: AppData, page: Page) -> Profile {
+  match page {
+    Page::Profile {
+      user,
+    } => profile_for(data, user),
+    Page::Followers {
+      user,
+    } => profile_for(data, user),
+    Page::Following {
+      user,
+    } => profile_for(data, user),
+    _ => LENA_PROFILE,
+  }
+}
+
+pub fn story_for_page(data: AppData, page: Page) -> StoryDetail {
+  match page {
+    Page::Story {
+      id,
+    } => story_for(data, id),
+    _ => LENA_STORY,
+  }
+}
+
+pub fn tiles_for(profile: Profile, tab: ProfileTab) -> Seq<Tile> {
+  match tab {
+    ProfileTab::Posts => profile.posts,
+    ProfileTab::Reels => profile.reels,
+    ProfileTab::Tagged => profile.tagged,
+    ProfileTab::Saved => profile.saved,
+  }
+}
+
+pub fn like_label(liked: Bool) -> Text {
+  if liked {
+    "Unlike"
+  } else {
+    "Like"
+  }
+}
+
+pub fn save_label(saved: Bool) -> Text {
+  if saved {
+    "Remove from saved"
+  } else {
+    "Save post"
+  }
+}
+
+pub fn profile_empty_label(tab: ProfileTab) -> Text {
+  match tab {
+    ProfileTab::Posts => "No posts yet.",
+    ProfileTab::Reels => "No reels yet.",
+    ProfileTab::Tagged => "No tagged posts yet.",
+    ProfileTab::Saved => "Posts you save will appear here.",
+  }
+}

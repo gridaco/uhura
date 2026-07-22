@@ -3,13 +3,21 @@ name = "app.instagram"
 version = 1
 language = "0.4"
 
+[framework]
+profile = "web-app"
+version = 1
+machine = "crate::instagram::Instagram"
+location = "crate::routing::Location"
+
 [modules]
+example_values = "example-values.uhura"
 instagram = "machine.uhura"
 parts = "parts.uhura"
-ui = "ui.uhura"
+presentation = "presentation.uhura"
+routing = "routing.uhura"
 
 [evidence.modules]
-previews = "evidence.uhura"
+scenarios = "evidence/scenarios.uhura"
 
 # Live instance identity, presentation, lifetime, and port bindings belong to
 # `host.toml`.

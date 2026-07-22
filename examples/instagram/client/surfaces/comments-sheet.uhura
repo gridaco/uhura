@@ -1,0 +1,82 @@
+use uhura::ui;
+use uhura::ui_surface::Surface;
+use crate::components::comment_row::CommentRow;
+use crate::instagram::{Comment, RequestId, User};
+use crate::routing::PostId;
+
+pub ui CommentsSheet(post: PostId, comments: Seq<Comment>, viewer: User, pending_comment: Option<(RequestId, Text)>, draft: Text, notice: Option<Text>) emits {
+  Dismissed,
+  DraftChanged(value: Text),
+  Submitted,
+} {
+  <Surface key={post}>
+    <view class="comments-sheet">
+      <view class="sheet-head">
+        <text class="sheet-title">Comments</text>
+        <button
+          label="Close comments"
+          on press -> Dismissed
+        >
+          <icon name="x"/>
+        </button>
+      </view>
+      {#if notice is Some(message)}
+        <view class="notice">
+          <text>{message}</text>
+        </view>
+      {:else}
+        <view/>
+      {/if}
+      <!-- @annotation Only the comment list scrolls so the title and composer remain fixed in the sheet. -->
+      <scroll class="comment-list">
+        {#if comments.size == 0 && pending_comment == None}
+          <view class="fill-center stack-sm">
+            <text class="empty-title">No comments yet</text>
+            <text class="muted">Start the conversation.</text>
+          </view>
+        {/if}
+        {#each comments as comment (comment.id)}
+          <CommentRow
+            avatar={comment.author.avatar}
+            username={comment.author.username}
+            body={comment.body}
+            posted_label={comment.posted_label}
+            pending={false}
+          />
+        {/each}
+        {#if pending_comment is Some((_, body))}
+          <CommentRow
+            avatar={viewer.avatar}
+            username={viewer.username}
+            body={body}
+            posted_label="Posting…"
+            pending={true}
+          />
+        {:else}
+          <view/>
+        {/if}
+      </scroll>
+      <view class="composer">
+        <img
+          class="avatar"
+          src={viewer.avatar.src}
+          alt={viewer.avatar.alt}
+        />
+        <textfield
+          value={draft}
+          label="Add a comment"
+          placeholder="Add a comment…"
+          disabled={pending_comment is Some(_)}
+          on change -> DraftChanged(event.text)
+        />
+        <button
+          label="Post"
+          disabled={draft == "" || pending_comment is Some(_)}
+          on press -> Submitted
+        >
+          <text>Post</text>
+        </button>
+      </view>
+    </view>
+  </Surface>
+}

@@ -7,7 +7,7 @@ use uhura_port::{
 };
 
 use super::codec::{hash, hex};
-use super::ir::{Expr, Machine, Program, SourceRef, UiAttributeValue, UiNode};
+use super::ir::{Expr, Machine, Program, SourceRef, UiAttributeValue, UiCallTargetKind, UiNode};
 use super::runtime::{
     Instance, evaluate_condition_with_locals, evaluate_with_locals, finite_values, match_pattern,
     record_map,
@@ -66,6 +66,15 @@ pub struct RenderEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventBinding {
     pub input: Expr,
+    pub locals: BTreeMap<String, Value>,
+    pub emit_mappings: Vec<EmitMapping>,
+}
+
+/// One pure component-output mapping captured by a rendered event binding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmitMapping {
+    pub emit_type: String,
+    pub bindings: BTreeMap<String, Expr>,
     pub locals: BTreeMap<String, Value>,
 }
 
@@ -134,8 +143,9 @@ impl Program {
             bindings: BTreeMap::new(),
             sources: BTreeMap::new(),
             surfaces: BTreeSet::new(),
+            bind_events: true,
         };
-        let nodes = projector.nodes(&presentation.nodes, &locals, "root")?;
+        let nodes = projector.nodes(&presentation.nodes, &locals, &[], "root")?;
         Ok(Projection {
             document: RenderDocument {
                 protocol: VIEW_PROTOCOL.into(),
@@ -149,6 +159,81 @@ impl Program {
             sources: ProjectionSources {
                 protocol: PROJECTION_SOURCES_PROTOCOL.into(),
                 presentation: presentation.id.clone(),
+                nodes: projector.sources,
+            },
+        })
+    }
+
+    /// Projects one pure UI component against an evidence snapshot context.
+    ///
+    /// This is presentation-function evaluation only: it allocates no runtime
+    /// component instance or wrapper node. The supplied machine instance is
+    /// used solely for checked pure function/type evaluation. Component emits
+    /// terminate unbound at this preview boundary, so the projection exposes
+    /// no dispatchable event bindings.
+    pub fn project_component(
+        &self,
+        instance: &Instance,
+        component_id: &str,
+        props: &[(String, Value)],
+    ) -> Result<Projection, RenderError> {
+        let component = self
+            .components
+            .get(component_id)
+            .ok_or_else(|| RenderError(format!("unknown UI component `{component_id}`")))?;
+        if props.len() != component.props.len() {
+            return Err(RenderError(format!(
+                "component `{component_id}` received {} preview props, expected {}",
+                props.len(),
+                component.props.len()
+            )));
+        }
+        let mut locals = BTreeMap::new();
+        for ((provided_name, value), (expected_name, ty)) in props.iter().zip(&component.props) {
+            if provided_name != expected_name {
+                return Err(RenderError(format!(
+                    "component `{component_id}` received preview prop `{provided_name}`, expected `{expected_name}`"
+                )));
+            }
+            let value = self
+                .machine_program
+                .canonicalize_value(ty, value)
+                .map_err(|error| RenderError(error.to_string()))?;
+            locals.insert(provided_name.clone(), value);
+        }
+        let machine = self
+            .machine_program
+            .machines
+            .get(&instance.machine)
+            .ok_or_else(|| RenderError("instance machine is absent from the program".into()))?;
+        let Value::Record(state_fields) = &instance.state else {
+            return Err(RenderError("instance state is not a record".into()));
+        };
+        let state = record_map(state_fields).map_err(|error| RenderError(error.to_string()))?;
+        let mut projector = Projector {
+            program: self,
+            machine,
+            instance,
+            state,
+            bindings: BTreeMap::new(),
+            sources: BTreeMap::new(),
+            surfaces: BTreeSet::new(),
+            bind_events: false,
+        };
+        let nodes = projector.nodes(&component.nodes, &locals, &[], "root")?;
+        Ok(Projection {
+            document: RenderDocument {
+                protocol: VIEW_PROTOCOL.into(),
+                presentation: component.id.clone(),
+                machine: instance.machine.clone(),
+                instance: instance.id.clone(),
+                sequence: instance.next_sequence.saturating_sub(1),
+                nodes,
+            },
+            bindings: projector.bindings,
+            sources: ProjectionSources {
+                protocol: PROJECTION_SOURCES_PROTOCOL.into(),
+                presentation: component.id.clone(),
                 nodes: projector.sources,
             },
         })
@@ -183,7 +268,7 @@ impl Program {
         let state = record_map(state_fields).map_err(|error| RenderError(error.to_string()))?;
         let mut locals = binding.locals.clone();
         locals.insert("event".into(), event);
-        evaluate_with_locals(
+        let mut value = evaluate_with_locals(
             &self.machine_program,
             machine,
             &instance.configuration,
@@ -191,7 +276,57 @@ impl Program {
             locals,
             &binding.input,
         )
-        .map_err(|error| RenderError(error.to_string()))
+        .map_err(|error| RenderError(error.to_string()))?;
+        for mapping in &binding.emit_mappings {
+            let Value::Variant {
+                type_id,
+                constructor,
+                fields,
+            } = value
+            else {
+                return Err(RenderError(
+                    "component event binding did not produce a declared emitted variant".into(),
+                ));
+            };
+            if type_id != mapping.emit_type {
+                return Err(RenderError(format!(
+                    "component event produced `{type_id}`, expected `{}`",
+                    mapping.emit_type
+                )));
+            }
+            let input = mapping.bindings.get(&constructor).ok_or_else(|| {
+                RenderError(format!(
+                    "component event `{constructor}` has no checked parent binding"
+                ))
+            })?;
+            let event = if fields.is_empty() {
+                Value::Unit
+            } else {
+                let fields = fields
+                    .into_iter()
+                    .map(|(name, value)| {
+                        name.map(|name| (name, value)).ok_or_else(|| {
+                            RenderError(format!(
+                                "component event `{constructor}` has an unnamed payload field"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Value::record(fields).map_err(|error| RenderError(error.to_string()))?
+            };
+            let mut locals = mapping.locals.clone();
+            locals.insert("event".into(), event);
+            value = evaluate_with_locals(
+                &self.machine_program,
+                machine,
+                &instance.configuration,
+                &state,
+                locals,
+                input,
+            )
+            .map_err(|error| RenderError(error.to_string()))?;
+        }
+        Ok(value)
     }
 }
 
@@ -203,6 +338,7 @@ struct Projector<'a> {
     bindings: BTreeMap<String, EventBinding>,
     sources: BTreeMap<String, SourceRef>,
     surfaces: BTreeSet<Vec<u8>>,
+    bind_events: bool,
 }
 
 impl Projector<'_> {
@@ -210,12 +346,13 @@ impl Projector<'_> {
         &mut self,
         nodes: &[UiNode],
         locals: &BTreeMap<String, Value>,
+        emit_mappings: &[EmitMapping],
         path: &str,
     ) -> Result<Vec<RenderNode>, RenderError> {
         let mut output = Vec::new();
         for (index, node) in nodes.iter().enumerate() {
             let node_path = format!("{path}.{index}");
-            self.node(node, locals, &node_path, &mut output)?;
+            self.node(node, locals, emit_mappings, &node_path, &mut output)?;
         }
         Ok(output)
     }
@@ -224,6 +361,7 @@ impl Projector<'_> {
         &mut self,
         node: &UiNode,
         locals: &BTreeMap<String, Value>,
+        emit_mappings: &[EmitMapping],
         path: &str,
         output: &mut Vec<RenderNode>,
     ) -> Result<(), RenderError> {
@@ -276,6 +414,9 @@ impl Projector<'_> {
                             }
                         }
                         UiAttributeValue::Event { event, input } => {
+                            if !self.bind_events {
+                                continue;
+                            }
                             let binding = event_key(&source.id, path, event);
                             if self
                                 .bindings
@@ -284,6 +425,7 @@ impl Projector<'_> {
                                     EventBinding {
                                         input: input.clone(),
                                         locals: event_binding_locals(input, locals),
+                                        emit_mappings: emit_mappings.to_vec(),
                                     },
                                 )
                                 .is_some()
@@ -344,7 +486,12 @@ impl Projector<'_> {
                     element,
                     attributes: rendered_attributes,
                     events,
-                    children: self.nodes(children, locals, &format!("{path}.children"))?,
+                    children: self.nodes(
+                        children,
+                        locals,
+                        emit_mappings,
+                        &format!("{path}.children"),
+                    )?,
                     surface,
                 });
             }
@@ -365,7 +512,12 @@ impl Projector<'_> {
                 if matches {
                     let mut scoped = locals.clone();
                     scoped.extend(bindings);
-                    output.extend(self.nodes(children, &scoped, &format!("{path}.if"))?);
+                    output.extend(self.nodes(
+                        children,
+                        &scoped,
+                        emit_mappings,
+                        &format!("{path}.if"),
+                    )?);
                 }
             }
             UiNode::Match { value, cases, .. } => {
@@ -381,6 +533,7 @@ impl Projector<'_> {
                         output.extend(self.nodes(
                             &case.children,
                             &scoped,
+                            emit_mappings,
                             &format!("{path}.case.{index}"),
                         )?);
                         matched = true;
@@ -428,10 +581,104 @@ impl Projector<'_> {
                     output.extend(self.nodes(
                         children,
                         &scoped,
+                        emit_mappings,
                         &format!("{path}.item.{}", hex(&hash("ui-key", &[identity]))),
                     )?);
                 }
             }
+            UiNode::Call {
+                target,
+                target_kind,
+                props,
+                bindings,
+                ..
+            } => match target_kind {
+                UiCallTargetKind::Component => {
+                    let component = self.program.components.get(target).ok_or_else(|| {
+                        RenderError(format!("unknown checked UI component `{target}`"))
+                    })?;
+                    if props.len() != component.props.len() {
+                        return Err(RenderError(format!(
+                            "component `{target}` received {} props, expected {}",
+                            props.len(),
+                            component.props.len()
+                        )));
+                    }
+                    let mut callee_locals = BTreeMap::new();
+                    for ((provided_name, expression), (expected_name, _)) in
+                        props.iter().zip(&component.props)
+                    {
+                        if provided_name != expected_name {
+                            return Err(RenderError(format!(
+                                "component `{target}` received prop `{provided_name}`, expected `{expected_name}`"
+                            )));
+                        }
+                        callee_locals.insert(provided_name.clone(), self.eval(expression, locals)?);
+                    }
+
+                    let handler_bindings = bindings
+                        .iter()
+                        .map(|binding| (binding.event.clone(), binding.input.clone()))
+                        .collect::<BTreeMap<_, _>>();
+                    let expected_events = component
+                        .emits
+                        .iter()
+                        .map(|constructor| constructor.name.as_str())
+                        .collect::<BTreeSet<_>>();
+                    if handler_bindings.len() != expected_events.len()
+                        || !handler_bindings
+                            .keys()
+                            .all(|event| expected_events.contains(event.as_str()))
+                    {
+                        return Err(RenderError(format!(
+                            "component `{target}` does not have its complete checked event mapping"
+                        )));
+                    }
+                    let mut nested_mappings = Vec::with_capacity(emit_mappings.len() + 1);
+                    nested_mappings.push(EmitMapping {
+                        emit_type: component.emit_type.clone(),
+                        bindings: handler_bindings,
+                        // Component call handlers execute in the caller's lexical frame. Capturing
+                        // the complete immutable frame is semantically exact and keeps projection
+                        // independent from checker-specific free-variable analysis.
+                        locals: locals.clone(),
+                    });
+                    nested_mappings.extend_from_slice(emit_mappings);
+                    output.extend(self.nodes(
+                        &component.nodes,
+                        &callee_locals,
+                        &nested_mappings,
+                        &format!("{path}.component.{target}"),
+                    )?);
+                }
+                UiCallTargetKind::Presentation => {
+                    if !props.is_empty() || !bindings.is_empty() {
+                        return Err(RenderError(format!(
+                            "machine-bound presentation `{target}` cannot receive props or event mappings"
+                        )));
+                    }
+                    let presentation = self.program.presentations.get(target).ok_or_else(|| {
+                        RenderError(format!("unknown checked presentation `{target}`"))
+                    })?;
+                    if presentation.machine != self.machine.id {
+                        return Err(RenderError(format!(
+                            "presentation `{target}` targets `{}`, not `{}`",
+                            presentation.machine, self.machine.id
+                        )));
+                    }
+                    let mut callee_locals = BTreeMap::new();
+                    callee_locals.insert(
+                        presentation.binding.clone(),
+                        self.instance.observation.clone(),
+                    );
+                    output.extend(self.nodes(
+                        &presentation.nodes,
+                        &callee_locals,
+                        emit_mappings,
+                        &format!("{path}.presentation.{target}"),
+                    )?);
+                }
+            },
         }
         Ok(())
     }

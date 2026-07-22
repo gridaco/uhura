@@ -259,7 +259,23 @@ pub enum ScenarioOrigin {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct EvidenceReference {
+    pub root: EvidenceReferenceRoot,
     pub path: Vec<Identifier>,
+    pub span: Span,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EvidenceReferenceRoot {
+    #[default]
+    Local,
+    Crate,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceArgument {
+    pub name: Identifier,
+    pub value: Expression,
     pub span: Span,
 }
 
@@ -267,6 +283,7 @@ pub struct EvidenceReference {
 pub struct EvidenceAliasDeclaration {
     pub name: Identifier,
     pub presentation: Option<Identifier>,
+    pub arguments: Option<Vec<EvidenceArgument>>,
     pub kind: Option<EvidencePresentationKind>,
     pub is_default: bool,
     pub note: Option<String>,
@@ -382,18 +399,31 @@ pub struct PartDeclaration {
     pub members: Vec<PartMember>,
 }
 
-/// A pure Web presentation bound to one machine observation.
+/// A pure Web presentation.
 ///
-/// Profile activation and binding validity are checker concerns. The syntax
-/// frontend recognizes this contextual declaration independently so tooling
-/// can parse and format a module before resolution.
+/// A declaration is either an application view bound to one machine
+/// observation or a reusable, runtime-pure component with typed inputs and a
+/// finite emitted-event protocol. Profile activation and binding validity are
+/// checker concerns. The syntax frontend recognizes both forms independently
+/// so tooling can parse and format a module before resolution.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct UiDeclaration {
     pub visibility: Visibility,
     pub name: Identifier,
-    pub machine: TypePath,
-    pub observation: Identifier,
+    pub binding: UiBinding,
     pub body: UiBody,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum UiBinding {
+    Machine {
+        machine: TypePath,
+        observation: Identifier,
+    },
+    Component {
+        parameters: Vec<Parameter>,
+        emits: ProtocolSection,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

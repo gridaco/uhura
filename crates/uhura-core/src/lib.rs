@@ -38,7 +38,8 @@ pub use ir::{
     MACHINE_PROGRAM_ID_PROTOCOL, MACHINE_UI_INTERFACE_ID_PROTOCOL, Machine, MachineProgram,
     MatchArm, OutcomeDef, OutcomePolicy, PRESENTATION_ID_PROTOCOL, Pattern, Presentation, Program,
     Scenario, ScenarioOrigin, SiteIdentityFrame, Statement, TypeDef, TypeRef, UiAttribute,
-    UiAttributeValue, UiCase, UiNode, UnaryOp, deployment_hash, deployment_identity_bytes,
+    UiAttributeValue, UiCallBinding, UiCallTargetKind, UiCase, UiComponent, UiNode, UnaryOp,
+    deployment_hash, deployment_identity_bytes,
 };
 pub use provenance::{
     AUTHORED_INTERACTION_TOPOLOGY_PROTOCOL, AuthoredInteractionEdge, AuthoredInteractionNode,
@@ -47,8 +48,9 @@ pub use provenance::{
     merge_authored_interaction_topology, semantic_node_id, source_revision_id,
 };
 pub use render::{
-    EventBinding, PROJECTION_SOURCES_PROTOCOL, Projection, ProjectionSources, RenderAttribute,
-    RenderAttributeValue, RenderDocument, RenderError, RenderEvent, RenderNode, VIEW_PROTOCOL,
+    EmitMapping, EventBinding, PROJECTION_SOURCES_PROTOCOL, Projection, ProjectionSources,
+    RenderAttribute, RenderAttributeValue, RenderDocument, RenderError, RenderEvent, RenderNode,
+    VIEW_PROTOCOL,
 };
 pub use route::RouteRuntimeError;
 pub use runtime::{

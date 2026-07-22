@@ -1,5 +1,8 @@
 use uhura_check::{CapturedPackageModules, check_package_graph_with_evidence};
-use uhura_core::{InteractionGraphEdgeKind, InteractionGraphNodeKind, Statement, semantic_node_id};
+use uhura_core::{
+    InteractionGraphEdgeKind, InteractionGraphNodeKind, RenderNode, Statement, UiNode, Value,
+    semantic_node_id,
+};
 use uhura_syntax::{Module, SourceIdentity, parse};
 
 fn module(file: u32, package: &str, logical: &str, source: &str) -> Module {
@@ -50,7 +53,7 @@ pub ui AppView for App(view) {{
 }
 
 #[test]
-fn package_graph_authoring_is_scoped_to_the_root_source_inventory() {
+fn package_graph_authoring_metadata_is_scoped_to_the_root_package() {
     let graph = vec![
         package(
             "example.root@1",
@@ -90,6 +93,109 @@ fn package_graph_authoring_is_scoped_to_the_root_source_inventory() {
         2,
         "dependency provenance remains complete"
     );
+}
+
+#[test]
+fn root_ui_can_compose_a_public_component_from_a_locked_dependency() {
+    let root = module(
+        3,
+        "example.root@1",
+        "application",
+        r#"
+use uhura::ui;
+use shared::card::SharedCard;
+
+pub machine App {
+  outcomes { commit Done }
+  state {}
+  observe {}
+}
+
+pub ui Application for App(view) {
+  <main><SharedCard label="Dependency component" /></main>
+}
+"#,
+    );
+    let dependency = module(
+        4,
+        "vendor.shared@1",
+        "card",
+        r#"
+use uhura::ui;
+
+pub ui SharedCard(label: Text) {
+  <section>{label}</section>
+}
+"#,
+    );
+    let graph = vec![
+        package(
+            "example.root@1",
+            &[("shared", "vendor.shared@1")],
+            vec![root],
+        ),
+        package("vendor.shared@1", &[], vec![dependency]),
+    ];
+
+    let output = check_package_graph_with_evidence("example.root@1", &graph, &[]);
+    assert!(
+        output.diagnostics.is_empty(),
+        "dependency component diagnostics:\n{:#?}",
+        output.diagnostics
+    );
+    assert!(
+        output
+            .provenance
+            .as_ref()
+            .expect("whole-graph provenance")
+            .sources
+            .iter()
+            .any(|source| source.path == "card.uhura"),
+        "dependency component source remains navigable"
+    );
+    let program = output.program.expect("checked dependency component graph");
+    assert!(
+        program
+            .components
+            .contains_key("vendor.shared@1::SharedCard")
+    );
+    let UiNode::Element { children, .. } =
+        &program.presentations["example.root@1::Application"].nodes[0]
+    else {
+        panic!("application root must be an element")
+    };
+    assert!(matches!(
+        children.as_slice(),
+        [UiNode::Call { target, .. }] if target == "vendor.shared@1::SharedCard"
+    ));
+
+    let (instance, _) = program
+        .machine_program
+        .admit("example.root@1::App", Value::Unit, "packages/dependency-ui")
+        .expect("root machine admission");
+    let projection = program
+        .project(&instance, "example.root@1::Application")
+        .expect("dependency component projection");
+    let [
+        RenderNode::Element {
+            element: root,
+            children,
+            ..
+        },
+    ] = projection.document.nodes.as_slice()
+    else {
+        panic!("application projection must contain one root element")
+    };
+    assert_eq!(root, "main");
+    assert!(matches!(
+        children.as_slice(),
+        [RenderNode::Element {
+            element,
+            children,
+            ..
+        }] if element == "section"
+            && matches!(children.as_slice(), [RenderNode::Text { text, .. }] if text == "Dependency component")
+    ));
 }
 
 fn graph(root_alias: &str, middle_alias: &str) -> Vec<CapturedPackageModules> {

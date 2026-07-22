@@ -6,6 +6,8 @@
 - **Doctrine:** [Uhura doctrine](../../../doctrine/README.md)
 - **Core/topology decision:**
   [RFC 0004](../../../rfcs/0004-standalone-machine-core-and-source-composition.md)
+- **Application-topology decision:**
+  [RFC 0005](../../../rfcs/0005-web-application-topology-and-ui-composition.md)
 - **Problem authorities:** [L0–L2 programs](../../../../examples/programs/) and
   [A0 Return Desk](../../../../examples/applications/a0-return-desk/)
 
@@ -102,7 +104,11 @@ keeps an equal-budget TypeScript-shaped challenger as a control.
 - Semantic program identity is computed from checked resolved IR. Physical
   source layout and comments are provenance, not behavior identity.
 - Web presentation is the explicit `ui` profile, activated by inert
-  `use uhura::ui;`. Framework behavior remains feature-by-feature `use`.
+  `use uhura::ui;`. Reusable UI is a checked, acyclic graph of pure typed
+  component calls and same-machine presentation calls.
+- The optional `web-app@1` project profile derives a closed application module
+  map, checked routes, and one `Application` presentation. Router vocabulary
+  and host authority remain explicit; the profile does not change the kernel.
 
 ## Documents
 
@@ -143,13 +149,17 @@ The candidate is blocked until the owning document is corrected.
 | **part** | A statically composed source owner of a namespaced machine contribution |
 | **dependency** | A declared read or in-transaction update interface between parts |
 | **component** | Pure UI reuse; never an implicit state owner |
+| **page** | A framework-routed machine-bound presentation selected from committed `Location` observation |
+| **application** | The generated machine-bound root presentation for one opted-in Web application |
 | **instance** | One runtime instantiation of the complete lowered machine |
 | **view** | The conventional UI binding for a machine's pure observation |
 
 ## End-to-end shape
 
 ```text
-manifest + source modules + lock
+manifest + authored sources + lock
+  -> resolve the explicit or opted-in framework source topology
+  -> generate checked route and application-composition source when selected
   -> resolve use paths, public declarations, profiles, and framework features
   -> check types, ownership, visibility, totality, and dependencies
   -> compose one complete machine
