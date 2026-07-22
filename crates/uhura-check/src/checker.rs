@@ -47,6 +47,9 @@ pub struct CheckOutput {
     /// Source-layout-sensitive semantic-node occurrences. Callers without
     /// source-layout metadata leave this empty.
     pub provenance: Option<uhura_core::Provenance>,
+    /// Checked source-only authoring metadata. This never enters executable
+    /// program identity or runtime behavior.
+    pub authoring: crate::AuthoringProjection,
 }
 
 #[derive(Clone, Debug)]
@@ -271,6 +274,7 @@ impl<'a> Checker<'a> {
             program,
             diagnostics: std::mem::take(&mut self.diagnostics),
             provenance: None,
+            authoring: crate::AuthoringProjection::default(),
         }
     }
 
@@ -9190,7 +9194,7 @@ fn patterns_overlap(left: &IrPattern, right: &IrPattern) -> bool {
 }
 
 fn loop_decrease_proven(condition: &ast::Expr, decreases: &ast::Expr, body: &ast::Block) -> bool {
-    // `v04_updates::lower_project` runs before the checker-neutral bridge and
+    // `updates::lower_project` runs before the checker-neutral bridge and
     // transitively inlines every non-terminal update. Consequently this body
     // contains the complete write effect of every update call that can reach a
     // loop back edge: `assignments_to` sees a called update's writes exactly as

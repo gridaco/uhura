@@ -57,10 +57,10 @@ pub(super) fn load(root: &Path, command: &str) -> Result<Project, ExitCode> {
         }
     };
 
-    load_v04_project(root, files, source_map, manifest, manifest_file)
+    load_checked_project(root, files, source_map, manifest, manifest_file)
 }
 
-fn load_v04_project(
+fn load_checked_project(
     root: &Path,
     files: Vec<SourceFile>,
     source_map: SourceMap,
@@ -87,7 +87,7 @@ fn load_v04_project(
             });
         }
     };
-    let captured_dependencies = match capture_v04_dependencies(root, &files, &manifest) {
+    let captured_dependencies = match capture_dependencies(root, &files, &manifest) {
         Ok(packages) => packages,
         Err(messages) => {
             let mut diagnostics = contract_diagnostics(messages, manifest_file);
@@ -112,21 +112,16 @@ fn load_v04_project(
         .iter()
         .map(|package| package.source.as_str())
         .collect::<Vec<_>>();
-    let mut diagnostics = validate_v04_sources(&files, &manifest, manifest_file, &dependency_roots);
+    let mut diagnostics = validate_sources(&files, &manifest, manifest_file, &dependency_roots);
     let program = if diagnostics.is_empty() {
         let sources = files
             .iter()
             .enumerate()
             .map(|(file, source)| {
-                uhura_check::V04ProjectSource::new(
-                    FileId(file as u32),
-                    &source.rel_path,
-                    &source.text,
-                )
+                uhura_check::ProjectSource::new(FileId(file as u32), &source.rel_path, &source.text)
             })
             .collect::<Vec<_>>();
-        let mut checked =
-            uhura_check::compile_v04_project(&manifest, &sources, &captured_dependencies);
+        let mut checked = uhura_check::compile_project(&manifest, &sources, &captured_dependencies);
         diagnostics.append(&mut checked.diagnostics);
         if let Some(program) = checked.program.as_ref() {
             diagnostics.extend(uhura_check::icon_token_diagnostics(
@@ -274,7 +269,7 @@ fn icon_resource_diagnostics(
         .collect()
 }
 
-fn capture_v04_dependencies(
+fn capture_dependencies(
     root: &Path,
     files: &[SourceFile],
     manifest: &ProjectManifest,
@@ -445,7 +440,7 @@ fn contract_diagnostics(messages: Vec<String>, manifest_file: FileId) -> Vec<Dia
         .collect()
 }
 
-fn validate_v04_sources(
+fn validate_sources(
     files: &[SourceFile],
     manifest: &ProjectManifest,
     manifest_file: FileId,
@@ -608,10 +603,10 @@ example incremented = increment::done;
 "#;
     let manifest = load_project_manifest(MANIFEST).expect("test manifest is current");
     let sources = [
-        uhura_check::V04ProjectSource::new(FileId(0), "machine.uhura", MACHINE),
-        uhura_check::V04ProjectSource::new(FileId(1), "evidence.uhura", EVIDENCE),
+        uhura_check::ProjectSource::new(FileId(0), "machine.uhura", MACHINE),
+        uhura_check::ProjectSource::new(FileId(1), "evidence.uhura", EVIDENCE),
     ];
-    let checked = uhura_check::compile_v04_project(&manifest, &sources, &[]);
+    let checked = uhura_check::compile_project(&manifest, &sources, &[]);
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let mut program = checked.program.expect("test project lowers");
     program.freeze_program_hashes();
@@ -624,7 +619,7 @@ mod tests {
 
     use super::*;
 
-    const V04_MACHINE: &str = r#"pub machine Counter {
+    const COUNTER_MACHINE: &str = r#"pub machine Counter {
   events {
     Increment,
   }
@@ -651,7 +646,7 @@ mod tests {
     fn project_root(label: &str) -> std::path::PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "uhura-cli-v04-{label}-{}-{}",
+            "uhura-cli-project-{label}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -660,7 +655,7 @@ mod tests {
         root
     }
 
-    fn write_v04_manifest(root: &Path, extra: &str) {
+    fn write_manifest(root: &Path, extra: &str) {
         std::fs::write(
             root.join("uhura.toml"),
             format!(
@@ -692,7 +687,7 @@ default = "lucide"
             ),
         ] {
             let root = project_root(label);
-            std::fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
+            std::fs::write(root.join("counter.uhura"), COUNTER_MACHINE).unwrap();
             if let Some(manifest) = manifest {
                 std::fs::write(root.join("uhura.toml"), manifest).unwrap();
             }
@@ -709,10 +704,10 @@ default = "lucide"
     }
 
     #[test]
-    fn manifest_selected_v04_lowers_the_declared_module() {
+    fn manifest_selected_lowers_the_declared_module() {
         let root = project_root("accepted");
-        write_v04_manifest(&root, "");
-        std::fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
+        write_manifest(&root, "");
+        std::fs::write(root.join("counter.uhura"), COUNTER_MACHINE).unwrap();
 
         let project = load(&root, "check").expect("load 0.4 project");
         assert!(project.diagnostics.is_empty(), "{:?}", project.diagnostics);
@@ -724,7 +719,7 @@ default = "lucide"
     }
 
     #[test]
-    fn manifest_selected_v04_rejects_unknown_icons_before_publication() {
+    fn manifest_selected_rejects_unknown_icons_before_publication() {
         let root = project_root("unknown-icon");
         std::fs::write(
             root.join("uhura.toml"),
@@ -739,7 +734,7 @@ ui = "ui.uhura"
 "#,
         )
         .unwrap();
-        std::fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
+        std::fs::write(root.join("counter.uhura"), COUNTER_MACHINE).unwrap();
         std::fs::write(
             root.join("ui.uhura"),
             r#"use uhura::ui;
@@ -769,9 +764,9 @@ pub ui CounterWeb for Counter(view) {
     }
 
     #[test]
-    fn manifest_selected_v04_preserves_parse_kind_in_public_diagnostics() {
+    fn manifest_selected_preserves_parse_kind_in_public_diagnostics() {
         let root = project_root("parse-diagnostic");
-        write_v04_manifest(&root, "");
+        write_manifest(&root, "");
         std::fs::write(root.join("counter.uhura"), "pub mashine Counter {}\n").unwrap();
 
         let project = load(&root, "check").expect("load malformed 0.4 project");
@@ -814,7 +809,7 @@ pub ui CounterWeb for Counter(view) {
     }
 
     #[test]
-    fn manifest_selected_v04_lowers_the_complete_module_graph() {
+    fn manifest_selected_lowers_the_complete_module_graph() {
         let root = project_root("modules");
         std::fs::write(
             root.join("uhura.toml"),
@@ -832,7 +827,7 @@ support = "support.uhura"
         std::fs::write(root.join("support.uhura"), "pub const INITIAL: Int = 0;\n").unwrap();
         std::fs::write(
             root.join("counter.uhura"),
-            V04_MACHINE
+            COUNTER_MACHINE
                 .replace(
                     "pub machine Counter {",
                     "use crate::support::INITIAL;\n\npub machine Counter {",
@@ -851,15 +846,15 @@ support = "support.uhura"
     }
 
     #[test]
-    fn manifest_selected_v04_attaches_manifest_role_evidence() {
+    fn manifest_selected_attaches_manifest_role_evidence() {
         let root = project_root("evidence");
-        write_v04_manifest(
+        write_manifest(
             &root,
             r#"[evidence.modules]
 evidence = "counter.evidence.uhura"
 "#,
         );
-        std::fs::write(root.join("counter.uhura"), V04_MACHINE).unwrap();
+        std::fs::write(root.join("counter.uhura"), COUNTER_MACHINE).unwrap();
         std::fs::write(
             root.join("counter.evidence.uhura"),
             r#"use crate::counter::Counter;
@@ -886,9 +881,9 @@ example incremented = increment::done;
     }
 
     #[test]
-    fn manifest_selected_v04_rejects_missing_and_unlisted_sources() {
+    fn manifest_selected_rejects_missing_and_unlisted_sources() {
         let missing_root = project_root("missing");
-        write_v04_manifest(&missing_root, "");
+        write_manifest(&missing_root, "");
         let missing = load(&missing_root, "check").expect("diagnosed 0.4 project");
         assert!(missing.program.is_none());
         assert!(
@@ -900,9 +895,9 @@ example incremented = increment::done;
         std::fs::remove_dir_all(missing_root).unwrap();
 
         let unlisted_root = project_root("unlisted");
-        write_v04_manifest(&unlisted_root, "");
-        std::fs::write(unlisted_root.join("counter.uhura"), V04_MACHINE).unwrap();
-        std::fs::write(unlisted_root.join("stray.uhura"), V04_MACHINE).unwrap();
+        write_manifest(&unlisted_root, "");
+        std::fs::write(unlisted_root.join("counter.uhura"), COUNTER_MACHINE).unwrap();
+        std::fs::write(unlisted_root.join("stray.uhura"), COUNTER_MACHINE).unwrap();
         let unlisted = load(&unlisted_root, "check").expect("diagnosed 0.4 project");
         assert!(unlisted.program.is_none());
         assert!(
@@ -915,9 +910,9 @@ example incremented = increment::done;
     }
 
     #[test]
-    fn manifest_selected_v04_admits_exact_locked_path_dependency() {
+    fn manifest_selected_admits_exact_locked_path_dependency() {
         let root = project_root("dependencies");
-        write_v04_manifest(
+        write_manifest(
             &root,
             r#"[dependencies.shared]
 package = "test.shared"
@@ -926,7 +921,7 @@ path = "vendor/shared"
 "#,
         );
         std::fs::create_dir_all(root.join("vendor/shared/deps/base")).unwrap();
-        let root_source = V04_MACHINE
+        let root_source = COUNTER_MACHINE
             .replace("pub machine", "use shared::values::INITIAL;\n\npub machine")
             .replace("count: Int = 0", "count: Int = INITIAL");
         std::fs::write(root.join("counter.uhura"), root_source).unwrap();

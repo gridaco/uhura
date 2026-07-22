@@ -223,9 +223,8 @@ body {
   padding-block-end: 58px;
 }
 
-/* Instagram application projections. These rules used to be distributed
-   across v0 page/component files; the current project has one checked UI
-   module and one deployment-owned stylesheet. */
+/* Instagram application projections. The project has one checked UI module
+   and one deployment-owned stylesheet. */
 .feed-page,
 .create-page,
 .profile-page,

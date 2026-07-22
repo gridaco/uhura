@@ -42,9 +42,9 @@ jobs:
         run: cargo test --locked --workspace --all-targets
       - name: CLI project gates
         run: |
-          # Project-wide formatting remains gated on RFC 0003 comment
-          # attachment; the formatter refuses to erase the evidence catalogue's
-          # authored comments.
+          # Project-wide formatting remains gated on RFC 0003 DSL comment and
+          # declaration-doc attachment; the formatter refuses to erase the
+          # evidence catalogue's authored comments.
           cargo run --locked -p uhura-cli -- check examples/instagram/client --deny-warnings
           cargo run --locked -p uhura-cli -- trace examples/instagram/client --script=feed_like_refused_scenario --expanded > /dev/null
 
@@ -196,7 +196,7 @@ jobs:
 
           curl --fail --silent --show-error \
             "http://127.0.0.1:$port/api/editor/state" --output "$state_json"
-          python3 - "$state_json" <<'PY'
+          python3 - "$state_json" "$GITHUB_WORKSPACE/examples/instagram/client/ui.uhura" <<'PY'
           import json
           import pathlib
           import sys
@@ -212,9 +212,35 @@ jobs:
           assert isinstance(render["authoring"]["targets"], list)
           assert render["authoring"]["targets"]
           assert isinstance(render["authoring"]["entries"], list)
-          assert render["authoring"]["entries"] == []
+          entries = render["authoring"]["entries"]
+          assert len(entries) == 1
+          annotation = entries[0]
+          assert annotation["class"] == "annotation"
+          assert annotation["kind"] == "annotation"
+          assert annotation["text"] == (
+              "The complete post-card presentation, shared across every static "
+              "PostCard example."
+          )
+          assert annotation["order"] == 0
+          target = next(
+              target
+              for target in render["authoring"]["targets"]
+              if target["id"] == annotation["targetId"]
+          )
+          assert target["class"] == "ui-element"
+          assert target["file"] == "ui.uhura"
+          assert target["label"] == '<view class="post-card">'
+          assert target["owner"] == {
+              "kind": "component",
+              "name": "app.instagram@1::PostCard",
+          }
+          source = pathlib.Path(sys.argv[2]).read_bytes()
+          start = target["span"]["offset"]
+          end = start + target["span"]["len"]
+          assert source[start:end].decode().startswith('<view class="post-card">')
           assert isinstance(render["groups"], list)
           assert render["groups"]
+          assert len(render["previews"]) == 91
           assert all(isinstance(preview["documentation"], dict) for preview in render["previews"])
           assert all(isinstance(preview["provenance"]["occurrences"], list) for preview in render["previews"])
           assert all(
@@ -225,6 +251,20 @@ jobs:
               for preview in render["previews"]
           )
           assert any(preview["provenance"]["occurrences"] for preview in render["previews"])
+          post_card_previews = [
+              preview
+              for preview in render["previews"]
+              if preview["identity"]["subject"] == "app.instagram@1::PostCard"
+          ]
+          assert len(post_card_previews) == 5
+          for preview in post_card_previews:
+              occurrences = [
+                  occurrence
+                  for occurrence in preview["provenance"]["occurrences"]
+                  if occurrence["targetId"] == target["id"]
+              ]
+              assert len(occurrences) == 1
+              assert occurrences[0]["anchors"]
           PY
 
           curl --fail --silent --show-error \

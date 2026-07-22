@@ -19,7 +19,7 @@ pub const REACTION_RECEIPT_PROTOCOL: &str = "uhura-reaction-receipt/0";
 /// Prefix reserved for compiler-generated locals that carry a source-level
 /// inline update result across a lowered reaction control-flow join.
 ///
-/// These names are not source-visible. The 0.4 frontend emits them and the
+/// These names are not source-visible. The frontend emits them and the
 /// reference runtime preserves them when a statement `if` or `match` restores
 /// its lexical locals after the selected branch completes.
 pub const INLINE_UPDATE_JOIN_LOCAL_PREFIX: &str = "__uhura_update_join_";

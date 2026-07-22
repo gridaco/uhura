@@ -218,11 +218,37 @@ test("authoring-only changes reuse semantic DOM", () => {
     label: "button",
     owner: { kind: "component", name: "card" },
   });
+  next.authoring.entries.push({
+    id: "annotation",
+    class: "annotation",
+    kind: "annotation",
+    text: "Authoring-only prose",
+    span: {
+      offset: 2,
+      len: 7,
+      start: { line: 1, col: 3 },
+      end: { line: 1, col: 10 },
+    },
+    targetId: "target",
+    order: 0,
+  });
   next.previews[0]!.provenance.occurrences.push({
     id: "occurrence",
     targetId: "target",
     anchors: ["root"],
   });
+  next.previews[0]!.content.value.sources = {
+    ...next.previews[0]!.content.value.sources,
+    nodes: {
+      ...next.previews[0]!.content.value.sources.nodes,
+      root: {
+        id: "ui/root",
+        path: "card.uhura",
+        start: 128,
+        end: 134,
+      },
+    },
+  };
 
   assert.deepEqual([...reusablePreviewIds(previous, next)], ["alpha", "beta"]);
   assert.deepEqual([...reusablePreviewFrameIds(previous, next)], ["alpha", "beta"]);

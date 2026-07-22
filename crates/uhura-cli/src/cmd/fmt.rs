@@ -49,10 +49,10 @@ pub fn run(common: &CommonArgs, check_only: bool) -> ExitCode {
         }
     };
 
-    format_v04_files(&files, &manifest, check_only)
+    format_files(&files, &manifest, check_only)
 }
 
-fn format_v04_files(
+fn format_files(
     files: &[SourceFile],
     manifest: &uhura_check::project_manifest::ProjectManifest,
     check_only: bool,
@@ -74,13 +74,13 @@ fn format_v04_files(
             broken = true;
             continue;
         };
-        let identity = uhura_syntax::v04::SourceIdentity::new(
+        let identity = uhura_syntax::SourceIdentity::new(
             index as u32,
             manifest.project.package_id().to_string(),
             logical.as_str(),
             physical.as_str(),
         );
-        let parsed = uhura_syntax::v04::parse(identity, &file.text);
+        let parsed = uhura_syntax::parse(identity, &file.text);
         if !parsed.diagnostics.is_empty() {
             for diagnostic in parsed.diagnostics {
                 let (code, rule) = diagnostic.kind.diagnostic_identity();
@@ -92,7 +92,7 @@ fn format_v04_files(
             broken = true;
             continue;
         }
-        let formatted = match uhura_syntax::v04::format(&parsed.module) {
+        let formatted = match uhura_syntax::format(&parsed.module) {
             Ok(formatted) => formatted,
             Err(error) => {
                 eprintln!("{}: UH2002 {error}", file.rel_path);
@@ -119,13 +119,13 @@ fn format_v04_files(
             broken = true;
             continue;
         };
-        let identity = uhura_syntax::v04::SourceIdentity::new(
+        let identity = uhura_syntax::SourceIdentity::new(
             index as u32,
             manifest.project.package_id().to_string(),
             logical.as_str(),
             physical.as_str(),
         );
-        let parsed = uhura_syntax::v04::parse(identity, &file.text);
+        let parsed = uhura_syntax::parse(identity, &file.text);
         if !parsed.diagnostics.is_empty() {
             for diagnostic in parsed.diagnostics {
                 let (code, rule) = diagnostic.kind.diagnostic_identity();
@@ -137,7 +137,7 @@ fn format_v04_files(
             broken = true;
             continue;
         }
-        let formatted = match uhura_syntax::v04::format(&parsed.module) {
+        let formatted = match uhura_syntax::format(&parsed.module) {
             Ok(formatted) => formatted,
             Err(error) => {
                 eprintln!("{}: UH2002 {error}", file.rel_path);
@@ -182,7 +182,7 @@ mod tests {
     fn project_root(label: &str) -> std::path::PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "uhura-cli-fmt-v04-{label}-{}-{}",
+            "uhura-cli-fmt-{label}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -216,7 +216,7 @@ main = "main.uhura"
     }
 
     #[test]
-    fn manifest_selected_v04_uses_the_v04_formatter() {
+    fn manifest_selected_sources_use_the_formatter() {
         let root = project_root("canonical");
         write_manifest(&root);
         std::fs::write(
@@ -236,7 +236,7 @@ main = "main.uhura"
     }
 
     #[test]
-    fn v04_formatter_refuses_comments_without_changing_source() {
+    fn formatter_refuses_comments_without_changing_source() {
         let root = project_root("comments");
         write_manifest(&root);
         let source = "/// Counter\npub machine Counter {}\n";

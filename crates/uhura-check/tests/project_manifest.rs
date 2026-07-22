@@ -1,4 +1,4 @@
-use uhura_check::project_manifest::{LANGUAGE_0_4, load_project_manifest};
+use uhura_check::project_manifest::{LANGUAGE_VERSION, load_project_manifest};
 
 fn issue_paths(text: &str) -> Vec<String> {
     load_project_manifest(text)
@@ -29,7 +29,7 @@ glyphs = "assets/brand.json"
 }
 
 #[test]
-fn parses_the_complete_closed_v04_manifest() {
+fn parses_the_complete_closed_manifest() {
     let manifest = load_project_manifest(
         r#"
 [project]
@@ -62,7 +62,7 @@ glyphs = "assets/brand.json"
 
     assert_eq!(manifest.project.name.as_str(), "examples.design-programs");
     assert_eq!(manifest.project.version, 2);
-    assert_eq!(manifest.project.language, LANGUAGE_0_4);
+    assert_eq!(manifest.project.language, LANGUAGE_VERSION);
     assert_eq!(
         manifest.project.package_id().to_string(),
         "examples.design-programs@2"
@@ -172,7 +172,7 @@ sources = ["evidence.uhura"]
 }
 
 #[test]
-fn v04_requires_exact_project_metadata_and_closed_tables() {
+fn language_version_requires_exact_project_metadata_and_closed_tables() {
     let paths = issue_paths(
         r#"
 [project]
@@ -196,7 +196,7 @@ mode = "retired"
 }
 
 #[test]
-fn selecting_v04_requires_both_project_and_nonempty_modules() {
+fn selecting_the_language_requires_both_project_and_nonempty_modules() {
     let missing_modules = issue_paths(
         r#"
 [project]
