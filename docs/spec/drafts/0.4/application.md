@@ -78,11 +78,11 @@ the declaration delimiter, so a raw `}` remains ordinary element text.
 A core `match` expression may appear inside an interpolation. No separate
 Svelte-like match block is selected by 0.4.
 
-Reusable presentation invocation and scoped or imported CSS syntax are not
-selected by 0.4. A presentation-shaped tag that resolves through `use` is
-diagnosed rather than treated as a component call. Checked standard extensions
-such as `Link` and `Surface` are finite catalogue entries, not a general
-component protocol.
+An UpperCamelCase tag that resolves through `use` is a checked UI call. The
+callee is either a pure typed component or a machine-bound presentation for
+the caller's same machine. Checked standard extensions such as `Link` and
+`Surface` remain finite catalogue entries; they are not user component calls.
+Scoped or imported CSS syntax is not selected by 0.4.
 
 The body is a pure projection of the referenced machine observation.
 Expressions inside braces use Uhura's Rust-shaped core expression language,
@@ -136,23 +136,63 @@ notice by definition. A domain may name a commit-policy outcome `Blocked` when
 it needs both a blocked classification and visible committed feedback; the
 policy, not the constructor's English name, decides publication.
 
-## 3. UI declarations do not own state
+## 3. UI declarations and pure composition
 
-A 0.4 UI declaration is one named pure projection bound to one machine's
-observation type. A host or evidence example may select that declaration for a
-machine instance. Another UI declaration cannot invoke it, pass values to it,
-or supply slots or children. Naming or selecting it does not allocate a
-machine, part, store, inbox, or semantic lifetime.
+A 0.4 UI declaration has one of two forms. A machine-bound presentation reads
+one machine's immutable observation:
+
+```uhura
+pub ui ProfilePage for Application(view) {
+  <ProfileCard
+    profile={view.profile}
+    on Open -> OpenProfile(event.user)
+  />
+}
+```
+
+A component is a pure presentation function with exact typed parameters and a
+finite emitted-event domain:
+
+```uhura
+pub ui ProfileCard(profile: Profile) emits {
+  Open(user: UserId),
+} {
+  <button on press -> Open(profile.user.id)>
+    {profile.user.display_name}
+  </button>
+}
+```
+
+Every component prop is required exactly once and checked against its declared
+type. Every emitted variant is bound exactly once at each call. Within a
+component call binding, contextual `event` contains that emitted variant's
+named payload record, or `Unit` for a payloadless variant. A component may call
+another pure component; emitted values compose outward until a machine-bound
+presentation constructs one machine input. The callee may be a local component
+or an explicitly imported public component from an exact locked package; both
+enter the same typed, acyclic call graph and retain their defining source
+provenance.
+
+A machine-bound presentation call is self-closing and accepts no props,
+events, or children. It receives the caller's same committed observation. A
+pure component cannot call a machine-bound presentation, presentations bound
+to different machines cannot call one another, and the complete call graph
+must be acyclic.
+
+Calls expand directly into the semantic render tree. They create no wrapper
+element, runtime instance, key space, state, lifecycle, context, scheduler,
+inbox, or semantic lifetime. Slots, child parameters, optional/default/rest or
+spread props, and partial event bindings are not selected by 0.4.
 
 State ownership remains in the machine or an explicitly composed part. A
 component-local physical concern such as hover, pressed pose, caret, IME,
 measurement, or animation frame remains renderer state unless promoted through
 a named semantic contract.
 
-Reusable UI composition remains an unselected language-design gate. Any later
-proposal must restate its value, event, child, identity, and expansion
-semantics, follow the Svelte-shaped parent pattern, and avoid creating another
-behavior or state-ownership language.
+Presentation identity includes the semantic closure reachable through calls.
+Changing an unused component does not change an unrelated presentation hash;
+changing a called component does. Physical source movement remains provenance
+unless a framework route path is changed.
 
 ## 4. Framework features
 
@@ -221,9 +261,72 @@ integration must reject overlapping checked route patterns before starting the
 application.
 
 Filename and directory conventions are not ambient language semantics.
-Projects may use a framework tool to generate `use` declarations and
-composition source, but the checked program must contain or resolve every
-semantic feature explicitly.
+An ordinary project continues to map every module explicitly. A root project
+may instead select the closed `web-app@1` framework resolver in `uhura.toml`:
+
+```toml
+[framework]
+profile = "web-app"
+version = 1
+machine = "crate::application::ApplicationMachine"
+location = "crate::routing::Location"
+```
+
+The two locators are exact root-package source locators, not host selectors.
+The selected profile recognizes only:
+
+```text
+app/**/page.uhura
+app/**/page.examples.uhura
+components/**/*.uhura
+components/**/*.examples.uhura
+surfaces/**/*.uhura
+surfaces/**/*.examples.uhura
+```
+
+`app/page.uhura` is required and owns `/`. Static directories add literal path
+segments; a directory such as `[post]` adds dynamic `{post}` and must match a
+field of the page's `Location` constructor. A public declaration named
+`PostPage` maps to `Location::Post`. Component and surface filenames map from
+kebab-case to their single public UpperCamelCase component declaration.
+
+`web-app@1` has no query-field convention. Every field of a page's `Location`
+constructor must be a named required path field represented exactly once by a
+matching `[parameter]` segment. Optional fields, query placeholders, tuple
+fields, and route fields not represented by the directory path are rejected
+by the generated route table's ordinary checker. An explicit project remains
+the current path for applications that need the broader authored `Routes`
+grammar.
+
+The resolver rejects unrecognized `.uhura` sources under those roots, orphan
+example files, invalid or repeated dynamic parameters, logical-module
+collisions, duplicate physical sources, missing roots, and reserved
+generated-name collisions. Non-source assets remain ordinary project inputs.
+It then constructs one closed effective module map and two generated checked
+declarations:
+
+- `APPLICATION_ROUTES: Routes<Location>`, derived from the page paths; and
+- `Application`, a public presentation bound to the configured machine.
+
+`Application` selects a page only from the configured machine's committed
+`location: Option<Location>` observation. `None` selects the root page while
+the first host delivery is pending. No generated code reads browser location
+independently. The machine explicitly imports the generated route value and
+configures its Router port; `host.toml` explicitly selects `crate::Application`
+and binds that port to `web.history`.
+
+Framework admission requires the configured machine to own exactly one
+`Router<Location>` port whose configuration resolves to that exact generated
+route value. Ordinary input-coverage checking requires the corresponding
+`changed` handler. The handler's transition remains authored machine logic:
+the framework neither inserts the `location` state write nor treats handler
+presence as proof that navigation commits the intended observation. Evidence
+must demonstrate that application policy.
+
+Generated sources pass through the ordinary parser and checker and retain
+diagnostic provenance. They are not writable authored files or Editor
+subjects. The opted-in path below `app/` is semantic route input; other source
+paths remain nonsemantic provenance.
 
 ## 5. Host boundary
 
@@ -427,6 +530,35 @@ Evidence cannot:
 - bypass admission; or
 - create a different interpreter.
 
+A page example names a machine-bound presentation and one reachable snapshot.
+A direct component or surface example additionally supplies every component
+prop by name. In 0.4 those evidence-only prop expressions must be
+compile-time-total constants; the checker validates and canonicalizes them
+against the component signature. Their concrete values participate in the
+evidence artifact identity. Tooling projects the pure component directly and
+does not invent a wrapper machine or claim that an unbound component emit is a
+machine-dispatchable interaction.
+
+```uhura
+example post_card_image
+  for PostCard(
+    post: LENA_GLAZE,
+    liked: POST_CARD_NOT_LIKED,
+    like_pending: POST_CARD_LIKE_SETTLED,
+    saved: POST_CARD_NOT_SAVED,
+    save_pending: POST_CARD_SAVE_SETTLED,
+    show_open: POST_CARD_HIDE_OPEN_LINK,
+  ) as component default
+  = crate::shared_evidence::feed_scenario::frame;
+```
+
+Evidence references are local by default. The explicit
+`crate::<evidence-module>::<scenario>::<pin>` form reaches a public producer in
+another admitted evidence module; it grants no core-source import authority.
+Page examples accept no prop list. Component and surface examples must target
+pure component declarations and provide the exact prop set, including an
+empty list when the component has no props.
+
 A static example identifies a complete, honest machine state plus an optional
 physical preview pose. Physical scroll, animation, focus, and media pose
 remain separately labelled renderer-preview data. They do not enter the
@@ -456,11 +588,33 @@ part without inventing runtime instances.
 Static examples may author or display namespaced values, but tooling must
 materialize a complete admitted global state before rendering.
 
+For a framework project, discovered source roles are authoritative: a page
+example targets a discovered page, a component example targets a discovered
+component, and a surface example targets a discovered surface. The generated
+`Application` presentation is the Play entry and is not an Editor authoring
+subject. Framework roles therefore preserve a page/component/surface catalogue
+without pretending that every subject is the same runtime artifact.
+
 The Editor and Play consume one checked semantic program and the same
 provenance sidecar. Physical source moves may change source occurrences and
 the source-revision identity, but cannot create new graph-node identities or
 change the machine, presentation, or deployment identity when their resolved
 semantic contents are unchanged.
+
+The source inventory and provenance span the closed package graph, so an
+imported dependency component remains readable and navigable. The authoring
+metadata projection is narrower by design: only root-package docs and
+annotations are exposed as editable project metadata; dependency-owned docs
+and annotations remain with their package.
+
+Generated framework modules are checked provenance, not editable Editor
+sources or authoring subjects. Play inspection nevertheless includes every
+generated source referenced by its `graphSources` sidecar, so every published
+byte span resolves inside the accompanying inspection source inventory.
+The Editor's non-generated source inventory and semantic-provenance table are
+therefore related but not identical sets: evidence-only sources may occur only
+in the former, generated semantic modules only in the latter, and every path
+present in both must have the same byte length and content hash.
 
 ## 8. Foreign escape boundary
 
@@ -485,9 +639,11 @@ This profile does not select:
 
 - a permanent or general-purpose widget system beyond the finite checked
   incubation catalogue;
-- file-system routing;
-- server components;
-- automatic data loading;
+- layouts, nested layouts, slots, or child parameters;
+- server components or server rendering;
+- route loaders, actions, or automatic data loading;
+- component state, lifecycle, context, or runtime component instances;
+- default, optional, rest, or spread props;
 - a browser-global store;
 - arbitrary npm packages;
 - runtime child-machine lifecycle;

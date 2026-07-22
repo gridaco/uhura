@@ -28,10 +28,10 @@ be compared fairly at the UI and framework boundary. Full-stack product
 examples test the broader integration and authoring workflow without pretending
 to be controlled language experiments.
 
-Repository-level harnesses are also distinct from an authored `use evidence`
-module such as the Instagram client's
-[`evidence.uhura`](instagram/client/evidence.uhura). Evidence modules define
-scenarios, checkpoints, pins, and static previews for one Uhura program. A
+Repository-level harnesses are also distinct from the Instagram client's
+authored [evidence corpus](instagram/client/evidence/). Evidence modules define
+scenarios, checkpoints, pins, and static previews for one Uhura program; the
+framework may colocate preview registrations beside their UI subjects. A
 harness specifies an independent problem against which different language
 designs may be evaluated.
 

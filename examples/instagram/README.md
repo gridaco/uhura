@@ -47,13 +47,21 @@ lockfile-exact project-local install command it prints and repeat the build.
   disposable authority database starts.
 - `client/machine.uhura` is the 0.4 headless application machine and its
   deterministic demo data.
+- `client/routing.uhura` owns typed application locations; `client/uhura.toml`
+  opts into `web-app@1`, which checks file routes against them.
 - `client/parts.uhura` proves checked source composition, ownership, and
   cross-part `Reads`/`Updates` over that same machine transaction.
-- `client/ui.uhura` is the explicit 0.4 Web UI projection.
-- `client/evidence.uhura` is the native 0.4 checked Editor/preview corpus.
+- `client/presentation.uhura` contains pure shared presentation helpers.
+- `client/app/`, `client/components/`, and `client/surfaces/` contain the nine
+  pages, eight pure components, and one pure surface discovered by the
+  selected framework profile.
+- Colocated `*.examples.uhura` files register the Editor catalogue while
+  `client/evidence/scenarios.uhura` owns their shared reachable states.
 - `client/host.toml` deploys the machine and binds browser/provider adapters.
-- `client/uhura.toml` declares the 0.4 package, modules, evidence, assets, and
-  icon resources.
+- `client/uhura.toml` declares the 0.4 package, explicit core modules,
+  framework locators, shared evidence, assets, and icon resources. The route
+  table and root `Application` presentation are generated and checked, not
+  committed source files.
 
 The example deliberately has two asset planes. `backend/seed/` is authority
 input and is captured relative to `app.spock`; it cannot escape the backend

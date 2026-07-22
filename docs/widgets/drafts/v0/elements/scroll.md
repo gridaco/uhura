@@ -275,5 +275,5 @@ Pre-0.4 implementation references (paths may now contain replacement code):
 
 - [Native element and event checking](../../../../../crates/uhura-check/src/checker.rs)
 - [Shared projection renderer and scroll policy](../../../../../web/src/renderer/projection.ts)
-- [Instagram scroll usage](../../../../../examples/instagram/client/ui.uhura)
+- [Maintained Instagram feed scroll usage](../../../../../examples/instagram/client/app/page.uhura)
 - [Specification router](../../../../spec/README.md)

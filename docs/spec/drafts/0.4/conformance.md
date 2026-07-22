@@ -74,9 +74,10 @@ Instagram is broad dogfood, not a language authority. Its 0.4 role is to
 exercise:
 
 - multiple source modules and parts;
-- separately inspectable page, component, and surface presentations; reusable
-  component invocation remains outside this gate until the UI grammar selects
-  its exact props, event-interface, and children contract;
+- separately inspectable framework pages, pure components, and pure surfaces;
+- checked page-to-component and component-to-component invocation with exact
+  props and total emitted-event mappings;
+- generated checked routes and one generated `Application` presentation;
 - shared session, navigation, notice, request, and feature state;
 - cross-part draft-read and update dependencies plus committed observation;
 - UI input construction;
@@ -138,6 +139,9 @@ The closed project boundary has isolated rejection fixtures for:
 - an unknown project-manifest key;
 - invalid package name, non-positive compatibility version, or language other
   than exact `"0.4"`;
+- an unknown or incomplete `[framework]` key, profile other than `web-app`,
+  version other than `1`, invalid machine/location locator, unknown locator
+  module, or co-located machine and location declarations;
 - an empty, invalid, reserved, duplicate, or case-ambiguous logical module;
 - duplicate physical mapping, wrong extension, missing file, invalid UTF-8,
   unsafe path, symlink escape, or unmapped project-owned `.uhura` source;
@@ -156,7 +160,13 @@ The closed project boundary has isolated rejection fixtures for:
   side-effect-only source locators;
 - package-global public-name collision, including collision through
   re-export; and
-- an invalid source declaration locator or module-qualified host selector.
+- an invalid source declaration locator or module-qualified host selector;
+- a missing root page, malformed or ambiguous route, unrecognized file in a
+  framework-owned root, explicit/discovered source overlap, orphaned sibling
+  evidence file, framework logical/public-name collision, or occupied
+  generated module/path; and
+- a framework role file with the wrong declaration count, binding kind, page
+  suffix, or component/surface basename-derived name.
 
 One positive lock fixture pins at least two path packages with a transitive
 dependency. Permuting every manifest and lock table must preserve the resolved
@@ -231,7 +241,13 @@ has its own isolated fixture. In particular, coverage must distinguish:
 - structural substitution between distinct source `struct` declarations, or
   invented per-field `pub`;
 - missing, duplicate, ambiguous, or source-layout-dependent logical-module
-  resolution.
+  resolution;
+- an unknown UI call target, pure-to-machine-bound call, cross-machine
+  presentation call, recursive component-call cycle, missing/extra/duplicate
+  prop, prop type mismatch, missing/extra/duplicate emitted-event binding, or
+  event payload mismatch; and
+- an evidence component example with missing, extra, duplicate,
+  non-constant, or type-mismatched props, or a mismatched subject role.
 
 Diagnostics must identify the authored concept, not only the flattened field or
 generated constructor.
@@ -259,6 +275,24 @@ Separate probes must establish:
   ordinals, checkpoints, canonical encodings, and program hash; and
 - a mixed root/part/port golden fixes the exact input and command constructor
   ordinals, including local-before-port order within every owner.
+
+Framework probes additionally establish:
+
+- omitting `[framework]` preserves the explicit-project behavior and leaves
+  physical source paths without application semantics;
+- discovery and generation are deterministic under filesystem enumeration and
+  manifest-table reordering;
+- generated route/application sources are checked and retain generated
+  provenance, but are absent from authored source listing and formatting while
+  remaining present in Play inspection whenever `graphSources` references
+  them;
+- route matching selects a page from committed `view.location`, including the
+  explicit root fallback, without consulting browser location independently;
+- changing component-call structure or props changes affected presentation
+  identity, while moving a component file and preserving its resolved public
+  identity does not; and
+- direct component evidence projects the same checked component graph used
+  from a page rather than synthesizing a wrapper presentation.
 
 Application-phase probes additionally establish:
 
@@ -327,10 +361,12 @@ provenance IR supports:
 - input/handler interaction graph;
 - update, draft-read, and committed-observation dependency graphs;
 - UI structure and input edges;
+- UI component-call edges, prop flow, and emitted-event mapping;
+- authoritative framework page/component/surface roles and route metadata;
 - exact observations and snapshots;
 - global receipts with part attribution;
 - checkpoint restore and replay;
-- static example placement and preview;
+- static page and direct component/surface example placement and preview;
 - incremental source update; and
 - rename/move refactoring without semantic drift.
 
@@ -357,11 +393,13 @@ second UI parser does not pass.
    dotted port locators, and host admission.
 9. Pass flat-versus-part behavior, canonical aggregate-order, and deployment
    identity probes.
-10. Add the `ui` profile, framework `use` declarations, presentation identity,
+10. Add the `ui` profile, pure component composition, presentation identity,
     UI provenance, and native evidence modules under their manifest role.
 11. Port A0 and preserve its oracle comparison.
 12. Port Instagram and validate Editor and Play.
-13. Repeat acquisition, repair, and controlled-change trials against the
+13. Add the opt-in `web-app@1` resolver, checked generated routes/application,
+    authoritative Editor roles, and direct component/surface evidence.
+14. Repeat acquisition, repair, and controlled-change trials against the
     executable frontend.
 
 No phase may add a second reaction engine or use JavaScript execution to fill
@@ -416,9 +454,19 @@ Before A0, the implementation must:
 Before Instagram, the implementation must:
 
 - resolve direct unaliased `use uhura::ui;` activation;
+- check typed pure components, exact props, total emitted-event bindings, and
+  an acyclic call graph without adding component-local state or lifecycle;
 - compute `PresentationId` separately from `MachineProgramId`;
 - retain UI nodes and input edges in the same provenance sidecar;
 - keep renderer preview pose outside semantic checkpoints;
+- expand `web-app@1` from its closed roots into ordinary checked modules;
+- generate and check `APPLICATION_ROUTES` plus machine-bound `Application`;
+- reject a configured machine without exactly one `Router<Location>` port
+  configured from generated
+  `APPLICATION_ROUTES`, while retaining the ordinary missing-handler
+  diagnostic for an unhandled `changed` input;
+- expose page/component/surface roles and direct component examples without
+  exposing generated source as editable source;
 - prove Editor and Play consume the same semantic and provenance artifacts;
   and
 - pass deployment identity probes with selected UI resources.

@@ -16,8 +16,8 @@ version.
 
 - [Uhura 0.4 incubation candidate](drafts/0.4/) — the single active exact
   design and implemented frontend. It uses a Rust-shaped machine surface plus
-  Svelte-shaped `ui`, and defines modular source composition that lowers to one
-  global semantic machine IR.
+  Svelte-shaped `ui`, pure typed UI composition, and an opt-in Web application
+  topology that still lowers to one global semantic machine IR.
 - Retired source frontends have no admission path in the current toolchain.
   Earlier experiments remain available through Git history.
 - [Relay B3 historical record](drafts/relay-b3/) — a short provenance pointer
@@ -26,11 +26,13 @@ version.
 - [v0 historical pointer](drafts/v0.md) — the retired UI-first experiment.
 - [RFC 0003](../rfcs/0003-source-comments-docs-and-annotations.md) — accepted
   source-metadata decision reconciled with the 0.4 grammar; its checked
-  attachment and authoring projection remain a separate pending
-  implementation.
+  sibling-list attachment and Editor authoring projection are implemented,
+  while the RFC names the remaining placement and declaration-doc work.
 - [RFC 0004](../rfcs/0004-standalone-machine-core-and-source-composition.md) —
   accepted core-first and source-composition boundary incorporated by the 0.4
   candidate.
+- [RFC 0005](../rfcs/0005-web-application-topology-and-ui-composition.md) —
+  accepted opt-in Web application topology and pure UI-composition boundary.
 
 The active candidate may be replaced wholesale. Durable decisions belong in
 RFCs; observable supported behavior must be restated in the specification and

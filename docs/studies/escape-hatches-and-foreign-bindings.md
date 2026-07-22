@@ -129,13 +129,14 @@ the same solved problem.
 
 ### 2.5 Fixtures, replay, and static examples
 
-The source-authored
-[`evidence.uhura`](../../examples/instagram/client/evidence.uhura) binds sealed
-implementations of the same port contracts, starts or restores scenarios,
-delivers typed inputs, records expected commands, and publishes named pins,
-checkpoints, and examples. `uhura check`, `uhura trace`, and Editor all use
-that one evidence runner; there is no external fixture-script runtime. Static
-examples do not execute interactive foreign behavior.
+The source-authored Instagram [evidence
+corpus](../../examples/instagram/client/evidence/) binds sealed implementations
+of the same port contracts, starts or restores scenarios, delivers typed
+inputs, records expected commands, and publishes named pins and checkpoints;
+colocated sibling evidence files register the examples. `uhura check`,
+`uhura trace`, and Editor all use that one evidence runner; there is no
+external fixture-script runtime. Static examples do not execute interactive
+foreign behavior.
 
 That is a valuable precedent for substitutes and recordings. It does not yet
 decide whether every foreign binding requires a fixture, fallback, snapshot,

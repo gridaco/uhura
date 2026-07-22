@@ -65,6 +65,9 @@ compatibility version.
 - [RFC 0004](rfcs/0004-standalone-machine-core-and-source-composition.md)
   fixes the standalone-core, explicit-`ui`, and modular-source/global-IR
   boundary incorporated by the active candidate.
+- [RFC 0005](rfcs/0005-web-application-topology-and-ui-composition.md)
+  fixes the opt-in Web application topology, generated checked routes, and
+  pure UI-composition boundary incorporated by the active candidate.
 - [RFC 0001](rfcs/0001-project-foundation.md) remains a draft proposal; it is
   not a foundational authority merely because other work was inspired by it.
 

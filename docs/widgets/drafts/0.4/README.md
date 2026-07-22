@@ -139,6 +139,12 @@ All other element/event pairs are rejected. This table states source checking,
 not browser realization details; every renderer must separately prove that it
 implements each admitted contract or reject the required capability honestly.
 
+UpperCamelCase calls to user-authored pure UI components use the component's
+checked `emits` declaration rather than this native-element event table. Every
+declared emitted variant is mapped exactly once at the call site. This does
+not make the component a new catalogue element or browser primitive; the Rust
+projector expands its checked render tree before the browser boundary.
+
 ## Resource-backed validation
 
 `<icon>` is checked in two stages before any Editor or Play render is
@@ -154,8 +160,10 @@ and has no fallback contract for repairing them.
 
 ## Deliberate limits
 
-This catalogue does not establish a general widget system, component
-invocation, raw HTML passthrough, arbitrary custom elements, or stable renderer
-behavior. An imported `ui` presentation is not callable with element-shaped
-syntax in 0.4. New elements and contracts require a checker change, matching
-renderer work, conformance coverage, and an update to this page.
+This catalogue does not establish a general widget system, raw HTML
+passthrough, arbitrary custom elements, or stable renderer behavior. Uhura 0.4
+does admit checked UpperCamelCase calls to pure typed UI declarations and
+same-machine presentations, but those calls expand to this finite catalogue
+and do not extend it. New lowercase elements and contracts require a checker
+change, matching renderer work, conformance coverage, and an update to this
+page.

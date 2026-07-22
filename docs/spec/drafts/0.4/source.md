@@ -172,9 +172,9 @@ language = "0.4"
 programs = "programs.uhura"
 ```
 
-The complete closed manifest, lock, and identity rules are specified in
-[Project and identity](project.md). The lock resolves every non-local `use`
-path to an exact compatible contract.
+The complete closed manifest, optional first-party application profile, lock,
+and identity rules are specified in [Project and identity](project.md). The
+lock resolves every non-local `use` path to an exact compatible contract.
 Source files begin with ordinary use declarations:
 
 ```uhura
@@ -214,14 +214,18 @@ Before source checking, project resolution supplies the closed one-to-one
 - `vendor::icons::Icon` names public declaration `Icon` in logical module
   `icons` of locked package `vendor`;
 - every checked source file has exactly one logical module path;
-- a physical filename or directory does not infer a logical path; and
+- outside an explicitly selected framework profile, a physical filename or
+  directory does not infer a logical path; and
 - moving a file while updating only the map preserves both source and IR.
 
 Changing a logical module path requires updating affected `use` declarations,
 but still preserves IR when package identity, public names, and logical
-composition are unchanged. A framework may generate the map from a directory
-convention; the resulting resolved map, not that convention, is the checker
-input.
+composition are unchanged. The opt-in `web-app@1` profile assigns closed
+meanings to `app/`, `components/`, and `surfaces/`, augments the explicit map,
+and generates checked route/application modules. The resulting effective map,
+source-role metadata, and generated source—not an independent framework
+runtime—are the checker input. Its precise path contract is defined by
+[Project and identity §3](project.md#web-app1-discovery-and-generated-modules).
 
 Use declarations are declarative and inert. Resolution:
 
@@ -254,7 +258,8 @@ retain contract declaration order. This order determines the aggregate `S`,
 `I`, `K`, and `V` domains, constructor ordinals, checkpoints, canonical
 encodings, receipts, semantic IR, program hashes, and invariant groups.
 Physical file layout and the authored placement of `part` or `port`
-declarations never participate in it.
+declarations never participate in machine identity. Framework-owned paths do
+participate in route and UI-role resolution only when that profile is selected.
 
 A package's public top-level names are unique across its source modules.
 Their semantic identity is:
