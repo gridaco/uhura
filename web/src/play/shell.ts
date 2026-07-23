@@ -1,6 +1,9 @@
 import { escapeHtmlAttribute, hostPath } from "../app/host.js";
 
 /** Static, host-owned Play chrome created when the `/play` route mounts. */
+import PRIMITIVE_BASE_STYLES from "../renderer/primitives/base.css?inline";
+import runtimeStyles from "./runtime.css?inline";
+
 export const PLAY_SHELL_MARKUP = `
   <header id="uh-shell-toolbar">
     <a class="uh-editor-link" href="${escapeHtmlAttribute(hostPath("/"))}" aria-label="Back to Editor">
@@ -71,10 +74,7 @@ export const PLAY_SHELL_MARKUP = `
       <div id="uh-frame-label">Mobile <span>390 × 844</span></div>
       <div id="uh-frame-sizer">
         <div id="uh-frame" data-frame="mobile">
-          <div id="uh-app">
-            <div id="uh-page"></div>
-            <div id="uh-surfaces"></div>
-          </div>
+          <div id="uh-app"></div>
           <div id="uh-overlay" hidden></div>
         </div>
       </div>
@@ -205,6 +205,10 @@ export interface PlayShell {
   pageHost: HTMLElement;
   surfaceHost: HTMLElement;
   overlayHost: HTMLElement;
+  /** The app runtime's shadow root — application styles belong here (#30). */
+  runtimeRoot: ShadowRoot;
+  /** The shadow host; mirrors the frame state for authored frame-keyed styles. */
+  appHost: HTMLElement;
 }
 
 function required<T extends Element>(
@@ -216,10 +220,57 @@ function required<T extends Element>(
   return found as T;
 }
 
+
+/**
+ * Rewrites an authored application stylesheet for the runtime shadow root:
+ * document-level selectors (`:root`, `html`, `body`, `#uh-frame`, `#uh-app`)
+ * have no match inside the shadow, so their entire leading ancestry chain is
+ * collapsed into a single `:host` selector — otherwise the app's design
+ * tokens and base rules silently die (#30 spike). `#uh-app` can only ever be
+ * the host itself, never a shadow descendant.
+ */
+const DOCUMENT_ANCESTRY =
+  /^(\s*)((?::root|html|body|#uh-frame(?:\[[^\]]*\])?|#uh-app)(?![\w-])(?:\s+(?::root|html|body|#uh-frame(?:\[[^\]]*\])?|#uh-app)(?![\w-]))*)/u;
+
+function collapseAncestry(selector: string): string {
+  return selector.replace(DOCUMENT_ANCESTRY, (_m, lead: string, chain: string) => {
+    const tokens = chain.split(/\s+/u);
+    const attrs = tokens
+      .filter((t) => t.startsWith("#uh-frame["))
+      .map((t) => t.slice("#uh-frame".length))
+      .join("");
+    const onHost = tokens.some((t) => t.startsWith("#uh-"));
+    return onHost ? `${lead}:host(#uh-app${attrs})` : `${lead}:host`;
+  });
+}
+
+export function retargetApplicationStyles(styleText: string): string {
+  // Comments can shield selector anchors, so strip them from the runtime copy.
+  const uncommented = styleText.replace(/\/\*[\s\S]*?\*\//g, "");
+  return uncommented.replace(
+    /(^|[{}])([^{}@]+)(\{)/g,
+    (_whole, boundary: string, selectors: string, brace: string) =>
+      boundary + selectors.split(",").map(collapseAncestry).join(",") + brace,
+  );
+}
+
 export function createPlayShell(document: Document): PlayShell {
   const container = document.createElement("div");
   container.className = "uh-play-route";
   container.innerHTML = PLAY_SHELL_MARKUP;
+  // The app runtime renders inside a shadow root (#30): shell chrome and the
+  // machine-owned page/surface trees cannot collide, and surface layering has
+  // a defined stacking root owned by the runtime.
+  const app = required<HTMLElement>(container, "#uh-app");
+  app.dataset["frame"] = "mobile";
+  const runtimeRoot = app.attachShadow({ mode: "open" });
+  const runtimeStyle = document.createElement("style");
+  runtimeStyle.textContent = `${PRIMITIVE_BASE_STYLES}\n${runtimeStyles}`;
+  const pageHost = document.createElement("div");
+  pageHost.id = "uh-page";
+  const surfaceHost = document.createElement("div");
+  surfaceHost.id = "uh-surfaces";
+  runtimeRoot.append(runtimeStyle, pageHost, surfaceHost);
   return {
     document,
     container,
@@ -248,8 +299,10 @@ export function createPlayShell(document: Document): PlayShell {
     debugDetails: required(container, "#uh-debug-details"),
     fullscreen: required(container, "#uh-fullscreen"),
     restart: required(container, "#uh-restart"),
-    pageHost: required(container, "#uh-page"),
-    surfaceHost: required(container, "#uh-surfaces"),
+    pageHost,
+    surfaceHost,
+    runtimeRoot,
+    appHost: app,
     overlayHost: required(container, "#uh-overlay"),
   };
 }

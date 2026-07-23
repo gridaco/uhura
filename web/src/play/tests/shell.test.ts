@@ -32,8 +32,7 @@ test("the route-built Play shell owns every runtime host and Editor navigation",
     "uh-frame-label",
     "uh-frame-sizer",
     "uh-frame",
-    "uh-page",
-    "uh-surfaces",
+    "uh-app",
     "uh-overlay",
   ];
   for (const id of requiredIds) {
@@ -95,4 +94,64 @@ test("Play fetches one namespaced coherent artifact set including app CSS", () =
     "/api/play/icon-fonts.json",
     "/api/play/stylesheet.css",
   ]);
+});
+
+import { retargetApplicationStyles } from "../shell.js";
+
+test("retargets document-level authored selectors to :host", () => {
+  const authored = [
+    ":root {\n  --color-ink: #111;\n}",
+    "body {\n  margin: 0;\n  color: var(--color-ink);\n}",
+    "#uh-app {\n  font-size: 15px;\n}",
+    "#uh-app button.uh-button,\n#uh-app .uh-textfield input { min-block-size: 44px; }",
+    ".post-body { padding: 8px; }",
+    ".uh-body-text { color: red; }",
+  ].join("\n\n");
+  const out = retargetApplicationStyles(authored);
+  assert.doesNotMatch(out, /:root\s*\{/u);
+  assert.doesNotMatch(out, /(^|[},\s])body\s*\{/u);
+  assert.doesNotMatch(out, /(^|[\s,{}])#uh-app(?!\)|[\w-])/mu);
+  assert.match(out, /:host \{\n {2}--color-ink: #111;/u);
+  assert.match(out, /:host\(#uh-app\) button\.uh-button,\n:host\(#uh-app\) \.uh-textfield input/u);
+  // No collateral hits: body/app substrings inside class names stay untouched.
+  assert.match(out, /\.post-body \{ padding: 8px; \}/u);
+  assert.match(out, /\.uh-body-text \{ color: red; \}/u);
+});
+
+test("retargets frame-keyed authored selectors to the host", () => {
+  const out = retargetApplicationStyles(
+    '#uh-frame[data-frame="desktop"] .bottom-nav { inline-size: 240px; }\n#uh-frame .anything { color: red; }',
+  );
+  assert.match(out, /:host\(#uh-app\[data-frame="desktop"\]\) \.bottom-nav/u);
+  assert.match(out, /:host\(#uh-app\) \.anything/u);
+  assert.doesNotMatch(out, /#uh-frame/u);
+});
+
+test("collapses compound document ancestry into a single host selector", () => {
+  const out = retargetApplicationStyles(
+    [
+      "body #uh-app .card { padding: 4px; }",
+      ":root #uh-app .card { color: blue; }",
+      "html body .page { margin: 0; }",
+      '#uh-frame[data-frame="desktop"] #uh-app .rail { inline-size: 244px; }',
+      "body #uh-frame .anything { color: red; }",
+    ].join("\n"),
+  );
+  assert.match(out, /:host\(#uh-app\) \.card \{ padding: 4px; \}/u);
+  assert.match(out, /:host\(#uh-app\) \.card \{ color: blue; \}/u);
+  assert.match(out, /:host \.page \{ margin: 0; \}/u);
+  assert.match(out, /:host\(#uh-app\[data-frame="desktop"\]\) \.rail/u);
+  assert.match(out, /:host\(#uh-app\) \.anything/u);
+  // The host id must never survive as a descendant — it can only be the host.
+  assert.doesNotMatch(out, /:host(?:\([^)]*\))?[^{,(]*#uh-app/u);
+  assert.doesNotMatch(out, /(?:^|[\s,{}])(?:body|html|:root|#uh-frame)(?![\w-])[^{,]*\{/mu);
+});
+
+test("comments do not shield document-level selectors from retargeting", () => {
+  const out = retargetApplicationStyles(
+    "/* tokens */\n:root {\n  --nav-rail-width: 244px;\n}\n\n/* base */\nbody { margin: 0; }",
+  );
+  assert.match(out, /:host \{\n {2}--nav-rail-width: 244px;/u);
+  assert.doesNotMatch(out, /:root/u);
+  assert.doesNotMatch(out, /(^|[\s,{}])body\s*\{/u);
 });

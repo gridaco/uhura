@@ -17,7 +17,10 @@ export function mountPlay(root: HTMLElement): PlayDispose {
   const unlockPageScale = lockPlayPageScale(document);
   const hadBodyClass = document.body.classList.contains("uh-play-shell");
   document.body.classList.add("uh-play-shell");
-  root.replaceChildren(shell.container, applicationStyle);
+  // The authored application stylesheet lives inside the runtime shadow root,
+  // after the base runtime styles, so it still wins the cascade (#30).
+  shell.runtimeRoot.append(applicationStyle);
+  root.replaceChildren(shell.container);
 
   let disposed = false;
   let chrome: ReturnType<typeof mountPlayChrome> | null = null;

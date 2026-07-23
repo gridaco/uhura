@@ -129,6 +129,7 @@ export function mountPlayChrome(
     frameName = next;
     const spec = FRAME_SPECS[next];
     shell.frame.dataset.frame = next;
+    shell.appHost.dataset["frame"] = next;
     shell.frameLabel.replaceChildren(
       shell.document.createTextNode(`${spec.label} `),
       Object.assign(shell.document.createElement("span"), {
