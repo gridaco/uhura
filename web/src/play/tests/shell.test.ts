@@ -110,10 +110,28 @@ test("retargets document-level authored selectors to :host", () => {
   const out = retargetApplicationStyles(authored);
   assert.doesNotMatch(out, /:root\s*\{/u);
   assert.doesNotMatch(out, /(^|[},\s])body\s*\{/u);
-  assert.doesNotMatch(out, /#uh-app/u);
+  assert.doesNotMatch(out, /(^|[\s,{}])#uh-app(?!\)|[\w-])/mu);
   assert.match(out, /:host \{\n {2}--color-ink: #111;/u);
-  assert.match(out, /:host button\.uh-button,\n:host \.uh-textfield input/u);
+  assert.match(out, /:host\(#uh-app\) button\.uh-button,\n:host\(#uh-app\) \.uh-textfield input/u);
   // 오폭 금지: 클래스 이름 속 body/app 문자열은 건드리지 않는다
   assert.match(out, /\.post-body \{ padding: 8px; \}/u);
   assert.match(out, /\.uh-body-text \{ color: red; \}/u);
+});
+
+test("retargets frame-keyed authored selectors to the host", () => {
+  const out = retargetApplicationStyles(
+    '#uh-frame[data-frame="desktop"] .bottom-nav { inline-size: 240px; }\n#uh-frame .anything { color: red; }',
+  );
+  assert.match(out, /:host\(#uh-app\[data-frame="desktop"\]\) \.bottom-nav/u);
+  assert.match(out, /:host\(#uh-app\) \.anything/u);
+  assert.doesNotMatch(out, /#uh-frame/u);
+});
+
+test("comments do not shield document-level selectors from retargeting", () => {
+  const out = retargetApplicationStyles(
+    "/* tokens */\n:root {\n  --nav-rail-width: 244px;\n}\n\n/* base */\nbody { margin: 0; }",
+  );
+  assert.match(out, /:host \{\n {2}--nav-rail-width: 244px;/u);
+  assert.doesNotMatch(out, /:root/u);
+  assert.doesNotMatch(out, /(^|[\s,{}])body\s*\{/u);
 });

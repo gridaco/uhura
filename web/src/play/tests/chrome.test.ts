@@ -201,6 +201,7 @@ function harness() {
     pageHost: element(),
     surfaceHost: element(),
     overlayHost: element(),
+    appHost: { dataset: {} },
   } as unknown as PlayShell;
 
   const chrome = mountPlayChrome(shell, {

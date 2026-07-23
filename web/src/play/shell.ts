@@ -207,6 +207,8 @@ export interface PlayShell {
   overlayHost: HTMLElement;
   /** The app runtime's shadow root — application styles belong here (#30). */
   runtimeRoot: ShadowRoot;
+  /** The shadow host; mirrors the frame state for authored frame-keyed styles. */
+  appHost: HTMLElement;
 }
 
 function required<T extends Element>(
@@ -226,14 +228,23 @@ function required<T extends Element>(
  * the app's design tokens and base rules silently die (#30 spike).
  */
 export function retargetApplicationStyles(styleText: string): string {
-  return styleText.replace(
+  // 주석은 셀렉터 앵커를 가리므로 런타임 사본에서는 제거한다.
+  const uncommented = styleText.replace(/\/\*[\s\S]*?\*\//g, "");
+  return uncommented.replace(
     /(^|[{}])([^{}@]+)(\{)/g,
     (_whole, boundary: string, selectors: string, brace: string) =>
       boundary +
       selectors
         .split(",")
         .map((selector) =>
-          selector.replace(/(^\s*)(:root|html|body|#uh-app)(?![\w-])/u, "$1:host"),
+          selector
+            .replace(
+              /(^\s*)#uh-frame(\[[^\]]*\])?/u,
+              (_m, lead: string, attr: string | undefined) =>
+                `${lead}:host(#uh-app${attr ?? ""})`,
+            )
+            .replace(/(^\s*)#uh-app(?![\w-])/u, "$1:host(#uh-app)")
+            .replace(/(^\s*)(:root|html|body)(?![\w-])/u, "$1:host"),
         )
         .join(",") +
       brace,
@@ -248,6 +259,7 @@ export function createPlayShell(document: Document): PlayShell {
   // machine-owned page/surface trees cannot collide, and surface layering has
   // a defined stacking root owned by the runtime.
   const app = required<HTMLElement>(container, "#uh-app");
+  app.dataset["frame"] = "mobile";
   const runtimeRoot = app.attachShadow({ mode: "open" });
   const runtimeStyle = document.createElement("style");
   runtimeStyle.textContent = `${PRIMITIVE_BASE_STYLES}\n${runtimeStyles}`;
@@ -287,6 +299,7 @@ export function createPlayShell(document: Document): PlayShell {
     pageHost,
     surfaceHost,
     runtimeRoot,
+    appHost: app,
     overlayHost: required(container, "#uh-overlay"),
   };
 }
