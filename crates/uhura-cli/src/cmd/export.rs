@@ -885,13 +885,11 @@ fn write_bundle(
                 out.display()
             ));
         }
-        if existed {
-            fs::remove_dir_all(&backup).map_err(|error| {
-                format!(
-                    "published bundle but could not remove {}: {error}",
-                    backup.display()
-                )
-            })?;
+        if existed && let Err(error) = fs::remove_dir_all(&backup) {
+            eprintln!(
+                "uhura export: published bundle but could not remove {}: {error}",
+                backup.display()
+            );
         }
         Ok(())
     })();
