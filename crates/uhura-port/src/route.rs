@@ -647,7 +647,7 @@ fn parse_pattern(
                     format!("`{segment}` is not a complete path placeholder"),
                 ));
             }
-            let decoded = decode_query_value(segment).map_err(|_| {
+            let decoded = decode_path_literal(segment).map_err(|_| {
                 RouteError::for_route(
                     RouteErrorCode::InvalidPattern,
                     &constructor.name,
@@ -860,7 +860,7 @@ fn parse_query(query: Option<&str>) -> Result<Vec<(String, String)>, RouteError>
 
 /// Encodes a dynamic path value with the pinned opaque component codec.
 pub fn encode_opaque_path_component(value: &str) -> String {
-    let encoded = encode_url_component(value);
+    let encoded = encode_url_component(value, safe_path_component_byte);
     if encoded.is_empty() || encoded == "." || encoded == ".." || encoded.starts_with('~') {
         format!("~{}", encode_base64url(value.as_bytes()))
     } else {
@@ -892,7 +892,7 @@ pub fn decode_opaque_path_component(component: &str) -> Result<String, RouteErro
 
 /// Canonical URL-component encoding used by route query values.
 pub fn encode_query_value(value: &str) -> String {
-    encode_url_component(value)
+    encode_url_component(value, safe_query_component_byte)
 }
 
 /// Decodes a query component and rejects every non-canonical spelling.
@@ -907,10 +907,21 @@ pub fn decode_query_value(component: &str) -> Result<String, RouteError> {
     Ok(decoded)
 }
 
-fn encode_url_component(value: &str) -> String {
+fn decode_path_literal(component: &str) -> Result<String, RouteError> {
+    let decoded = decode_percent_bytes(component)?;
+    if encode_url_component(&decoded, safe_path_component_byte) != component {
+        return Err(RouteError::new(
+            RouteErrorCode::NonCanonicalComponent,
+            format!("`{component}` is not a canonical literal path component"),
+        ));
+    }
+    Ok(decoded)
+}
+
+fn encode_url_component(value: &str, safe: fn(u8) -> bool) -> String {
     let mut output = String::new();
     for byte in value.as_bytes() {
-        if safe_component_byte(*byte) {
+        if safe(*byte) {
             output.push(char::from(*byte));
         } else {
             const HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -922,7 +933,7 @@ fn encode_url_component(value: &str) -> String {
     output
 }
 
-fn safe_component_byte(byte: u8) -> bool {
+fn safe_path_component_byte(byte: u8) -> bool {
     matches!(
         byte,
         b'A'..=b'Z'
@@ -938,6 +949,10 @@ fn safe_component_byte(byte: u8) -> bool {
             | b'('
             | b')'
     )
+}
+
+fn safe_query_component_byte(byte: u8) -> bool {
+    safe_path_component_byte(byte) && byte != b'\''
 }
 
 fn decode_percent_bytes(component: &str) -> Result<String, RouteError> {
@@ -1288,6 +1303,7 @@ mod tests {
             "plain",
             "space value",
             "slash/percent%",
+            "'",
             "~",
             "한글",
             "emoji-🛰️",
@@ -1305,6 +1321,12 @@ mod tests {
         for noncanonical in ["raw space", "+", "%41", "%2f", "한글"] {
             assert!(decode_query_value(noncanonical).is_err(), "{noncanonical}");
         }
+        assert_eq!(encode_opaque_path_component("'"), "'");
+        assert_eq!(decode_path_literal("author's").unwrap(), "author's");
+        assert!(decode_path_literal("author%27s").is_err());
+        assert_eq!(encode_query_value("'"), "%27");
+        assert_eq!(decode_query_value("%27").unwrap(), "'");
+        assert!(decode_query_value("'").is_err());
     }
 
     #[test]

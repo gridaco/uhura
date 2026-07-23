@@ -25,6 +25,7 @@ to authoritative data and operations.
 - Typed ports admitted against exact adapter ownership and contract identities.
 - A read-only Editor for browsing checked previews.
 - A Play mode for running the experience against a provider.
+- An immutable Web export of one checked Editor/Play generation.
 - One canonical engine used natively and through Wasm, with cross-boundary
   conformance tests.
 
@@ -79,6 +80,10 @@ cargo run --locked -p uhura-cli -- check \
 # Start Play as the primary route; Editor remains available at /
 cargo run --locked -p uhura-cli -- play examples/instagram/client
 
+# Export ordinary files for any static host; no Uhura process runs at serving time
+cargo run --locked -p uhura-cli -- export examples/instagram/client \
+  --out dist/instagram-web --mount /instagram/
+
 # Serialize one source-authored evidence scenario as canonical JSONL
 cargo run --locked -p uhura-cli -- trace examples/instagram/client \
   --script=feed_like_refused_scenario --expanded
@@ -93,6 +98,11 @@ corepack pnpm@10.11.0 -C web check
 `check` and `trace` use the same checked program and evidence runner that feed
 Editor previews. `--script` selects an authored `scenario`; it is not a
 fixture-script language or an alternate runtime.
+
+`export` uses the packaged mount-neutral Web template and browser Wasm runtime.
+The resulting directory is host-vendor agnostic but mount-specific. Its
+`uhura-static-bundle.json` records the entry document and required
+mount-scoped history fallback.
 
 ## Repository layout
 

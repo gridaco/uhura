@@ -4,6 +4,7 @@
 /crates/uhura-wasm/pkg
 /web/node_modules
 /web/dist
+/web/dist-export
 /examples/instagram/client/providers/dist
 /examples/instagram/client/build
 /examples/applications/*/answers/*/build

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 
 import type { SurfaceLoader, SurfaceMount } from "./router.js";
 import {
   createRouteRenderer,
   EDITOR_PATH,
+  routableHostUrl,
   routeFor,
+  routeForHost,
 } from "./router.js";
 
 const deferred = (): {
@@ -65,6 +67,50 @@ test("only reserved editor entry points select Editor", () => {
   assert.equal(routeFor("/_uhura/editor/preferences").surface, "play");
 });
 
+test("a mounted host owns only its segment-scoped browser paths", () => {
+  assert.equal(routeForHost("/demo/", "/demo/")?.surface, "editor");
+  assert.equal(
+    routeForHost("/demo/", "/demo/_uhura/editor")?.surface,
+    "editor",
+  );
+  assert.equal(routeForHost("/demo/", "/demo/play")?.surface, "play");
+  assert.equal(
+    routeForHost("/demo/", "/demo/profile/mira")?.surface,
+    "play",
+  );
+
+  assert.equal(routeForHost("/demo/", "/docs"), null);
+  assert.equal(routeForHost("/demo/", "/demolition"), null);
+});
+
+test("same-origin URLs are routable only inside the mounted host", () => {
+  const origin = "https://example.test";
+  assert.equal(
+    routableHostUrl("/demo/", origin, new URL(`${origin}/demo/play`)),
+    true,
+  );
+  assert.equal(
+    routableHostUrl("/demo/", origin, new URL(`${origin}/demo`)),
+    true,
+  );
+  assert.equal(
+    routableHostUrl("/demo/", origin, new URL(`${origin}/docs`)),
+    false,
+  );
+  assert.equal(
+    routableHostUrl("/demo/", origin, new URL(`${origin}/demolition`)),
+    false,
+  );
+  assert.equal(
+    routableHostUrl(
+      "/demo/",
+      origin,
+      new URL("https://outside.test/demo/play"),
+    ),
+    false,
+  );
+});
+
 test("real application locations keep one running Play surface", async () => {
   let playLoads = 0;
   let playMounts = 0;
@@ -100,4 +146,54 @@ test("real application locations keep one running Play surface", async () => {
 
   await renderer.render(EDITOR_PATH);
   assert.equal(playDisposals, 1);
+});
+
+test("a mounted router ignores initial browser locations outside its mount", async () => {
+  vi.resetModules();
+  vi.stubGlobal("document", {
+    getElementById(): { textContent: string } {
+      return {
+        textContent: JSON.stringify({
+          protocol: "uhura-host-config/0",
+          mountPath: "/demo/",
+          mode: "static",
+          playEntry: "/play",
+        }),
+      };
+    },
+    documentElement: { dataset: {} },
+    addEventListener(): void {},
+  });
+  vi.stubGlobal("window", { addEventListener(): void {} });
+  vi.stubGlobal("location", {
+    href: "https://example.test/docs",
+    origin: "https://example.test",
+    pathname: "/docs",
+    search: "",
+    hash: "",
+  });
+  vi.stubGlobal("history", {
+    replaceState(): void {},
+    pushState(): void {},
+  });
+
+  try {
+    const { createRouter: createMountedRouter } = await import("./router.js");
+    let loads = 0;
+    createMountedRouter({
+      root: { replaceChildren(): void {} } as unknown as HTMLElement,
+      loadEditor: async () => {
+        loads += 1;
+        return () => undefined;
+      },
+      loadPlay: async () => {
+        loads += 1;
+        return () => undefined;
+      },
+    }).start();
+    await Promise.resolve();
+    assert.equal(loads, 0);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

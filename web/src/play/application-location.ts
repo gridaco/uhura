@@ -1,6 +1,11 @@
 import type { BrowserLocation } from "../app/router.js";
+import {
+  hostPath,
+  stripHostPath,
+  UHURA_HOST_BASE,
+} from "../app/host.js";
 
-export const PLAY_COMPATIBILITY_PATH = "/play" as const;
+export const PLAY_COMPATIBILITY_PATH = hostPath("/play");
 
 /**
  * The host keeps `/` as the friendly Editor entry, while an application's
@@ -11,11 +16,17 @@ export const PLAY_COMPATIBILITY_PATH = "/play" as const;
 export const applicationPathForBrowser = (
   location: BrowserLocation,
 ): string => {
+  const hosted = stripHostPath(UHURA_HOST_BASE, location.pathname);
+  if (hosted === null) {
+    throw new Error(
+      `browser location ${JSON.stringify(location.pathname)} is outside the Uhura host`,
+    );
+  }
   const pathname =
-    location.pathname === PLAY_COMPATIBILITY_PATH
-      || location.pathname === `${PLAY_COMPATIBILITY_PATH}/`
+    hosted === "/play"
+      || hosted === "/play/"
       ? "/"
-      : location.pathname;
+      : hosted;
   return `${pathname}${location.search}${location.hash}`;
 };
 
@@ -25,8 +36,8 @@ export const browserUrlForApplication = (
   baseUrl: string,
 ): URL => {
   const destination = new URL(applicationUrl, baseUrl);
-  if (destination.pathname === "/") {
-    destination.pathname = PLAY_COMPATIBILITY_PATH;
-  }
+  destination.pathname = hostPath(
+    destination.pathname === "/" ? "/play" : destination.pathname,
+  );
   return destination;
 };

@@ -80,10 +80,17 @@ import {
   editorIdentifierLabel,
   editorPreviewLabels,
 } from "./display-labels.js";
+import {
+  escapeHtmlAttribute,
+  hostPath,
+  rebaseHostResource,
+  UHURA_PLAY_ENTRY,
+  UHURA_STATIC_HOST,
+} from "../app/host.js";
 
-const EDITOR_STATE_PATH = "/api/editor/state";
-const EDITOR_ICON_FONTS_PATH = "/api/editor/icon-fonts.json";
-const EDITOR_EVENTS_PATH = "/api/editor/events";
+const EDITOR_STATE_PATH = hostPath("/api/editor/state");
+const EDITOR_ICON_FONTS_PATH = hostPath("/api/editor/icon-fonts.json");
+const EDITOR_EVENTS_PATH = hostPath("/api/editor/events");
 const UI_VISIBLE_KEY = "uhura.editor.ui-visible";
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 3;
@@ -256,7 +263,7 @@ const SHELL_HTML = `
     </div>
   </main>
   <aside class="editor-inspector" aria-label="Preview details">
-    <div class="panel-heading"><a class="play-link" href="/play" aria-label="Open Play"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5 3.25v9.5L12.5 8z"></path></svg>Play</a></div>
+    <div class="panel-heading"><a class="play-link" href="${escapeHtmlAttribute(UHURA_PLAY_ENTRY)}" aria-label="Open Play"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5 3.25v9.5L12.5 8z"></path></svg>Play</a></div>
     <section class="inspector-section inspector-overview">
       <div class="inspector-hero"><span class="inspector-hero-icon" aria-hidden="true">U</span><div><strong data-overview-application>Uhura</strong><span data-overview-freshness>Loading preview model</span></div></div>
       <dl class="inspector-grid" data-overview-stats></dl>
@@ -1773,7 +1780,19 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
         if (!iconResponse.ok) {
           throw new Error(`Editor icon fonts request failed (${iconResponse.status})`);
         }
-        const iconManifest = decodeIconFontManifest(await iconResponse.json(), "editor");
+        const decodedIconManifest = decodeIconFontManifest(
+          await iconResponse.json(),
+          "editor",
+        );
+        const iconManifest = {
+          ...decodedIconManifest,
+          families: Object.fromEntries(
+            Object.entries(decodedIconManifest.families).map(([name, family]) => [
+              name,
+              { ...family, font: rebaseHostResource(family.font) },
+            ]),
+          ),
+        };
         if (iconManifest.revision !== decision.state.render.revision) {
           throw new Error(
             `Editor icon fonts revision ${String(iconManifest.revision)} does not match render revision ${decision.state.render.revision}`,
@@ -2139,28 +2158,32 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
     });
   }
 
-  const events = new window.EventSource(EDITOR_EVENTS_PATH);
-  listen(events, "open", () => {
-    showStatus("Refreshing previews", "Connected to the Editor host…", "neutral");
-    void loadState(updates.opened());
-  });
-  listen(events, "error", () => {
-    showStatus(
-      "Live preview disconnected",
-      "The last loaded state remains visible while Editor reconnects…",
-      "warning",
-    );
-  });
-  listen(events, "message", (rawEvent) => {
-    const event = rawEvent as MessageEvent<string>;
-    try {
-      const revision = decodeEditorRevisionEvent(JSON.parse(event.data));
-      const token = updates.announced(revision);
-      if (token) void loadState(token);
-    } catch (error) {
-      console.warn("ignored invalid Uhura Editor event", error);
-    }
-  });
+  const events = UHURA_STATIC_HOST
+    ? null
+    : new window.EventSource(EDITOR_EVENTS_PATH);
+  if (events !== null) {
+    listen(events, "open", () => {
+      showStatus("Refreshing previews", "Connected to the Editor host…", "neutral");
+      void loadState(updates.opened());
+    });
+    listen(events, "error", () => {
+      showStatus(
+        "Live preview disconnected",
+        "The last loaded state remains visible while Editor reconnects…",
+        "warning",
+      );
+    });
+    listen(events, "message", (rawEvent) => {
+      const event = rawEvent as MessageEvent<string>;
+      try {
+        const revision = decodeEditorRevisionEvent(JSON.parse(event.data));
+        const token = updates.announced(revision);
+        if (token) void loadState(token);
+      } catch (error) {
+        console.warn("ignored invalid Uhura Editor event", error);
+      }
+    });
+  }
 
   // Initial load does not wait for the SSE handshake. The mandatory `open`
   // fetch supersedes this request if the connection establishes first.
@@ -2171,7 +2194,7 @@ export const mountEditor = (root: HTMLElement): EditorDispose => {
   return (): void => {
     if (destroyed) return;
     destroyed = true;
-    events.close();
+    events?.close();
     annotationOverlay.dispose();
     disposePreparedEditorModel(model);
     resizeObserver?.disconnect();

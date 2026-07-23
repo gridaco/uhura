@@ -1,7 +1,9 @@
+import { escapeHtmlAttribute, hostPath } from "../app/host.js";
+
 /** Static, host-owned Play chrome created when the `/play` route mounts. */
 export const PLAY_SHELL_MARKUP = `
   <header id="uh-shell-toolbar">
-    <a class="uh-editor-link" href="/" aria-label="Back to Editor">
+    <a class="uh-editor-link" href="${escapeHtmlAttribute(hostPath("/"))}" aria-label="Back to Editor">
       <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m10.5 3.5-4.5 4.5 4.5 4.5"></path></svg>
       Editor
     </a>

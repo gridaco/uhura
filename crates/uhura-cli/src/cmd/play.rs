@@ -304,7 +304,7 @@ fn run_host(common: &CommonArgs, port: u16, primary: PrimarySurface) -> ExitCode
     ExitCode::SUCCESS
 }
 
-fn locate_web_assets() -> Result<WebAssets, String> {
+pub(super) fn locate_web_assets() -> Result<WebAssets, String> {
     let mut candidates = Vec::new();
     if let Some(explicit) = std::env::var_os("UHURA_WEB_DIST") {
         candidates.push(PathBuf::from(explicit));
@@ -346,6 +346,52 @@ fn locate_web_assets() -> Result<WebAssets, String> {
     Err(format!(
         "browser application is not built (looked for {locations}); set \
          UHURA_WEB_DIST or build web/ before starting a browser surface"
+    ))
+}
+
+pub(super) fn locate_export_web_assets() -> Result<WebAssets, String> {
+    let mut candidates = Vec::new();
+    if let Some(explicit) = std::env::var_os("UHURA_EXPORT_WEB_DIST") {
+        candidates.push(PathBuf::from(explicit));
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(bin) = executable.parent()
+    {
+        candidates.push(bin.join("../share/uhura/web-export"));
+    }
+    candidates.push(tool_root().join("web/dist-export"));
+
+    let mut attempted = Vec::new();
+    for root in candidates {
+        if attempted.contains(&root) {
+            continue;
+        }
+        attempted.push(root.clone());
+        let index_path = root.join("index.html");
+        match std::fs::symlink_metadata(&index_path) {
+            Ok(_) => {
+                let wasm_root = locate_wasm_for(&root);
+                return if wasm_root.is_dir() {
+                    WebAssets::from_directories(&root, &wasm_root)
+                } else {
+                    WebAssets::from_frontend_directory(&root)
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!("could not read {}: {error}", index_path.display()));
+            }
+        }
+    }
+    let locations = attempted
+        .iter()
+        .map(|root| root.join("index.html").display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "export browser application is not built (looked for {locations}); set \
+         UHURA_EXPORT_WEB_DIST or build the export Web profile into web/dist-export before \
+         running `uhura export`"
     ))
 }
 
@@ -435,7 +481,7 @@ fn observe(root: std::path::PathBuf, host: Arc<Host>, mut seen: ProjectSourceFin
     }
 }
 
-fn project_fingerprint(root: &Path) -> ProjectSourceFingerprint {
+pub(super) fn project_fingerprint(root: &Path) -> ProjectSourceFingerprint {
     capture_project_snapshot(root).fingerprint().clone()
 }
 
@@ -453,7 +499,7 @@ fn wait_for_stable_fingerprint(
     }
 }
 
-fn build_stable_candidate(
+pub(super) fn build_stable_candidate(
     root: &Path,
     mut before: ProjectSourceFingerprint,
     revision: u64,

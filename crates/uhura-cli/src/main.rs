@@ -1,7 +1,7 @@
-//! The `uhura` CLI: check | fmt | editor | play | trace | graph. With no command
-//! it opens the read-only editor for the current directory. Thin argument
-//! parsing over the library crate (`uhura_cli::cmd`) — the same code the gate
-//! tests drive.
+//! The `uhura` CLI: check | export | fmt | editor | play | trace | graph. With
+//! no command it opens the read-only editor for the current directory. Thin
+//! argument parsing over the library crate (`uhura_cli::cmd`) — the same code
+//! the gate tests drive.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -11,6 +11,7 @@ use uhura_cli::{CommonArgs, cmd};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CliCommand {
     Check,
+    Export,
     Fmt,
     Editor,
     Play,
@@ -22,6 +23,7 @@ impl CliCommand {
     fn parse(name: &str) -> Option<Self> {
         match name {
             "check" => Some(Self::Check),
+            "export" => Some(Self::Export),
             "fmt" => Some(Self::Fmt),
             "editor" => Some(Self::Editor),
             "play" => Some(Self::Play),
@@ -77,6 +79,8 @@ fn main() -> ExitCode {
     let mut emit_ir = false;
     let mut script: Option<String> = None;
     let mut out: Option<String> = None;
+    let mut mount: Option<String> = None;
+    let mut play_entry: Option<String> = None;
     let mut expanded = false;
     let mut port: u16 = 8787;
 
@@ -110,6 +114,26 @@ fn main() -> ExitCode {
             other if other.starts_with("--out=") => {
                 out = Some(other["--out=".len()..].to_string());
             }
+            other if other.starts_with("--mount=") => {
+                mount = Some(other["--mount=".len()..].to_string());
+            }
+            "--mount" => match args.next() {
+                Some(v) => mount = Some(v),
+                None => {
+                    eprintln!("--mount takes an origin-local path");
+                    return ExitCode::from(2);
+                }
+            },
+            other if other.starts_with("--play-entry=") => {
+                play_entry = Some(other["--play-entry=".len()..].to_string());
+            }
+            "--play-entry" => match args.next() {
+                Some(v) => play_entry = Some(v),
+                None => {
+                    eprintln!("--play-entry takes an origin-local path");
+                    return ExitCode::from(2);
+                }
+            },
             // Space-separated `--out <file>` consumes its value, like --format.
             "--out" => match args.next() {
                 Some(v) => out = Some(v),
@@ -150,9 +174,19 @@ fn main() -> ExitCode {
         deny_warnings,
         emit_ir,
     };
+    if command != CliCommand::Export && (mount.is_some() || play_entry.is_some()) {
+        eprintln!("--mount and --play-entry are valid only for `uhura export`");
+        return ExitCode::from(2);
+    }
     match command {
         CliCommand::Fmt => cmd::fmt::run(&common, check_only),
         CliCommand::Check => cmd::check::run(&common),
+        CliCommand::Export => cmd::export::run(
+            &common,
+            out.as_deref(),
+            mount.as_deref(),
+            play_entry.as_deref(),
+        ),
         CliCommand::Editor => cmd::editor::run(&common, port),
         CliCommand::Trace => cmd::trace::run(&common, script.as_deref(), expanded),
         CliCommand::Play => cmd::play::run(&common, port),
@@ -162,7 +196,11 @@ fn main() -> ExitCode {
 
 fn print_usage() {
     eprintln!("usage: uhura [path] [--port <n>]");
-    eprintln!("       uhura <check|fmt|editor|play|trace|graph> [path] [flags]");
+    eprintln!("       uhura <check|export|fmt|editor|play|trace|graph> [path] [flags]");
+    eprintln!(
+        "       uhura export [path] --out <directory> [--mount </path/>] \
+         [--play-entry </path>]"
+    );
     eprintln!("       no command selects the editor (path defaults to the current directory)");
 }
 
@@ -194,6 +232,14 @@ mod tests {
             Ok((CliCommand::Editor, true))
         );
         assert_eq!(select_command(Some("play")), Ok((CliCommand::Play, true)));
+    }
+
+    #[test]
+    fn selects_static_export_as_an_explicit_command() {
+        assert_eq!(
+            select_command(Some("export")),
+            Ok((CliCommand::Export, true))
+        );
     }
 
     #[test]

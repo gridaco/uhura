@@ -1,3 +1,5 @@
+import { hostPath, stripHostPath, UHURA_HOST_BASE } from "./host.js";
+
 export type SurfaceDispose = () => void;
 export type SurfaceMount = (
   root: HTMLElement,
@@ -53,12 +55,31 @@ export interface RouteRenderer {
   render(pathname: string): Promise<boolean>;
 }
 
-export const EDITOR_PATH = "/_uhura/editor";
+export const EDITOR_PATH = hostPath("/_uhura/editor");
 
-const editorPath = (pathname: string): boolean =>
+const editorHostPath = (pathname: string): boolean =>
   pathname === "/"
-  || pathname === EDITOR_PATH
-  || pathname === `${EDITOR_PATH}/`;
+    || pathname === "/_uhura/editor"
+    || pathname === "/_uhura/editor/";
+
+export const routeForHost = (
+  base: string,
+  pathname: string,
+): AppRoute | null => {
+  const hosted = stripHostPath(base, pathname);
+  if (hosted === null) return null;
+  return {
+    pathname,
+    surface: editorHostPath(hosted) ? "editor" : "play",
+  };
+};
+
+export const routableHostUrl = (
+  base: string,
+  origin: string,
+  url: URL,
+): boolean =>
+  url.origin === origin && stripHostPath(base, url.pathname) !== null;
 
 /**
  * `/` remains the friendly Editor entry. The explicit reserved route makes
@@ -66,10 +87,15 @@ const editorPath = (pathname: string): boolean =>
  * `/play` is the compatibility Play entry; every other pathname is an actual
  * application location and therefore also belongs to Play.
  */
-export const routeFor = (pathname: string): AppRoute => ({
-  pathname,
-  surface: editorPath(pathname) ? "editor" : "play",
-});
+export const routeFor = (pathname: string): AppRoute => {
+  const route = routeForHost(UHURA_HOST_BASE, pathname);
+  if (route === null) {
+    throw new Error(
+      `browser path ${JSON.stringify(pathname)} is outside the Uhura host`,
+    );
+  }
+  return route;
+};
 
 interface RoutedAnchor {
   url: URL;
@@ -82,7 +108,7 @@ const routedAnchor = (target: EventTarget | null): RoutedAnchor | null => {
   if (anchor.target && anchor.target !== "_self") return null;
   if (anchor.hasAttribute("download")) return null;
   const url = new URL(anchor.href, location.href);
-  if (url.origin !== location.origin) return null;
+  if (!routableHostUrl(UHURA_HOST_BASE, location.origin, url)) return null;
   return { url };
 };
 
@@ -141,12 +167,14 @@ export function createRouter(options: RouterOptions): AppRouter {
     cause: NavigationCause,
   ): Promise<void> => {
     const sequence = ++locationSequence;
+    const route = routeForHost(UHURA_HOST_BASE, url.pathname);
+    if (route === null) return;
     const committed = await renderer.render(url.pathname);
     if (!committed || sequence !== locationSequence) return;
     options.locationChanged?.({
       cause,
       location: browserLocation(url),
-      route: routeFor(url.pathname),
+      route,
     });
   };
 
@@ -157,6 +185,11 @@ export function createRouter(options: RouterOptions): AppRouter {
     const url = new URL(destination, location.href);
     if (url.origin !== location.origin) {
       throw new Error(`cannot route a different origin: ${url.origin}`);
+    }
+    if (stripHostPath(UHURA_HOST_BASE, url.pathname) === null) {
+      throw new Error(
+        `cannot route outside the Uhura host: ${url.pathname}`,
+      );
     }
     const href = `${url.pathname}${url.search}${url.hash}`;
     const current = `${location.pathname}${location.search}${location.hash}`;

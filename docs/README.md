@@ -68,6 +68,9 @@ compatibility version.
 - [RFC 0005](rfcs/0005-web-application-topology-and-ui-composition.md)
   fixes the opt-in Web application topology, generated checked routes, and
   pure UI-composition boundary incorporated by the active candidate.
+- [RFC 0006](rfcs/0006-immutable-web-export.md) fixes host-agnostic immutable
+  Web export, listenerless static publication, and mount-scoped routing for a
+  checked project generation.
 - [RFC 0001](rfcs/0001-project-foundation.md) remains a draft proposal; it is
   not a foundational authority merely because other work was inspired by it.
 

@@ -21,6 +21,7 @@ decision changes, preserve the earlier RFC and add explicit `Supersedes` and
 | [0003](0003-source-comments-docs-and-annotations.md) | Source comments, declaration docs, and markup annotations | Accepted |
 | [0004](0004-standalone-machine-core-and-source-composition.md) | Standalone machine core and source composition | Accepted |
 | [0005](0005-web-application-topology-and-ui-composition.md) | Web application topology and pure UI composition | Accepted |
+| [0006](0006-immutable-web-export.md) | Immutable Web export | Accepted |
 
 RFC numbers are local to the Uhura project, zero-padded, and never reused after
 a proposal has been shared. The status inside an RFC is authoritative.

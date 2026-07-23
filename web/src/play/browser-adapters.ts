@@ -51,7 +51,9 @@ export const createWebHistoryAdapter = (
     contractInstanceHash: requirement.contractInstanceHash,
     start(context: PortAdapterContext): void {
       stop = host.onLocation((url) => {
-        context.deliver(host.decodeRoute(requirement.port, url).value);
+        const fragment = url.indexOf("#");
+        const routeUrl = fragment === -1 ? url : url.slice(0, fragment);
+        context.deliver(host.decodeRoute(requirement.port, routeUrl).value);
       });
     },
     accept(command): void {
