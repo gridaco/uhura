@@ -98,6 +98,55 @@ test("an admitted adapter receives commands in order and reports later inputs", 
   host.dispose();
 });
 
+test("adapter readiness waits for async starts and reports their failures", async () => {
+  const contractHash = hash("0".repeat(64));
+  const contractInstanceHash = hash("1".repeat(64));
+  const failure = new Error("adapter start failed");
+  const errors: Array<{ error: unknown; port: string }> = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const host = createAdapterHost({
+    requirements: [{
+      port: "authority",
+      adapter: APPLICATION_PROVIDER_ADAPTER,
+      contractHash,
+      contractInstanceHash,
+    }],
+    adapters: [{
+      port: "authority",
+      adapter: APPLICATION_PROVIDER_ADAPTER,
+      contractHash,
+      contractInstanceHash,
+      async start(): Promise<void> {
+        await gate;
+        throw failure;
+      },
+      accept() {},
+    }],
+    deliver() {},
+    adapterError(error, port) {
+      errors.push({ error, port });
+    },
+  });
+
+  const readiness = host.start();
+  assert.equal(host.start(), readiness);
+  let settled = false;
+  void readiness.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  release();
+  await readiness;
+  assert.equal(settled, true);
+  assert.deepEqual(errors, [{ error: failure, port: "authority" }]);
+  host.dispose();
+});
+
 test("adapter admission is complete and contract checked", () => {
   const expected = hash("1".repeat(64));
   const incompatible = hash("2".repeat(64));

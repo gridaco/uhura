@@ -73,6 +73,7 @@ export interface PlayConfig {
 
 export interface PlayController {
   readonly session: WasmSession;
+  readonly ready: Promise<void>;
   dispose(): void;
 }
 
@@ -823,10 +824,11 @@ export function startPlay(
     snapshotFromInspection(identityInspection, initialReceipt),
     initialReceipt,
   );
-  adapters.start();
+  const ready = adapters.start();
 
   return {
     session,
+    ready,
     dispose(): void {
       if (disposed) return;
       disposed = true;
