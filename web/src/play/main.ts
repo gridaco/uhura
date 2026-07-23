@@ -68,6 +68,7 @@ import {
 import { createProviderHost } from "./provider-host.js";
 import type { DisposableProviderHost } from "./provider-host.js";
 import type { PlayShell } from "./shell.js";
+import { retargetApplicationStyles } from "./shell.js";
 import {
   SYSTEM_ACTOR_STORAGE_KEY,
   createSystemControls,
@@ -585,7 +586,7 @@ export function startPlayRuntime(
       artifacts.generation,
     );
     if (disposed) return;
-    applicationStyle.textContent = styleText;
+    applicationStyle.textContent = retargetApplicationStyles(styleText);
     const providerAsset = provider?.resolveAsset?.bind(provider);
     const resolveAsset = providerAsset === undefined
       ? undefined

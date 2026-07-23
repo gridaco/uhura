@@ -95,3 +95,25 @@ test("Play fetches one namespaced coherent artifact set including app CSS", () =
     "/api/play/stylesheet.css",
   ]);
 });
+
+import { retargetApplicationStyles } from "../shell.js";
+
+test("retargets document-level authored selectors to :host", () => {
+  const authored = [
+    ":root {\n  --color-ink: #111;\n}",
+    "body {\n  margin: 0;\n  color: var(--color-ink);\n}",
+    "#uh-app {\n  font-size: 15px;\n}",
+    "#uh-app button.uh-button,\n#uh-app .uh-textfield input { min-block-size: 44px; }",
+    ".post-body { padding: 8px; }",
+    ".uh-body-text { color: red; }",
+  ].join("\n\n");
+  const out = retargetApplicationStyles(authored);
+  assert.doesNotMatch(out, /:root\s*\{/u);
+  assert.doesNotMatch(out, /(^|[},\s])body\s*\{/u);
+  assert.doesNotMatch(out, /#uh-app/u);
+  assert.match(out, /:host \{\n {2}--color-ink: #111;/u);
+  assert.match(out, /:host button\.uh-button,\n:host \.uh-textfield input/u);
+  // 오폭 금지: 클래스 이름 속 body/app 문자열은 건드리지 않는다
+  assert.match(out, /\.post-body \{ padding: 8px; \}/u);
+  assert.match(out, /\.uh-body-text \{ color: red; \}/u);
+});

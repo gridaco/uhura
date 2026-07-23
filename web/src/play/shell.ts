@@ -218,6 +218,28 @@ function required<T extends Element>(
   return found as T;
 }
 
+
+/**
+ * Rewrites an authored application stylesheet for the runtime shadow root:
+ * document-level selectors (`:root`, `html`, `body`, `#uh-app`) have no
+ * match inside the shadow, so they are retargeted to `:host` — otherwise
+ * the app's design tokens and base rules silently die (#30 spike).
+ */
+export function retargetApplicationStyles(styleText: string): string {
+  return styleText.replace(
+    /(^|[{}])([^{}@]+)(\{)/g,
+    (_whole, boundary: string, selectors: string, brace: string) =>
+      boundary +
+      selectors
+        .split(",")
+        .map((selector) =>
+          selector.replace(/(^\s*)(:root|html|body|#uh-app)(?![\w-])/u, "$1:host"),
+        )
+        .join(",") +
+      brace,
+  );
+}
+
 export function createPlayShell(document: Document): PlayShell {
   const container = document.createElement("div");
   container.className = "uh-play-route";
