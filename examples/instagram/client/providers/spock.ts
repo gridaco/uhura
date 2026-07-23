@@ -146,6 +146,12 @@ const COMMAND_REFUSALS: Readonly<Record<string, readonly string[]>> = {
 };
 
 export interface SpockProviderConfig {
+  /**
+   * `auto` keeps the live Spock authority unless the provider is running from
+   * an immutable Uhura static export. `browser-local` is primarily useful for
+   * focused tests and explicitly offline hosts.
+   */
+  mode?: "auto" | "network" | "browser-local";
   /** Standalone fallback for the full Spock `/graphql/v1` endpoint. */
   graphql_url: string;
   /** Standalone fallback for the Spock `/rest/v1/rpc` prefix. */
@@ -345,6 +351,7 @@ const AUTHORITY_REQUEST_TIMEOUT_MS = 15_000;
 const HOST_ENVIRONMENT_TIMEOUT_MS = 2_000;
 const HOST_ENVIRONMENT_PATH = "/~project/environment";
 const HOST_ENVIRONMENT_PROTOCOL = "spock-host-environment/1";
+const STATIC_PLAY_PROTOCOL = "uhura-static-play/0";
 
 interface AuthorityEndpoints {
   graphqlUrl: string | null;
@@ -586,6 +593,390 @@ interface SnapshotData {
   postTags: GraphPostTag[];
 }
 
+const LOCAL_MIRA = "user-mira";
+const LOCAL_MIRA_AUTHORITY_ID = "10000000-0000-4000-8000-000000000001";
+
+/**
+ * Static Play cannot carry Spock's native database process. This seed mirrors
+ * the checked Instagram demo's logical ids and fixture assets closely enough
+ * to exercise the real machine, routes, presentation, and admitted provider
+ * contracts entirely inside one browser session.
+ */
+function browserLocalSnapshot(): SnapshotData {
+  const users: UserRow[] = [
+    {
+      id: LOCAL_MIRA,
+      username: "mira.santos",
+      display_name: "Mira Santos",
+      avatar: { id: "avatar-mira" },
+      avatar_alt: "Mira Santos",
+      bio: "Food and travel photographer in Lisbon. Usually awake before the trams.",
+    },
+    {
+      id: "user-lena",
+      username: "lena.holt",
+      display_name: "Lena Holt",
+      avatar: { id: "avatar-lena" },
+      avatar_alt: "Lena Holt",
+      bio: "Ceramics and slow mornings. Small-batch studio work from Portland.",
+    },
+    {
+      id: "user-marco",
+      username: "marco.reyes",
+      display_name: "Marco Reyes",
+      avatar: { id: "avatar-marco" },
+      avatar_alt: "Marco Reyes",
+      bio: "Ocean, desert, and a board on the roof.",
+    },
+    {
+      id: "user-nils",
+      username: "nils.bergman",
+      display_name: "Nils Bergman",
+      avatar: { id: "avatar-nils" },
+      avatar_alt: "Nils Bergman",
+      bio: "Night skies and northern water, filmed around Tromsø.",
+    },
+    {
+      id: "user-priya",
+      username: "priya.raman",
+      display_name: "Priya Raman",
+      avatar: { id: "avatar-priya" },
+      avatar_alt: "Priya Raman",
+      bio: "Bread, fermentation, and small rituals.",
+    },
+    {
+      id: "user-ayla",
+      username: "ayla.demir",
+      display_name: "Ayla Demir",
+      avatar: { id: "avatar-ayla" },
+      avatar_alt: "Ayla Demir",
+      bio: "Ferries, tea, and cities seen from the water.",
+    },
+    {
+      id: "user-june",
+      username: "june.park",
+      display_name: "June Park",
+      avatar: { id: "avatar-june" },
+      avatar_alt: "June Park",
+      bio: "Clothes, cloth, and the people who make both.",
+    },
+    {
+      id: "user-theo",
+      username: "theo.okafor",
+      display_name: "Theo Okafor",
+      avatar: { id: "avatar-theo" },
+      avatar_alt: "Theo Okafor",
+      bio: "Murals and pickup basketball.",
+    },
+    {
+      id: "user-kenji",
+      username: "kenji.rides",
+      display_name: "Kenji Tanaka",
+      avatar: { id: "avatar-kenji" },
+      avatar_alt: "Kenji Tanaka",
+      bio: "Long rides, steep roads, and roadside food.",
+    },
+  ];
+
+  const posts: GraphPost[] = [
+    {
+      id: "post-lena-glaze",
+      author: { id: "user-lena" },
+      caption:
+        "New copper-red test tiles out of the kiln. Cone 10, heavy reduction — the speckle finally behaved.",
+      published_at: "2026-07-22T23:00:00Z",
+      show_in_feed: true,
+      media_kind: "image",
+      media_file: { id: "media-lena-glaze" },
+      video_file: null,
+      media_alt: "Decorative ceramic tile panels in an artisan studio",
+    },
+    {
+      id: "post-lena-bowls",
+      author: { id: "user-lena" },
+      caption: "Copper glaze in close-up, before the wax cooled.",
+      published_at: "2026-07-22T08:00:00Z",
+      show_in_feed: true,
+      media_kind: "image",
+      media_file: { id: "thumb-lena-2" },
+      video_file: null,
+      media_alt: "Celadon ceramic vessel with a sculpted wave rim",
+    },
+    {
+      id: "post-marco-baja",
+      author: { id: "user-marco" },
+      caption:
+        "Three days down the Baja coast. Swell arrived on the last morning, as it always does.",
+      published_at: "2026-07-22T21:00:00Z",
+      show_in_feed: true,
+      media_kind: "carousel",
+      media_file: null,
+      video_file: null,
+      media_alt: null,
+    },
+    {
+      id: "post-nils-aurora",
+      author: { id: "user-nils" },
+      caption:
+        "Aurora over the fjord last night — the whole sky was breathing.",
+      published_at: "2026-07-22T19:00:00Z",
+      show_in_feed: true,
+      media_kind: "video",
+      media_file: { id: "media-nils-aurora-poster" },
+      video_file: { id: "video-nils-aurora" },
+      media_alt: "Soft bands of blue, violet, and green light across a dark sky",
+    },
+    {
+      id: "post-priya-starter",
+      author: { id: "user-priya" },
+      caption: "Day 400 of the starter. She's earned a name: Clint Yeastwood.",
+      published_at: "2026-07-22T17:00:00Z",
+      show_in_feed: true,
+      media_kind: "image",
+      media_file: { id: "media-priya-starter" },
+      video_file: null,
+      media_alt: "Black-and-white cross-section of a rustic bread loaf",
+    },
+    {
+      id: "post-ayla-ferry",
+      author: { id: "user-ayla" },
+      caption:
+        "Morning ferry across the Bosphorus. Tea, gulls, and nowhere to be until noon.",
+      published_at: "2026-07-22T15:00:00Z",
+      show_in_feed: true,
+      media_kind: "image",
+      media_file: { id: "media-ayla-ferry" },
+      video_file: null,
+      media_alt: "Small boat crossing blue water toward the skyline",
+    },
+    {
+      id: "post-june-lookbook",
+      author: { id: "user-june" },
+      caption: "Studio lookbook, page one. Linen in every weight we could mill.",
+      published_at: "2026-07-22T13:00:00Z",
+      show_in_feed: true,
+      media_kind: "image",
+      media_file: { id: "media-june-lookbook" },
+      video_file: null,
+      media_alt: "Navy mosaic printed across natural linen fabric",
+    },
+    {
+      id: "post-theo-court",
+      author: { id: "user-theo" },
+      caption:
+        "Finished the mural at the 9th street court. Paint holds up better than my jumper.",
+      published_at: "2026-07-22T11:00:00Z",
+      show_in_feed: true,
+      media_kind: "video",
+      media_file: { id: "media-theo-court" },
+      video_file: { id: "video-theo-court" },
+      media_alt: "Colorful patterned staircase framed by saturated yellow walls",
+    },
+    {
+      id: "post-kenji-copper",
+      author: { id: "user-kenji" },
+      caption:
+        "120km of switchbacks and one very smug goat. Copper Pass, you were worth it.",
+      published_at: "2026-07-21T10:00:00Z",
+      show_in_feed: true,
+      media_kind: "image",
+      media_file: { id: "media-kenji-copper" },
+      video_file: null,
+      media_alt: "Cyclists riding through a crowded market square",
+    },
+    {
+      id: "post-mira-ferry",
+      author: { id: LOCAL_MIRA },
+      caption: "The last ferry left a gold line all the way home.",
+      published_at: "2026-07-21T07:00:00Z",
+      show_in_feed: true,
+      media_kind: "video",
+      media_file: { id: "thumb-mira-6" },
+      video_file: { id: "video-mira-ferry" },
+      media_alt: "Ocean spray breaking over rocks in golden light",
+    },
+  ];
+
+  const followPairs = [
+    [LOCAL_MIRA, "user-lena"],
+    [LOCAL_MIRA, "user-marco"],
+    [LOCAL_MIRA, "user-nils"],
+    [LOCAL_MIRA, "user-priya"],
+    [LOCAL_MIRA, "user-ayla"],
+    [LOCAL_MIRA, "user-june"],
+    [LOCAL_MIRA, "user-kenji"],
+    ["user-lena", LOCAL_MIRA],
+    ["user-priya", LOCAL_MIRA],
+    ["user-june", LOCAL_MIRA],
+    ["user-theo", LOCAL_MIRA],
+  ] as const;
+  const likePairs = [
+    [LOCAL_MIRA, "post-marco-baja"],
+    [LOCAL_MIRA, "post-kenji-copper"],
+    ["user-lena", "post-mira-ferry"],
+    ["user-priya", "post-lena-glaze"],
+    ["user-marco", "post-lena-glaze"],
+    ["user-kenji", "post-lena-glaze"],
+    ["user-june", "post-priya-starter"],
+  ] as const;
+
+  return {
+    users,
+    stories: [
+      {
+        id: "ring-mira",
+        author: { id: LOCAL_MIRA },
+        position: 1,
+        media_file: { id: "thumb-mira-1" },
+        media_alt: "Pastéis de nata on a marble counter",
+        caption: "Before the city wakes",
+        published_at: "2026-07-23T00:05:00Z",
+      },
+      {
+        id: "ring-mira-tram",
+        author: { id: LOCAL_MIRA },
+        position: 2,
+        media_file: { id: "thumb-mira-2" },
+        media_alt: "Tram rails catching the first light in Lisbon",
+        caption: "Then the city wakes",
+        published_at: "2026-07-23T00:12:00Z",
+      },
+      {
+        id: "ring-lena",
+        author: { id: "user-lena" },
+        position: 1,
+        media_file: { id: "thumb-lena-7" },
+        media_alt: "Lena throwing a tall clay cylinder",
+        caption: "One pull, no edits",
+        published_at: "2026-07-22T23:35:00Z",
+      },
+      {
+        id: "ring-lena-glazes",
+        author: { id: "user-lena" },
+        position: 2,
+        media_file: { id: "thumb-lena-8" },
+        media_alt: "Rows of glaze buckets labelled by firing cone",
+        caption: "The unglamorous half of studio day",
+        published_at: "2026-07-22T23:48:00Z",
+      },
+      {
+        id: "ring-lena-studio",
+        author: { id: "user-lena" },
+        position: 3,
+        media_file: { id: "thumb-lena-9" },
+        media_alt: "Morning light crossing a clean ceramics workbench",
+        caption: "Reset for tomorrow",
+        published_at: "2026-07-23T00:04:00Z",
+      },
+      {
+        id: "ring-priya",
+        author: { id: "user-priya" },
+        position: 1,
+        media_file: { id: "media-priya-starter" },
+        media_alt: "Freshly sliced sourdough loaf",
+        caption: "Still warm",
+        published_at: "2026-07-22T23:15:00Z",
+      },
+    ],
+    storyViews: [
+      {
+        viewer: { id: LOCAL_MIRA },
+        story: { id: "ring-mira" },
+        at: "2026-07-23T00:06:00Z",
+      },
+      {
+        viewer: { id: LOCAL_MIRA },
+        story: { id: "ring-mira-tram" },
+        at: "2026-07-23T00:13:00Z",
+      },
+      {
+        viewer: { id: LOCAL_MIRA },
+        story: { id: "ring-priya" },
+        at: "2026-07-22T23:20:00Z",
+      },
+    ],
+    posts,
+    slides: [
+      {
+        id: "slide-marco-1",
+        post: { id: "post-marco-baja" },
+        position: 1,
+        file: { id: "media-marco-baja-1" },
+        alt: "Ocean wave exploding into white spray against deep blue water",
+      },
+      {
+        id: "slide-marco-2",
+        post: { id: "post-marco-baja" },
+        position: 2,
+        file: { id: "media-marco-baja-2" },
+        alt: "Glowing campfire beside a tent under a desert night sky",
+      },
+      {
+        id: "slide-marco-3",
+        post: { id: "post-marco-baja" },
+        position: 3,
+        file: { id: "media-marco-baja-3" },
+        alt: "Palm-lined ocean glowing orange and violet at sunset",
+      },
+    ],
+    comments: [
+      {
+        id: "comment-lena-1",
+        post: { id: "post-lena-glaze" },
+        author: { id: "user-kenji" },
+        body: "That copper red is unreal. What cone are you firing to?",
+        created_at: "2026-07-22T23:15:00Z",
+      },
+      {
+        id: "comment-lena-2",
+        post: { id: "post-lena-glaze" },
+        author: { id: "user-priya" },
+        body: "The speckle is perfect.",
+        created_at: "2026-07-22T23:27:00Z",
+      },
+      {
+        id: "comment-lena-3",
+        post: { id: "post-lena-glaze" },
+        author: { id: "user-marco" },
+        body: "Saving this palette.",
+        created_at: "2026-07-22T23:43:00Z",
+      },
+    ],
+    likes: likePairs.map(([user, post], index) => ({
+      user: { id: user },
+      post: { id: post },
+      at: `2026-07-22T22:${String(index).padStart(2, "0")}:00Z`,
+    })),
+    saves: [
+      {
+        user: { id: LOCAL_MIRA },
+        post: { id: "post-marco-baja" },
+        at: "2026-07-22T22:00:00Z",
+      },
+      {
+        user: { id: LOCAL_MIRA },
+        post: { id: "post-nils-aurora" },
+        at: "2026-07-22T22:01:00Z",
+      },
+    ],
+    follows: followPairs.map(([follower, followed], index) => ({
+      follower: { id: follower },
+      followed: { id: followed },
+      at: `2026-07-01T00:${String(index).padStart(2, "0")}:00Z`,
+    })),
+    postTags: [
+      {
+        post: { id: "post-marco-baja" },
+        person: { id: LOCAL_MIRA },
+      },
+      {
+        post: { id: "post-priya-starter" },
+        person: { id: "user-lena" },
+      },
+    ],
+  };
+}
+
 interface GraphQlError {
   message: string;
   extensions?: Record<string, unknown>;
@@ -760,7 +1151,13 @@ function toRefusalName(code: string): string {
  * there is no second provider protocol or projection/outcome envelope.
  */
 function createSpockBackend(
-  { graphql_url, rpc_url, storage_url, actor }: SpockProviderConfig,
+  {
+    mode = "auto",
+    graphql_url,
+    rpc_url,
+    storage_url,
+    actor,
+  }: SpockProviderConfig,
   host: ProviderHost,
 ): SpockBackend {
   const graphqlUrl = graphql_url.replace(/\/+$/, "");
@@ -783,10 +1180,15 @@ function createSpockBackend(
   const signedAssets = new Map<string, { url: string; refreshAt: number }>();
   const signingAssets = new Map<string, Promise<string>>();
   const uploadedFileNames = new Map<string, string>();
+  const browserLocalAssets = new Map<string, string>();
   let operationTail: Promise<void> = Promise.resolve();
   const cancellable = new AbortController();
   let disposed = host.signal.aborted;
   let authorityResolution: Promise<AuthorityEndpoints> | undefined;
+  let browserLocalResolution: Promise<boolean> | undefined;
+  let browserLocal = mode === "browser-local";
+  let localSnapshot: SnapshotData | undefined;
+  let localSequence = 0;
 
   function dispose(): void {
     if (disposed) return;
@@ -796,6 +1198,8 @@ function createSpockBackend(
     signedAssets.clear();
     signingAssets.clear();
     uploadedFileNames.clear();
+    for (const url of browserLocalAssets.values()) URL.revokeObjectURL(url);
+    browserLocalAssets.clear();
   }
 
   if (disposed) cancellable.abort();
@@ -804,6 +1208,46 @@ function createSpockBackend(
   function assertLive(): void {
     if (!disposed) return;
     throw new DOMException("Uhura Play provider was disposed", "AbortError");
+  }
+
+  function useBrowserLocal(): Promise<boolean> {
+    if (mode === "network") return Promise.resolve(false);
+    if (browserLocal) return Promise.resolve(true);
+    browserLocalResolution ??= (async () => {
+      let metadata: URL;
+      try {
+        metadata = new URL(
+          /* @vite-ignore */ "./static.json",
+          import.meta.url,
+        );
+      } catch {
+        return false;
+      }
+      if (metadata.protocol !== "http:" && metadata.protocol !== "https:") {
+        return false;
+      }
+      try {
+        const response = await fetch(metadata, {
+          headers: { accept: "application/json" },
+          signal: cancellable.signal,
+        });
+        if (!response.ok) return false;
+        const value = JSON.parse(await response.text()) as unknown;
+        if (
+          !exactObject(value, ["protocol", "playGeneration"])
+          || value.protocol !== STATIC_PLAY_PROTOCOL
+          || !Number.isSafeInteger(value.playGeneration)
+        ) {
+          return false;
+        }
+        browserLocal = true;
+        return true;
+      } catch (error) {
+        if (disposed || cancellable.signal.aborted) throw error;
+        return false;
+      }
+    })();
+    return browserLocalResolution;
   }
 
   function authorityEndpoints(): Promise<AuthorityEndpoints> {
@@ -846,6 +1290,10 @@ function createSpockBackend(
    * @returns {Promise<SnapshotData>}
    */
   async function fetchSnapshot(): Promise<SnapshotData> {
+    if (await useBrowserLocal()) {
+      localSnapshot ??= browserLocalSnapshot();
+      return localSnapshot;
+    }
     const { graphqlUrl } = await authorityEndpoints();
     if (graphqlUrl === null) {
       throw new Error(
@@ -891,6 +1339,7 @@ function createSpockBackend(
    * @returns {Promise<void>}
    */
   async function verifyViewer(): Promise<void> {
+    if (browserLocal) return;
     const expected = viewerId();
     const { whoamiUrl } = await authorityEndpoints();
     const response = await fetch(whoamiUrl, {
@@ -909,6 +1358,189 @@ function createSpockBackend(
     }
   }
 
+  function localRefusal(code: string, message: string): RpcReply {
+    return { ok: false, error: { code, message } };
+  }
+
+  function localText(
+    payload: Record<string, unknown>,
+    name: string,
+  ): string | null {
+    const value = payload[name];
+    return typeof value === "string" ? value : null;
+  }
+
+  function browserLocalRpc(
+    fn: string,
+    payload: Record<string, unknown>,
+  ): RpcReply {
+    const data = localSnapshot;
+    if (!data) throw new Error("browser-local Instagram authority is not loaded");
+    const viewer = viewerId();
+    const hasPost = (id: string): boolean =>
+      data.posts.some((post) => post.id === id);
+    const hasUser = (id: string): boolean =>
+      data.users.some((user) => user.id === id);
+
+    switch (fn) {
+      case "like_post": {
+        const post = localText(payload, "post");
+        if (post === null || !hasPost(post)) {
+          return localRefusal("not_found", "post was not found");
+        }
+        if (
+          !data.likes.some((like) =>
+            like.user.id === viewer && like.post.id === post
+          )
+        ) {
+          data.likes.push({
+            user: { id: viewer },
+            post: { id: post },
+            at: new Date().toISOString(),
+          });
+        }
+        return { ok: true, result: { user: viewer, post } };
+      }
+      case "unlike_post": {
+        const post = localText(payload, "post");
+        if (post === null) {
+          return localRefusal("not_found", "post was not found");
+        }
+        data.likes = data.likes.filter((like) =>
+          like.user.id !== viewer || like.post.id !== post
+        );
+        return { ok: true, result: { user: viewer, post } };
+      }
+      case "save_post": {
+        const post = localText(payload, "post");
+        if (post === null || !hasPost(post)) {
+          return localRefusal("not_found", "post was not found");
+        }
+        if (
+          !data.saves.some((save) =>
+            save.user.id === viewer && save.post.id === post
+          )
+        ) {
+          data.saves.push({
+            user: { id: viewer },
+            post: { id: post },
+            at: new Date().toISOString(),
+          });
+        }
+        return { ok: true, result: { user: viewer, post } };
+      }
+      case "unsave_post": {
+        const post = localText(payload, "post");
+        if (post === null) {
+          return localRefusal("not_found", "post was not found");
+        }
+        data.saves = data.saves.filter((save) =>
+          save.user.id !== viewer || save.post.id !== post
+        );
+        return { ok: true, result: { user: viewer, post } };
+      }
+      case "add_comment": {
+        const post = localText(payload, "post");
+        const body = localText(payload, "body")?.trim() ?? "";
+        if (post === null || !hasPost(post)) {
+          return localRefusal("not_found", "post was not found");
+        }
+        if (body.length === 0) {
+          return localRefusal(
+            "comment_body_invalid",
+            "comment body cannot be empty",
+          );
+        }
+        localSequence += 1;
+        const id = `comment-local-${localSequence}`;
+        data.comments.push({
+          id,
+          post: { id: post },
+          author: { id: viewer },
+          body,
+          created_at: new Date().toISOString(),
+        });
+        return { ok: true, result: { id } };
+      }
+      case "mark_story_viewed": {
+        const story = localText(payload, "story");
+        if (
+          story === null
+          || !data.stories.some((candidate) => candidate.id === story)
+        ) {
+          return localRefusal("not_found", "story was not found");
+        }
+        if (
+          !data.storyViews.some((view) =>
+            view.viewer.id === viewer && view.story.id === story
+          )
+        ) {
+          data.storyViews.push({
+            viewer: { id: viewer },
+            story: { id: story },
+            at: new Date().toISOString(),
+          });
+        }
+        return { ok: true, result: { viewer, story } };
+      }
+      case "follow_user": {
+        const target = localText(payload, "target");
+        if (target === null || !hasUser(target)) {
+          return localRefusal("not_found", "user was not found");
+        }
+        if (target === viewer) {
+          return localRefusal("cannot_follow_self", "cannot follow yourself");
+        }
+        if (
+          !data.follows.some((follow) =>
+            follow.follower.id === viewer && follow.followed.id === target
+          )
+        ) {
+          data.follows.push({
+            follower: { id: viewer },
+            followed: { id: target },
+            at: new Date().toISOString(),
+          });
+        }
+        return { ok: true, result: { follower: viewer, followed: target } };
+      }
+      case "unfollow_user": {
+        const target = localText(payload, "target");
+        if (target === null) {
+          return localRefusal("not_found", "user was not found");
+        }
+        data.follows = data.follows.filter((follow) =>
+          follow.follower.id !== viewer || follow.followed.id !== target
+        );
+        return { ok: true, result: { follower: viewer, followed: target } };
+      }
+      case "create_image_post": {
+        const image = localText(payload, "image");
+        const caption = localText(payload, "caption") ?? "";
+        const alt = localText(payload, "alt")?.trim() ?? "";
+        if (image === null || !browserLocalAssets.has(image)) {
+          return localRefusal("image_not_ready", "image is not ready");
+        }
+        localSequence += 1;
+        const id = `post-local-${localSequence}`;
+        data.posts.unshift({
+          id,
+          author: { id: viewer },
+          caption,
+          published_at: new Date().toISOString(),
+          show_in_feed: true,
+          media_kind: "image",
+          media_file: { id: image },
+          video_file: null,
+          media_alt: alt,
+        });
+        return { ok: true, result: { id } };
+      }
+      default:
+        return localRefusal("provider_error", `unsupported local RPC ${fn}`);
+    }
+  }
+
   /**
    * @param {string} fn
    * @param {Record<string, unknown>} payload
@@ -918,6 +1550,7 @@ function createSpockBackend(
     fn: string,
     payload: Record<string, unknown>,
   ): Promise<RpcReply> {
+    if (browserLocal) return browserLocalRpc(fn, payload);
     const { rpcUrl } = await authorityEndpoints();
     const timeout = new AbortController();
     const timeoutId = setTimeout(
@@ -966,6 +1599,8 @@ function createSpockBackend(
    */
   async function resolveAsset(asset: string): Promise<string> {
     if (/^(?:[a-z][a-z0-9+.-]*:|\/)/iu.test(asset)) return asset;
+    const browserLocalAsset = browserLocalAssets.get(asset);
+    if (browserLocalAsset) return browserLocalAsset;
     const local = LOCAL_PLAY_ASSETS[asset];
     if (local) {
       return `/api/play/assets/${encodeURIComponent(local)}`;
@@ -1025,6 +1660,13 @@ function createSpockBackend(
     const contentType = file.type.trim().toLowerCase();
     if (!SUPPORTED_IMAGE_TYPES.has(contentType)) {
       throw new Error("Choose an image file (JPEG, PNG, or WebP)");
+    }
+
+    if (browserLocal) {
+      localSequence += 1;
+      const object = `upload-local-${localSequence}`;
+      browserLocalAssets.set(object, URL.createObjectURL(file));
+      return object;
     }
 
     const { storageUrl } = await authorityEndpoints();
@@ -1178,8 +1820,11 @@ function createSpockBackend(
       db.taggedPostsByUser.set(tag.person.id, posts);
     }
 
+    const selectedActor = browserLocal && actor === LOCAL_MIRA_AUTHORITY_ID
+      ? LOCAL_MIRA
+      : actor;
     const resolved = data.users.find(
-      (user) => user.id === actor || user.username === actor,
+      (user) => user.id === selectedActor || user.username === selectedActor,
     );
     // Keep the authority-owned user directory available even when a stale
     // tab-local actor selection cannot resolve. `load` still refuses
@@ -1730,7 +2375,10 @@ function createSpockBackend(
 
     systemInfo() {
       return {
-        actor: viewerRow?.id ?? actor,
+        actor: viewerRow?.id
+          ?? (browserLocal && actor === LOCAL_MIRA_AUTHORITY_ID
+            ? LOCAL_MIRA
+            : actor),
         actors: [...db.users.values()]
           .sort((left, right) => left.username.localeCompare(right.username))
           .map((user) => ({
@@ -2005,14 +2653,28 @@ function settled(request: WireValue, result: WireValue): WireValue {
 function providerConfig(
   config: Readonly<Record<string, unknown>>,
 ): SpockProviderConfig {
-  const value = (name: keyof SpockProviderConfig): string => {
+  const value = (
+    name: Exclude<keyof SpockProviderConfig, "mode">,
+  ): string => {
     const entry = config[name];
     if (typeof entry !== "string" || entry.trim().length === 0) {
       throw new TypeError(`Instagram provider needs nonempty \`${name}\``);
     }
     return entry;
   };
+  const rawMode = config["mode"];
+  if (
+    rawMode !== undefined
+    && rawMode !== "auto"
+    && rawMode !== "network"
+    && rawMode !== "browser-local"
+  ) {
+    throw new TypeError(
+      "Instagram provider `mode` must be `auto`, `network`, or `browser-local`",
+    );
+  }
   return {
+    mode: rawMode,
     graphql_url: value("graphql_url"),
     rpc_url: value("rpc_url"),
     storage_url: value("storage_url"),

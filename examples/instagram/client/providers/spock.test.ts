@@ -158,6 +158,24 @@ function textKeyMapKeys(value: WireValue): string[] {
   });
 }
 
+function textKeyMapValue(value: WireValue, key: string): WireValue {
+  assert.equal(value.$, "map");
+  assert.ok(Array.isArray(value.entries));
+  const entry = (value.entries as WireValue[][]).find(([entryKey]) => {
+    if (
+      entryKey?.$ !== "key"
+      || typeof entryKey.value !== "object"
+      || entryKey.value === null
+    ) {
+      return false;
+    }
+    return (entryKey.value as WireValue).value === key;
+  });
+  assert.ok(entry, `missing map key ${key}`);
+  assert.ok(entry[1]);
+  return entry[1];
+}
+
 function request(
   id: number,
   mutation: string,
@@ -207,6 +225,7 @@ function onlyField(value: unknown): WireValue {
 
 function makeHarness(
   pickFile: () => Promise<File | null> = async () => null,
+  config: Readonly<Record<string, unknown>> = {},
 ) {
   const abort = new AbortController();
   const requirements = {
@@ -229,6 +248,7 @@ function makeHarness(
       rpc_url: "http://standalone.test/rest/v1/rpc",
       storage_url: "http://standalone.test/storage/v1",
       actor: "mira.santos",
+      ...config,
     },
     {
       signal: abort.signal,
@@ -407,6 +427,58 @@ test("settles a machine mutation and publishes refreshed authority", async () =>
     assert.equal(caseOf(result), "Accepted", JSON.stringify(result));
     assert.deepEqual(rpcBodies, [{ post: "post-lena-image" }]);
     assert.equal(harness.authorityValues.length, 2);
+    harness.provider.dispose();
+  });
+});
+
+test("runs the checked Instagram authority inside a browser-local session", async () => {
+  await withFetch(async (input) => {
+    throw new Error(`browser-local provider must not fetch ${String(input)}`);
+  }, async () => {
+    const harness = makeHarness(
+      async () => null,
+      {
+        mode: "browser-local",
+        actor: "10000000-0000-4000-8000-000000000001",
+      },
+    );
+    await harness.authority.start?.(harness.authorityContext);
+
+    assert.equal(harness.authorityValues.length, 1);
+    assert.equal(
+      caseOf(namedField(harness.authorityValues[0], "value")),
+      "Ready",
+    );
+    const info = harness.provider.systemInfo();
+    assert.equal(info.actor, MIRA);
+    assert.equal(info.actors.length, 9);
+
+    await harness.mutations.accept(
+      request(1, "SetLike", [
+        ["post", key(POST_ID, text("post-lena-glaze"))],
+        ["liked", bool(true)],
+      ]),
+      harness.mutationsContext,
+    );
+
+    assert.equal(
+      caseOf(namedField(harness.mutationValues[0], "result")),
+      "Accepted",
+    );
+    assert.equal(harness.authorityValues.length, 2);
+    const observed = harness.authorityValues.at(-1);
+    assert.ok(observed);
+    const authority = namedField(observed, "value");
+    const data = namedField(authority, "data");
+    const post = textKeyMapValue(
+      namedField(data, "posts"),
+      "post-lena-glaze",
+    );
+    assert.equal(namedField(post, "viewer_liked").value, true);
+    assert.equal(
+      await harness.provider.resolveAsset("media-lena-glaze"),
+      "/api/play/assets/media-lena-glaze.webp",
+    );
     harness.provider.dispose();
   });
 });
