@@ -113,7 +113,7 @@ test("retargets document-level authored selectors to :host", () => {
   assert.doesNotMatch(out, /(^|[\s,{}])#uh-app(?!\)|[\w-])/mu);
   assert.match(out, /:host \{\n {2}--color-ink: #111;/u);
   assert.match(out, /:host\(#uh-app\) button\.uh-button,\n:host\(#uh-app\) \.uh-textfield input/u);
-  // 오폭 금지: 클래스 이름 속 body/app 문자열은 건드리지 않는다
+  // No collateral hits: body/app substrings inside class names stay untouched.
   assert.match(out, /\.post-body \{ padding: 8px; \}/u);
   assert.match(out, /\.uh-body-text \{ color: red; \}/u);
 });

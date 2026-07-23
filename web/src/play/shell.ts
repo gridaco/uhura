@@ -228,7 +228,7 @@ function required<T extends Element>(
  * the app's design tokens and base rules silently die (#30 spike).
  */
 export function retargetApplicationStyles(styleText: string): string {
-  // 주석은 셀렉터 앵커를 가리므로 런타임 사본에서는 제거한다.
+  // Comments can shield selector anchors, so strip them from the runtime copy.
   const uncommented = styleText.replace(/\/\*[\s\S]*?\*\//g, "");
   return uncommented.replace(
     /(^|[{}])([^{}@]+)(\{)/g,
