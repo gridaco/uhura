@@ -32,8 +32,7 @@ test("the route-built Play shell owns every runtime host and Editor navigation",
     "uh-frame-label",
     "uh-frame-sizer",
     "uh-frame",
-    "uh-page",
-    "uh-surfaces",
+    "uh-app",
     "uh-overlay",
   ];
   for (const id of requiredIds) {

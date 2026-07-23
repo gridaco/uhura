@@ -1,0 +1,45 @@
+/* Runtime styles live inside the app shadow root (#30): the app cannot
+   collide with shell chrome, and surface layering has a defined root. */
+
+#uh-page, .uh-page-root { block-size: 100%; min-block-size: 0; }
+.uh-page-root > * { block-size: 100%; }
+.uh-projection-error {
+  block-size: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: #e4e4e7;
+  background: #111113;
+  text-align: center;
+}
+.uh-projection-error strong { font-size: 15px; }
+.uh-projection-error p { max-inline-size: 54ch; color: #f0a6a6; }
+.uh-projection-error code { color: #a1a1aa; font: 12px/1.5 ui-monospace, monospace; }
+
+/* Play-only affordances layered over the shared primitive bases. */
+button.uh-button { cursor: pointer; }
+button.uh-button[disabled] { cursor: default; }
+.uh-region { cursor: pointer; }
+.uh-pager .uh-track { scrollbar-width: none; }
+
+/* Machine-owned surfaces stay inside the selected prototype frame. */
+#uh-surfaces {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+#uh-surfaces:empty { display: none; }
+#uh-surfaces::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 40%);
+  pointer-events: auto;
+}
+#uh-surfaces > .uhura-surface { pointer-events: auto; }
+
+/* keyboard affordance for non-native interactives */
+.uh-region:focus-visible, button.uh-button:focus-visible { outline: 2px solid #4a90e2; outline-offset: 2px; }
+
