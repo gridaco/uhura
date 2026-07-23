@@ -622,6 +622,7 @@ export function startPlayRuntime(
     });
     pendingSession = null;
     runtime.provider = provider;
+    await play.ready;
     if (disposed) return;
     systemControls.ready(providerSystemInfo(provider, hasProvider));
   }

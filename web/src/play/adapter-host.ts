@@ -175,8 +175,11 @@ export interface AdapterHostOptions {
 }
 
 export interface AdapterHost {
-  /** Starts every admitted adapter exactly once. */
-  start(): void;
+  /**
+   * Starts every admitted adapter exactly once and resolves after their
+   * asynchronous initialization has settled.
+   */
+  start(): Promise<void>;
   /**
    * Offers committed commands in semantic order. Adapters may complete in any
    * order; promises are observed only for operational error reporting.
@@ -244,7 +247,7 @@ export function createAdapterHost(
     options.schedule,
   );
   let disposed = false;
-  let started = false;
+  let readiness: Promise<void> | null = null;
 
   const reportError = (
     error: unknown,
@@ -266,25 +269,27 @@ export function createAdapterHost(
   });
 
   return {
-    start(): void {
+    start(): Promise<void> {
       if (disposed) {
         throw new Error("cannot start a disposed Uhura adapter host");
       }
-      if (started) return;
-      started = true;
+      if (readiness) return readiness;
+      const pending: Promise<void>[] = [];
       for (const adapter of adapters.values()) {
         if (!adapter.start) continue;
         try {
           const result = adapter.start(contextFor(adapter.port));
           if (result) {
-            void Promise.resolve(result).catch((error: unknown) => {
+            pending.push(Promise.resolve(result).catch((error: unknown) => {
               reportError(error, adapter.port);
-            });
+            }));
           }
         } catch (error) {
           reportError(error, adapter.port);
         }
       }
+      readiness = Promise.all(pending).then(() => {});
+      return readiness;
     },
     publish(commands): void {
       if (disposed) {
