@@ -223,31 +223,34 @@ function required<T extends Element>(
 
 /**
  * Rewrites an authored application stylesheet for the runtime shadow root:
- * document-level selectors (`:root`, `html`, `body`, `#uh-app`) have no
- * match inside the shadow, so they are retargeted to `:host` — otherwise
- * the app's design tokens and base rules silently die (#30 spike).
+ * document-level selectors (`:root`, `html`, `body`, `#uh-frame`, `#uh-app`)
+ * have no match inside the shadow, so their entire leading ancestry chain is
+ * collapsed into a single `:host` selector — otherwise the app's design
+ * tokens and base rules silently die (#30 spike). `#uh-app` can only ever be
+ * the host itself, never a shadow descendant.
  */
+const DOCUMENT_ANCESTRY =
+  /^(\s*)((?::root|html|body|#uh-frame(?:\[[^\]]*\])?|#uh-app)(?![\w-])(?:\s+(?::root|html|body|#uh-frame(?:\[[^\]]*\])?|#uh-app)(?![\w-]))*)/u;
+
+function collapseAncestry(selector: string): string {
+  return selector.replace(DOCUMENT_ANCESTRY, (_m, lead: string, chain: string) => {
+    const tokens = chain.split(/\s+/u);
+    const attrs = tokens
+      .filter((t) => t.startsWith("#uh-frame["))
+      .map((t) => t.slice("#uh-frame".length))
+      .join("");
+    const onHost = tokens.some((t) => t.startsWith("#uh-"));
+    return onHost ? `${lead}:host(#uh-app${attrs})` : `${lead}:host`;
+  });
+}
+
 export function retargetApplicationStyles(styleText: string): string {
   // Comments can shield selector anchors, so strip them from the runtime copy.
   const uncommented = styleText.replace(/\/\*[\s\S]*?\*\//g, "");
   return uncommented.replace(
     /(^|[{}])([^{}@]+)(\{)/g,
     (_whole, boundary: string, selectors: string, brace: string) =>
-      boundary +
-      selectors
-        .split(",")
-        .map((selector) =>
-          selector
-            .replace(
-              /(^\s*)#uh-frame(\[[^\]]*\])?/u,
-              (_m, lead: string, attr: string | undefined) =>
-                `${lead}:host(#uh-app${attr ?? ""})`,
-            )
-            .replace(/(^\s*)#uh-app(?![\w-])/u, "$1:host(#uh-app)")
-            .replace(/(^\s*)(:root|html|body)(?![\w-])/u, "$1:host"),
-        )
-        .join(",") +
-      brace,
+      boundary + selectors.split(",").map(collapseAncestry).join(",") + brace,
   );
 }
 

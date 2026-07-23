@@ -127,6 +127,26 @@ test("retargets frame-keyed authored selectors to the host", () => {
   assert.doesNotMatch(out, /#uh-frame/u);
 });
 
+test("collapses compound document ancestry into a single host selector", () => {
+  const out = retargetApplicationStyles(
+    [
+      "body #uh-app .card { padding: 4px; }",
+      ":root #uh-app .card { color: blue; }",
+      "html body .page { margin: 0; }",
+      '#uh-frame[data-frame="desktop"] #uh-app .rail { inline-size: 244px; }',
+      "body #uh-frame .anything { color: red; }",
+    ].join("\n"),
+  );
+  assert.match(out, /:host\(#uh-app\) \.card \{ padding: 4px; \}/u);
+  assert.match(out, /:host\(#uh-app\) \.card \{ color: blue; \}/u);
+  assert.match(out, /:host \.page \{ margin: 0; \}/u);
+  assert.match(out, /:host\(#uh-app\[data-frame="desktop"\]\) \.rail/u);
+  assert.match(out, /:host\(#uh-app\) \.anything/u);
+  // The host id must never survive as a descendant — it can only be the host.
+  assert.doesNotMatch(out, /:host(?:\([^)]*\))?[^{,(]*#uh-app/u);
+  assert.doesNotMatch(out, /(?:^|[\s,{}])(?:body|html|:root|#uh-frame)(?![\w-])[^{,]*\{/mu);
+});
+
 test("comments do not shield document-level selectors from retargeting", () => {
   const out = retargetApplicationStyles(
     "/* tokens */\n:root {\n  --nav-rail-width: 244px;\n}\n\n/* base */\nbody { margin: 0; }",
