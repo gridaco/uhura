@@ -540,6 +540,7 @@ dependencies = [
  "uhura-check",
  "uhura-core",
  "uhura-host",
+ "uhura-port",
  "uhura-project",
  "uhura-syntax",
 ]

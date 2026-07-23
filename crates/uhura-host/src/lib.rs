@@ -5022,6 +5022,18 @@ pub struct WebAssetDigest {
     pub size: u64,
 }
 
+/// One immutable file in a listenerless browser bundle.
+///
+/// Paths are relative URL paths without a leading slash. A static publisher
+/// may mount the complete set below one prefix; the matching web build uses
+/// that prefix for shell navigation and API/resource requests.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StaticWebFile {
+    pub path: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Clone, Debug)]
 struct WebFile {
     bytes: Arc<Vec<u8>>,
@@ -5190,8 +5202,28 @@ fn validate_index_assets(
             root.join("index.html").display()
         ));
     }
+    let declared_mount = files
+        .get("uhura-web-build.json")
+        .and_then(|file| serde_json::from_slice::<serde_json::Value>(&file.bytes).ok())
+        .and_then(|value| {
+            value
+                .get("assetBase")
+                .or_else(|| value.get("base"))?
+                .as_str()
+                .map(str::to_string)
+        })
+        .and_then(|base| {
+            let relative = base.strip_prefix('/')?.strip_suffix('/')?;
+            (!relative.is_empty()).then(|| format!("{relative}/"))
+        });
     for reference in references {
-        if !files.contains_key(&reference) {
+        let packaged = files.contains_key(&reference)
+            || declared_mount.as_ref().is_some_and(|mount| {
+                reference
+                    .strip_prefix(mount)
+                    .is_some_and(|relative| files.contains_key(relative))
+            });
+        if !packaged {
             return Err(format!(
                 "{} references a missing application asset: /{reference}",
                 root.join("index.html").display()
@@ -5360,7 +5392,10 @@ fn record_index_asset_reference(
     {
         return Ok(());
     }
-    let relative = path.strip_prefix('/').unwrap_or(path);
+    let relative = path
+        .strip_prefix('/')
+        .or_else(|| path.strip_prefix("./"))
+        .unwrap_or(path);
     if relative.contains('\\')
         || relative
             .split('/')
@@ -5643,6 +5678,203 @@ impl Host {
             None => application_path(&self.web, path),
         };
         served_response(outcome)
+    }
+
+    /// Snapshot the immutable Editor/Play application as ordinary files.
+    ///
+    /// Event streams are intentionally absent: a static web build pins one
+    /// checked revision and one Play generation for the browser session.
+    /// The caller is responsible for serving application-history paths with
+    /// `index.html` as their fallback.
+    pub fn static_files(&self) -> Result<Vec<StaticWebFile>, String> {
+        let state = self.state.read().expect("state lock");
+        if state.play.generation != state.editor.source_revision {
+            return Err(format!(
+                "cannot export an incoherent static bundle: Editor revision {} and Play generation {} differ",
+                state.editor.source_revision, state.play.generation,
+            ));
+        }
+        if !state.play.ok {
+            return Err(format!(
+                "cannot export static bundle: current Play generation {} is rejected",
+                state.play.generation,
+            ));
+        }
+        let renderable = state.editor.last_renderable.as_ref().ok_or_else(|| {
+            "cannot export a static bundle without a renderable Editor revision".to_string()
+        })?;
+        if renderable.render.revision != state.editor.source_revision {
+            return Err(format!(
+                "cannot export static bundle: current Editor revision {} is not renderable; latest renderable revision is {}",
+                state.editor.source_revision, renderable.render.revision,
+            ));
+        }
+        let good =
+            state.play.good.as_ref().ok_or_else(|| {
+                "cannot export a static bundle without a good Play build".to_string()
+            })?;
+        let mut files = BTreeMap::<String, StaticWebFile>::new();
+
+        for (path, file) in self.web.files.iter() {
+            insert_static_file(
+                &mut files,
+                path.clone(),
+                file.content_type.clone(),
+                file.bytes.as_ref().clone(),
+            )?;
+        }
+        for (path, file) in self.web.wasm_files.iter() {
+            insert_static_file(
+                &mut files,
+                format!("api/play/wasm/{path}"),
+                file.content_type.clone(),
+                file.bytes.as_ref().clone(),
+            )?;
+        }
+
+        insert_static_file(
+            &mut files,
+            "api/editor/state".to_string(),
+            content_type("json"),
+            state.editor.state_json.clone().into_bytes(),
+        )?;
+        let editor_fonts = renderable.icon_fonts.as_ref().map_or_else(
+            || {
+                empty_icon_font_manifest(IconFontManifestVersion::Revision(
+                    renderable.render.revision,
+                ))
+            },
+            |resources| {
+                icon_font_manifest(
+                    resources,
+                    IconFontManifestVersion::Revision(renderable.render.revision),
+                    "/api/editor/icon-fonts",
+                )
+            },
+        );
+        insert_static_file(
+            &mut files,
+            "api/editor/icon-fonts.json".to_string(),
+            content_type("json"),
+            editor_fonts,
+        )?;
+        if let Some(resources) = &renderable.icon_fonts {
+            insert_static_icon_fonts(&mut files, "api/editor/icon-fonts", resources)?;
+        }
+
+        for (path, extension, bytes) in [
+            ("api/play/ir.json", "json", good.ir.as_bytes()),
+            (
+                "api/play/inspect.json",
+                "json",
+                good.inspect_json.as_bytes(),
+            ),
+            ("api/play/config.json", "json", good.config_json.as_bytes()),
+            ("api/play/stylesheet.css", "css", good.stylesheet.as_bytes()),
+        ] {
+            insert_static_file(
+                &mut files,
+                path.to_string(),
+                content_type(extension),
+                bytes.to_vec(),
+            )?;
+        }
+        insert_static_file(
+            &mut files,
+            "api/play/static.json".to_string(),
+            content_type("json"),
+            serde_json::to_vec(&serde_json::json!({
+                "protocol": "uhura-static-play/0",
+                "playGeneration": state.play.generation,
+            }))
+            .map_err(|error| format!("could not encode static Play metadata: {error}"))?,
+        )?;
+        let play_fonts = good.icon_fonts.as_ref().map_or_else(
+            || empty_icon_font_manifest(IconFontManifestVersion::Generation(state.play.generation)),
+            |resources| {
+                icon_font_manifest(
+                    resources,
+                    IconFontManifestVersion::Generation(state.play.generation),
+                    "/api/play/icon-fonts",
+                )
+            },
+        );
+        insert_static_file(
+            &mut files,
+            "api/play/icon-fonts.json".to_string(),
+            content_type("json"),
+            play_fonts,
+        )?;
+        if let Some(resources) = &good.icon_fonts {
+            insert_static_icon_fonts(&mut files, "api/play/icon-fonts", resources)?;
+        }
+        if let Some(provider) = &good.provider_js {
+            insert_static_file(
+                &mut files,
+                "api/play/provider.js".to_string(),
+                content_type("js"),
+                provider.clone().into_bytes(),
+            )?;
+        }
+        for (path, bytes) in &good.play_assets {
+            let extension = Path::new(path)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            insert_static_file(
+                &mut files,
+                format!("api/play/assets/{path}"),
+                content_type(extension),
+                bytes.as_ref().to_vec(),
+            )?;
+        }
+
+        Ok(files.into_values().collect())
+    }
+}
+
+fn insert_static_icon_fonts(
+    files: &mut BTreeMap<String, StaticWebFile>,
+    root: &str,
+    resources: &IconFontResources,
+) -> Result<(), String> {
+    for family in resources.families.values() {
+        insert_static_file(
+            files,
+            format!("{root}/{}.woff2", family.font_hash),
+            content_type("woff2"),
+            family.font.as_ref().to_vec(),
+        )?;
+    }
+    Ok(())
+}
+
+fn insert_static_file(
+    files: &mut BTreeMap<String, StaticWebFile>,
+    path: String,
+    content_type: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    let candidate = StaticWebFile {
+        path: path.clone(),
+        content_type,
+        bytes,
+    };
+    match files.entry(path) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(candidate);
+            Ok(())
+        }
+        std::collections::btree_map::Entry::Occupied(entry)
+            if entry.get().content_type == candidate.content_type
+                && entry.get().bytes == candidate.bytes =>
+        {
+            Ok(())
+        }
+        std::collections::btree_map::Entry::Occupied(entry) => Err(format!(
+            "static bundle path `{}` has conflicting representations",
+            entry.key()
+        )),
     }
 }
 
@@ -9991,6 +10223,131 @@ ui = "ui.uhura"
     }
 
     #[test]
+    fn static_snapshot_contains_fixed_editor_play_web_and_wasm_files_without_events() {
+        let index = b"<!doctype html><script src='/assets/app.js'></script>".to_vec();
+        let web = WebAssets {
+            files: Arc::new(BTreeMap::from([
+                (
+                    "index.html".to_string(),
+                    WebFile {
+                        bytes: Arc::new(index.clone()),
+                        content_type: content_type("html"),
+                    },
+                ),
+                (
+                    "assets/app.js".to_string(),
+                    WebFile {
+                        bytes: Arc::new(b"export {};".to_vec()),
+                        content_type: content_type("js"),
+                    },
+                ),
+            ])),
+            index: Arc::new(index),
+            wasm_files: Arc::new(BTreeMap::from([(
+                "uhura_wasm_bg.wasm".to_string(),
+                WebFile {
+                    bytes: Arc::new(b"wasm".to_vec()),
+                    content_type: content_type("wasm"),
+                },
+            )])),
+        };
+        let host = Host::new(web, candidate_with_icon_fonts(1, b"font"))
+            .unwrap()
+            .0;
+        let files = host.static_files().unwrap();
+        let paths = files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<BTreeSet<_>>();
+
+        for path in [
+            "index.html",
+            "assets/app.js",
+            "api/editor/state",
+            "api/editor/icon-fonts.json",
+            "api/play/ir.json",
+            "api/play/inspect.json",
+            "api/play/config.json",
+            "api/play/static.json",
+            "api/play/icon-fonts.json",
+            "api/play/stylesheet.css",
+            "api/play/wasm/uhura_wasm_bg.wasm",
+        ] {
+            assert!(paths.contains(path), "missing {path}");
+        }
+        for scope in ["editor", "play"] {
+            assert!(
+                paths.iter().any(|path| {
+                    path.starts_with(&format!("api/{scope}/icon-fonts/"))
+                        && path.ends_with(".woff2")
+                }),
+                "missing {scope} font bytes"
+            );
+        }
+        assert!(!paths.contains("api/editor/events"));
+        assert!(!paths.contains("api/play/events"));
+    }
+
+    #[test]
+    fn static_snapshot_rejects_current_editor_mixed_with_last_good_play() {
+        let host = Host::new(
+            test_web_assets(),
+            candidate_with_icon_fonts(1, b"first-font"),
+        )
+        .unwrap()
+        .0;
+        let report = host
+            .publish(ClientCandidate {
+                revision: 2,
+                source_fingerprint: ProjectSourceFingerprint::default(),
+                source_revision_id: "test-source-revision-2".into(),
+                editor: Ok(artifact(2, "current-editor")),
+                play: Err(diagnostics("broken Play")),
+                checked_routes: Some(Vec::new()),
+            })
+            .unwrap();
+        assert!(report.editor_current);
+        assert!(!report.play_ok);
+        assert!(report.has_good_play);
+
+        let error = host.static_files().unwrap_err();
+        assert!(
+            error.contains("current Play generation 2 is rejected"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn static_snapshot_rejects_stale_editor_mixed_with_current_play() {
+        let host = Host::new(
+            test_web_assets(),
+            candidate_with_icon_fonts(1, b"first-font"),
+        )
+        .unwrap()
+        .0;
+        let report = host
+            .publish(ClientCandidate {
+                revision: 2,
+                source_fingerprint: ProjectSourceFingerprint::default(),
+                source_revision_id: "test-source-revision-2".into(),
+                editor: Err(editor_rejection("broken Editor")),
+                play: Ok(good_build(icon_fonts(b"second-font"))),
+                checked_routes: Some(Vec::new()),
+            })
+            .unwrap();
+        assert!(!report.editor_current);
+        assert!(report.play_ok);
+
+        let error = host.static_files().unwrap_err();
+        assert!(
+            error.contains(
+                "current Editor revision 2 is not renderable; latest renderable revision is 1"
+            ),
+            "{error}",
+        );
+    }
+
+    #[test]
     fn api_routes_are_explicit_and_play_is_fully_namespaced() {
         assert_eq!(api_route("/api/editor/state"), Some(ApiRoute::EditorState));
         assert_eq!(
@@ -11213,13 +11570,18 @@ glyphs = "icons/brand/missing.json"
                 ></div>
                 <LINK rel=stylesheet HREF = "/assets/app.css?v=1">
                 <script type=module SRC='/assets/app.js#entry'></script>
+                <script type=module src="./assets/export.js"></script>
             "#,
         )
         .unwrap();
 
         assert_eq!(
             references,
-            BTreeSet::from(["assets/app.css".to_string(), "assets/app.js".to_string(),])
+            BTreeSet::from([
+                "assets/app.css".to_string(),
+                "assets/app.js".to_string(),
+                "assets/export.js".to_string(),
+            ])
         );
     }
 
@@ -11343,6 +11705,35 @@ glyphs = "icons/brand/missing.json"
             error.contains("missing application asset: /assets/missing.css"),
             "{error}"
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frontend_locator_accepts_assets_materialized_for_a_static_mount_path() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "uhura-web-mounted-assets-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(
+            root.join("index.html"),
+            r#"<script type="module" src="/demo/assets/app.js"></script>"#,
+        )
+        .unwrap();
+        fs::write(root.join("assets/app.js"), "application").unwrap();
+        fs::write(
+            root.join("uhura-web-build.json"),
+            r#"{"protocol":"uhura-web-build/1","profile":"static-export","assetBase":"/demo/","hostConfigProtocol":"uhura-host-config/0","mountPath":"/demo/","playEntry":"/demo/play"}"#,
+        )
+        .unwrap();
+
+        let web = WebAssets::from_frontend_directory(&root).unwrap();
+        assert!(web.files.contains_key("assets/app.js"));
 
         fs::remove_dir_all(root).unwrap();
     }

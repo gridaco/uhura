@@ -63,6 +63,9 @@ esac
 required_files=(
   "$TARGET_DIR/release/uhura"
   "$ROOT/web/dist/index.html"
+  "$ROOT/web/dist/uhura-web-build.json"
+  "$ROOT/web/dist-export/index.html"
+  "$ROOT/web/dist-export/uhura-web-build.json"
   "$ROOT/crates/uhura-wasm/pkg/web/uhura_wasm.js"
   "$ROOT/crates/uhura-wasm/pkg/web/uhura_wasm_bg.wasm"
 )
@@ -84,9 +87,11 @@ trap cleanup EXIT
 mkdir -p \
   "$STAGING/bin" \
   "$STAGING/share/uhura/web" \
+  "$STAGING/share/uhura/web-export" \
   "$STAGING/share/uhura/wasm"
 install -m 755 "$TARGET_DIR/release/uhura" "$STAGING/bin/uhura"
 cp -R "$ROOT/web/dist/." "$STAGING/share/uhura/web/"
+cp -R "$ROOT/web/dist-export/." "$STAGING/share/uhura/web-export/"
 cp -R "$ROOT/crates/uhura-wasm/pkg/web/." "$STAGING/share/uhura/wasm/"
 
 # Replace only after the full package has been assembled. The destination was
@@ -97,3 +102,4 @@ STAGING=""
 
 echo "Uhura package: $OUT"
 echo "Run: $OUT/bin/uhura editor <project>"
+echo "Export: $OUT/bin/uhura export <project> --out <directory>"

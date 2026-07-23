@@ -26,6 +26,7 @@ uhura-check = { workspace = true }
 uhura-core = { workspace = true }
 uhura-project = { workspace = true }
 uhura-host = { workspace = true }
+uhura-port = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tiny_http = { workspace = true }

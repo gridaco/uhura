@@ -55,9 +55,10 @@ Spock provider. It is independent of the application dev server.
 
 ## Build and runtime contract
 
-`corepack pnpm build` creates two generated products:
+`corepack pnpm build` creates three generated products:
 
-- `dist/`: one Vite application build for both Editor and Play;
+- `dist/`: the origin-root live build used by native Editor and Play;
+- `dist-export/`: the relative-chunk template materialized by `uhura export`;
 - `../examples/instagram/client/providers/dist/spock.js`: the configured
   Instagram Play provider.
 
@@ -74,6 +75,7 @@ browser adapter; a configured provider module supplies typed application
 adapters through `createUhuraAdapters(config, host)`. Deliveries return through
 a deferred FIFO bridge and cannot synchronously re-enter a reaction. Node and
 Vite are build-time dependencies only.
-`../scripts/package.sh` builds the application, provider, Wasm, and release
-binary, then places the runtime web and Wasm assets beside the executable under
-`dist/uhura/` (or a supplied output directory).
+`../scripts/package.sh` builds both application profiles, the provider, Wasm,
+and the release binary. It packages live and export Web distributions
+separately beside the executable. `uhura export` configures the export template
+for a canonical mount without invoking Node or Vite at command runtime.

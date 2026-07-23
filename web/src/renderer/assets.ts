@@ -1,3 +1,5 @@
+import { rebasePlayAsset } from "../app/host.js";
+
 export interface AssetAppliers {
   applyImage(el: HTMLImageElement, assetRef: string | undefined): void;
   applyVideoSource(el: HTMLVideoElement, assetRef: string | undefined): void;
@@ -21,7 +23,9 @@ interface AppliedSlot {
 }
 
 function fixtureAssetUrl(assetRef: string, extension: AssetExtension): string {
-  return `/api/play/assets/${encodeURIComponent(assetRef)}.${extension}`;
+  return rebasePlayAsset(
+    `/api/play/assets/${encodeURIComponent(assetRef)}.${extension}`,
+  );
 }
 
 function applyImageUrl(el: HTMLImageElement, url: string | undefined): void {

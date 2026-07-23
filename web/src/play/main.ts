@@ -33,6 +33,12 @@ import {
   publishLocation,
 } from "../app/location.js";
 import { routeFor } from "../app/router.js";
+import {
+  hostPath,
+  rebasePlayAsset,
+  rebaseHostResource,
+  UHURA_STATIC_HOST,
+} from "../app/host.js";
 import { PlayGenerationGate } from "./generation.js";
 import type { GenerationAction } from "./generation.js";
 import { createInspectionStore } from "./inspection-store.js";
@@ -67,16 +73,17 @@ import {
   createSystemControls,
 } from "./system-controls.js";
 
-const WASM_MODULE_URL = "/api/play/wasm/uhura_wasm.js";
+const WASM_MODULE_URL = hostPath("/api/play/wasm/uhura_wasm.js");
+const STATIC_PLAY_METADATA_URL = hostPath("/api/play/static.json");
 type WasmModule = typeof import("/api/play/wasm/uhura_wasm.js");
 type WasmSession = InstanceType<WasmModule["Session"]>;
 
 export const PLAY_ARTIFACT_URLS = [
-  "/api/play/ir.json",
-  "/api/play/inspect.json",
-  "/api/play/config.json",
-  "/api/play/icon-fonts.json",
-  "/api/play/stylesheet.css",
+  hostPath("/api/play/ir.json"),
+  hostPath("/api/play/inspect.json"),
+  hostPath("/api/play/config.json"),
+  hostPath("/api/play/icon-fonts.json"),
+  hostPath("/api/play/stylesheet.css"),
 ] as const;
 
 const EXPECTED_PROTOCOLS: Readonly<Record<string, string>> = {
@@ -202,7 +209,16 @@ async function loadOptionalIcons(
   ) {
     return undefined;
   }
-  const manifest = decodeIconFontManifest(value, "play");
+  const decoded = decodeIconFontManifest(value, "play");
+  const manifest = {
+    ...decoded,
+    families: Object.fromEntries(
+      Object.entries(decoded.families).map(([name, family]) => [
+        name,
+        { ...family, font: rebaseHostResource(family.font) },
+      ]),
+    ),
+  };
   if (manifest.generation !== generation) {
     throw new Error(
       `Play icon fonts generation ${String(manifest.generation)} does not match artifact generation ${generation}`,
@@ -232,6 +248,7 @@ export function startPlayRuntime(
   let playAssets: AssetAppliers | null = null;
   let play: PlayController | null = null;
   let pendingSession: WasmSession | null = null;
+  let staticGeneration: Promise<number> | null = null;
 
   const systemControls = createSystemControls({
     target: view,
@@ -253,9 +270,30 @@ export function startPlayRuntime(
   };
   view.__uhura = runtime;
 
+  const loadStaticGeneration = (): Promise<number> => {
+    staticGeneration ??= fetch(STATIC_PLAY_METADATA_URL, { signal: abort.signal })
+      .then(async (response) => {
+        const value = await response.json() as Record<string, unknown>;
+        const generation = value["playGeneration"];
+        if (
+          !response.ok
+          || value["protocol"] !== "uhura-static-play/0"
+          || typeof generation !== "number"
+          || !Number.isSafeInteger(generation)
+        ) {
+          throw new TypeError("invalid Uhura static Play metadata");
+        }
+        return generation as number;
+      });
+    return staticGeneration;
+  };
+
   async function fetchArtifacts<const T extends readonly string[]>(
     urls: T,
   ): Promise<{ texts: { [K in keyof T]: string }; generation: number }> {
+    const pinnedGeneration = UHURA_STATIC_HOST
+      ? await loadStaticGeneration()
+      : null;
     const responses = await Promise.all(
       urls.map((url) => fetch(url, { signal: abort.signal })),
     );
@@ -272,6 +310,7 @@ export function startPlayRuntime(
     });
     const artifactGenerations = responses.map((response, index) => {
       const header = response.headers.get("x-uhura-generation");
+      if (header === null && pinnedGeneration !== null) return pinnedGeneration;
       if (header === null || !/^\d+$/u.test(header)) {
         throw new Error(
           `${urls[index] ?? "artifact"}: missing or invalid x-uhura-generation`,
@@ -320,7 +359,7 @@ export function startPlayRuntime(
   }
 
   function listenForDevEvents(): void {
-    const events = new EventSource("/api/play/events");
+    const events = new EventSource(hostPath("/api/play/events"));
     eventSource = events;
     let everOpened = false;
     events.onopen = () => {
@@ -515,7 +554,7 @@ export function startPlayRuntime(
       );
       try {
         const loadedProvider = await loadUhuraAdapterProvider(
-          config.provider.module,
+          rebaseHostResource(config.provider.module),
           providerConfig(config.provider.config),
           boundary,
           requirements.provider,
@@ -547,7 +586,11 @@ export function startPlayRuntime(
     );
     if (disposed) return;
     applicationStyle.textContent = styleText;
-    const resolveAsset = provider?.resolveAsset?.bind(provider);
+    const providerAsset = provider?.resolveAsset?.bind(provider);
+    const resolveAsset = providerAsset === undefined
+      ? undefined
+      : async (asset: string): Promise<string> =>
+        rebasePlayAsset(await providerAsset(asset));
     playAssets = createPlayAssets(resolveAsset);
     inspection.installArtifacts({
       generation: artifacts.generation,
@@ -583,11 +626,13 @@ export function startPlayRuntime(
     systemControls.ready(providerSystemInfo(provider, hasProvider));
   }
 
-  try {
-    listenForDevEvents();
-  } catch (error) {
-    systemControls.failed(error);
-    overlay.showFatal(`failed to open the Play event stream: ${String(error)}`);
+  if (!UHURA_STATIC_HOST) {
+    try {
+      listenForDevEvents();
+    } catch (error) {
+      systemControls.failed(error);
+      overlay.showFatal(`failed to open the Play event stream: ${String(error)}`);
+    }
   }
 
   void boot().catch((error: unknown) => {

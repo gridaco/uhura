@@ -115,6 +115,18 @@ describe("built-in browser adapters", () => {
     expect(context.deliver).toHaveBeenCalledWith(changed);
   });
 
+  it("keeps browser fragments outside the Wasm route contract", () => {
+    const { host, context, emitLocation } = setup();
+    const adapter = createWebHistoryAdapter(requirement, host);
+    adapter.start?.(context);
+    emitLocation("/orders?state=open#details");
+    expect(host.decodeRoute).toHaveBeenCalledWith(
+      "router",
+      "/orders?state=open",
+    );
+    expect(context.deliver).toHaveBeenCalledWith(changed);
+  });
+
   it("encodes push/replace and delegates back without inventing values", () => {
     const { host, context } = setup();
     const adapter = createWebHistoryAdapter(requirement, host);
