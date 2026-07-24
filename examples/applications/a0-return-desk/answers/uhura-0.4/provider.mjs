@@ -1,4 +1,4 @@
-const MODULE = "app.return_desk.machine@1";
+const MODULE = "app.returndesk@1";
 const MACHINE = `${MODULE}::ReturnDesk`;
 
 const TYPES = Object.freeze({
@@ -86,7 +86,9 @@ const requiredVariant = (value, type, caseName, context) => {
     || value.case !== caseName
     || !Array.isArray(value.fields)
   ) {
-    throw new TypeError(`${context} has an unexpected Uhura value`);
+    throw new TypeError(
+      `${context} expected ${type}::${caseName}, received ${JSON.stringify(value)}`,
+    );
   }
   return value;
 };
@@ -120,7 +122,7 @@ const createReturnsAdapter = (host, returnId) => {
       const request = requiredVariant(
         command,
         TYPES.returnsSend,
-        "returns.request",
+        "request",
         "Return Desk return command",
       );
       const requestId = requiredField(
@@ -134,7 +136,7 @@ const createReturnsAdapter = (host, returnId) => {
           field("id", requestId),
           field(
             "result",
-            variant(TYPES.settlement, "accepted", [
+            variant(TYPES.settlement, "Accepted", [
               field("return_id", text(returnId)),
             ]),
           ),

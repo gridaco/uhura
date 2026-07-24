@@ -9,6 +9,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "web/src/**/*.test.ts",
+      "examples/applications/a0-return-desk/answers/uhura-0.4/provider.test.mjs",
       "examples/instagram/client/providers/*.test.ts",
     ],
   },
